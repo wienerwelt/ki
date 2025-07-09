@@ -1,0 +1,19 @@
+/* frontend/src/index.css */
+body {
+  margin: 0;
+  font-family: 'Roboto', 'Helvetica', 'Arial', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f4f6f8; /* Helle Hintergrundfarbe */
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+#root {
+  display: flex;
+  min-height: 100vh; /* Mindestens die Höhe des Viewports */
+  flex-direction: column;
+}

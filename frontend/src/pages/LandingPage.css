@@ -1,0 +1,23 @@
+/* frontend/src/pages/LandingPage.css */
+
+.teaser-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 auto;
+    max-width: 500px;
+    text-align: left;
+}
+
+.teaser-list li {
+    margin-bottom: 10px;
+}
+
+.blur-text {
+    filter: blur(4px); /* Stärke der Unschärfe anpassen */
+    transition: filter 0.3s ease-in-out; /* Übergang für Hover-Effekt */
+}
+
+/* Optional: Leichter "Reveal" Effekt beim Hover */
+.blur-text:hover {
+    filter: blur(0px);
+}
