@@ -20,6 +20,7 @@ import apiClient from '../apiClient';
 interface Region {
     id: string;
     name: string;
+    is_default?: boolean; // NEU
 }
 
 interface BusinessPartner {
@@ -98,6 +99,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [formSubscriptionEndDate, setFormSubscriptionEndDate] = useState('');
     const [formColorSchemeId, setFormColorSchemeId] = useState<string | null>('');
     const [formRegionIds, setFormRegionIds] = useState<string[]>([]);
+    const [formDefaultRegionId, setFormDefaultRegionId] = useState<string | null>(null); // NEU
     const [formIsActive, setFormIsActive] = useState(true);
     const [formUrlBusinessPartner, setFormUrlBusinessPartner] = useState('');
     const [formLevel1Name, setFormLevel1Name] = useState('');
@@ -140,6 +142,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setFormSubscriptionEndDate('');
         setFormColorSchemeId('');
         setFormRegionIds([]);
+        setFormDefaultRegionId(null); // NEU
         setFormIsActive(true);
         setFormUrlBusinessPartner('');
         setFormLevel1Name('');
@@ -158,6 +161,11 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setFormSubscriptionEndDate(bp.subscription_end_date ? bp.subscription_end_date.split('T')[0] : '');
         setFormColorSchemeId(bp.color_scheme_id || '');
         setFormRegionIds(bp.regions.map(r => r.id));
+        
+        // NEU: Standard-Region setzen
+        const defaultRegion = bp.regions.find(r => r.is_default);
+        setFormDefaultRegionId(defaultRegion?.id || bp.regions[0]?.id || null);
+
         setFormIsActive(bp.is_active);
         setFormUrlBusinessPartner(bp.url_businesspartner || '');
         setFormLevel1Name(bp.level_1_name || '');
@@ -183,6 +191,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
             subscription_end_date: formSubscriptionEndDate,
             color_scheme_id: formColorSchemeId || null,
             region_ids: formRegionIds,
+            default_region_id: formDefaultRegionId, // NEU
             is_active: formIsActive,
             url_businesspartner: formUrlBusinessPartner || null,
             level_1_name: formLevel1Name || null,
@@ -314,7 +323,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                             <TableCell>{bp.address || '-'}</TableCell>
                                             <TableCell>
                                                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                                                    {bp.regions.map(region => <Chip key={region.id} label={region.name} size="small" />)}
+                                                    {bp.regions.map(region => <Chip key={region.id} label={region.name} size="small" variant={region.is_default ? 'filled' : 'outlined'} color={region.is_default ? 'primary' : 'default'} />)}
                                                 </Box>
                                             </TableCell>
                                             <TableCell>
@@ -389,6 +398,29 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                     SelectProps={{ multiple: true, renderValue: (selected) => (<Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{(selected as string[]).map(id => <Chip key={id} size="small" label={regions.find(r => r.id === id)?.name} />)}</Box>) }}
                                 >
                                     {regions.map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))}
+                                </TextField>
+                            </Grid>
+                            {/* NEUES FELD FÜR STANDARD-REGION */}
+                            <Grid item xs={12}>
+                                <TextField
+                                    select
+                                    label="Standard-Region"
+                                    fullWidth
+                                    value={formDefaultRegionId || ''}
+                                    onChange={(e) => setFormDefaultRegionId(e.target.value)}
+                                    disabled={formRegionIds.length === 0}
+                                    helperText="Diese Region wird als Voreinstellung in den Widgets verwendet."
+                                >
+                                    <MenuItem value="">
+                                        <em>Keine</em>
+                                    </MenuItem>
+                                    {regions
+                                        .filter(r => formRegionIds.includes(r.id))
+                                        .map((r) => (
+                                            <MenuItem key={r.id} value={r.id}>
+                                                {r.name}
+                                            </MenuItem>
+                                        ))}
                                 </TextField>
                             </Grid>
                             <Grid item xs={12} sm={6}>

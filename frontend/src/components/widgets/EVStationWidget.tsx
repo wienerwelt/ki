@@ -35,7 +35,13 @@ const EVStationWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRemo
 
     useEffect(() => {
         if (user?.regions && user.regions.length > 0) {
-            setSelectedRegion(user.regions[0]);
+            // KORREKTUR: Die Prüfung auf 'is_default' wird robuster gemacht.
+            // '!!r.is_default' stellt sicher, dass jeder "wahrheitsgemäße" Wert (z.B. true, 1, 'true')
+            // korrekt als Standard erkannt wird.
+            const defaultRegion = user.regions.find(r => !!r.is_default);
+            
+            // Setzt die Standard-Region oder greift auf die erste in der Liste zurück.
+            setSelectedRegion(defaultRegion || user.regions[0]);
         }
     }, [user?.regions]);
 
@@ -159,16 +165,6 @@ const EVStationWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRemo
                     />
                 </Box>
 
-                {/* Info-Hinweis außerhalb der Trefferliste */}
-                <Box sx={{ px: 2, pt: 0 }}>
-                    <Alert severity="info" sx={{ mb: 1 }}>
-                        Aus technischen Gründen werden maximal die ersten 1.000 Stationen des Landes durchsucht.<br />
-                        Die Suche nach Stadt/Ort findet nur die darin enthaltenen Ergebnisse.<br />
-                        Für vollständige Ergebnisse verwende die Originalsuche auf&nbsp;
-                        <MuiLink href="https://openchargemap.org" target="_blank" rel="noopener">OpenChargeMap</MuiLink>.
-                    </Alert>
-                </Box>
-
                 <Box sx={{ flex: 1, overflowY: 'auto' }}>
                     {isLoading ? (
                         <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
@@ -194,9 +190,25 @@ const EVStationWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRemo
                             ))}
                         </List>
                     ) : (
-                        <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
-                            {city ? 'Keine passenden Stationen in diesem Ort gefunden.' : 'Bitte einen Ort eingeben.'}
-                        </Typography>
+                        <Box sx={{ p: 2, textAlign: 'center' }}>
+                            {!city ? (
+                                <>
+                                    <Alert severity="info" sx={{ mb: 2, textAlign: 'left' }}>
+                                        Aus technischen Gründen werden maximal die ersten 1.000 Stationen des Landes durchsucht.<br />
+                                        Die Suche nach Stadt/Ort findet nur die darin enthaltenen Ergebnisse.<br />
+                                        Für vollständige Ergebnisse verwende die Originalsuche auf&nbsp;
+                                        <MuiLink href="https://openchargemap.org" target="_blank" rel="noopener">OpenChargeMap</MuiLink>.
+                                    </Alert>
+                                    <Typography variant="body2" color="text.secondary">
+                                        Bitte einen Ort eingeben.
+                                    </Typography>
+                                </>
+                            ) : (
+                                <Typography variant="body2" color="text.secondary">
+                                    Keine passenden Stationen in diesem Ort gefunden.
+                                </Typography>
+                            )}
+                        </Box>
                     )}
                 </Box>
 

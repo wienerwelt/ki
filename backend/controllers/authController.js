@@ -41,7 +41,6 @@ exports.register = async (req, res) => {
     }
 };
 
-
 exports.login = async (req, res) => {
     const { identifier, password } = req.body;
     try {
@@ -51,10 +50,22 @@ exports.login = async (req, res) => {
                 bp.is_active AS business_partner_is_active, 
                 bp.name as business_partner_name, 
                 bp.dashboard_title,
-                (SELECT COALESCE(json_agg(r.* ORDER BY r.name), '[]'::json)
-                 FROM business_partner_regions bpr
-                 JOIN regions r ON bpr.region_id = r.id
-                 WHERE bpr.business_partner_id = u.business_partner_id) as regions
+                (
+                  SELECT COALESCE(
+                    json_agg(
+                      json_build_object(
+                        'id', r.id,
+                        'name', r.name,
+                        'code', r.code,
+                        'is_default', bpr.is_default
+                      )
+                      ORDER BY r.name
+                    ), '[]'::json
+                  )
+                  FROM business_partner_regions bpr
+                  JOIN regions r ON bpr.region_id = r.id
+                  WHERE bpr.business_partner_id = u.business_partner_id
+                ) as regions
              FROM users u 
              LEFT JOIN business_partners bp ON u.business_partner_id = bp.id 
              WHERE u.email = $1 OR u.username = $1`,
@@ -64,7 +75,7 @@ exports.login = async (req, res) => {
         if (userResult.rows.length === 0) return res.status(400).json({ message: 'Ungültige Anmeldedaten.' });
         const user = userResult.rows[0];
 
-                await logActivity({
+        await logActivity({
             userId: user.id,
             username: user.username,
             actionType: 'USER_LOGIN',

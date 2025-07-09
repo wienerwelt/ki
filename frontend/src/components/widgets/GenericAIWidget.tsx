@@ -197,7 +197,12 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
     }, [searchTerm]);
 
     useEffect(() => {
-        if (user?.regions && user.regions.length > 0) setSelectedRegion(user.regions[0]);
+        // KORRIGIERT: Wendet die gleiche Logik wie im EVStationWidget an,
+        // um die als Standard markierte Region zu finden und zu setzen.
+        if (user?.regions && user.regions.length > 0) {
+            const defaultRegion = user.regions.find(r => !!r.is_default);
+            setSelectedRegion(defaultRegion || user.regions[0]);
+        }
     }, [user?.regions]);
 
     useEffect(() => {
@@ -320,21 +325,18 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
                         <TextField
                             select value={selectedRegion?.id || ''}
                             onChange={(e) => {
-                                // KORREKTUR: Null-Prüfung hinzugefügt
                                 const region = user?.regions?.find(r => r.id === e.target.value);
                                 setSelectedRegion(region || null);
                             }}
                             size="small" variant="outlined" sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '24px' } }}
                             SelectProps={{
                                 renderValue: (value) => {
-                                    // KORREKTUR: Null-Prüfung hinzugefügt
                                     const region = user?.regions?.find(r => r.id === value);
                                     if (!region) return null;
                                     return <Tooltip title={region.name}><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} /></Tooltip>;
                                 }
                             }}
                         >
-                            {/* KORREKTUR: Null-Prüfung hinzugefügt */}
                             {user?.regions?.map((region) => <MenuItem key={region.id} value={region.id}><Tooltip title={region.name} placement="right"><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} /></Tooltip></MenuItem>)}
                         </TextField>
                     )}

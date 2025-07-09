@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { 
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
@@ -73,10 +73,12 @@ function getComparator<Key extends keyof any>(
 const AdminUserManagementPage: React.FC = () => {
     const { businessPartnerId: adminFilterBpId } = useParams<{ businessPartnerId?: string }>();
     const navigate = useNavigate();
+    const location = useLocation();
     const { user: loggedInUser } = useAuth();
 
     const isAdmin = loggedInUser?.role === 'admin';
     const isAssistant = loggedInUser?.role === 'assistenz';
+    const businessPartnerNameFromState = location.state?.businessPartnerName;
 
     const [users, setUsers] = useState<User[]>([]);
     const [businessPartnerOptions, setBusinessPartnerOptions] = useState<BusinessPartnerOption[]>([]);
@@ -349,7 +351,7 @@ const AdminUserManagementPage: React.FC = () => {
                     <Box>
                         <Typography variant="h4" component="h1">Benutzerverwaltung</Typography>
                         {isAdmin && adminFilterBpId && (
-                             <Chip label={`Admin-Filter: ${businessPartnerOptions.find(bp => bp.id === adminFilterBpId)?.name}`} onDelete={() => navigate('/admin/users')} sx={{ mt: 1 }} />
+                             <Chip label={`Admin-Filter: ${businessPartnerNameFromState || businessPartnerOptions.find(bp => bp.id === adminFilterBpId)?.name}`} onDelete={() => navigate('/admin/users')} sx={{ mt: 1 }} />
                         )}
                         {isAssistant && (
                              <Typography variant="subtitle1" color="text.secondary" sx={{ mt: 1 }}>
@@ -431,7 +433,16 @@ const AdminUserManagementPage: React.FC = () => {
                         </TextField>
 
                         {isAdmin && (
-                            <TextField select margin="dense" label="Business Partner" fullWidth value={formBusinessPartnerId} onChange={(e) => setFormBusinessPartnerId(e.target.value)} sx={{ mt: 2 }} disabled={!!adminFilterBpId || isAssistant}>
+                            <TextField 
+                                select 
+                                margin="dense" 
+                                label="Business Partner" 
+                                fullWidth 
+                                value={formBusinessPartnerId} 
+                                onChange={(e) => setFormBusinessPartnerId(e.target.value)} 
+                                sx={{ mt: 2 }} 
+                                disabled={isAssistant} // KORRIGIERT: Nur für Assistenten sperren
+                            >
                                 <MenuItem value=""><em>Kein Business Partner</em></MenuItem>
                                 {businessPartnerOptions.map((bp) => (<MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>))}
                             </TextField>

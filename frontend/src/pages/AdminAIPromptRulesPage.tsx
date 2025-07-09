@@ -10,7 +10,7 @@ import AddIcon from '@mui/icons-material/Add';
 import SaveIcon from '@mui/icons-material/Save';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import DeleteIcon from '@mui/icons-material/Delete'; // NEU: Icon importieren
+import DeleteIcon from '@mui/icons-material/Delete';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
@@ -41,12 +41,12 @@ const initialWorkspaceState = {
     focus_page: '',
 };
 
-const aiProviders = ['Google Gemini', 'OpenAI GPT-4', 'Anthropic Claude'];
 const europeanCountries = ["EU", "Albanien", "Andorra", "Belgien", "Bosnien und Herzegowina", "Bulgarien", "Dänemark", "Deutschland", "Estland", "Finnland", "Frankreich", "Griechenland", "Irland", "Island", "Italien", "Kosovo", "Kroatien", "Lettland", "Liechtenstein", "Litauen", "Luxemburg", "Malta", "Moldau", "Monaco", "Montenegro", "Niederlande", "Nordmazedonien", "Norwegen", "Österreich", "Polen", "Portugal", "Rumänien", "San Marino", "Schweden", "Schweiz", "Serbien", "Slowakei", "Slowenien", "Spanien", "Tschechien", "Ukraine", "Ungarn", "Vatikanstadt", "Vereinigtes Königreich", "Weißrussland", "Zypern"];
 
 const AdminAIPromptRulesPage: React.FC = () => {
     const [rules, setRules] = useState<AIPromptRule[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
+    const [aiProviders, setAiProviders] = useState<string[]>([]); // NEU: State für Provider
     const [workspaceState, setWorkspaceState] = useState(initialWorkspaceState);
     const [logModalOpen, setLogModalOpen] = useState(false);
     const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -63,12 +63,15 @@ const AdminAIPromptRulesPage: React.FC = () => {
         setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
-            const [rulesRes, categoriesRes] = await Promise.all([
+            // NEU: Ruft alle Daten parallel ab, inklusive der neuen Provider-Liste
+            const [rulesRes, categoriesRes, providersRes] = await Promise.all([
                 apiClient.get('/api/admin/ai-prompt-rules', { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/admin/categories', { headers: { 'x-auth-token': token } })
+                apiClient.get('/api/admin/categories', { headers: { 'x-auth-token': token } }),
+                apiClient.get('/api/admin/ai-prompt-rules/providers', { headers: { 'x-auth-token': token } })
             ]);
             setRules(rulesRes.data);
             setCategories(categoriesRes.data);
+            setAiProviders(providersRes.data);
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Laden der Initialdaten.');
         } finally {
@@ -155,8 +158,8 @@ const AdminAIPromptRulesPage: React.FC = () => {
     };
 
     const handleGenerate = async () => {
-        if (!workspaceState.ruleId) {
-            setError("Bitte zuerst eine Regel auswählen.");
+        if (!workspaceState.promptTemplate || !workspaceState.ai_provider) {
+            setError("Eine Prompt-Vorlage und ein KI-Provider sind für die Generierung erforderlich.");
             return;
         }
         if (!workspaceState.inputText) {
@@ -172,8 +175,15 @@ const AdminAIPromptRulesPage: React.FC = () => {
         setJobStatus('pending');
 
         const token = localStorage.getItem('jwt_token');
+        
         const payload = {
             ruleId: workspaceState.ruleId,
+            ruleData: {
+                name: workspaceState.ruleName,
+                prompt_template: workspaceState.promptTemplate,
+                ai_provider: workspaceState.ai_provider,
+                output_format: workspaceState.output_format,
+            },
             inputText: workspaceState.inputText,
             region: workspaceState.region || null,
             categoryId: workspaceState.categoryId || null,
@@ -206,23 +216,18 @@ const AdminAIPromptRulesPage: React.FC = () => {
         }
     };
 
-    /**
-     * NEU: Handler zum Löschen einer Regel.
-     */
     const handleDeleteRule = async (ruleId: string, event: React.MouseEvent) => {
-        event.stopPropagation(); // Verhindert, dass die Regel beim Klick ausgewählt wird.
+        event.stopPropagation();
         if (!window.confirm('Sind Sie sicher, dass Sie diese Regel endgültig löschen möchten?')) return;
 
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.delete(`/api/admin/ai-prompt-rules/${ruleId}`, { headers: { 'x-auth-token': token } });
             
-            // Wenn die gelöschte Regel die aktuell ausgewählte war, den Editor zurücksetzen.
             if (workspaceState.ruleId === ruleId) {
                 handleNewRule();
             }
-
-            await fetchData(); // Lädt die Liste neu.
+            await fetchData();
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Löschen der Regel.');
         }
@@ -337,7 +342,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
                                 size="large"
                                 startIcon={isGenerating ? <ButtonSpinner size={24} color="inherit" /> : <AutoFixHighIcon />}
                                 onClick={handleGenerate}
-                                disabled={isGenerating || !workspaceState.ruleId}
+                                disabled={isGenerating || !workspaceState.promptTemplate || !workspaceState.ai_provider || !workspaceState.inputText}
                             >
                                 Generieren & Log anzeigen
                             </Button>

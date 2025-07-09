@@ -26,13 +26,14 @@ export interface DashboardSavedConfig {
     widgets: WidgetConfig[];
 }
 
-// KORREKTUR: Zentrale Definition für eine Region mit Koordinaten
+// KORREKTUR: Zentrale Definition für eine Region mit der neuen 'is_default' Eigenschaft
 export interface Region {
     id: string;
     name: string;
     code: string;
     latitude?: number | null;
     longitude?: number | null;
+    is_default?: boolean; // NEU: Optionale Eigenschaft für die Standard-Region
 }
 
 // Basis-Props für alle Widgets

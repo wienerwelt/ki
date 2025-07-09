@@ -13,7 +13,10 @@ exports.getAllBusinessPartners = async (req, res) => {
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 cs.name AS color_scheme_name, cs.primary_color,
                 (SELECT COUNT(*) FROM users u WHERE u.business_partner_id = bp.id) AS user_count,
-                (SELECT COALESCE(json_agg(DISTINCT jsonb_build_object('id', r.id, 'name', r.name)), '[]'::json)
+                (SELECT COALESCE(json_agg(
+                    jsonb_build_object('id', r.id, 'name', r.name, 'is_default', bpr.is_default)
+                    ORDER BY bpr.is_default DESC, r.name ASC
+                ), '[]'::json)
                  FROM business_partner_regions bpr
                  JOIN regions r ON bpr.region_id = r.id
                  WHERE bpr.business_partner_id = bp.id) AS regions
@@ -36,7 +39,10 @@ exports.getBusinessPartnerById = async (req, res) => {
     try {
         const result = await db.query(
             `SELECT bp.*, cs.name AS color_scheme_name,
-               (SELECT COALESCE(json_agg(r.* ORDER BY r.name), '[]'::json)
+               (SELECT COALESCE(json_agg(
+                   jsonb_build_object('id', r.id, 'name', r.name, 'is_default', bpr.is_default)
+                   ORDER BY bpr.is_default DESC, r.name ASC
+                ), '[]'::json)
                 FROM business_partner_regions bpr
                 JOIN regions r ON bpr.region_id = r.id
                 WHERE bpr.business_partner_id = bp.id) as regions
@@ -60,7 +66,8 @@ exports.createBusinessPartner = async (req, res) => {
     const { 
         name, address, logo_url, subscription_start_date, subscription_end_date, 
         color_scheme_id, is_active, url_businesspartner, region_ids = [], 
-        dashboard_title, level_1_name, level_2_name, level_3_name 
+        dashboard_title, level_1_name, level_2_name, level_3_name,
+        default_region_id // NEU
     } = req.body;
 
     if (!name) return res.status(400).json({ message: 'Name is required.' });
@@ -83,9 +90,14 @@ exports.createBusinessPartner = async (req, res) => {
         );
         const newBp = bpResult.rows[0];
 
-        if (region_ids.length > 0) {
-            const regionValues = region_ids.map(region_id => `('${newBp.id}', '${region_id}')`).join(',');
-            await client.query(`INSERT INTO business_partner_regions (business_partner_id, region_id) VALUES ${regionValues}`);
+        if (region_ids && region_ids.length > 0) {
+            for (const region_id of region_ids) {
+                const isDefault = region_id === default_region_id;
+                await client.query(
+                    'INSERT INTO business_partner_regions (business_partner_id, region_id, is_default) VALUES ($1, $2, $3)',
+                    [newBp.id, region_id, isDefault]
+                );
+            }
         }
 
         await client.query('COMMIT');
@@ -107,7 +119,8 @@ exports.updateBusinessPartner = async (req, res) => {
     const { 
         name, address, logo_url, subscription_start_date, subscription_end_date, 
         color_scheme_id, is_active, url_businesspartner, region_ids = [], 
-        dashboard_title, level_1_name, level_2_name, level_3_name 
+        dashboard_title, level_1_name, level_2_name, level_3_name,
+        default_region_id // NEU
     } = req.body;
 
     const client = await db.connect();
@@ -131,9 +144,14 @@ exports.updateBusinessPartner = async (req, res) => {
 
         await client.query('DELETE FROM business_partner_regions WHERE business_partner_id = $1', [id]);
 
-        if (region_ids.length > 0) {
-            const regionValues = region_ids.map(region_id => `('${id}', '${region_id}')`).join(',');
-            await client.query(`INSERT INTO business_partner_regions (business_partner_id, region_id) VALUES ${regionValues}`);
+        if (region_ids && region_ids.length > 0) {
+            for (const region_id of region_ids) {
+                const isDefault = region_id === default_region_id;
+                await client.query(
+                    'INSERT INTO business_partner_regions (business_partner_id, region_id, is_default) VALUES ($1, $2, $3)',
+                    [id, region_id, isDefault]
+                );
+            }
         }
 
         await client.query('COMMIT');
@@ -147,7 +165,7 @@ exports.updateBusinessPartner = async (req, res) => {
     }
 };
 
-// ... (Rest der Controller-Funktionen bleibt unverändert)
+// DELETE business partner
 exports.deleteBusinessPartner = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Business Partner ID format.' });
@@ -164,6 +182,7 @@ exports.deleteBusinessPartner = async (req, res) => {
     }
 };
 
+// GET all color schemes
 exports.getAllColorSchemes = async (req, res) => {
     try {
         const result = await db.query('SELECT id, name, primary_color FROM color_schemes ORDER BY name ASC');
@@ -174,6 +193,7 @@ exports.getAllColorSchemes = async (req, res) => {
     }
 };
 
+// GET all regions
 exports.getAllRegions = async (req, res) => {
     try {
         const result = await db.query('SELECT id, name FROM regions ORDER BY name ASC');
@@ -184,6 +204,7 @@ exports.getAllRegions = async (req, res) => {
     }
 };
 
+// GET user stats for a business partner
 exports.getBusinessPartnerUserStats = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
@@ -218,6 +239,7 @@ exports.getBusinessPartnerUserStats = async (req, res) => {
     }
 };
 
+// GET membership level names for a business partner
 exports.getMembershipLevels = async (req, res) => {
     const { id } = req.params;
     try {

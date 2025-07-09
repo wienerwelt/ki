@@ -4,9 +4,11 @@ const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { generateAIContent } = require('./aiExecutionService');
 const { searchGoogle } = require('./googleSearchService');
-const { scrapeUrlText } = require('./genericScraperService');
+// KORREKTUR: Importiert den neuen, vereinheitlichten Service
+const { scrapeUrl } = require('./scrapingService'); 
 const { logActivity } = require('./auditLogService');
 const { callOpenAI } = require('./aiService');
+const { aiContentQueue } = require('./queueService');
 
 // Erstellt einen eindeutigen "Fingerabdruck" aus Keywords und Region
 const createKeywordsHash = (keywords, region) => {
@@ -17,10 +19,6 @@ const createKeywordsHash = (keywords, region) => {
 
 /**
  * Prüft mit einer schnellen KI-Anfrage, ob der Text relevant ist.
- * @param {string} articleText - Der zu prüfende Text.
- * @param {string[]} keywords - Die relevanten Keywords.
- * @param {string} articleUrl - Die URL des Artikels für das Logging.
- * @returns {Promise<boolean>} - True, wenn der Inhalt relevant ist.
  */
 async function isContentRelevant(articleText, keywords, articleUrl) {
     if (!articleText) return false;
@@ -33,12 +31,7 @@ async function isContentRelevant(articleText, keywords, articleUrl) {
         await logActivity({
             actionType: 'AI_RELEVANCE_CHECK',
             status: 'success',
-            details: {
-                url: articleUrl,
-                keywords: keywords,
-                decision: decision ? 'JA' : 'NEIN',
-                aiResponse: answer
-            },
+            details: { url: articleUrl, keywords: keywords, decision: decision ? 'JA' : 'NEIN', aiResponse: answer },
             username: 'System'
         });
 
@@ -49,11 +42,7 @@ async function isContentRelevant(articleText, keywords, articleUrl) {
         await logActivity({
             actionType: 'AI_RELEVANCE_CHECK',
             status: 'failure',
-            details: {
-                url: articleUrl,
-                keywords: keywords,
-                error: error.message
-            },
+            details: { url: articleUrl, keywords: keywords, error: error.message },
             username: 'System'
         });
         return false;
@@ -78,7 +67,7 @@ async function getSummaryForArticle(articleText, articleUrl) {
         const { content: summary, usage, model } = await callOpenAI(prompt, 'gpt-3.5-turbo');
         await logActivity({ 
             actionType: 'AI_SUMMARIZATION_SUCCESS', status: 'success', 
-            details: { url: articleUrl, model, tokenUsage: usage, summaryLength: summary.length, summary }, 
+            details: { url: articleUrl, model, tokenUsage: usage, summaryLength: summary.length }, 
             username: 'System' 
         });
         return summary;
@@ -89,11 +78,12 @@ async function getSummaryForArticle(articleText, articleUrl) {
     }
 }
 
-
 /**
  * Hauptfunktion, die den gesamten intelligenten Prozess steuert.
+ * Wird vom Worker aufgerufen.
  */
-const processSubscription = async ({ ruleId, region, keywords, subscriptionId, userId }) => {
+const processSubscription = async (subscription) => {
+    const { ai_prompt_rule_id: ruleId, region, keywords, id: subscriptionId, user_id: userId } = subscription;
     const keywordsHash = createKeywordsHash(keywords, region);
     const client = await db.connect();
     let jobId;
@@ -102,14 +92,14 @@ const processSubscription = async ({ ruleId, region, keywords, subscriptionId, u
         const cacheQuery = `SELECT generated_content_id FROM generated_content_cache WHERE ai_prompt_rule_id = $1 AND region = $2 AND keywords_hash = $3 AND created_at > NOW() - INTERVAL '24 hours'`;
         const cacheResult = await client.query(cacheQuery, [ruleId, region, keywordsHash]);
         if (cacheResult.rows.length > 0) {
-            console.log(`[IntelliService] Cache Hit! Prozess wird nicht neu gestartet.`);
+            console.log(`[IntelliService] Cache Hit für Abo ${subscriptionId}! Prozess wird nicht neu gestartet.`);
             return;
         }
 
         const jobRes = await client.query(`INSERT INTO ai_jobs (ai_prompt_rule_id, status, is_automated) VALUES ($1, 'pending', TRUE) RETURNING id`, [ruleId]);
         jobId = jobRes.rows[0].id;
         await client.query(`UPDATE ai_jobs SET status = 'running' WHERE id = $1`, [jobId]);
-
+        
         const ruleResult = await client.query('SELECT * FROM ai_prompt_rules WHERE id = $1', [ruleId]);
         if (ruleResult.rows.length === 0) throw new Error(`Regel mit ID ${ruleId} nicht gefunden.`);
         const rule = ruleResult.rows[0];
@@ -120,9 +110,7 @@ const processSubscription = async ({ ruleId, region, keywords, subscriptionId, u
         const keywordsPart = keywords.map(kw => `"${kw}"`).join(' OR ');
         const searchQuery = `${keywordsPart} ${region}`.trim();
         
-        const searchOptions = {
-            countryCode: countryCode,
-        };
+        const searchOptions = { countryCode: countryCode };
         
         const searchResults = await searchGoogle(searchQuery, searchOptions);
         if (searchResults.length === 0) {
@@ -132,8 +120,9 @@ const processSubscription = async ({ ruleId, region, keywords, subscriptionId, u
         }
 
         let articleSummaries = [];
-        for (const { link, title } of searchResults.slice(0, 5)) {
-            const scrapedText = await scrapeUrlText(link);
+        for (const { link } of searchResults.slice(0, 5)) {
+            // KORREKTUR: Ruft die neue, vereinheitlichte Funktion auf
+            const scrapedText = await scrapeUrl(link); 
             if (scrapedText) {
                 const relevant = await isContentRelevant(scrapedText, keywords, link);
                 if (relevant) {
@@ -160,18 +149,16 @@ const processSubscription = async ({ ruleId, region, keywords, subscriptionId, u
             ai_provider: rule.ai_provider, jobId, userId
         });
 
-        // --- ERGEBNIS VERARBEITEN UND SPEICHERN (KORRIGIERT) ---
         let contentToStore = aiResultString;
-        let title = `Hot Topics: ${keywords.join(', ')}`;
+        let finalTitle = `Hot Topics: ${keywords.join(', ')}`;
         let finalKeywords = keywords;
         let finalCategoryId = rule.default_category_id;
 
-        // Nur parsen, wenn das erwartete Format JSON ist.
         if (rule.output_format === 'json') {
             try {
                 const parsedResult = JSON.parse(aiResultString);
-                contentToStore = parsedResult.content || contentToStore; // Fallback auf rohen String
-                title = parsedResult.title || title; // Fallback auf Standardtitel
+                contentToStore = parsedResult.content || contentToStore;
+                finalTitle = parsedResult.title || finalTitle;
                 finalKeywords = parsedResult.keywords || finalKeywords;
                 if (parsedResult.category) {
                      const foundCategoryRes = await client.query('SELECT id FROM categories WHERE name ILIKE $1', [parsedResult.category.trim()]);
@@ -181,14 +168,13 @@ const processSubscription = async ({ ruleId, region, keywords, subscriptionId, u
                 }
             } catch(e) {
                 console.error(`[IntelliService - Job ${jobId}] Fehler beim Parsen des erwarteten JSON-Outputs. Speichere rohen Text. Fehler:`, e.message);
-                // Im Fehlerfall wird der `contentToStore` (der bereits der rohe String ist) und der Standardtitel verwendet.
             }
         }
 
         const newContentRes = await client.query(
             `INSERT INTO ai_generated_content (id, ai_prompt_rule_id, job_id, title, generated_output, region, user_id, keywords, category_id, output_format) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-            [uuidv4(), ruleId, jobId, title, contentToStore, region, userId, finalKeywords, finalCategoryId, rule.output_format]
+            [uuidv4(), ruleId, jobId, finalTitle, contentToStore, region, userId, finalKeywords, finalCategoryId, rule.output_format]
         );
         const newContentId = newContentRes.rows[0].id;
 
@@ -200,36 +186,38 @@ const processSubscription = async ({ ruleId, region, keywords, subscriptionId, u
 
         await client.query(`UPDATE ai_jobs SET status = 'completed' WHERE id = $1`, [jobId]);
         console.log(`[IntelliService - Job ${jobId}] Prozess erfolgreich abgeschlossen und gecached.`);
-        
+
     } catch (err) {
-        console.error(`[IntelliService] Fehler im intelligenten Content-Prozess (Job: ${jobId}):`, err.message);
+        console.error(`[IntelliService] Fehler im Abo-Prozess (Job: ${jobId}, Abo: ${subscriptionId}):`, err.message);
         if (jobId) await client.query(`UPDATE ai_jobs SET status = 'failed' WHERE id = $1`, [jobId]);
     } finally {
         client.release();
     }
 };
 
+/**
+ * Fügt alle aktiven Abonnements zur Job-Warteschlange hinzu.
+ */
 const processAllActiveSubscriptions = async () => {
-    console.log(`[Cronjob] Starte Verarbeitung aller aktiven Content-Abonnements...`);
+    console.log(`[Cronjob] Starte das Hinzufügen aller aktiven Abonnements zur Job-Warteschlange...`);
     const client = await db.connect();
     try {
-        const activeSubsRes = await client.query(`SELECT id, user_id, ai_prompt_rule_id, region, keywords FROM content_subscriptions WHERE is_active = TRUE`);
-        if (activeSubsRes.rows.length === 0) {
+        const activeSubsRes = await client.query(`SELECT * FROM content_subscriptions WHERE is_active = TRUE`);
+        const subscriptions = activeSubsRes.rows;
+        
+        if (subscriptions.length === 0) {
             console.log('[Cronjob] Keine aktiven Abonnements gefunden.');
             return;
         }
-        console.log(`[Cronjob] ${activeSubsRes.rows.length} aktive Abonnements gefunden.`);
-        for (const subscription of activeSubsRes.rows) {
-            await processSubscription({
-                ruleId: subscription.ai_prompt_rule_id,
-                region: subscription.region,
-                keywords: subscription.keywords,
-                subscriptionId: subscription.id,
-                userId: subscription.user_id,
-            });
+        
+        console.log(`[Cronjob] Füge ${subscriptions.length} aktive Abonnements zur Warteschlange hinzu.`);
+        for (const subscription of subscriptions) {
+            await aiContentQueue.add('subscription-processing', { subscription });
         }
+        console.log(`[Cronjob] Alle Abonnements erfolgreich zur Verarbeitung übergeben.`);
+
     } catch (err) {
-        console.error('[Cronjob] Fehler bei der Verarbeitung der Abos:', err.message);
+        console.error('[Cronjob] Fehler beim Hinzufügen der Abos zur Warteschlange:', err.message);
     } finally {
         client.release();
     }

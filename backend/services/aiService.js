@@ -108,8 +108,10 @@ async function executePrompt(provider, prompt) {
     switch (provider) {
         case 'OpenAI GPT-4':
             return callOpenAI(prompt, 'gpt-4');
+        case 'OpenAI GPT-4o':
+            return callOpenAI(prompt, 'gpt-4o');
         case 'OpenAI GPT-3.5':
-             return callOpenAI(prompt, 'gpt-3.5-turbo');
+             return callOpenAI(prompt, 'gpt-3.5-turbo');             
         case 'Google Gemini':
             return callGoogleGemini(prompt, 'gemini-1.5-flash');
         default:
