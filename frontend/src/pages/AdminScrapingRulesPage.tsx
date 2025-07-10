@@ -12,6 +12,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SearchIcon from '@mui/icons-material/Search';
+import TipsAndUpdatesIcon from '@mui/icons-material/TipsAndUpdates';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 
@@ -33,6 +34,7 @@ interface ScrapingRule {
     name: string | null;
     current_entry_count: number;
     region: string | null;
+    link_selector: string | null;
 }
 
 interface Category {
@@ -64,18 +66,22 @@ const initialFormState = {
     title_selector: '',
     date_selector: '',
     description_selector: '',
+    link_selector: '',
     date_format: '',
     category_default: '',
     is_active: true,
     region: '',
 };
 
+// ERWEITERT: Zusätzliche Datumsformate hinzugefügt
 const commonDateFormats = [
-    { value: 'YYYY-MM-DD', label: '2025-06-29 (ISO 8601)' },
-    { value: 'DD.MM.YYYY', label: '29.06.2025 (Deutsch)' },
-    { value: 'MM/DD/YYYY', label: '06/29/2025 (Amerikanisch)' },
-    { value: 'D. MMMM YYYY', label: '29. Juni 2025 (mit Monatsname)'},
-    { value: 'ddd, D MMM YYYY', label: 'So, 29 Jun 2025 (RSS-Feed-Format)'}
+    { value: 'yyyy-MM-dd', label: '2025-06-29 (ISO 8601)' },
+    { value: 'dd.MM.yyyy', label: '29.06.2025 (Deutsch, Punkt)' },
+    { value: 'dd-MM-yyyy', label: '29-06-2025 (Deutsch, Bindestrich)' },
+    { value: 'd. MMMM yyyy', label: '29. Juni 2025 (mit Monatsname)'},
+    { value: 'MM/dd/yyyy', label: '06/29/2025 (Amerikanisch)' },
+    { value: 'MMMM d, yyyy', label: 'June 29, 2025 (Englisch, mit Komma)'},
+    { value: 'EEE, d MMM yyyy', label: 'So, 29 Jun 2025 (RSS-Feed-Format)'}
 ];
 
 const europeanCountries = ["EU", "Albanien", "Andorra", "Belgien", "Bosnien und Herzegowina", "Bulgarien", "Dänemark", "Deutschland", "Estland", "Finnland", "Frankreich", "Griechenland", "Irland", "Island", "Italien", "Kosovo", "Kroatien", "Lettland", "Liechtenstein", "Litauen", "Luxemburg", "Malta", "Moldau", "Monaco", "Montenegro", "Niederlande", "Nordmazedonien", "Norwegen", "Österreich", "Polen", "Portugal", "Rumänien", "San Marino", "Schweden", "Schweiz", "Serbien", "Slowakei", "Slowenien", "Spanien", "Tschechien", "Ukraine", "Ungarn", "Vatikanstadt", "Vereinigtes Königreich", "Weißrussland", "Zypern"];
@@ -97,6 +103,10 @@ const AdminScrapingRulesPage: React.FC = () => {
     const [currentJobId, setCurrentJobId] = useState<string | null>(null);
     const [jobLogs, setJobLogs] = useState<{ log_level: string, message: string, created_at: string }[]>([]);
     const [jobStatus, setJobStatus] = useState<string | null>(null);
+    
+    const [suggesting, setSuggesting] = useState(false);
+    const [suggestionAlert, setSuggestionAlert] = useState<string | null>(null);
+
 
     const fetchInitialData = async () => {
         setLoading(true);
@@ -145,6 +155,7 @@ const AdminScrapingRulesPage: React.FC = () => {
         setEditingRule(null);
         setFormState(initialFormState);
         setOpenDialog(true);
+        setSuggestionAlert(null);
     };
 
     const handleOpenEditDialog = (rule: ScrapingRule) => {
@@ -157,18 +168,21 @@ const AdminScrapingRulesPage: React.FC = () => {
             title_selector: rule.title_selector || '',
             date_selector: rule.date_selector || '',
             description_selector: rule.description_selector || '',
+            link_selector: rule.link_selector || '',
             date_format: rule.date_format || '',
             category_default: rule.category_default || '',
             is_active: rule.is_active,
             region: rule.region || '',
         });
         setOpenDialog(true);
+        setSuggestionAlert(null);
     };
 
     const handleCloseDialog = () => {
         setOpenDialog(false);
         setEditingRule(null);
         setError(null);
+        setSuggestionAlert(null);
     };
 
     const handleSubmit = async () => {
@@ -176,17 +190,9 @@ const AdminScrapingRulesPage: React.FC = () => {
         setError(null);
         const token = localStorage.getItem('jwt_token');
         const ruleData = {
+            ...formState,
             name: formState.name || null,
-            source_identifier: formState.source_identifier,
             url_pattern: formState.url_pattern || null,
-            content_container_selector: formState.content_container_selector || null,
-            title_selector: formState.title_selector || null,
-            date_selector: formState.date_selector || null,
-            description_selector: formState.description_selector || null,
-            date_format: formState.date_format || null,
-            category_default: formState.category_default || null,
-            is_active: formState.is_active,
-            region: formState.region || null,
         };
         try {
             if (editingRule) {
@@ -243,6 +249,54 @@ const AdminScrapingRulesPage: React.FC = () => {
         const isAsc = orderBy === property && order === 'asc';
         setOrder(isAsc ? 'desc' : 'asc');
         setOrderBy(property);
+    };
+    
+    const handleSuggestSelectors = async () => {
+        if (!formState.url_pattern) {
+            setError('Bitte geben Sie zuerst eine URL ein.');
+            return;
+        }
+        setSuggesting(true);
+        setError(null);
+        setSuggestionAlert(null);
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const response = await apiClient.post(
+                '/api/admin/scraping-rules/suggest',
+                { url: formState.url_pattern },
+                { headers: { 'x-auth-token': token } }
+            );
+            
+            const data = response.data;
+
+            if (data && data.format && data.rules) {
+                if (data.format === 'html') {
+                    if (typeof data.rules === 'object' && data.rules !== null) {
+                        setFormState(prevState => ({
+                            ...prevState,
+                            content_container_selector: data.rules.content_container_selector || '',
+                            title_selector: data.rules.title_selector || '',
+                            date_selector: data.rules.date_selector || '',
+                            description_selector: data.rules.description_selector || '',
+                            link_selector: data.rules.link_selector || '',
+                        }));
+                    } else {
+                         setError('Die KI hat ein ungültiges Regel-Format für HTML zurückgegeben.');
+                    }
+                } else if (data.format === 'rss' || data.format === 'atom' || data.format === 'unknown') {
+                    setSuggestionAlert(data.rules.message || 'RSS/Atom-Feed erkannt. Keine Selektoren notwendig.');
+                } else {
+                    setError(`Unbekanntes Format "${data.format}" von der KI empfangen.`);
+                }
+            } else {
+                setError('Die KI hat eine ungültige oder leere Antwortstruktur zurückgegeben.');
+            }
+
+        } catch (err: any) {
+            setError(err.response?.data?.message || 'Fehler beim Abrufen der Vorschläge.');
+        } finally {
+            setSuggesting(false);
+        }
     };
 
     const sortedAndFilteredRules = useMemo(() => {
@@ -322,6 +376,8 @@ const AdminScrapingRulesPage: React.FC = () => {
                     <DialogTitle>{editingRule ? 'Scraping-Regel bearbeiten' : 'Neue Scraping-Regel hinzufügen'}</DialogTitle>
                     <DialogContent>
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+                        {suggestionAlert && <Alert severity="info" sx={{ mb: 2 }}>{suggestionAlert}</Alert>}
+
                         <TextField name="name" label="Name der Regel" fullWidth value={formState.name} onChange={handleFormChange} margin="dense" />
                         <TextField name="source_identifier" label="Source Identifier" fullWidth value={formState.source_identifier} onChange={handleFormChange} margin="dense" required disabled={!!editingRule} />
                         <TextField select name="region" label="Region" fullWidth value={formState.region} onChange={handleFormChange} margin="dense">
@@ -330,21 +386,40 @@ const AdminScrapingRulesPage: React.FC = () => {
                                 <MenuItem key={country} value={country}>{country}</MenuItem>
                             ))}
                         </TextField>
+                        
                         <TextField 
                             name="url_pattern" 
-                            label="URL" 
+                            label="URL der Übersichtsseite oder des Feeds" 
                             fullWidth value={formState.url_pattern} 
                             onChange={handleFormChange} 
                             margin="dense"
                             required
-                            helperText="Die exakte URL der Seite oder des RSS-Feeds, z.B. https://www.beispiel.de/news" 
+                            helperText="URL der Seite, die eine Liste von Artikeln enthält."
+                            InputProps={{
+                                endAdornment: (
+                                    <InputAdornment position="end">
+                                        <Button 
+                                            onClick={handleSuggestSelectors} 
+                                            disabled={suggesting || !formState.url_pattern}
+                                            startIcon={suggesting ? <CircularProgress size={20} /> : <TipsAndUpdatesIcon />}
+                                            sx={{ mr: -1 }}
+                                        >
+                                            {suggesting ? 'Analysiere...' : 'Vorschlagen'}
+                                        </Button>
+                                    </InputAdornment>
+                                )
+                            }}
                         />
-                        <TextField name="content_container_selector" label="Container Selektor (für HTML)" fullWidth value={formState.content_container_selector} onChange={handleFormChange} margin="dense" />
-                        <TextField name="title_selector" label="Titel Selektor (für HTML)" fullWidth value={formState.title_selector} onChange={handleFormChange} margin="dense" />
-                        <TextField name="date_selector" label="Datum Selektor (für HTML)" fullWidth value={formState.date_selector} onChange={handleFormChange} margin="dense" />
-                        <TextField name="description_selector" label="Beschreibung Selektor (für HTML)" fullWidth value={formState.description_selector} onChange={handleFormChange} margin="dense" />
+
+                        <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>HTML-Listen-Selektoren</Typography>
+                        <TextField name="content_container_selector" label="Container Selektor (einzelner Artikel)" fullWidth value={formState.content_container_selector} onChange={handleFormChange} margin="dense" />
+                        <TextField name="title_selector" label="Titel Selektor (relativ zum Container)" fullWidth value={formState.title_selector} onChange={handleFormChange} margin="dense" />
+                        <TextField name="date_selector" label="Datum Selektor (relativ zum Container)" fullWidth value={formState.date_selector} onChange={handleFormChange} margin="dense" />
+                        <TextField name="description_selector" label="Beschreibung Selektor (relativ zum Container)" fullWidth value={formState.description_selector} onChange={handleFormChange} margin="dense" />
+                        <TextField name="link_selector" label="Link Selektor (relativ zum Container)" fullWidth value={formState.link_selector} onChange={handleFormChange} margin="dense" />
                         
-                        <TextField select name="date_format" label="Datum Format (für HTML)" fullWidth value={formState.date_format} onChange={handleFormChange} margin="dense" helperText="Gibt an, wie das Datum auf der Quell-Seite formatiert ist.">
+                        <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Allgemeine Einstellungen</Typography>
+                        <TextField select name="date_format" label="Datum Format (optional)" fullWidth value={formState.date_format} onChange={handleFormChange} margin="dense" helperText="Format des Datums, falls es nicht automatisch erkannt wird.">
                             <MenuItem value=""><em>Automatische Erkennung</em></MenuItem>
                             {commonDateFormats.map((format) => ( <MenuItem key={format.value} value={format.value}>{format.label}</MenuItem>))}
                         </TextField>

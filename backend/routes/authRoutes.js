@@ -9,4 +9,7 @@ router.post('/register', authController.register);
 // Route für den Login
 router.post('/login', authController.login);
 
+// NEU: Route für den Google Token Login
+router.post('/google', authController.googleLogin);
+
 module.exports = router;

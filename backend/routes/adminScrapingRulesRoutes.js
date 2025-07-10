@@ -12,11 +12,13 @@ router.post('/', adminSrController.createScrapingRule);
 router.put('/:id', adminSrController.updateScrapingRule);
 router.delete('/:id', adminSrController.deleteScrapingRule);
 
+// NEU/KORRIGIERT: Route für die KI-Vorschläge
+// Der Pfad ist '/suggest', da die Datei wahrscheinlich unter '/api/admin/scraping-rules' gemountet wird.
+// Der Funktionsaufruf wurde auf adminSrController.getSuggestionForUrl korrigiert.
+router.post('/suggest', adminSrController.getSuggestionForUrl);
+
 // Routen für das Triggern und Beobachten von Jobs
 router.post('/:id/trigger-scrape', adminSrController.triggerScrapeJob);
-
-// KORREKTUR: Diese Route hat gefehlt. Sie definiert den Endpunkt zum Abrufen der Logs.
-// Die URL lautet jetzt: GET /api/admin/scraping-rules/logs/:jobId
 router.get('/logs/:jobId', adminSrController.getScrapeLogs);
 
 module.exports = router;

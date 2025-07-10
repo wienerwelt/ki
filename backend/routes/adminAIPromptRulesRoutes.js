@@ -9,7 +9,8 @@ const {
     updateAIPromptRule,
     deleteAIPromptRule,
     executeRule,
-    duplicateAIPromptRule // Stellen Sie sicher, dass dieser Import vorhanden ist
+    duplicateAIPromptRule,
+    getAIProviders // NEU: Importiere die neue Funktion
 } = require('../controllers/adminAIPromptRulesController');
 
 router.use(adminAuth);
@@ -17,10 +18,13 @@ router.use(adminAuth);
 // GET / -> Holt alle Regeln
 router.get('/', getAllAIPromptRules);
 
+// NEU: GET /providers -> Holt die Liste der verfügbaren KI-Anbieter
+router.get('/providers', getAIProviders);
+
 // POST / -> Erstellt eine neue Regel
 router.post('/', createAIPromptRule);
 
-// NEU: POST /:id/duplicate -> Dupliziert eine Regel
+// POST /:id/duplicate -> Dupliziert eine Regel
 router.post('/:id/duplicate', duplicateAIPromptRule);
 
 // POST /execute -> Führt eine Regel manuell aus

@@ -1,16 +1,16 @@
 // backend/server.js
 require('dotenv').config();
 const express = require('express');
-const dotenv = require('dotenv');
 const cors = require('cors');
+const session = require('express-session');
 const db = require('./config/db');
-const { logActivity } = require('./services/auditLogService'); // NEU
+const { logActivity } = require('./services/auditLogService');
 
 // Routen-Importe
 const authRoutes = require('./routes/authRoutes');
-const sessionRoutes = require('./routes/sessionRoutes'); // NEU
+const sessionRoutes = require('./routes/sessionRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
-const userRoutes = require('./routes/userRoutes'); // NEU
+const userRoutes = require('./routes/userRoutes');
 const dataRoutes = require('./routes/dataRoutes');
 const businessPartnerRoutes = require('./routes/businessPartnerRoutes');
 const widgetRoutes = require('./routes/widgetRoutes');
@@ -35,13 +35,27 @@ const scraperService = require('./services/scraperService');
 const cron = require('node-cron');
 const { processAllActiveSubscriptions } = require('./services/intelligentContentService');
 
-dotenv.config();
-
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+// KORREKTE REIHENFOLGE DER MIDDLEWARE
+// 1. CORS-Konfiguration, um Cross-Origin-Anfragen zu erlauben
+app.use(cors({
+    origin: 'http://localhost:5173', // Erlaubt explizit Anfragen von Ihrem Vite-Frontend
+    credentials: true,
+}));
+
+// 2. Body-Parser für JSON-Anfragen
 app.use(express.json());
+
+// 3. Session-Konfiguration
+app.use(session({
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: { httpOnly: true, secure: process.env.NODE_ENV === 'production' },
+}));
+
 
 // DB-Verbindung
 db.query('SELECT 1')
@@ -52,10 +66,10 @@ db.query('SELECT 1')
     })
     .catch(err => console.error('PostgreSQL connection error:', err));
 
-// API-Routen
+// 4. API-Routen
 app.use('/api/auth', authRoutes);
-app.use('/api/session', sessionRoutes); // NEU
-app.use('/api/users', userRoutes); // NEU
+app.use('/api/session', sessionRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/data', dataRoutes);
 app.use('/api/business-partner', businessPartnerRoutes);
@@ -82,42 +96,10 @@ app.get('/', (req, res) => {
     res.send('Welcome to KI-Dashboard Backend! Access /api/auth/login or /api/auth/register for more.');
 });
 
+// Cronjob für Content-Abos
 console.log('Führe initialen Job für Content-Abos direkt nach dem Start aus...');
 processAllActiveSubscriptions();
 
-// NEU: Globale Fehlerbehandlungs-Middleware
-// Diese muss nach allen app.use() Routen-Definitionen stehen.
-app.use((err, req, res, next) => {
-    console.error('UNHANDLED ERROR:', err);
-    
-    // Protokolliere den kritischen Fehler
-    logActivity({
-        actionType: 'CRITICAL_ERROR',
-        status: 'failure',
-        details: {
-            error: err.message,
-            stack: err.stack,
-            path: req.path,
-            method: req.method
-        },
-        ipAddress: req.ip
-    });
-
-    res.status(500).send('Ein interner Serverfehler ist aufgetreten.');
-});
-
-
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    // NEU: Protokolliere den Server-Start
-    logActivity({
-        actionType: 'SERVER_START',
-        status: 'success',
-        details: { message: `Server started on port ${PORT}` }
-    });
-});
-
-// NEU: Überwachung für den Cronjob
 cron.schedule('0 2 * * *', async () => {
     const actionType = 'CRON_JOB_CONTENT_SUBSCRIPTION';
     console.log(`[${new Date().toISOString()}] Starting daily cron job: ${actionType}`);
@@ -138,4 +120,32 @@ cron.schedule('0 2 * * *', async () => {
 }, {
     scheduled: true,
     timezone: "Europe/Vienna"
+});
+
+// Globale Fehlerbehandlungs-Middleware (muss am Ende stehen)
+app.use((err, req, res, next) => {
+    console.error('UNHANDLED ERROR:', err);
+    
+    logActivity({
+        actionType: 'CRITICAL_ERROR',
+        status: 'failure',
+        details: {
+            error: err.message,
+            stack: err.stack,
+            path: req.path,
+            method: req.method
+        },
+        ipAddress: req.ip
+    });
+
+    res.status(500).send('Ein interner Serverfehler ist aufgetreten.');
+});
+
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    logActivity({
+        actionType: 'SERVER_START',
+        status: 'success',
+        details: { message: `Server started on port ${PORT}` }
+    });
 });

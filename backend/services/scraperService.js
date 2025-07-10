@@ -2,206 +2,236 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const xml2js = require('xml2js');
-const db = require('../config/db');
+const { JSDOM } = require('jsdom');
+const { Readability } = require('@mozilla/readability');
+// KORRIGIERT: Notwendige Importe aus date-fns
 const { parse } = require('date-fns');
+const { de } = require('date-fns/locale'); // NEU: Import des deutschen Sprachpakets
+const db = require('../config/db');
 const { logActivity } = require('./auditLogService');
+const { callOpenAI } = require('./aiService');
 
-// Helfer-Funktion zum Schreiben von Logs in die DB
+// ===================================================================================
+// HELPER-FUNKTIONEN
+// ===================================================================================
+
 const logToDb = async (jobId, level, message) => {
+    if (!jobId) return;
     try {
-        await db.query(
-            `INSERT INTO scraping_logs (job_id, log_level, message) VALUES ($1, $2, $3)`,
-            [jobId, level, message]
-        );
+        await db.query(`INSERT INTO scraping_logs (job_id, log_level, message) VALUES ($1, $2, $3)`, [jobId, level, message]);
     } catch (dbError) {
         console.error(`FATAL: Could not write log to DB for jobId ${jobId}:`, dbError);
     }
 };
 
-// Eine robustere Funktion zum Verarbeiten von Datums-Strings
+// KORRIGIERT: Die parse-Funktion verwendet jetzt das deutsche Sprachpaket
 const parseDateString = (dateString, dateFormat, jobId) => {
     if (!dateString) return null;
-
-    let parsedDate;
     try {
-        if (dateFormat) {
-            // Versuch mit dem vorgegebenen Format
-            parsedDate = parse(dateString, dateFormat, new Date());
-        } else {
-            // Standardversuch, der viele ISO-Formate abdeckt
-            parsedDate = new Date(dateString);
-        }
+        // Wenn ein Format angegeben ist, verwende es mit dem deutschen Locale
+        const parsedDate = dateFormat 
+            ? parse(dateString, dateFormat, new Date(), { locale: de }) 
+            : new Date(dateString);
 
-        // Einheitliche Überprüfung am Ende: Ist das Ergebnis ein gültiges Datum?
         if (parsedDate instanceof Date && !isNaN(parsedDate.getTime())) {
             return parsedDate;
-        } else {
-            logToDb(jobId, 'WARN', `Ungültiges Datumsformat im Feed erkannt und ignoriert: "${dateString}"`);
-            return null;
         }
+        logToDb(jobId, 'WARN', `Ungültiges Datumsformat im Feed erkannt: "${dateString}"`);
+        return null;
     } catch (error) {
         logToDb(jobId, 'ERROR', `Fehler beim Parsen des Datums "${dateString}": ${error.message}`);
         return null;
     }
 };
 
-// Helfer-Funktion zum Entfernen von HTML-Tags
 const sanitizeHtml = (htmlString) => {
     if (!htmlString) return null;
-    const $ = cheerio.load(htmlString);
-    return $.text();
+    return cheerio.load(htmlString).text();
 };
 
-// Helfer-Funktion zur Extraktion von Schlagwörtern basierend auf DB-Tags
 const extractTags = (text, availableTags) => {
     if (!text || !availableTags) return [];
     const foundTagIds = new Set();
     const lowercasedText = text.toLowerCase();
-    
     availableTags.forEach(tag => {
-        // Prüft, ob der Tag-Name (als ganzes Wort oder Teil) im Text vorkommt
         if (lowercasedText.includes(tag.name.toLowerCase())) {
             foundTagIds.add(tag.id);
         }
     });
-    
     return Array.from(foundTagIds);
 };
 
-// Die Kern-Scraping-Funktion
-async function scrapeRule(jobId, rule, availableTags) {
-    const { url_pattern: sourceUrl, source_identifier: sourceIdentifier, region: ruleRegion, id: ruleId, date_format: dateFormat } = rule;
-    await logToDb(jobId, 'INFO', `Starte Verarbeitung für Quelle: ${sourceIdentifier} von ${sourceUrl}`);
-    
+// ===================================================================================
+// INTERNE SCRAPING-LOGIK
+// ===================================================================================
+
+async function _extractDataFromHtml(htmlContent, url) {
     try {
-        const response = await axios.get(sourceUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Connection': 'keep-alive',
-            },
-            timeout: 15000
-        });
-        
-        const contentType = response.headers['content-type'] || '';
-        const isXml = contentType.includes('xml') || contentType.includes('rss') || sourceUrl.endsWith('.xml') || sourceUrl.endsWith('.rss');
-
-        if (isXml) {
-            await logToDb(jobId, 'INFO', 'Quelle als XML/RSS-Feed erkannt.');
-            const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: true });
-            const result = await parser.parseStringPromise(response.data);
-            const items = result.rss?.channel?.item || result.feed?.entry || [];
-            const feedItems = Array.isArray(items) ? items : [items];
-            let itemsProcessed = 0;
-
-            if (sourceIdentifier.includes('traffic')) {
-                await logToDb(jobId, 'INFO', `Verarbeite ${feedItems.length} Einträge für die Tabelle 'traffic_incidents'.`);
-                for (const item of feedItems) {
-                    const title = item.title || 'Unbekannte Meldung';
-                    const description = item.description || null;
-                    const link = item.link?.href || item.link || null;
-                    const guid = item.guid?._ || item.guid || link;
-                    if (!guid) {
-                        await logToDb(jobId, 'WARN', `Eintrag ohne guid oder link übersprungen: ${title}`);
-                        continue;
-                    }
-                    
-                    const rawDate = item.pubDate || item.updated;
-                    const pubDate = parseDateString(rawDate, dateFormat, jobId);
-
-                    await db.query(
-                        `INSERT INTO traffic_incidents (title, description, link, published_at, road_name, region, type, source_identifier, scraping_rule_id, original_item_guid)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                         ON CONFLICT (link) DO UPDATE SET 
-                            description = EXCLUDED.description, 
-                            published_at = EXCLUDED.published_at, 
-                            title = EXCLUDED.title;`,
-                        [title, description, link, pubDate, title.split(',')[0], ruleRegion, 'Stau', sourceIdentifier, ruleId, guid]
-                    );
-                    itemsProcessed++;
-                }
-            } else {
-                await logToDb(jobId, 'INFO', `Verarbeite ${feedItems.length} Einträge für die Tabelle 'scraped_content'.`);
-                for (const item of feedItems) {
-                    const link = item.link?.href || item.link || null;
-                    if (!link) continue;
-                    
-                    const rawTitle = item.title?._ || item.title || 'Kein Titel';
-                    const rawDescription = item.description?._ || item.summary?._ || item.description || item.summary || null;
-                    const rawDate = item.pubDate || item.updated;
-                    
-                    const cleanTitle = sanitizeHtml(rawTitle);
-                    const cleanDescription = sanitizeHtml(rawDescription);
-                    const combinedText = `${cleanTitle} ${cleanDescription}`;
-                    const foundTagIds = extractTags(combinedText, availableTags);
-
-                    let publishedDate = null;
-                    let eventDate = null;
-                    const parsedDate = parseDateString(rawDate, dateFormat, jobId);
-
-                    if (rule.category_default === 'event') {
-                        eventDate = parsedDate;
-                    } else {
-                        publishedDate = parsedDate;
-                    }
-
-                    const insertContentQuery = `
-                        INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, event_date, category, region)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                        ON CONFLICT (original_url) DO UPDATE SET title = EXCLUDED.title, summary = EXCLUDED.summary, published_date = EXCLUDED.published_date
-                        RETURNING id;`;
-                    
-                    const contentResult = await db.query(insertContentQuery, [sourceIdentifier, link, cleanTitle, cleanDescription, publishedDate, eventDate, rule.category_default, ruleRegion]);
-                    
-                    if (contentResult.rows.length > 0 && foundTagIds.length > 0) {
-                        const scrapedContentId = contentResult.rows[0].id;
-                        await logToDb(jobId, 'INFO', `Inhalt ${scrapedContentId} erstellt/gefunden. Verknüpfe ${foundTagIds.length} Tags...`);
-
-                        for (const tagId of foundTagIds) {
-                            await db.query(
-                                `INSERT INTO scraped_content_tags (scraped_content_id, tag_id)
-                                 VALUES ($1, $2)
-                                 ON CONFLICT DO NOTHING;`,
-                                [scrapedContentId, tagId]
-                            );
-                        }
-                    }
-                    itemsProcessed++;
-                }
-            }
-            await logToDb(jobId, 'INFO', `Erfolgreich ${itemsProcessed} von ${feedItems.length} Einträgen verarbeitet.`);
-        } else {
-            await logToDb(jobId, 'WARN', 'HTML-Scraping ist in diesem Beispiel nicht vollständig implementiert.');
+        const dom = new JSDOM(htmlContent, { url });
+        const reader = new Readability(dom.window.document);
+        const article = reader.parse();
+        if (article && article.textContent) {
+            return {
+                title: article.title,
+                textContent: article.textContent.replace(/\s\s+/g, ' ').trim()
+            };
         }
-        
-        await db.query('UPDATE scraping_rules SET last_scraped_at = CURRENT_TIMESTAMP WHERE id = $1', [ruleId]);
+        throw new Error('Readability konnte keinen Artikelinhalt finden.');
     } catch (error) {
-        await logToDb(jobId, 'ERROR', `Fehler bei der Verarbeitung von ${sourceUrl}: ${error.message}`);
-        throw error;
+        throw new Error(`Fehler bei der HTML-Verarbeitung: ${error.message}`);
     }
 }
 
-// Diese Funktion wird für den manuellen Trigger von der API aufgerufen
+async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
+    const { source_identifier: sourceIdentifier, region: ruleRegion, id: ruleId, date_format: dateFormat, category_default } = rule;
+    const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: true });
+    const result = await parser.parseStringPromise(xmlContent);
+    const items = result.rss?.channel?.item || result.feed?.entry || [];
+    const feedItems = Array.isArray(items) ? items : [items];
+    let itemsInserted = 0;
+
+    await logToDb(jobId, 'INFO', `Verarbeite ${feedItems.length} Einträge für Regel '${sourceIdentifier}'.`);
+
+    for (const item of feedItems) {
+        if (sourceIdentifier.includes('traffic')) {
+            const title = item.title || 'Unbekannte Meldung';
+            const link = item.link?.href || item.link || null;
+            const guid = item.guid?._ || item.guid || link;
+            if (!guid) continue;
+            
+            const result = await db.query(
+                `INSERT INTO traffic_incidents (title, description, link, published_at, road_name, region, type, source_identifier, scraping_rule_id, original_item_guid)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 ON CONFLICT (link) DO UPDATE SET description = EXCLUDED.description, published_at = EXCLUDED.published_at, title = EXCLUDED.title;`,
+                [title, item.description || null, link, parseDateString(item.pubDate || item.updated, dateFormat, jobId), title.split(',')[0], ruleRegion, 'Stau', sourceIdentifier, ruleId, guid]
+            );
+            if(result.rowCount > 0) itemsInserted++;
+
+        } else {
+            const link = item.link?.href || item.link || null;
+            if (!link) continue;
+
+            const cleanTitle = sanitizeHtml(item.title?._ || item.title || 'Kein Titel');
+            const cleanDescription = sanitizeHtml(item.description?._ || item.summary?._ || item.description || item.summary || null);
+            const foundTagIds = extractTags(`${cleanTitle} ${cleanDescription}`, availableTags);
+            const parsedDate = parseDateString(item.pubDate || item.updated, dateFormat, jobId);
+
+            const contentResult = await db.query(
+                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, event_date, category, region)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
+                [sourceIdentifier, link, cleanTitle, cleanDescription, category_default === 'event' ? null : parsedDate, category_default === 'event' ? parsedDate : null, category_default, ruleRegion]
+            );
+            
+            if (contentResult.rowCount > 0) {
+                itemsInserted++;
+                const scrapedContentId = contentResult.rows[0].id;
+                if (foundTagIds.length > 0) {
+                    for (const tagId of foundTagIds) {
+                        await db.query(`INSERT INTO scraped_content_tags (scraped_content_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING;`, [scrapedContentId, tagId]);
+                    }
+                }
+            }
+        }
+    }
+    return itemsInserted;
+}
+
+// ===================================================================================
+// EXPORTIERTE HAUPTFUNKTIONEN
+// ===================================================================================
+
 async function triggerSingleRuleScrape(ruleId, jobId) {
+    let itemsProcessed = 0;
     try {
         await db.query(`UPDATE scraping_jobs SET status = 'running' WHERE id = $1`, [jobId]);
-        
         const ruleResult = await db.query('SELECT * FROM scraping_rules WHERE id = $1', [ruleId]);
-        if (ruleResult.rows.length === 0) {
-            throw new Error(`Scraping-Regel mit ID ${ruleId} nicht gefunden.`);
-        }
+        if (ruleResult.rows.length === 0) throw new Error(`Scraping-Regel mit ID ${ruleId} nicht gefunden.`);
+        
         const rule = ruleResult.rows[0];
-
         const tagsResult = await db.query('SELECT id, name FROM tags');
         const availableTags = tagsResult.rows;
 
-        await scrapeRule(jobId, rule, availableTags);
+        const response = await axios.get(rule.url_pattern, { timeout: 15000 });
+        const contentType = response.headers['content-type'] || '';
 
+        if (contentType.includes('xml') || contentType.includes('rss')) {
+             itemsProcessed = await _processXmlFeedByRule(response.data, rule, jobId, availableTags);
+        } else if (contentType.includes('html')) {
+            if (rule.content_container_selector && rule.link_selector) {
+                await logToDb(jobId, 'INFO', `Quelle als HTML-Liste erkannt. Analysiere Seite für Regel '${rule.source_identifier}'.`);
+                const $ = cheerio.load(response.data);
+                const articleContainers = $(rule.content_container_selector);
+                await logToDb(jobId, 'INFO', `${articleContainers.length} mögliche Artikel-Container gefunden. Verarbeite jeden...`);
+
+                for (const container of articleContainers) {
+                    const element = $(container);
+                    const linkElement = element.find(rule.link_selector);
+                    let articleUrl = linkElement.attr('href');
+
+                    if (!articleUrl) {
+                        await logToDb(jobId, 'WARN', `Kein Link im Container gefunden (Selektor: ${rule.link_selector}). Container wird übersprungen.`);
+                        continue;
+                    }
+                    try {
+                        articleUrl = new URL(articleUrl, rule.url_pattern).href;
+                    } catch (e) {
+                        await logToDb(jobId, 'WARN', `Ungültiger Link gefunden: ${articleUrl}. Container wird übersprungen.`);
+                        continue;
+                    }
+
+                    const title = rule.title_selector ? element.find(rule.title_selector).text().trim() : 'Kein Titel';
+                    const summary = rule.description_selector ? element.find(rule.description_selector).text().trim() : null;
+                    const dateString = rule.date_selector ? element.find(rule.date_selector).text().trim() : null;
+                    const parsedDate = parseDateString(dateString, rule.date_format, jobId);
+                    const foundTagIds = extractTags(`${title} ${summary}`, availableTags);
+
+                    const contentResult = await db.query(
+                        `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, event_date, category, region)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
+                        [rule.source_identifier, articleUrl, title, summary, rule.category_default === 'event' ? null : parsedDate, rule.category_default === 'event' ? parsedDate : null, rule.category_default, rule.region]
+                    );
+
+                    if (contentResult.rowCount > 0) {
+                        itemsProcessed++;
+                        const newContentId = contentResult.rows[0].id;
+                        if (foundTagIds.length > 0) {
+                            for (const tagId of foundTagIds) {
+                                await db.query(`INSERT INTO scraped_content_tags (scraped_content_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING;`, [newContentId, tagId]);
+                            }
+                        }
+                    }
+                }
+            } else {
+                await logToDb(jobId, 'INFO', `Quelle als einzelne HTML-Seite erkannt. Extrahiere Textinhalt für Regel '${rule.source_identifier}'.`);
+                const { title, textContent } = await _extractDataFromHtml(response.data, rule.url_pattern);
+
+                if (textContent) {
+                    const contentResult = await db.query(
+                        `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, category, region)
+                         VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, $6) ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
+                        [rule.source_identifier, rule.url_pattern, title, textContent, rule.category_default, rule.region]
+                    );
+
+                    if (contentResult.rowCount > 0) {
+                        itemsProcessed = 1;
+                        await logToDb(jobId, 'INFO', `HTML-Inhalt von '${rule.url_pattern}' erfolgreich verarbeitet und gespeichert.`);
+                    } else {
+                        await logToDb(jobId, 'INFO', `Inhalt von '${rule.url_pattern}' existiert bereits in der Datenbank.`);
+                    }
+                } else {
+                     await logToDb(jobId, 'WARN', `Konnte keinen Textinhalt aus der HTML-Seite '${rule.url_pattern}' extrahieren.`);
+                }
+            }
+        } else {
+            throw new Error(`Nicht unterstützter Inhaltstyp für regelbasiertes Scraping: ${contentType}.`);
+        }
+        
+        await logToDb(jobId, 'INFO', `Zusammenfassung: ${itemsProcessed} neue Inhalte wurden erfolgreich gescrapt und in die Datenbank eingefügt.`);
+        
+        await db.query('UPDATE scraping_rules SET last_scraped_at = CURRENT_TIMESTAMP WHERE id = $1', [ruleId]);
         await db.query(`UPDATE scraping_jobs SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);
         await logToDb(jobId, 'INFO', 'Job erfolgreich abgeschlossen.');
     } catch(err) {
-        console.error(`[Scraper] Critical error during single job scrape for jobId ${jobId}:`, err.message);
         await logToDb(jobId, 'ERROR', `Job mit kritischem Fehler abgebrochen: ${err.message}`);
         await db.query(`UPDATE scraping_jobs SET status = 'failed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);
     }
@@ -209,73 +239,116 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
 
 async function startAllScrapingJobs() {
     console.log(`[Scraper] Starting all scheduled scraping jobs...`);
-    
     try {
-        const scrapingRulesResult = await db.query(`SELECT * FROM scraping_rules WHERE is_active = TRUE`);
-        const activeScrapingRules = scrapingRulesResult.rows;
-        
-        const tagsResult = await db.query('SELECT id, name FROM tags');
-        const availableTags = tagsResult.rows;
-        
-        console.log(`[Scraper] Found ${activeScrapingRules.length} active rules and ${availableTags.length} tags to process.`);
-
-        // NEU: Detailliertes Logging für jede einzelne Regel
-        for (const rule of activeScrapingRules) {
-            const jobResult = await db.query(
-                `INSERT INTO scraping_jobs (scraping_rule_id, status) VALUES ($1, 'pending') RETURNING id`,
-                [rule.id]
-            );
+        const rulesResult = await db.query(`SELECT * FROM scraping_rules WHERE is_active = TRUE`);
+        for (const rule of rulesResult.rows) {
+            const jobResult = await db.query(`INSERT INTO scraping_jobs (scraping_rule_id, status) VALUES ($1, 'pending') RETURNING id`, [rule.id]);
             const jobId = jobResult.rows[0].id;
-            
-            const logDetails = { 
-                source: rule.source_identifier, 
-                url: rule.url_pattern,
-                ruleId: rule.id,
-                jobId: jobId
-            };
+            triggerSingleRuleScrape(rule.id, jobId).catch(err => console.error(`Error in background scrape for rule ${rule.id}:`, err.message));
+        }
+        console.log('[Scraper] All scheduled scraping jobs cycle completed.');
+    } catch (error) {
+        console.error('[Scraper] Critical error during scraping setup:', error.message);
+    }
+}
 
-            // Protokolliere den Start des spezifischen Jobs
-            await logActivity({ actionType: 'SCRAPING_RULE_START', status: 'success', targetId: rule.id, targetType: 'scraping_rule', details: logDetails });
-            
-            try {
-                await db.query(`UPDATE scraping_jobs SET status = 'running' WHERE id = $1`, [jobId]);
-                await scrapeRule(jobId, rule, availableTags);
-                await db.query(`UPDATE scraping_jobs SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);
-                await logToDb(jobId, 'INFO', 'Job erfolgreich abgeschlossen.');
-                
-                // Protokolliere den Erfolg des spezifischen Jobs
-                await logActivity({ actionType: 'SCRAPING_RULE_SUCCESS', status: 'success', targetId: rule.id, targetType: 'scraping_rule', details: logDetails });
+async function getScrapingRuleSuggestion(url, userId) {
+    console.log(`[Intelligent-Selector-AI] Starte Analyse für URL: ${url}`);
+    
+    await logActivity({
+        userId,
+        actionType: 'AI_SUGGEST_SCRAPING_RULES',
+        status: 'info',
+        details: { url, message: 'Analyse gestartet.' }
+    });
 
-            } catch(err) {
-                console.error(`[Scraper] Critical error during single job scrape for jobId ${jobId}:`, err.message);
-                await logToDb(jobId, 'ERROR', `Job mit kritischem Fehler abgebrochen: ${err.message}`);
-                await db.query(`UPDATE scraping_jobs SET status = 'failed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);
+    let rawContent;
+    let model;
+    try {
+        const response = await axios.get(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' },
+            timeout: 15000,
+            responseType: 'text'
+        });
+        rawContent = response.data;
+    } catch (error) {
+        await logActivity({
+            userId,
+            actionType: 'AI_SUGGEST_SCRAPING_RULES',
+            status: 'failure',
+            details: { url, error: error.message }
+        });
+        console.error(`[Intelligent-Selector-AI] Fehler beim Abrufen der URL ${url}:`, error.message);
+        throw new Error(`Konnte die URL nicht abrufen. Status: ${error.response?.status || 'Netzwerkfehler'}`);
+    }
 
-                // Protokolliere den Fehlschlag des spezifischen Jobs
-                await logActivity({ 
-                    actionType: 'SCRAPING_RULE_FAILURE', 
-                    status: 'failure', 
-                    targetId: rule.id, 
-                    targetType: 'scraping_rule', 
-                    details: { ...logDetails, error: err.message }
-                });
-            }
+    const prompt = `
+        Du bist ein Experte für Datenextraktion. Deine Aufgabe ist es, den folgenden Webinhalt zu analysieren, sein Format (HTML, RSS, Atom XML) zu erkennen und Regeln zur Extraktion einer LISTE VON ARTIKELN vorzuschlagen.
+
+        ANWEISUNGEN:
+        1.  FORMAT ERKENNEN: Identifiziere das Format. Mögliche Werte sind: 'html', 'rss', 'atom'.
+        2.  REGELN VORSCHLAGEN:
+            * Wenn Format 'html': Finde die CSS-Selektoren für eine Artikelliste.
+                - \`content_container_selector\`: Der CSS-Selektor, der JEDEN EINZELNEN Artikel in der Liste umschließt.
+                - \`title_selector\`: Der CSS-Selektor für den Titel, relativ zum Container.
+                - \`date_selector\`: Der CSS-Selektor für das Datum, relativ zum Container.
+                - \`description_selector\`: Der CSS-Selektor für den Teaser-Text, relativ zum Container.
+                - \`link_selector\`: Der CSS-Selektor für den Link ('<a>'-Tag) zur Detailseite, relativ zum Container.
+            * Wenn Format 'rss' oder 'atom': Gib eine Standardnachricht aus.
+        3.  ANTWORTFORMAT: Gib deine Antwort NUR als valides JSON-Objekt zurück.
+            * Wenn du das Format absolut nicht bestimmen kannst, antworte so:
+              \`\`\`json
+              { "format": "unknown", "rules": { "message": "Das Format der Seite konnte nicht automatisch erkannt werden." } }
+              \`\`\`
+
+        HIER IST DER ZU ANALYSIERENDE INHALT (max. 40000 Zeichen):
+        \`\`\`
+        ${rawContent.substring(0, 40000)}
+        \`\`\`
+    `;
+
+    let aiResponseContent = '';
+    try {
+        model = 'gpt-3.5-turbo';
+        const { content, usage } = await callOpenAI(prompt, model);
+        aiResponseContent = content;
+
+        if (!aiResponseContent || aiResponseContent.trim() === '') {
+            throw new Error('Die KI hat eine leere Antwort zurückgegeben.');
         }
         
-        console.log('[Scraper] All scheduled scraping jobs cycle completed.');
+        const cleanedContent = aiResponseContent.replace(/```json\n?/, '').replace(/```/, '').trim();
+        const suggestion = JSON.parse(cleanedContent);
+
+        if (!suggestion || !suggestion.format || !suggestion.rules) {
+            console.error('[Intelligent-Selector-AI] Ungültige JSON-Struktur von der KI:', suggestion);
+            throw new Error('Die KI hat eine Antwort mit einer ungültigen Struktur zurückgegeben.');
+        }
+
+        await logActivity({
+            userId,
+            actionType: 'AI_SUGGEST_SCRAPING_RULES',
+            status: 'success',
+            details: { url, model, tokenUsage: usage, format: suggestion.format }
+        });
+
+        console.log(`[Intelligent-Selector-AI] Erfolgreich Vorschläge für ${url} erhalten.`);
+        return suggestion;
 
     } catch (error) {
-        console.error('[Scraper] Critical error during the main scraping process setup:', error.message);
-        // Protokolliere einen Fehlschlag des gesamten Cronjobs, falls die Vorbereitung fehlschlägt
         await logActivity({
-            actionType: 'CRON_JOB_SCRAPING_SETUP_FAILURE',
+            userId,
+            actionType: 'AI_SUGGEST_SCRAPING_RULES',
             status: 'failure',
-            details: { error: error.message, stack: error.stack }
+            details: { url, model: model || 'N/A', error: error.message, rawApiResponse: aiResponseContent }
         });
+        console.error(`[Intelligent-Selector-AI] Fehler bei der KI-Analyse:`, error.message);
+        throw new Error(`Fehler bei der KI-Analyse: ${error.message}`);
     }
 }
 
 module.exports = {
-    startAllScrapingJobs,
     triggerSingleRuleScrape,
+    startAllScrapingJobs,
+    getScrapingRuleSuggestion,
 };

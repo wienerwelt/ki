@@ -1,6 +1,6 @@
 const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
-const { triggerSingleRuleScrape } = require('../services/scraperService');
+const { triggerSingleRuleScrape, getScrapingRuleSuggestion } = require('../services/scraperService');
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
 exports.getAllScrapingRules = async (req, res) => {
@@ -11,7 +11,8 @@ exports.getAllScrapingRules = async (req, res) => {
                 (CASE
                     WHEN r.source_identifier LIKE '%traffic%' THEN (SELECT COUNT(*) FROM traffic_incidents ti WHERE ti.source_identifier = r.source_identifier)
                     ELSE (SELECT COUNT(*) FROM scraped_content sc WHERE sc.source_identifier = r.source_identifier)
-                END)::INTEGER AS current_entry_count
+                END)::INTEGER AS current_entry_count,
+                link_selector
             FROM
                 scraping_rules r
             ORDER BY
@@ -25,28 +26,15 @@ exports.getAllScrapingRules = async (req, res) => {
     }
 };
 
-exports.getScrapingRuleById = async (req, res) => {
-    const { id } = req.params;
-    if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Scraping Rule ID format.' });
-    try {
-        const result = await db.query('SELECT * FROM scraping_rules WHERE id = $1', [id]);
-        if (result.rows.length === 0) return res.status(404).json({ message: 'Scraping Rule not found.' });
-        res.json(result.rows[0]);
-    } catch (err) {
-        console.error('Error fetching scraping rule by ID:', err.message);
-        res.status(500).send('Server error');
-    }
-};
-
 exports.createScrapingRule = async (req, res) => {
-    const { name, source_identifier, region, url_pattern, category_default, is_active, content_container_selector, title_selector, date_selector, description_selector, date_format } = req.body;
+    const { name, source_identifier, region, url_pattern, category_default, is_active, content_container_selector, title_selector, date_selector, description_selector, date_format, link_selector } = req.body;
     if (!source_identifier) return res.status(400).json({ message: 'Source identifier is required.' });
 
     try {
         const newRule = await db.query(
-            `INSERT INTO scraping_rules (id, name, source_identifier, region, url_pattern, category_default, is_active, content_container_selector, title_selector, date_selector, description_selector, date_format)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-            [uuidv4(), name || null, source_identifier, region || null, url_pattern || null, category_default || null, is_active, content_container_selector || null, title_selector || null, date_selector || null, description_selector || null, date_format || null]
+            `INSERT INTO scraping_rules (id, name, source_identifier, region, url_pattern, category_default, is_active, content_container_selector, title_selector, date_selector, description_selector, date_format, link_selector)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+            [uuidv4(), name || null, source_identifier, region || null, url_pattern || null, category_default || null, is_active, content_container_selector || null, title_selector || null, date_selector || null, description_selector || null, date_format || null, link_selector || null]
         );
         res.status(201).json(newRule.rows[0]);
     } catch (err) {
@@ -56,14 +44,44 @@ exports.createScrapingRule = async (req, res) => {
     }
 };
 
+// KORRIGIERT: Diese Funktion behandelt leere Felder nun korrekt.
 exports.updateScrapingRule = async (req, res) => {
     const { id } = req.params;
-    if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
+    if (!isValidUUID(id)) {
+        return res.status(400).json({ message: 'Invalid ID format.' });
+    }
 
-    const fields = req.body;
-    // Entfernt leere Felder, damit sie nicht versehentlich null in der DB setzen
-    const validFields = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== ''));
-    const fieldEntries = Object.entries(validFields);
+    // Explizit alle möglichen Felder aus dem Request Body holen
+    const {
+        name,
+        region,
+        url_pattern,
+        category_default,
+        is_active,
+        content_container_selector,
+        title_selector,
+        date_selector,
+        description_selector,
+        date_format,
+        link_selector
+    } = req.body;
+
+    // Ein Objekt mit den zu aktualisierenden Daten erstellen.
+    // Leere Zeichenketten werden in 'null' umgewandelt, um sie in der DB zu löschen.
+    const updateData = {};
+    if (name !== undefined) updateData.name = name || null;
+    if (region !== undefined) updateData.region = region || null;
+    if (url_pattern !== undefined) updateData.url_pattern = url_pattern || null;
+    if (category_default !== undefined) updateData.category_default = category_default || null;
+    if (is_active !== undefined) updateData.is_active = is_active; // Boolean-Werte (true/false) beibehalten
+    if (content_container_selector !== undefined) updateData.content_container_selector = content_container_selector || null;
+    if (title_selector !== undefined) updateData.title_selector = title_selector || null;
+    if (date_selector !== undefined) updateData.date_selector = date_selector || null;
+    if (description_selector !== undefined) updateData.description_selector = description_selector || null;
+    if (date_format !== undefined) updateData.date_format = date_format || null;
+    if (link_selector !== undefined) updateData.link_selector = link_selector || null;
+
+    const fieldEntries = Object.entries(updateData);
 
     if (fieldEntries.length === 0) {
         return res.status(400).json({ message: 'No fields to update provided.' });
@@ -71,7 +89,7 @@ exports.updateScrapingRule = async (req, res) => {
 
     const setClauses = fieldEntries.map(([key], index) => `${key} = $${index + 1}`);
     const values = fieldEntries.map(([, value]) => value);
-    
+
     const query = `
         UPDATE scraping_rules 
         SET ${setClauses.join(', ')}, updated_at = CURRENT_TIMESTAMP 
@@ -82,7 +100,9 @@ exports.updateScrapingRule = async (req, res) => {
 
     try {
         const result = await db.query(query, values);
-        if (result.rows.length === 0) return res.status(404).json({ message: 'Rule not found.' });
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'Rule not found.' });
+        }
         res.json(result.rows[0]);
     } catch (err) {
         console.error('Error updating scraping rule:', err.message);
@@ -103,8 +123,25 @@ exports.deleteScrapingRule = async (req, res) => {
     }
 };
 
+exports.getSuggestionForUrl = async (req, res) => {
+    const { url } = req.body;
+    const userId = req.user?.id;
 
-// --- Funktionen für manuelle Scraping-Jobs ---
+    if (!url) {
+        return res.status(400).json({ message: 'URL wird für die Analyse benötigt.' });
+    }
+    if (!userId) {
+        return res.status(401).json({ message: 'Benutzer nicht authentifiziert.' });
+    }
+
+    try {
+        const suggestions = await getScrapingRuleSuggestion(url, userId);
+        res.json(suggestions);
+    } catch (err) {
+        console.error('Fehler beim Abrufen der Scraping-Vorschläge:', err.message);
+        res.status(500).json({ message: err.message || 'Ein interner Fehler ist aufgetreten.' });
+    }
+};
 
 exports.triggerScrapeJob = async (req, res) => {
     const { id: ruleId } = req.params;

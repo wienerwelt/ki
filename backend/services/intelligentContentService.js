@@ -4,8 +4,7 @@ const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { generateAIContent } = require('./aiExecutionService');
 const { searchGoogle } = require('./googleSearchService');
-// KORREKTUR: Importiert den neuen, vereinheitlichten Service
-const { scrapeUrl } = require('./scrapingService'); 
+const { extractTextFromUrl } = require('./scraperService'); 
 const { logActivity } = require('./auditLogService');
 const { callOpenAI } = require('./aiService');
 const { aiContentQueue } = require('./queueService');
@@ -121,8 +120,8 @@ const processSubscription = async (subscription) => {
 
         let articleSummaries = [];
         for (const { link } of searchResults.slice(0, 5)) {
-            // KORREKTUR: Ruft die neue, vereinheitlichte Funktion auf
-            const scrapedText = await scrapeUrl(link); 
+            // KORREKTUR: Ruft die neue, korrekte Funktion auf
+            const scrapedText = await extractTextFromUrl(link); 
             if (scrapedText) {
                 const relevant = await isContentRelevant(scrapedText, keywords, link);
                 if (relevant) {
@@ -130,8 +129,6 @@ const processSubscription = async (subscription) => {
                     if(summary) {
                        articleSummaries.push(`--- Zusammenfassung von ${link} ---\n${summary}`);
                     }
-                } else {
-                    console.log(`[IntelliService - Job ${jobId}] Inhalt von ${link} als irrelevant eingestuft und übersprungen.`);
                 }
             }
         }

@@ -2,7 +2,79 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
-const { logActivity } = require('../services/auditLogService'); // NEU
+const { logActivity } = require('../services/auditLogService');
+const { OAuth2Client } = require('google-auth-library');
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+
+exports.googleLogin = async (req, res) => {
+    const { token } = req.body;
+    try {
+        // 1. Google-Token verifizieren
+        const ticket = await client.verifyIdToken({
+            idToken: token,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+        const { email, name } = ticket.getPayload();
+        const username = email.split('@')[0];
+
+        // 2. Prüfen, ob der Benutzer bereits existiert
+        let userResult = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+        let user = userResult.rows[0];
+
+        // 3. Wenn der Benutzer nicht existiert, neu anlegen
+        if (!user) {
+            console.log(`Creating new user for email: ${email}`);
+            const defaultBpResult = await db.query("SELECT id FROM business_partners WHERE name = 'Global Logistics GmbH'");
+            if (defaultBpResult.rows.length === 0) {
+                return res.status(500).json({ message: 'Standard-Business-Partner nicht gefunden.' });
+            }
+            const defaultBusinessPartnerId = defaultBpResult.rows[0].id;
+            
+            const newUserResult = await db.query(
+                `INSERT INTO users (username, email, name, password_hash, role, business_partner_id) 
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+                [username, email, name, 'google-authenticated', 'fleet_manager', defaultBusinessPartnerId]
+            );
+            user = newUserResult.rows[0];
+            await logActivity({ userId: user.id, username: user.username, actionType: 'USER_REGISTER_GOOGLE', status: 'success', ipAddress: req.ip });
+        }
+
+        // 4. Benutzerdaten für den Token zusammenstellen (ähnlich wie beim normalen Login)
+        const userWithDetails = await db.query(
+            `SELECT u.*, bp.is_active AS business_partner_is_active, bp.name as business_partner_name, bp.dashboard_title,
+             (SELECT COALESCE(json_agg(json_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)), '[]'::json)
+              FROM business_partner_regions bpr JOIN regions r ON bpr.region_id = r.id
+              WHERE bpr.business_partner_id = u.business_partner_id) as regions
+             FROM users u LEFT JOIN business_partners bp ON u.business_partner_id = bp.id WHERE u.id = $1`,
+            [user.id]
+        );
+        
+        const finalUser = userWithDetails.rows[0];
+
+        // 5. Eigenen Anwendungs-Token (JWT) erstellen und zurücksenden
+        const payload = {
+            user: {
+                id: finalUser.id,
+                username: finalUser.username,
+                role: finalUser.role,
+                business_partner_id: finalUser.business_partner_id,
+                business_partner_name: finalUser.business_partner_name,
+                dashboard_title: finalUser.dashboard_title,
+                regions: finalUser.regions
+            }
+        };
+        const appToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1h' });
+
+        await logActivity({ userId: finalUser.id, username: finalUser.username, actionType: 'USER_LOGIN_GOOGLE', status: 'success', ipAddress: req.ip });
+
+        res.json({ token: appToken, user: { id: finalUser.id, name: finalUser.name, email: finalUser.email, role: finalUser.role } });
+
+    } catch (err) {
+        console.error('Google Login Error:', err.message);
+        res.status(500).send('Serverfehler bei der Google-Authentifizierung');
+    }
+};
 
 // Die register-Funktion bleibt unverändert
 exports.register = async (req, res) => {
