@@ -16,7 +16,9 @@ import ArticleIcon from '@mui/icons-material/Article';
 import CategoryIcon from '@mui/icons-material/Category';
 import TagIcon from '@mui/icons-material/Tag';
 import MonitorIcon from '@mui/icons-material/Monitor';
-import QueryStatsIcon from '@mui/icons-material/QueryStats'; // NEU
+import QueryStatsIcon from '@mui/icons-material/QueryStats';
+import CampaignIcon from '@mui/icons-material/Campaign';
+import StarsIcon from '@mui/icons-material/Stars'; // NEU: Icon für Aktionen
 
 
 const AdminDashboardPage: React.FC = () => {
@@ -54,6 +56,36 @@ const AdminDashboardPage: React.FC = () => {
                             <Typography variant="h6" component="h2" gutterBottom>Widget-Typen</Typography>
                             <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Verfügbare Widgets definieren und verwalten.</Typography>
                             <Button component={Link} to="/admin/widget-types" variant="contained" color="secondary">Verwalten</Button>
+                        </Paper>
+                    </Grid>
+
+                    {/* --- Marketing & Angebote --- */}
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <StarsIcon sx={{ fontSize: 60, mb: 2 }} color="warning" />
+                            <Typography variant="h6" component="h2" gutterBottom>
+                                Aktionen verwalten
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
+                                Spezielle Aktionen und Angebote für Partner erstellen.
+                            </Typography>
+                            <Button component={Link} to="/admin/actions" variant="contained" color="warning">
+                                Verwalten
+                            </Button>
+                        </Paper>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <CampaignIcon sx={{ fontSize: 60, mb: 2 }} color="secondary" />
+                            <Typography variant="h6" component="h2" gutterBottom>
+                                Werbung
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
+                                Werbebanner für das Dashboard verwalten.
+                            </Typography>
+                            <Button component={Link} to="/admin/advertisements" variant="contained" color="secondary">
+                                Verwalten
+                            </Button>
                         </Paper>
                     </Grid>
 
@@ -178,6 +210,7 @@ const AdminDashboardPage: React.FC = () => {
                             </Button>
                         </Paper>
                     </Grid>
+                    
                 </Grid>
             </Container>
         </DashboardLayout>

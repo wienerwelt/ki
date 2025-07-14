@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
-    TextField, MenuItem, Switch, FormControlLabel, Chip, Grid, TableSortLabel, InputAdornment 
+    TextField, MenuItem, Switch, FormControlLabel, Chip, Grid, TableSortLabel, InputAdornment, Link as MuiLink, FormHelperText
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -10,6 +10,18 @@ import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
+
+// Icon-Importe
+import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
+import EvStationIcon from '@mui/icons-material/EvStation';
+import TrafficIcon from '@mui/icons-material/Traffic';
+import SpaIcon from '@mui/icons-material/Spa';
+import GavelIcon from '@mui/icons-material/Gavel';
+import CommuteIcon from '@mui/icons-material/Commute';
+import BusinessIcon from '@mui/icons-material/Business';
+import ConfirmationNumberIcon from '@mui/icons-material/ConfirmationNumber'; // Wird als "Vignette" verwendet
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+
 
 // --- Interfaces ---
 interface WidgetType {
@@ -35,7 +47,42 @@ interface RoleOption {
     description: string;
 }
 
-// --- Sortier-Helferfunktionen ---
+// --- Hilfskomponenten ---
+
+const availableIcons = {
+    'LocalGasStation': <LocalGasStationIcon />,
+    'EvStation': <EvStationIcon />,
+    'Traffic': <TrafficIcon />,
+    'Spa': <SpaIcon />,
+    'Gavel': <GavelIcon />,
+    'Commute': <CommuteIcon />,
+    'Business': <BusinessIcon />,
+    'Vignette': <ConfirmationNumberIcon />,
+};
+
+// KORRIGIERT: Diese Komponente ist jetzt robuster und ignoriert Groß-/Kleinschreibung und das Suffix "Icon".
+const DynamicIcon: React.FC<{ iconName: string | null }> = ({ iconName }) => {
+    if (!iconName) {
+        return <HelpOutlineIcon color="disabled" />;
+    }
+    
+    // Konvertiert den eingegebenen Namen in ein einheitliches Format zum Vergleichen
+    // und entfernt optional das Suffix "Icon" (case-insensitive)
+    const normalizedIconName = iconName.trim().toLowerCase().replace(/icon$/, '');
+    
+    // Findet den passenden Schlüssel im 'availableIcons'-Objekt (case-insensitive)
+    const iconKey = Object.keys(availableIcons).find(
+        key => key.toLowerCase() === normalizedIconName
+    );
+
+    if (iconKey) {
+        return availableIcons[iconKey as keyof typeof availableIcons];
+    }
+    
+    return <HelpOutlineIcon color="disabled" />;
+};
+
+
 type Order = 'asc' | 'desc';
 
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
@@ -244,6 +291,7 @@ const AdminWidgetTypesPage: React.FC = () => {
                             <Table>
                                 <TableHead>
                                     <TableRow>
+                                        <TableCell sx={{ width: '1%' }}>Icon</TableCell>
                                         <TableCell sortDirection={orderBy === 'name' ? order : false}><TableSortLabel active={orderBy === 'name'} direction={order} onClick={() => handleSortRequest('name')}>Name</TableSortLabel></TableCell>
                                         <TableCell sortDirection={orderBy === 'type_key' ? order : false}><TableSortLabel active={orderBy === 'type_key'} direction={order} onClick={() => handleSortRequest('type_key')}>Type Key</TableSortLabel></TableCell>
                                         <TableCell sortDirection={orderBy === 'component_key' ? order : false}><TableSortLabel active={orderBy === 'component_key'} direction={order} onClick={() => handleSortRequest('component_key')}>Component Key</TableSortLabel></TableCell>
@@ -256,6 +304,9 @@ const AdminWidgetTypesPage: React.FC = () => {
                                 <TableBody>
                                     {sortedAndFilteredTypes.map((wt) => (
                                         <TableRow key={wt.id} hover>
+                                            <TableCell>
+                                                <DynamicIcon iconName={wt.icon_name} />
+                                            </TableCell>
                                             <TableCell sx={{ fontWeight: 'bold' }}>{wt.name}</TableCell>
                                             <TableCell><code>{wt.type_key}</code></TableCell>
                                             <TableCell><code>{wt.component_key || '-'}</code></TableCell>
@@ -282,6 +333,15 @@ const AdminWidgetTypesPage: React.FC = () => {
                     </Paper>
                 )}
 
+                <Box sx={{ mt: 2, textAlign: 'center' }}>
+                    <Typography variant="body2">
+                        Für das Feld "Icon Name" können alle Icons von Material-UI verwendet werden. 
+                        <MuiLink href="https://mui.com/material-ui/material-icons/" target="_blank" rel="noopener noreferrer" sx={{ ml: 0.5 }}>
+                            Hier finden Sie eine Übersicht.
+                        </MuiLink>
+                    </Typography>
+                </Box>
+
                 <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
                     <DialogTitle>{editingWt ? 'Widget-Typ bearbeiten' : 'Neuen Widget-Typ hinzufügen'}</DialogTitle>
                     <DialogContent>
@@ -290,7 +350,18 @@ const AdminWidgetTypesPage: React.FC = () => {
                             <Grid item xs={12} sm={6}><TextField margin="dense" label="Name" fullWidth value={formName} onChange={(e) => setFormName(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={6}><TextField margin="dense" label="Type Key (Eindeutig)" fullWidth value={formTypeKey} onChange={(e) => setFormTypeKey(e.target.value)} disabled={!!editingWt} /></Grid>
                             <Grid item xs={12}><TextField margin="dense" label="Beschreibung" fullWidth multiline rows={2} value={formDescription} onChange={(e) => setFormDescription(e.target.value)} /></Grid>
-                            <Grid item xs={12} sm={6}><TextField margin="dense" label="Icon Name (Material-UI)" fullWidth value={formIconName} onChange={(e) => setFormIconName(e.target.value)} /></Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField 
+                                    margin="dense" 
+                                    label="Icon Name (Material-UI)" 
+                                    fullWidth 
+                                    value={formIconName} 
+                                    onChange={(e) => setFormIconName(e.target.value)} 
+                                />
+                                <FormHelperText>
+                                    Verfügbar: {Object.keys(availableIcons).join(', ')}
+                                </FormHelperText>
+                            </Grid>
                             <Grid item xs={12} sm={6}><TextField margin="dense" label="Component Key (z.B. GenericAI)" fullWidth value={formComponentKey} onChange={(e) => setFormComponentKey(e.target.value)} /></Grid>
                             <Grid item xs={12}><TextField margin="dense" label="Config (als JSON)" fullWidth multiline rows={4} value={formConfig} onChange={(e) => setFormConfig(e.target.value)} placeholder='{ "title": "Mein Titel", "category": "meine_kategorie" }' /></Grid>
                             <Grid item xs={6} md={3}><TextField margin="dense" label="Standardbreite" type="number" fullWidth value={formDefaultWidth} onChange={(e) => setFormDefaultWidth(parseInt(e.target.value))} /></Grid>

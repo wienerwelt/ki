@@ -11,10 +11,10 @@ exports.getAllBusinessPartners = async (req, res) => {
                 bp.subscription_start_date, bp.subscription_end_date, bp.color_scheme_id, 
                 bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
-                cs.name AS color_scheme_name, cs.primary_color,
+                cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
                 (SELECT COUNT(*) FROM users u WHERE u.business_partner_id = bp.id) AS user_count,
                 (SELECT COALESCE(json_agg(
-                    jsonb_build_object('id', r.id, 'name', r.name, 'is_default', bpr.is_default)
+                    jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
                     ORDER BY bpr.is_default DESC, r.name ASC
                 ), '[]'::json)
                  FROM business_partner_regions bpr
@@ -38,9 +38,9 @@ exports.getBusinessPartnerById = async (req, res) => {
 
     try {
         const result = await db.query(
-            `SELECT bp.*, cs.name AS color_scheme_name,
+            `SELECT bp.*, cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
                (SELECT COALESCE(json_agg(
-                   jsonb_build_object('id', r.id, 'name', r.name, 'is_default', bpr.is_default)
+                   jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
                    ORDER BY bpr.is_default DESC, r.name ASC
                 ), '[]'::json)
                 FROM business_partner_regions bpr
@@ -67,7 +67,7 @@ exports.createBusinessPartner = async (req, res) => {
         name, address, logo_url, subscription_start_date, subscription_end_date, 
         color_scheme_id, is_active, url_businesspartner, region_ids = [], 
         dashboard_title, level_1_name, level_2_name, level_3_name,
-        default_region_id // NEU
+        default_region_id
     } = req.body;
 
     if (!name) return res.status(400).json({ message: 'Name is required.' });
@@ -83,9 +83,18 @@ exports.createBusinessPartner = async (req, res) => {
                 level_1_name, level_2_name, level_3_name
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
             [
-                name, address, logo_url, subscription_start_date, subscription_end_date, 
-                color_scheme_id || null, is_active, url_businesspartner, dashboard_title,
-                level_1_name, level_2_name, level_3_name
+                name, 
+                address || null, 
+                logo_url || null, 
+                subscription_start_date || null, 
+                subscription_end_date || null, 
+                color_scheme_id || null, 
+                is_active, 
+                url_businesspartner || null, 
+                dashboard_title || null,
+                level_1_name || null, 
+                level_2_name || null, 
+                level_3_name || null
             ]
         );
         const newBp = bpResult.rows[0];
@@ -111,6 +120,7 @@ exports.createBusinessPartner = async (req, res) => {
     }
 };
 
+
 // UPDATE existing business partner
 exports.updateBusinessPartner = async (req, res) => {
     const { id } = req.params;
@@ -120,7 +130,7 @@ exports.updateBusinessPartner = async (req, res) => {
         name, address, logo_url, subscription_start_date, subscription_end_date, 
         color_scheme_id, is_active, url_businesspartner, region_ids = [], 
         dashboard_title, level_1_name, level_2_name, level_3_name,
-        default_region_id // NEU
+        default_region_id
     } = req.body;
 
     const client = await db.connect();
@@ -135,9 +145,9 @@ exports.updateBusinessPartner = async (req, res) => {
                 level_2_name = $11, level_3_name = $12, updated_at = CURRENT_TIMESTAMP
              WHERE id = $13 RETURNING *`,
             [
-                name, address, logo_url, subscription_start_date, subscription_end_date, 
-                color_scheme_id || null, is_active, url_businesspartner, dashboard_title, 
-                level_1_name, level_2_name, level_3_name, id
+                name, address || null, logo_url || null, subscription_start_date || null, subscription_end_date || null, 
+                color_scheme_id || null, is_active, url_businesspartner || null, dashboard_title || null, 
+                level_1_name || null, level_2_name || null, level_3_name || null, id
             ]
         );
         if (updatedBpResult.rows.length === 0) throw new Error('Business Partner not found.');
@@ -165,7 +175,7 @@ exports.updateBusinessPartner = async (req, res) => {
     }
 };
 
-// DELETE business partner
+// ... (restlicher Code bleibt unverändert)
 exports.deleteBusinessPartner = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Business Partner ID format.' });
@@ -182,10 +192,9 @@ exports.deleteBusinessPartner = async (req, res) => {
     }
 };
 
-// GET all color schemes
 exports.getAllColorSchemes = async (req, res) => {
     try {
-        const result = await db.query('SELECT id, name, primary_color FROM color_schemes ORDER BY name ASC');
+        const result = await db.query('SELECT id, name, primary_color, secondary_color FROM color_schemes ORDER BY name ASC');
         res.json(result.rows);
     } catch (err) {
         console.error('Error fetching all color schemes:', err.message);
@@ -193,10 +202,9 @@ exports.getAllColorSchemes = async (req, res) => {
     }
 };
 
-// GET all regions
 exports.getAllRegions = async (req, res) => {
     try {
-        const result = await db.query('SELECT id, name FROM regions ORDER BY name ASC');
+        const result = await db.query('SELECT id, name, code FROM regions ORDER BY name ASC');
         res.json(result.rows);
     } catch (err) {
         console.error('Error fetching all regions:', err.message);
@@ -204,7 +212,6 @@ exports.getAllRegions = async (req, res) => {
     }
 };
 
-// GET user stats for a business partner
 exports.getBusinessPartnerUserStats = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
@@ -239,7 +246,6 @@ exports.getBusinessPartnerUserStats = async (req, res) => {
     }
 };
 
-// GET membership level names for a business partner
 exports.getMembershipLevels = async (req, res) => {
     const { id } = req.params;
     try {

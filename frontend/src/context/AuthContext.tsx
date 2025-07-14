@@ -3,7 +3,6 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { jwtDecode } from 'jwt-decode';
 import axios from 'axios';
 import apiClient from '../apiClient';
-// KORREKTUR: Die neue, zentrale Region-Definition wird importiert
 import { Region } from '../types/dashboard.types';
 
 // --- Interfaces ---
@@ -15,8 +14,6 @@ interface BusinessPartnerData {
     background_color: string; accent_color?: string;
 }
 
-// Die lokale Region-Definition wird entfernt.
-
 interface UserPayload {
     id: string;
     username: string; 
@@ -24,7 +21,7 @@ interface UserPayload {
     business_partner_id: string | null;
     business_partner_name: string | null;
     dashboard_title: string | null;
-    regions: Region[] | null; // Verwendet jetzt den korrekten, zentralen Region-Typ
+    regions: Region[] | null;
 }
 
 interface DecodedToken {
@@ -113,7 +110,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const logout = () => {
+        // Token aus dem Local Storage entfernen
         localStorage.removeItem('jwt_token');
+        // NEU: Liste der geschlossenen Werbeanzeigen ebenfalls entfernen
+        localStorage.removeItem('closedAds');
+
+        // Lokalen Zustand der App zurücksetzen
         setUser(null);
         setBusinessPartner(null);
         setTokenExp(null);

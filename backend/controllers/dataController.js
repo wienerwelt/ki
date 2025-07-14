@@ -222,6 +222,7 @@ exports.getUniqueTrafficRegions = async (req, res) => {
 
 exports.getBpScrapedContent = async (req, res) => {
     const { businessPartnerId, category } = req.query;
+    const { id: userId } = req.user; // User-ID aus der Authentifizierung holen
 
     if (!businessPartnerId) {
         return res.status(400).json({ message: 'Business Partner ID is required.' });
@@ -233,18 +234,22 @@ exports.getBpScrapedContent = async (req, res) => {
     const sourceIdentifier = `${businessPartnerId}_${category}`;
     
     const orderByClause = category === 'events' 
-        ? 'ORDER BY event_date DESC, scraped_at DESC' 
-        : 'ORDER BY published_date DESC, scraped_at DESC';
+        ? 'ORDER BY sc.event_date DESC, sc.scraped_at DESC' 
+        : 'ORDER BY sc.published_date DESC, sc.scraped_at DESC';
 
     try {
         const query = `
-            SELECT id, title, summary, original_url, published_date, event_date, category, scraped_at, region, relevance_score
-            FROM scraped_content
-            WHERE source_identifier = $1
+            SELECT 
+                sc.id, sc.title, sc.summary, sc.original_url, sc.published_date, 
+                sc.event_date, sc.category, sc.scraped_at, sc.region, sc.relevance_score,
+                COALESCE(crv.vote, 0) as user_vote
+            FROM scraped_content sc
+            LEFT JOIN content_relevance_votes crv ON crv.content_id = sc.id AND crv.user_id = $2
+            WHERE sc.source_identifier = $1
             ${orderByClause}
             LIMIT 5
         `;
-        const queryParams = [sourceIdentifier];
+        const queryParams = [sourceIdentifier, userId];
 
         const result = await db.query(query, queryParams);
 
@@ -643,5 +648,227 @@ exports.getEVStations = async (req, res) => {
     } catch (err) {
         console.error('OCM API error:', err?.response?.data || err.message);
         res.status(502).json({ message: 'Fehler bei OCM API', error: err?.response?.data || err.message });
+    }
+};
+
+exports.getScrapedContent = async (req, res) => {
+    // NEU: Business Partner ID wird aus den Benutzerdaten extrahiert
+    const { id: userId, last_login_at: lastLogin, business_partner_id: businessPartnerId } = req.user;
+    const {
+        page = 1,
+        limit = 10,
+        sortBy = 'date', // 'date' oder 'relevance'
+        category,
+        region,
+        search
+    } = req.query;
+    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
+    try {
+        const queryParams = [];
+        let whereClauses = [];
+        let paramIndex = 1;
+
+        if (category) {
+            // NEU: Logik zur Handhabung von Business-Partner-spezifischen Kategorien
+            if (category === 'businesspartner_news' || category === 'businesspartner_events') {
+                if (!businessPartnerId) {
+                    // Wenn der Benutzer keinem BP zugeordnet ist, kann er keine BP-spezifischen Inhalte sehen.
+                    return res.json({ data: [], totalPages: 0, counts: { unread: 0, new: 0 } });
+                }
+                // Erstellt den erwarteten source_identifier, z.B. 'uuid-1234_news'
+                const sourceIdentifier = `${businessPartnerId}_${category.split('_')[1]}`;
+                whereClauses.push(`sc.source_identifier = $${paramIndex++}`);
+                queryParams.push(sourceIdentifier);
+            } else {
+                // Standard-Filterung für alle anderen Kategorien
+                whereClauses.push(`sc.category = $${paramIndex++}`);
+                queryParams.push(category);
+            }
+        }
+        
+        if (region && region !== 'all') {
+            whereClauses.push(`sc.region = $${paramIndex++}`);
+            queryParams.push(region);
+        }
+
+        if (search) {
+            whereClauses.push(`(sc.title ILIKE $${paramIndex} OR sc.summary ILIKE $${paramIndex})`);
+            queryParams.push(`%${search}%`);
+            paramIndex++;
+        }
+
+        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+        
+        const baseQuery = `FROM scraped_content sc ${whereString}`;
+
+        const countQuery = `SELECT COUNT(*) as total_items ${baseQuery}`;
+        const totalResult = await db.query(countQuery, queryParams);
+        const totalItems = parseInt(totalResult.rows[0].total_items, 10);
+        const totalPages = Math.ceil(totalItems / limit);
+
+        // Zählung für "ungelesen" und "neu"
+        const countsQuery = `
+            WITH filtered_content AS (
+                SELECT id, scraped_at
+                ${baseQuery}
+            )
+            SELECT 
+                (SELECT COUNT(*) FROM filtered_content fc WHERE NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = fc.id AND ursc.user_id = $${paramIndex})) as unread_count,
+                (SELECT COUNT(*) FROM filtered_content WHERE scraped_at > $${paramIndex + 1}) as new_count
+        `;
+        const countsParams = [...queryParams, userId, lastLogin || new Date(0)];
+        const countsResult = await db.query(countsQuery, countsParams);
+        const counts = {
+            unread: parseInt(countsResult.rows[0].unread_count, 10) || 0,
+            new: parseInt(countsResult.rows[0].new_count, 10) || 0,
+        };
+
+        let orderByClause = 'ORDER BY sc.published_date DESC, sc.scraped_at DESC';
+        if (sortBy === 'relevance') {
+            orderByClause = 'ORDER BY sc.relevance_score DESC, sc.published_date DESC';
+        }
+
+        const dataQuery = `
+            SELECT
+                sc.id, sc.title, sc.summary, sc.original_url, sc.published_date,
+                sc.event_date, sc.category, sc.scraped_at, sc.relevance_score, sc.region,
+                EXISTS (
+                    SELECT 1 FROM user_read_scraped_content ursc 
+                    WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex}
+                ) as is_read,
+                COALESCE(crv.vote, 0) as user_vote
+            FROM scraped_content sc
+            LEFT JOIN content_relevance_votes crv ON crv.content_id = sc.id AND crv.user_id = $${paramIndex}
+            ${whereString}
+            ${orderByClause}
+            LIMIT $${paramIndex + 1} OFFSET $${paramIndex + 2}
+        `;
+
+        const finalParams = [...queryParams, userId, parseInt(limit, 10), offset];
+        const result = await db.query(dataQuery, finalParams);
+
+        res.json({
+            source: 'Scraped Content Feed',
+            timestamp: new Date().toISOString(),
+            data: result.rows,
+            totalPages: totalPages,
+            currentPage: parseInt(page, 10),
+            counts: counts, // Zählungen hinzufügen
+        });
+
+    } catch (err) {
+        console.error(`Error fetching scraped content:`, err.message);
+        res.status(500).json({ message: 'Error fetching scraped content', data: [] });
+    }
+};
+
+/**
+ * Markiert einen gescrapten Inhalt als vom Benutzer gelesen.
+ */
+exports.markScrapedContentAsRead = async (req, res) => {
+    const { id: userId } = req.user;
+    const { contentId } = req.params;
+    try {
+        await db.query(
+            'INSERT INTO user_read_scraped_content (user_id, scraped_content_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+            [userId, contentId]
+        );
+        res.status(200).json({ message: 'Content marked as read.' });
+    } catch (err) {
+        console.error('Error marking scraped content as read:', err.message);
+        res.status(500).send('Server error');
+    }
+};
+
+exports.getActiveAdvertisement = async (req, res) => {
+    const { business_partner_id } = req.user;
+
+    try {
+        // Findet die spezifischste, aktive Anzeige:
+        // 1. Zuerst eine für den Business Partner, die jetzt aktiv ist.
+        // 2. Wenn nicht gefunden, eine globale Anzeige, die jetzt aktiv ist.
+        const query = `
+            SELECT content, id FROM advertisements
+            WHERE 
+                is_active = TRUE AND
+                (start_date IS NULL OR start_date <= NOW()) AND
+                (end_date IS NULL OR end_date >= NOW()) AND
+                (business_partner_id = $1 OR business_partner_id IS NULL)
+            ORDER BY 
+                business_partner_id DESC NULLS LAST -- Spezifische Anzeigen vor globalen
+            LIMIT 1;
+        `;
+        const result = await db.query(query, [business_partner_id]);
+
+        if (result.rows.length > 0) {
+            res.json(result.rows[0]);
+        } else {
+            res.json(null); // Keine aktive Anzeige gefunden
+        }
+    } catch (err) {
+        console.error('Error fetching active advertisement:', err.message);
+        res.status(500).send('Server Error');
+    }
+};
+
+exports.getActiveActionsForWidget = async (req, res) => {
+    // Annahme: req.user wird von der authMiddleware bereitgestellt
+    const { business_partner_id, id: user_id } = req.user;
+
+    // Wenn der Benutzer keinem Partner zugeordnet ist, gibt es keine Aktionen
+    if (!business_partner_id) {
+        return res.json({ data: [], totalPages: 0, counts: { unread: 0, new: 0 } });
+    }
+
+    const { page = 1, limit = 10, sortBy = 'date', search = '' } = req.query;
+    const offset = (page - 1) * limit;
+    const now = new Date();
+
+    try {
+        let baseQuery = `
+            FROM business_partner_actions a
+            WHERE 
+                a.business_partner_id = $1 AND 
+                a.is_active = TRUE AND
+                (a.start_date IS NULL OR a.start_date <= $2) AND
+                (a.end_date IS NULL OR a.end_date >= $2)
+        `;
+        const queryParams = [business_partner_id, now];
+        let paramIndex = 3;
+
+        if (search) {
+            baseQuery += ` AND (a.title ILIKE $${paramIndex} OR a.content_text ILIKE $${paramIndex})`;
+            queryParams.push(`%${search}%`);
+            paramIndex++;
+        }
+        
+        // Gesamtzahl der Ergebnisse für die Paginierung ermitteln
+        const totalResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, queryParams);
+        const totalItems = parseInt(totalResult.rows[0].count, 10);
+        const totalPages = Math.ceil(totalItems / limit);
+
+        // Daten für die aktuelle Seite abrufen
+        // HINWEIS: is_read Logik wurde vereinfacht, um Fehler zu vermeiden.
+        // Sie benötigen eine 'user_read_status' Tabelle für die volle Funktionalität.
+        const dataQuery = `
+            SELECT a.id, a.layout_type, a.title, a.content_text, a.link_url, a.image_url, a.created_at,
+                   false as is_read 
+            ${baseQuery}
+            ORDER BY ${sortBy === 'title' ? 'a.title' : 'a.created_at'} DESC
+            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        `;
+        
+        const finalQueryParams = [...queryParams, limit, offset];
+        const dataResult = await pool.query(dataQuery, finalQueryParams);
+
+        // Platzhalter für Zählungen
+        const counts = { unread: 0, new: 0 };
+
+        res.json({ data: dataResult.rows, totalPages, counts });
+
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Serverfehler');
     }
 };

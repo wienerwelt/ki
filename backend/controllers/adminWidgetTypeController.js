@@ -55,38 +55,50 @@ exports.createWidgetType = async (req, res) => {
     }
 };
 
-// UPDATE existing widget type
+// KORRIGIERT: Diese Funktion baut die UPDATE-Anweisung jetzt dynamisch auf.
+// So werden nur die Felder aktualisiert, die auch wirklich im Request Body vorhanden sind.
 exports.updateWidgetType = async (req, res) => {
     const { id } = req.params;
-    if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Widget Type ID format.' });
-
-    const { name, type_key, description, icon_name, is_removable, is_resizable, is_draggable, default_width, default_height, default_min_width, default_min_height, allowed_roles, config, component_key } = req.body;
+    if (!isValidUUID(id)) {
+        return res.status(400).json({ message: 'Invalid Widget Type ID format.' });
+    }
 
     try {
-        const currentWt = await db.query('SELECT * FROM widget_types WHERE id = $1', [id]);
-        if (currentWt.rows.length === 0) {
+        const currentWtResult = await db.query('SELECT * FROM widget_types WHERE id = $1', [id]);
+        if (currentWtResult.rows.length === 0) {
             return res.status(404).json({ message: 'Widget Type not found.' });
         }
 
-        const updatedWt = await db.query(
-            `UPDATE widget_types SET
-                name = $1, type_key = $2, description = $3, icon_name = $4,
-                is_removable = $5, is_resizable = $6, is_draggable = $7,
-                default_width = $8, default_height = $9, default_min_width = $10,
-                default_min_height = $11, allowed_roles = $12, config = $13,
-                component_key = $14, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $15 RETURNING *`,
-            [name, type_key, description, icon_name, is_removable, is_resizable, is_draggable, default_width, default_height, default_min_width, default_min_height, allowed_roles, config, component_key, id]
-        );
+        const fieldsToUpdate = req.body;
+        const updateEntries = Object.entries(fieldsToUpdate).filter(([, value]) => value !== undefined);
+
+        if (updateEntries.length === 0) {
+            return res.status(400).json({ message: 'No fields to update provided.' });
+        }
+
+        const setClauses = updateEntries.map(([key], index) => `${key} = $${index + 1}`);
+        const values = updateEntries.map(([, value]) => value);
+        
+        const query = `
+            UPDATE widget_types 
+            SET ${setClauses.join(', ')}, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = $${values.length + 1} 
+            RETURNING *
+        `;
+        values.push(id);
+
+        const updatedWt = await db.query(query, values);
         res.json(updatedWt.rows[0]);
+
     } catch (err) {
         console.error('Error updating widget type:', err.message);
         if (err.code === '23505') {
-            return res.status(409).json({ message: 'Widget Type with this name or type_key already exists.' });
+            return res.status(409).json({ message: 'A Widget Type with this name or type_key already exists.' });
         }
         res.status(500).send('Server error');
     }
 };
+
 
 // DELETE a widget type
 exports.deleteWidgetType = async (req, res) => {

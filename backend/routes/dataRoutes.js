@@ -1,16 +1,14 @@
-// backend/routes/dataRoutes.js
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
 const dataController = require('../controllers/dataController');
 
-// Alle Routen in dieser Datei sind durch die authMiddleware geschützt
 router.use(authMiddleware);
 
 router.get('/fuel-prices', dataController.getFuelPrices);
 router.get('/traffic-info', dataController.getTrafficInfo);
-//router.get('/ai-content', dataController.getAIContentByCategory);
 router.get('/ai-content', dataController.getAiContent);
+router.get('/scraped-content', dataController.getScrapedContent);
 router.get('/tax-changes', dataController.getTaxChanges);
 router.get('/fleet-news', dataController.getFleetAssociationNews);
 router.get('/traffic-regions', dataController.getUniqueTrafficRegions);
@@ -24,5 +22,12 @@ router.get('/ai-prompt-rules', authMiddleware, dataController.getAIPromptRulesFo
 router.get('/categories', authMiddleware, dataController.getCategoriesForUser);
 router.get('/regions', dataController.getAllRegions);
 router.get('/ev-stations', authMiddleware, dataController.getEVStations);
+router.post('/scraped-content/:contentId/mark-as-read', dataController.markScrapedContentAsRead);
+
+// Diese Route sollte jetzt funktionieren, da die Funktion im dataController existiert
+router.get('/actions', authMiddleware, dataController.getActiveActionsForWidget);
+
+// Active Advertisement Endpoint
+router.get('/active-advertisement', dataController.getActiveAdvertisement);
 
 module.exports = router;

@@ -1,10 +1,14 @@
 // backend/server.js
 require('dotenv').config();
 const express = require('express');
+const dotenv = require('dotenv');
 const cors = require('cors');
-const session = require('express-session');
 const db = require('./config/db');
 const { logActivity } = require('./services/auditLogService');
+const cookieParser = require('cookie-parser');
+const cron = require('node-cron');
+const auth = require('./middleware/authMiddleware');
+
 
 // Routen-Importe
 const authRoutes = require('./routes/authRoutes');
@@ -29,33 +33,38 @@ const adminSubscriptionsRoutes = require('./routes/adminSubscriptionsRoutes.js')
 const adminRoleRoutes = require('./routes/adminRoleRoutes.js');
 const adminMonitorRoutes = require('./routes/adminMonitorRoutes.js');
 const adminStatsRoutes = require('./routes/adminStatsRoutes.js');
+const adminAdvertisementsRoutes = require('./routes/adminAdvertisementsRoutes');
+// NEU: Import für die Business Partner Aktionen Routen
+const adminBpActionsRoutes = require('./routes/adminBpActionsRoutes');
+
+
+// NEU: Import des dataControllers, um die neue Funktion zu nutzen
+const dataController = require('./controllers/dataController');
 
 // Service-Importe
 const scraperService = require('./services/scraperService');
-const cron = require('node-cron');
 const { processAllActiveSubscriptions } = require('./services/intelligentContentService');
+
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// KORREKTE REIHENFOLGE DER MIDDLEWARE
-// 1. CORS-Konfiguration, um Cross-Origin-Anfragen zu erlauben
+// --- CORS Setup für Credentials und Frontend-Origin ---
 app.use(cors({
-    origin: 'http://localhost:5173', // Erlaubt explizit Anfragen von Ihrem Vite-Frontend
-    credentials: true,
+  origin: 'http://localhost:5173',
+  credentials: true,
 }));
 
-// 2. Body-Parser für JSON-Anfragen
+// --- Standard Middleware ---
 app.use(express.json());
+app.use(cookieParser());
 
-// 3. Session-Konfiguration
-app.use(session({
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: { httpOnly: true, secure: process.env.NODE_ENV === 'production' },
-}));
-
+// --- Logging aller Requests ---
+app.use((req, res, next) => {
+    console.log(`[${req.method}] ${req.originalUrl}`);
+    next();
+});
 
 // DB-Verbindung
 db.query('SELECT 1')
@@ -66,7 +75,7 @@ db.query('SELECT 1')
     })
     .catch(err => console.error('PostgreSQL connection error:', err));
 
-// 4. API-Routen
+// API-Routen
 app.use('/api/auth', authRoutes);
 app.use('/api/session', sessionRoutes);
 app.use('/api/users', userRoutes);
@@ -74,6 +83,10 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/data', dataRoutes);
 app.use('/api/business-partner', businessPartnerRoutes);
 app.use('/api/widgets', widgetRoutes);
+
+// Route für den Werbebanner. Muss geschützt sein, daher wird die `auth` Middleware verwendet.
+app.get('/api/data/active-advertisement', auth, dataController.getActiveAdvertisement);
+
 
 // Admin-API-Routen
 app.use('/api/admin/business-partners', adminBusinessPartnerRoutes);
@@ -91,7 +104,11 @@ app.use('/api/admin/subscriptions', adminSubscriptionsRoutes);
 app.use('/api/admin/roles', adminRoleRoutes);
 app.use('/api/admin/monitor', adminMonitorRoutes);
 app.use('/api/admin/stats', adminStatsRoutes);
+app.use('/api/admin/advertisements', adminAdvertisementsRoutes);
+// NEU: Registrierung der Admin-Routen für die Business Partner Aktionen
+app.use('/api/admin/actions', adminBpActionsRoutes);
 
+// Testroute
 app.get('/', (req, res) => {
     res.send('Welcome to KI-Dashboard Backend! Access /api/auth/login or /api/auth/register for more.');
 });
@@ -100,6 +117,7 @@ app.get('/', (req, res) => {
 console.log('Führe initialen Job für Content-Abos direkt nach dem Start aus...');
 processAllActiveSubscriptions();
 
+// Cronjob-Überwachung
 cron.schedule('0 2 * * *', async () => {
     const actionType = 'CRON_JOB_CONTENT_SUBSCRIPTION';
     console.log(`[${new Date().toISOString()}] Starting daily cron job: ${actionType}`);
@@ -122,10 +140,11 @@ cron.schedule('0 2 * * *', async () => {
     timezone: "Europe/Vienna"
 });
 
-// Globale Fehlerbehandlungs-Middleware (muss am Ende stehen)
+
+// Globale Fehlerbehandlungs-Middleware
 app.use((err, req, res, next) => {
     console.error('UNHANDLED ERROR:', err);
-    
+
     logActivity({
         actionType: 'CRITICAL_ERROR',
         status: 'failure',
@@ -141,6 +160,7 @@ app.use((err, req, res, next) => {
     res.status(500).send('Ein interner Serverfehler ist aufgetreten.');
 });
 
+// Serverstart
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     logActivity({

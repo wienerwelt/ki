@@ -27,7 +27,10 @@ import AdminAIContentPage from './pages/AdminAIContentPage';
 import AdminCategoriesPage from './pages/AdminCategoriesPage';
 import AdminTagsPage from './pages/AdminTagsPage';
 import AdminMonitorPage from './pages/AdminMonitorPage';
-import AdminStatisticsPage from './pages/AdminStatisticsPage'; // NEU
+import AdminStatisticsPage from './pages/AdminStatisticsPage';
+import AdminAdvertisementsPage from './pages/AdminAdvertisementsPage';
+// NEU: Import für die Aktionen-Seite
+import AdminBpActionsPage from './pages/AdminBpActionsPage';
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
@@ -43,7 +46,8 @@ const AdminRoutes: React.FC = () => {
     return user?.role === 'admin' ? <Outlet /> : <Navigate to="/dashboard" replace />;
 };
 
-const UserManagementAllowedRoutes: React.FC = () => {
+// Dieser Guard wird nun für alle Seiten verwendet, auf die Admins und Assistenten Zugriff haben
+const BpStaffAllowedRoutes: React.FC = () => {
     const { user } = useAuth();
     const isAllowed = user?.role === 'admin' || user?.role === 'assistenz';
     return isAllowed ? <Outlet /> : <Navigate to="/dashboard" replace />;
@@ -86,11 +90,15 @@ function App() {
                         <Route path="/dashboard" element={<DashboardPage />} />
                         <Route path="/profile" element={<ProfilePage />} />
                         
-                        <Route element={<UserManagementAllowedRoutes />}>
+                        {/* Routen für Admins und Assistenten */}
+                        <Route element={<BpStaffAllowedRoutes />}>
                             <Route path="/admin/users" element={<AdminUserManagementPage />} />
                             <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
+                            {/* NEU: Route für die Aktionen-Seite */}
+                            <Route path="/admin/actions" element={<AdminBpActionsPage />} />
                         </Route>
 
+                        {/* Routen nur für Admins */}
                         <Route path="/admin" element={<AdminRoutes />}>
                             <Route index element={<AdminDashboardPage />} />
                             <Route path="business-partners" element={<AdminBusinessPartnersPage />} />
@@ -104,7 +112,8 @@ function App() {
                             <Route path="categories" element={<AdminCategoriesPage />} />
                             <Route path="tags" element={<AdminTagsPage />} />
                             <Route path="monitor" element={<AdminMonitorPage />} />
-                            <Route path="statistics" element={<AdminStatisticsPage />} /> {/* NEU */}
+                            <Route path="statistics" element={<AdminStatisticsPage />} />
+                            <Route path="advertisements" element={<AdminAdvertisementsPage />} />
                         </Route>
                     </Route>
                     

@@ -1,79 +1,22 @@
-Anleitung zum Starten des KI Dashboards
-Diese Anleitung beschreibt die notwendigen Schritte, um die vollständige Entwicklungsumgebung für das KI-Dashboard zu starten.
+1.Schritt
+1.1 Docker Desktop-Anwendung auf Ihrem Computer gestartet sein
+1.2 Redis-Server starten:
+1.3 docker run -d --name mein-redis-server -p 6379:6379 redis
+	wenn der Container bereits existiert, starten Sie ihn mit:
+1.3 docker start mein-redis-Server (Lokal)
+	wenn Redis direkt installiert:
+1.3 redis-server
 
-Voraussetzungen
-Stellen Sie sicher, dass die folgenden Programme auf Ihrem System installiert sind:
-
-Node.js und npm
-
-Git (oder eine andere Versionskontrolle)
-
-Redis (entweder direkt installiert oder über Docker)
-
-Docker Desktop-Anwendung auf Ihrem Computer gestartet sein
-
-Schritt 1: Redis-Server starten
-Der Redis-Server ist die "Postzentrale" für unsere Hintergrund-Jobs und muss als Erstes laufen.
-
-Falls Sie Docker verwenden (empfohlen):
-Öffnen Sie ein Terminal und starten Sie den Redis-Container. Falls Sie ihn noch nicht haben, können Sie ihn mit diesem Befehl erstellen:
-
-docker run -d --name mein-redis-server -p 6379:6379 redis
-
-Wenn der Container bereits existiert, starten Sie ihn mit:
-
-docker start mein-redis-server
-
-Falls Sie Redis direkt installiert haben:
-Öffnen Sie ein Terminal und starten Sie den Redis-Dienst. Der Befehl lautet meistens:
-
-redis-server
-
-(Lassen Sie dieses Terminalfenster geöffnet.)
+(Lassen Sie dieses Terminalfenster geöffnet)
 
 Schritt 2: Backend starten (API-Server & Worker)
-Für das Backend benötigen Sie zwei separate Terminals, die beide im backend-Verzeichnis Ihres Projekts geöffnet sind.
-
-Terminal 1: API-Server starten
-Dieser Server nimmt die Anfragen vom Frontend entgegen.
-
-# 1. In das Backend-Verzeichnis wechseln
-cd pfad/zu/deinem/projekt/backend
-
-# 2. Den API-Server im Entwicklungsmodus starten
-npm run dev
-
-Terminal 2: Worker-Prozess starten
-Dieser Prozess arbeitet die rechenintensiven KI-Jobs im Hintergrund ab.
-
-# 1. In das Backend-Verzeichnis wechseln (in einem neuen Terminal)
-cd pfad/zu/deinem/projekt/backend
-
-# 2. Den Worker im Entwicklungsmodus starten
-npm run dev:worker
-
-Jetzt sollten sowohl Ihr API-Server als auch der Worker laufen und auf Aufgaben warten.
+2.1 cd pfad/zu/deinem/projekt/backend (cd backend)
+Terminal 1) npm run dev:worker
+Terminal 2) npm run dev
 
 Schritt 3: Frontend starten
-Für das Frontend benötigen Sie ein drittes Terminal, das im frontend-Verzeichnis Ihres Projekts geöffnet ist.
-
-Terminal 3: Frontend-Entwicklungsserver starten
-
-# 1. In das Frontend-Verzeichnis wechseln
-cd pfad/zu/deinem/projekt/frontend
-
-# 2. Den Vite-Server starten
-npm run dev
+3.1 cd pfad/zu/deinem/projekt/frontend (cd frontend)
+Terminal 3) npm run dev
 
 Zusammenfassung
-Wenn alle Schritte erfolgreich waren, laufen jetzt:
-
-Ein Redis-Server, der auf Port 6379 lauscht.
-
-Ein Backend-API-Server, der auf dem in Ihrer Konfiguration festgelegten Port lauscht (z.B. 5000).
-
-Ein Backend-Worker, der mit Redis verbunden ist und auf Jobs wartet.
-
-Ein Frontend-Entwicklungsserver, der die Anwendung in Ihrem Browser bereitstellt (meist unter http://localhost:5173).
-
-Sie können jetzt die angezeigte URL in Ihrem Browser öffnen, um auf das KI-Dashboard zuzugreifen.
+Frontend http://localhost:5173

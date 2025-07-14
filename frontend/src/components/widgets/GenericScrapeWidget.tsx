@@ -1,18 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-    Box, Typography, TextField, CircularProgress, MenuItem, Alert, List, ListItem, ListItemIcon, ListItemText, Divider,
-    Dialog, DialogTitle, DialogContent, Chip, Badge, Button, Grid, Stack, IconButton, Tooltip, Link as MuiLink,
-    Accordion, AccordionSummary, AccordionDetails, DialogActions, Pagination, Paper, InputAdornment
+    Box, Typography, CircularProgress, MenuItem, Alert, List, ListItem, ListItemText, Divider,
+    Dialog, DialogTitle, DialogContent, Button, Stack, IconButton, Tooltip, Link as MuiLink,
+    DialogActions, Pagination, Select, FormControl, InputLabel, SelectChangeEvent, Badge, Chip,
+    TextField, InputAdornment
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import SendIcon from '@mui/icons-material/Send';
 import CloseIcon from '@mui/icons-material/Close';
-import PersonIcon from '@mui/icons-material/Person';
-import GroupsIcon from '@mui/icons-material/Groups';
 import EmailIcon from '@mui/icons-material/Email';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
-import LanguageIcon from '@mui/icons-material/Language';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
 // NEU: Imports für die Daumen-Icons
@@ -20,7 +16,6 @@ import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt';
 import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
-import { Autocomplete } from '@mui/material';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
@@ -28,53 +23,47 @@ import { useAuth } from '../../context/AuthContext';
 import ClickAwayListener from '@mui/material/ClickAwayListener';
 
 // --- Interfaces ---
-interface ContentItem {
+interface ScrapedContentItem {
     id: string;
     title: string;
     summary: string | null;
     is_read: boolean;
     published_date: string;
+    event_date?: string | null;
     relevance_score: number;
     original_url?: string | null;
-    origin: 'personal_subscription' | 'popular' | 'system_generated';
-    user_vote: number; // NEU: Hinzugefügt, um den User-Vote zu speichern
+    category: string;
+    user_vote: number;
+    scraped_at: string;
+    region: string | null;
 }
-interface AIPromptRule { id: string; name: string; default_category_id?: string; }
-interface GenericAIWidgetProps extends BaseWidgetProps { title: string; category: string; icon?: React.ReactNode; }
-interface EmailState { open: boolean; loading: boolean; error: string | null; subject: string; body: string; }
+
+interface GenericScrapeWidgetProps extends BaseWidgetProps {
+    icon?: React.ReactNode;
+    title: string;
+    category: string;
+}
+
+interface EmailState {
+    open: boolean;
+    loading: boolean;
+    error: string | null;
+    subject: string;
+    body: string;
+}
 
 // --- Hilfskomponenten ---
 const ArticleBodyRenderer: React.FC<{ summary: string | null | undefined }> = ({ summary }) => {
     if (!summary) return <Typography>Kein Inhalt verfügbar.</Typography>;
-    const sourcesSeparatorRegex = /(\n\s*Quellen:?\s*\n)/i;
-    const parts = summary.split(sourcesSeparatorRegex);
-    const mainContent = parts[0];
-    const sourcesBlock = parts.length > 1 ? parts.slice(1).join('') : null;
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const renderTextWithLinks = (text: string) => {
-        const textParts = text.split(urlRegex);
-        return textParts.map((part, index) => {
-            if (part.match(urlRegex)) return <MuiLink href={part} target="_blank" rel="noopener noreferrer" key={index}>{part}</MuiLink>;
-            return part;
-        });
-    };
     return (
-        <>
-            <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{renderTextWithLinks(mainContent)}</Typography>
-            {sourcesBlock && (
-                <Box sx={{ mt: 3, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                    {sourcesBlock.split('\n').filter(line => line.trim() !== '').map((line, index) => {
-                        if (/^Quellen:?$/i.test(line.trim())) return <Typography key={index} variant="overline" color="text.secondary" component="div" sx={{ mb: 1 }}>{line}</Typography>;
-                        return <Box key={index} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}><LinkIcon fontSize="small" color="action" /><Typography variant="body2" component="div">{renderTextWithLinks(line)}</Typography></Box>;
-                    })}
-                </Box>
-            )}
-        </>
+        <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+            {summary}
+        </Typography>
     );
 };
 
-// KORRIGIERT: Das VoteComponent wurde durch die neue, kreative Version ersetzt.
-const VoteComponent: React.FC<{ item: ContentItem; onVote: (vote: 1 | -1) => void; size?: 'small' | 'medium' }> = ({ item, onVote, size = 'small' }) => {
+// KORRIGIERT: Das VoteComponent wurde komplett überarbeitet
+const VoteComponent: React.FC<{ item: ScrapedContentItem; onVote: (vote: 1 | -1) => void; size?: 'small' | 'medium' }> = ({ item, onVote, size = 'small' }) => {
     const getScoreColor = (score: number) => score > 0 ? 'success.main' : score < 0 ? 'error.main' : 'text.secondary';
     
     const handleVote = (e: React.MouseEvent, vote: 1 | -1) => {
@@ -86,6 +75,7 @@ const VoteComponent: React.FC<{ item: ContentItem; onVote: (vote: 1 | -1) => voi
         <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
             <Tooltip title="Hilfreich">
                 <IconButton size={size} onClick={(e) => handleVote(e, 1)} sx={{ p: 0.5, '&:active': { transform: 'scale(0.9)' } }}>
+                    {/* KORRIGIERT: "primary" wurde zu "success" geändert, um einen grünen Daumen anzuzeigen */}
                     {item.user_vote === 1 ? <ThumbUpIcon color="success" fontSize={size} /> : <ThumbUpOffAltIcon color="action" fontSize={size} />}
                 </IconButton>
             </Tooltip>
@@ -99,6 +89,15 @@ const VoteComponent: React.FC<{ item: ContentItem; onVote: (vote: 1 | -1) => voi
             </Tooltip>
         </Box>
     );
+};
+
+const getDomain = (url: string | null | undefined): string | null => {
+    if (!url) return null;
+    try {
+        return new URL(url).hostname.replace(/^www\./, '');
+    } catch (e) {
+        return null;
+    }
 };
 
 const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onSearch }) => {
@@ -191,24 +190,19 @@ const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onS
     );
 };
 
-const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, isRemovable, title, category, icon }) => {
+// --- Haupt-Widget-Komponente ---
+const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category }) => {
     const { user } = useAuth();
-    const [items, setItems] = useState<ContentItem[]>([]);
-    const [counts, setCounts] = useState({ unread: 0, new: 0 });
+    const [items, setItems] = useState<ScrapedContentItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [selectedArticle, setSelectedArticle] = useState<ContentItem | null>(null);
-    const [relevantRules, setRelevantRules] = useState<AIPromptRule[]>([]);
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [submitError, setSubmitError] = useState<string | null>(null);
-    const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
-    const [selectedRuleId, setSelectedRuleId] = useState('');
-    const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
-    const [keywords, setKeywords] = useState<string[]>([]);
+    const [selectedArticle, setSelectedArticle] = useState<ScrapedContentItem | null>(null);
     const [emailState, setEmailState] = useState<EmailState>({ open: false, loading: false, error: null, subject: '', body: '' });
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(0);
-    
+    const [sortBy, setSortBy] = useState('date');
+    const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
+    const [counts, setCounts] = useState({ unread: 0, new: 0 });
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
 
@@ -219,101 +213,83 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
 
     useEffect(() => {
         if (user?.regions && user.regions.length > 0) {
-            const defaultRegion = user.regions.find(r => !!r.is_default);
-            setSelectedRegion(defaultRegion || user.regions[0]);
+            const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0];
+            setSelectedRegion(defaultRegion);
         }
     }, [user?.regions]);
 
-    useEffect(() => {
-        if (relevantRules.length === 1) setSelectedRuleId(relevantRules[0].id);
-        else setSelectedRuleId('');
-    }, [relevantRules]);
-
-    const fetchData = useCallback(async (currentPage: number, search: string) => {
-        if (!category || !selectedRegion) {
+    const fetchData = useCallback(async (currentPage: number, currentSortBy: string, region: Region | null, search: string) => {
+        if (!category) {
+            setIsLoading(false);
+            setError("Keine Kategorie im Widget-Typ konfiguriert.");
             setItems([]);
-            setTotalPages(0);
             return;
         }
+        
         setIsLoading(true);
         setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
-            const params = new URLSearchParams({ category, region: selectedRegion.name, page: String(currentPage), limit: '5' });
-            if (search) params.append('search', search);
-            
-            const contentUrl = `/api/data/ai-content?${params.toString()}`;
-            const [rulesRes, contentRes, categoriesRes] = await Promise.all([
-                apiClient.get('/api/data/ai-prompt-rules', { headers: { 'x-auth-token': token } }),
-                apiClient.get(contentUrl, { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/data/categories', { headers: { 'x-auth-token': token } }),
-            ]);
+            const params = new URLSearchParams({
+                page: String(currentPage),
+                limit: '10',
+                sortBy: currentSortBy,
+                region: region ? region.name : 'all',
+            });
+            params.append('category', category);
+            if (search) {
+                params.append('search', search);
+            }
 
-            const currentCategory = categoriesRes.data.find((c: any) => c.name === category);
-            if (currentCategory) setRelevantRules(rulesRes.data.filter((r: any) => r.default_category_id === currentCategory.id));
-            
-            setItems(contentRes.data?.data || []);
-            setCounts(contentRes.data?.counts || { unread: 0, new: 0 });
-            setTotalPages(contentRes.data?.totalPages || 0);
+            const response = await apiClient.get(`/api/data/scraped-content?${params.toString()}`, {
+                headers: { 'x-auth-token': token }
+            });
+
+            setItems(response.data?.data || []);
+            setTotalPages(response.data?.totalPages || 0);
+            setCounts(response.data?.counts || { unread: 0, new: 0 });
         } catch (err: any) {
-            setError(err.response?.data?.message || `Inhalte für "${category}" konnten nicht geladen werden.`);
+            setError(err.response?.data?.message || `Gescrapte Inhalte konnten nicht geladen werden.`);
         } finally {
             setIsLoading(false);
         }
-    }, [category, selectedRegion]);
+    }, [category]);
 
-    useEffect(() => { setPage(1); }, [selectedRegion, debouncedSearchTerm]);
-    useEffect(() => { fetchData(page, debouncedSearchTerm); }, [fetchData, page, debouncedSearchTerm]);
-    
-    const handleOpenArticle = async (article: ContentItem) => {
+    useEffect(() => {
+        setPage(1);
+    }, [sortBy, selectedRegion, debouncedSearchTerm]);
+
+    useEffect(() => {
+        fetchData(page, sortBy, selectedRegion, debouncedSearchTerm);
+    }, [fetchData, page, sortBy, selectedRegion, debouncedSearchTerm]);
+
+    const handleOpenArticle = async (article: ScrapedContentItem) => {
         setSelectedArticle(article);
         if (!article.is_read) {
             try {
                 const token = localStorage.getItem('jwt_token');
-                await apiClient.post(`/api/data/content/${article.id}/mark-as-read`, {}, { headers: { 'x-auth-token': token } });
+                await apiClient.post(`/api/data/scraped-content/${article.id}/mark-as-read`, {}, { headers: { 'x-auth-token': token } });
                 setItems(prev => prev.map(n => n.id === article.id ? { ...n, is_read: true } : n));
                 setCounts(prev => ({ ...prev, unread: Math.max(0, prev.unread - 1) }));
             } catch (err) { console.error("Fehler beim Markieren als gelesen:", err); }
         }
     };
 
-    const handleCloseDialog = () => setSelectedArticle(null);
-    
     const handleVote = async (contentId: string, vote: 1 | -1) => {
         const token = localStorage.getItem('jwt_token');
-        const currentItem = items.find(item => item.id === contentId) || selectedArticle;
+        const currentItem = items.find(item => item.id === contentId);
         if (!currentItem) return;
 
         const newVote = currentItem.user_vote === vote ? 0 : vote;
 
         try {
-            const res = await apiClient.post(`/api/data/content/${contentId}/vote`, { vote: newVote, contentType: 'ai_content' }, { headers: { 'x-auth-token': token } });
+            const res = await apiClient.post(`/api/data/content/${contentId}/vote`, { vote: newVote, contentType: 'scraped_content' }, { headers: { 'x-auth-token': token } });
             const newScore = res.data.relevance_score;
             setItems(prev => prev.map(item => item.id === contentId ? { ...item, relevance_score: newScore, user_vote: newVote } : item));
             if (selectedArticle?.id === contentId) setSelectedArticle(prev => prev ? { ...prev, relevance_score: newScore, user_vote: newVote } : null);
         } catch (err) { console.error("Fehler bei der Abstimmung:", err); }
     };
-
-    const handleSubmitSubscription = async () => {
-        if (!selectedRuleId || !selectedRegion || keywords.length === 0) {
-            setSubmitError("Analyse-Typ, eine spezifische Region und Keywords sind für ein Abo erforderlich.");
-            return;
-        }
-        setIsSubmitting(true);
-        setSubmitError(null);
-        setSubmitSuccess(null);
-        try {
-            const token = localStorage.getItem('jwt_token');
-            await apiClient.post('/api/admin/subscriptions', { ruleId: selectedRuleId, region: selectedRegion.name, keywords }, { headers: { 'x-auth-token': token } });
-            setSubmitSuccess(`Ihr Abonnement wurde gespeichert.`);
-            setKeywords([]);
-            setTimeout(() => fetchData(1, debouncedSearchTerm), 5000);
-        } catch (err: any) {
-            setSubmitError(err.response?.data?.message || 'Fehler beim Speichern.');
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
+    
     const handleGenerateEmail = async () => {
         if (!selectedArticle) return;
         setEmailState({ ...emailState, loading: true, open: true, error: null });
@@ -325,20 +301,10 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
             setEmailState({ ...emailState, open: true, loading: false, error: err.response?.data?.message || 'E-Mail konnte nicht generiert werden.' });
         }
     };
+
+    const handleCloseDialog = () => setSelectedArticle(null);
     const handleCloseEmailDialog = () => setEmailState({ ...emailState, open: false });
     const handleCopyToClipboard = (text: string) => navigator.clipboard.writeText(text);
-    const handleKeywordsChange = (event: React.SyntheticEvent, newValue: string[]) => {
-        const processedKeywords = newValue.map(kw => kw.charAt(0).toUpperCase() + kw.slice(1));
-        setKeywords([...new Set(processedKeywords)]);
-    };
-    const getOriginProps = (origin: ContentItem['origin']) => {
-        switch (origin) {
-            case 'personal_subscription': return { text: 'Persönlich für Sie', icon: <PersonIcon fontSize="inherit" color="primary" />, tooltip: 'Dieser Inhalt wurde aufgrund Ihrer abonnierten "Hot Topics" generiert.' };
-            case 'popular': return { text: 'Interessiert andere', icon: <GroupsIcon fontSize="inherit" color="action" />, tooltip: 'Dieser Inhalt wurde von anderen Nutzern abonniert oder ist im Netzwerk beliebt.' };
-            case 'system_generated': return { text: 'Aus dem Netz', icon: <LanguageIcon fontSize="inherit" color="disabled" />, tooltip: 'Dieser Inhalt wurde systemseitig als relevant eingestuft.' };
-            default: return { text: null, icon: null, tooltip: null };
-        }
-    };
 
     return (
         <WidgetPaper 
@@ -350,7 +316,7 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
                     <Badge badgeContent={counts.unread} color="secondary"><Chip label="Ungelesen" size="small" variant="outlined" /></Badge>
                     <Box sx={{ flexGrow: 1 }} />
                     <AnimatedSearchBar onSearch={setSearchTerm} />
-                    {user?.regions && user.regions.length > 0 && (
+                    {user?.regions && user.regions.length > 1 && (
                         <TextField
                             select value={selectedRegion?.id || ''}
                             onChange={(e) => {
@@ -358,34 +324,61 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
                                 setSelectedRegion(region || null);
                             }}
                             size="small" variant="outlined" sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '24px' } }}
-                            SelectProps={{
-                                renderValue: (value) => {
-                                    const region = user?.regions?.find(r => r.id === value);
-                                    if (!region) return null;
-                                    return <Tooltip title={region.name}><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} /></Tooltip>;
-                                }
-                            }}
                         >
                             {user?.regions?.map((region) => <MenuItem key={region.id} value={region.id}><Tooltip title={region.name} placement="right"><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} /></Tooltip></MenuItem>)}
                         </TextField>
                     )}
+                    <FormControl size="small" variant="outlined" sx={{ minWidth: 120 }}>
+                        <InputLabel id="sort-by-label">Sortieren</InputLabel>
+                        <Select
+                            labelId="sort-by-label"
+                            value={sortBy}
+                            onChange={(e: SelectChangeEvent) => setSortBy(e.target.value)}
+                            label="Sortieren"
+                        >
+                            <MenuItem value="date">Neueste</MenuItem>
+                            <MenuItem value="relevance">Relevanz</MenuItem>
+                        </Select>
+                    </FormControl>
                 </Box>
             }
             widgetId={widgetId || ''} onDelete={onDelete} isRemovable={isRemovable} loading={isLoading} error={error}
         >
             <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Box sx={{ flexGrow: 1, overflowY: 'auto', maxHeight: 280 }}>
+                <Box sx={{ flexGrow: 1, overflowY: 'auto', maxHeight: 320 }}>
                     {items.length > 0 ? (
                         <List dense>
                             {items.map((item, index) => {
-                                const originProps = getOriginProps(item.origin);
+                                const domain = getDomain(item.original_url);
                                 return (
                                     <React.Fragment key={item.id}>
-                                        <ListItem button onClick={() => handleOpenArticle(item)} onMouseDown={(e) => e.stopPropagation()}>
-                                            <ListItemIcon sx={{minWidth: 36, opacity: item.is_read ? 0.4 : 1}}>{icon}</ListItemIcon>
+                                        <ListItem
+                                            button
+                                            onClick={() => handleOpenArticle(item)}
+                                        >
                                             <ListItemText 
                                                 primary={<Typography variant="body2" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>{item.title}</Typography>}
-                                                secondary={originProps.text && <Tooltip title={originProps.tooltip || ''}><Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.75rem', color: 'text.secondary' }}>{originProps.icon}<span style={{ marginLeft: '4px' }}>{originProps.text}</span></Box></Tooltip>}
+                                                secondary={
+                                                    <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            Gefunden am: {new Date(item.scraped_at).toLocaleDateString('de-AT')}
+                                                        </Typography>
+                                                        {domain && (
+                                                            <MuiLink 
+                                                                href={item.original_url!} 
+                                                                target="_blank" 
+                                                                rel="noopener noreferrer" 
+                                                                variant="caption" 
+                                                                color="text.secondary"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                ({domain})
+                                                            </MuiLink>
+                                                        )}
+                                                        <Box sx={{ flexGrow: 1 }} />
+                                                        <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
+                                                    </Box>
+                                                }
                                             />
                                         </ListItem>
                                         {index < items.length - 1 && <Divider component="li" />}
@@ -393,32 +386,35 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
                                 );
                             })}
                         </List>
-                    ) : ( <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>Keine Artikel für Ihre Auswahl gefunden.</Typography> )}
+                    ) : ( <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>Keine Inhalte für Ihre Auswahl gefunden.</Typography> )}
                 </Box>
                 {totalPages > 1 && <Box sx={{ display: 'flex', justifyContent: 'center', pt: 1 }}><Pagination count={totalPages} page={page} onChange={(e, value) => setPage(value)} size="small" /></Box>}
-                <Divider sx={{ my: 1 }} />
-                <Accordion disableGutters elevation={0} sx={{ p: 0, '&.Mui-expanded': { margin: 0 }, '&:before': { display: 'none' } }}>
-                    <AccordionSummary expandIcon={<ExpandMoreIcon />} onMouseDown={(e) => e.stopPropagation()} sx={{ p: 0, minHeight: '36px', '& .MuiAccordionSummary-content': { margin: '8px 0' } }}><Typography variant="body2">Persönliches Thema abonnieren</Typography></AccordionSummary>
-                    <AccordionDetails sx={{ p: 1, pt: 0 }}>
-                        <Grid container spacing={2}>
-                            {relevantRules.length > 1 && <Grid item xs={12}><TextField select fullWidth label="Analyse-Typ für Ihr Abo" value={selectedRuleId} onChange={(e) => setSelectedRuleId(e.target.value)} size="small"><MenuItem value=""><em>Bitte Analyse wählen</em></MenuItem>{relevantRules.map(rule => (<MenuItem key={rule.id} value={rule.id}>{rule.name}</MenuItem>))}</TextField></Grid>}
-                            <Grid item xs={12}><Autocomplete multiple freeSolo options={[]} value={keywords} onChange={handleKeywordsChange} renderTags={(val, props) => val.map((opt, i) => <Chip label={opt} {...props({ index: i })} />)} renderInput={(params) => <TextField {...params} label={`Meine Hot Topics (Keywords) in ${selectedRegion?.name || ''}`} size="small" />}/></Grid>
-                        </Grid>
-                        <Button variant="contained" size="small" sx={{ mt: 2 }} startIcon={isSubmitting ? <CircularProgress size={20} color="inherit" /> : <SendIcon />} onClick={handleSubmitSubscription} onMouseDown={(e) => e.stopPropagation()} disabled={isSubmitting || !selectedRuleId || !selectedRegion || keywords.length === 0}>Thema abonnieren</Button>
-                        {submitSuccess && <Alert severity="success" sx={{ mt: 1, p: '0 16px' }}>{submitSuccess}</Alert>}
-                        {submitError && <Alert severity="error" sx={{ mt: 1, p: '0 16px' }}>{submitError}</Alert>}
-                    </AccordionDetails>
-                </Accordion>
             </Box>
+
+            {/* Dialog für Artikelansicht */}
             <Dialog open={!!selectedArticle} onClose={handleCloseDialog} fullWidth maxWidth="md">
-                <DialogTitle sx={{ m: 0, p: 2 }}><Box display="flex" justifyContent="space-between" alignItems="center"><Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>{selectedArticle?.title}</Typography><IconButton aria-label="close" onClick={handleCloseDialog} sx={{ ml: 2 }}><CloseIcon /></IconButton></Box></DialogTitle>
-                <DialogContent dividers><ArticleBodyRenderer summary={selectedArticle?.summary} /></DialogContent>
+                <DialogTitle sx={{ m: 0, p: 2 }}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center">
+                        <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>{selectedArticle?.title}</Typography>
+                        <IconButton aria-label="close" onClick={handleCloseDialog} sx={{ ml: 2 }}><CloseIcon /></IconButton>
+                    </Box>
+                </DialogTitle>
+                <DialogContent dividers>
+                    {selectedArticle?.original_url && (
+                        <MuiLink href={selectedArticle.original_url} target="_blank" rel="noopener noreferrer" sx={{display: 'inline-flex', alignItems: 'center', mb: 2}}>
+                            <LinkIcon sx={{mr: 1}}/>
+                            Originalquelle besuchen
+                        </MuiLink>
+                    )}
+                    <ArticleBodyRenderer summary={selectedArticle?.summary} />
+                </DialogContent>
                 <DialogActions sx={{ p: '16px 24px', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Button onClick={handleGenerateEmail} startIcon={<EmailIcon />} disabled={emailState.loading}>E-Mail-Entwurf{emailState.loading && <CircularProgress size={20} sx={{ ml: 1 }} />}</Button>
-                    {/* KORRIGIERT: Das neue Voting-System wird hier verwendet */}
                     {selectedArticle && <VoteComponent item={selectedArticle} onVote={(vote) => handleVote(selectedArticle.id, vote)} size="medium" />}
                 </DialogActions>
             </Dialog>
+
+            {/* Dialog für E-Mail-Entwurf */}
             <Dialog open={emailState.open} onClose={handleCloseEmailDialog} fullWidth maxWidth="md">
                 <DialogTitle>E-Mail-Entwurf</DialogTitle>
                 <DialogContent>
@@ -438,4 +434,4 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
     );
 };
 
-export default GenericAIWidget;
+export default GenericScrapeWidget;
