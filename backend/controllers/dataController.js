@@ -813,62 +813,58 @@ exports.getActiveAdvertisement = async (req, res) => {
 };
 
 exports.getActiveActionsForWidget = async (req, res) => {
-    // Annahme: req.user wird von der authMiddleware bereitgestellt
-    const { business_partner_id, id: user_id } = req.user;
+    const { business_partner_id } = req.user;
 
-    // Wenn der Benutzer keinem Partner zugeordnet ist, gibt es keine Aktionen
     if (!business_partner_id) {
-        return res.json({ data: [], totalPages: 0, counts: { unread: 0, new: 0 } });
+        return res.json({ data: [], totalPages: 0, counts: { new: 0 } });
     }
 
-    const { page = 1, limit = 10, sortBy = 'date', search = '' } = req.query;
+    const { page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
     const now = new Date();
 
     try {
-        let baseQuery = `
-            FROM business_partner_actions a
+        // Basis-Query, die nur die notwendigen Spalten abfragt
+        const baseQuery = `
+            FROM business_partner_actions
             WHERE 
-                a.business_partner_id = $1 AND 
-                a.is_active = TRUE AND
-                (a.start_date IS NULL OR a.start_date <= $2) AND
-                (a.end_date IS NULL OR a.end_date >= $2)
+                business_partner_id = $1 AND 
+                is_active = TRUE AND
+                (start_date IS NULL OR start_date <= $2) AND
+                (end_date IS NULL OR end_date >= $2)
         `;
         const queryParams = [business_partner_id, now];
-        let paramIndex = 3;
 
-        if (search) {
-            baseQuery += ` AND (a.title ILIKE $${paramIndex} OR a.content_text ILIKE $${paramIndex})`;
-            queryParams.push(`%${search}%`);
-            paramIndex++;
-        }
-        
-        // Gesamtzahl der Ergebnisse für die Paginierung ermitteln
-        const totalResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, queryParams);
+        // Gesamtzahl der Aktionen für die Paginierung ermitteln
+        const totalQuery = `SELECT COUNT(*) ${baseQuery}`;
+        const totalResult = await db.query(totalQuery, queryParams);
         const totalItems = parseInt(totalResult.rows[0].count, 10);
         const totalPages = Math.ceil(totalItems / limit);
 
         // Daten für die aktuelle Seite abrufen
-        // HINWEIS: is_read Logik wurde vereinfacht, um Fehler zu vermeiden.
-        // Sie benötigen eine 'user_read_status' Tabelle für die volle Funktionalität.
         const dataQuery = `
-            SELECT a.id, a.layout_type, a.title, a.content_text, a.link_url, a.image_url, a.created_at,
-                   false as is_read 
+            SELECT id, layout_type, title, content_text, link_url, image_url, created_at
             ${baseQuery}
-            ORDER BY ${sortBy === 'title' ? 'a.title' : 'a.created_at'} DESC
-            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+            ORDER BY created_at DESC
+            LIMIT $3 OFFSET $4
         `;
+        const dataQueryParams = [...queryParams, limit, offset];
+        const dataResult = await db.query(dataQuery, dataQueryParams);
+
+        // Zähler für "neue" Aktionen (z.B. in den letzten 3 Tagen erstellt)
+        const newQuery = `SELECT COUNT(*) FROM business_partner_actions WHERE business_partner_id = $1 AND is_active = TRUE AND created_at >= NOW() - INTERVAL '3 days'`;
+        const newResult = await db.query(newQuery, [business_partner_id]);
+        const counts = { new: parseInt(newResult.rows[0].count, 10) || 0 };
         
-        const finalQueryParams = [...queryParams, limit, offset];
-        const dataResult = await pool.query(dataQuery, finalQueryParams);
-
-        // Platzhalter für Zählungen
-        const counts = { unread: 0, new: 0 };
-
         res.json({ data: dataResult.rows, totalPages, counts });
 
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Serverfehler');
+        // Verbessertes Fehler-Logging
+        console.error('--- DATABASE ERROR in getActiveActionsForWidget ---');
+        console.error('Timestamp:', new Date().toISOString());
+        console.error('Error Message:', err.message);
+        console.error('Full Error Object:', err);
+        console.error('----------------------------------------------------');
+        res.status(500).send('Serverfehler beim Abrufen der Aktionen.');
     }
 };

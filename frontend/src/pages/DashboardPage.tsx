@@ -18,7 +18,7 @@ import FleetNewsWidget from '../components/widgets/FleetNewsWidget';
 import VignetteWidget from '../components/widgets/VignetteWidget';
 import EVStationWidget from '../components/widgets/EVStationWidget';
 import GenericScrapeWidget from '../components/widgets/GenericScrapeWidget';
-import BpActionsWidget from '../components/widgets/BpActionsWidget'; // NEU
+import BpActionsWidget from '../components/widgets/BpActionsWidget';
 
 // --- Alle benötigten Icons importieren ---
 import SpaIcon from '@mui/icons-material/Spa';
@@ -31,7 +31,7 @@ import ConfirmationNumberIcon from '@mui/icons-material/ConfirmationNumber';
 import EvStationIcon from '@mui/icons-material/EvStation';
 import CommuteIcon from '@mui/icons-material/Commute';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import StarsIcon from '@mui/icons-material/Stars'; // NEU
+import StarsIcon from '@mui/icons-material/Stars';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
 
@@ -45,7 +45,8 @@ const WidgetComponentMap: { [key: string]: React.ElementType<any> } = {
     GenericAI: GenericAIWidget,
     EVStation: EVStationWidget,
     GenericScrape: GenericScrapeWidget,
-    BpActionsWidget: BpActionsWidget, // NEU
+    BusinessPartnerAktionen: BpActionsWidget,
+    bp_actions: BpActionsWidget, 
 };
 
 const IconMap: { [key: string]: React.ElementType<any> } = {
@@ -58,7 +59,7 @@ const IconMap: { [key: string]: React.ElementType<any> } = {
     Vignette: ConfirmationNumberIcon,
     EvStation: EvStationIcon,
     Commute: CommuteIcon,
-    Stars: StarsIcon, // NEU
+    Stars: StarsIcon,
 };
 
 const DashboardPage: React.FC = () => {
@@ -135,22 +136,31 @@ const DashboardPage: React.FC = () => {
 
         const newWidgetId = `${widgetTypeMeta.type_key}-${Date.now()}`;
         const newWidgets: WidgetConfig[] = [...dashboardConfig.widgets, { id: newWidgetId, type: widgetTypeMeta.type_key }];
+        
+        const defaultWidth = widgetTypeMeta.default_width || 4;
         const newLayoutItem: Layout = {
             i: newWidgetId,
             x: 0,
-            y: 0,
-            w: widgetTypeMeta.default_width || 4,
+            y: Infinity, 
+            w: defaultWidth,
             h: widgetTypeMeta.default_height || 8,
-            minW: widgetTypeMeta.default_min_width,
+            minW: Math.min(widgetTypeMeta.default_min_width || 0, defaultWidth),
             minH: widgetTypeMeta.default_min_height,
         };
+        
         setDashboardConfig(prev => prev ? { widgets: newWidgets, layout: [...prev.layout, newLayoutItem] } : null);
         handleCloseAddWidgetMenu();
     };
 
     const renderWidgetContent = (widget: WidgetConfig) => {
-        const widgetTypeMeta = availableWidgetTypes.find(wt => wt.type_key === widget.type);
-        const componentKey = widgetTypeMeta?.component_key || widget.type;
+        // KORRIGIERT: Diese Logik findet nun immer die korrekten Metadaten, auch für alte, gespeicherte Widget-Typen.
+        const typeKeyMapping: { [key: string]: string } = {
+            'bp_actions': 'BusinessPartnerAktionen',
+        };
+        const correctedTypeKey = typeKeyMapping[widget.type] || widget.type;
+        const widgetTypeMeta = availableWidgetTypes.find(wt => wt.type_key === correctedTypeKey);
+
+        const componentKey = widgetTypeMeta?.component_key || correctedTypeKey; 
         const SpecificWidgetComponent = WidgetComponentMap[componentKey];
         const config = widgetTypeMeta?.config || {};
         
@@ -158,6 +168,7 @@ const DashboardPage: React.FC = () => {
         const IconComponent = normalizedIconName && IconMap[normalizedIconName] ? IconMap[normalizedIconName] : HelpOutlineIcon;
 
         if (!SpecificWidgetComponent) {
+            console.error(`Unbekanntes Widget: componentKey='${componentKey}' wurde in WidgetComponentMap nicht gefunden.`);
             return <Box p={2}><Typography>Unbekanntes Widget: {widget.type}</Typography></Box>;
         }
         
@@ -165,6 +176,7 @@ const DashboardPage: React.FC = () => {
             onDelete: handleDeleteWidget,
             widgetId: widget.id,
             isRemovable: widgetTypeMeta?.is_removable ?? true,
+            title: widgetTypeMeta?.name || 'Widget',
         };
         
         switch (componentKey) {
@@ -184,7 +196,8 @@ const DashboardPage: React.FC = () => {
                         />;
 
             case 'EVStation':
-            case 'BpActionsWidget': // NEU
+            case 'BusinessPartnerAktionen':
+            case 'bp_actions':
                 return <SpecificWidgetComponent 
                             {...commonProps} 
                             icon={<IconComponent />}

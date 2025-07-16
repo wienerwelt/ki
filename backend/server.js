@@ -8,6 +8,7 @@ const { logActivity } = require('./services/auditLogService');
 const cookieParser = require('cookie-parser');
 const cron = require('node-cron');
 const auth = require('./middleware/authMiddleware');
+const path = require('path'); // Import für das Path-Modul
 
 
 // Routen-Importe
@@ -34,11 +35,9 @@ const adminRoleRoutes = require('./routes/adminRoleRoutes.js');
 const adminMonitorRoutes = require('./routes/adminMonitorRoutes.js');
 const adminStatsRoutes = require('./routes/adminStatsRoutes.js');
 const adminAdvertisementsRoutes = require('./routes/adminAdvertisementsRoutes');
-// NEU: Import für die Business Partner Aktionen Routen
 const adminBpActionsRoutes = require('./routes/adminBpActionsRoutes');
 
 
-// NEU: Import des dataControllers, um die neue Funktion zu nutzen
 const dataController = require('./controllers/dataController');
 
 // Service-Importe
@@ -59,6 +58,10 @@ app.use(cors({
 // --- Standard Middleware ---
 app.use(express.json());
 app.use(cookieParser());
+
+// KORRIGIERT: Statische Dateien aus dem "frontend/public"-Ordner bereitstellen
+app.use('/public', express.static(path.join(__dirname, '..', 'frontend', 'public')));
+
 
 // --- Logging aller Requests ---
 app.use((req, res, next) => {
@@ -105,7 +108,6 @@ app.use('/api/admin/roles', adminRoleRoutes);
 app.use('/api/admin/monitor', adminMonitorRoutes);
 app.use('/api/admin/stats', adminStatsRoutes);
 app.use('/api/admin/advertisements', adminAdvertisementsRoutes);
-// NEU: Registrierung der Admin-Routen für die Business Partner Aktionen
 app.use('/api/admin/actions', adminBpActionsRoutes);
 
 // Testroute
