@@ -8,8 +8,8 @@ import 'react-resizable/css/styles.css';
 import { DashboardSavedConfig, WidgetConfig, WidgetTypeMeta } from '../types/dashboard.types';
 import apiClient from '../apiClient';
 
-// --- Alle benötigten Widget-Komponenten importieren ---
 import GenericAIWidget from '../components/widgets/GenericAIWidget';
+import GenericScrapeWidget from '../components/widgets/GenericScrapeWidget';
 import BusinessPartnerInfoWidget from '../components/widgets/BusinessPartnerInfoWidget';
 import TrafficInfoWidget from '../components/widgets/TrafficInfoWidget';
 import FuelPricesWidget from '../components/widgets/FuelPricesWidget';
@@ -17,10 +17,9 @@ import TaxChangesWidget from '../components/widgets/TaxChangesWidget';
 import FleetNewsWidget from '../components/widgets/FleetNewsWidget';
 import VignetteWidget from '../components/widgets/VignetteWidget';
 import EVStationWidget from '../components/widgets/EVStationWidget';
-import GenericScrapeWidget from '../components/widgets/GenericScrapeWidget';
-import BpActionsWidget from '../components/widgets/BpActionsWidget';
+import BusinessPartnerActionsWidget from '../components/widgets/BusinessPartnerActionsWidget';
+import TrustedSourcesWidget from '../components/widgets/TrustedSourcesWidget';
 
-// --- Alle benötigten Icons importieren ---
 import SpaIcon from '@mui/icons-material/Spa';
 import BusinessIcon from '@mui/icons-material/Business';
 import TrafficIcon from '@mui/icons-material/Traffic';
@@ -32,6 +31,8 @@ import EvStationIcon from '@mui/icons-material/EvStation';
 import CommuteIcon from '@mui/icons-material/Commute';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import StarsIcon from '@mui/icons-material/Stars';
+import FactoryIcon from '@mui/icons-material/Factory';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
 
@@ -45,8 +46,8 @@ const WidgetComponentMap: { [key: string]: React.ElementType<any> } = {
     GenericAI: GenericAIWidget,
     EVStation: EVStationWidget,
     GenericScrape: GenericScrapeWidget,
-    BusinessPartnerAktionen: BpActionsWidget,
-    bp_actions: BpActionsWidget, 
+    BusinessPartnerAktionen: BusinessPartnerActionsWidget,
+    TrustedSources: TrustedSourcesWidget,    
 };
 
 const IconMap: { [key: string]: React.ElementType<any> } = {
@@ -60,6 +61,8 @@ const IconMap: { [key: string]: React.ElementType<any> } = {
     EvStation: EvStationIcon,
     Commute: CommuteIcon,
     Stars: StarsIcon,
+    Factory: FactoryIcon,
+    FactCheck: FactCheckIcon,
 };
 
 const DashboardPage: React.FC = () => {
@@ -77,7 +80,7 @@ const DashboardPage: React.FC = () => {
         try {
             const token = localStorage.getItem('jwt_token');
             if (!token) throw new Error("Kein Authentifizierungstoken gefunden.");
-            
+
             const [widgetTypesResponse, configResponse] = await Promise.all([
                 apiClient.get('/api/widgets/types', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/dashboard/config', { headers: { 'x-auth-token': token } })
@@ -128,7 +131,7 @@ const DashboardPage: React.FC = () => {
         const updatedLayout = dashboardConfig.layout.filter(l => l.i !== widgetId);
         setDashboardConfig({ layout: updatedLayout, widgets: updatedWidgets });
     };
-    
+
     const handleAddWidget = (widgetTypeKey: string) => {
         if (!dashboardConfig) return;
         const widgetTypeMeta = availableWidgetTypes.find(wt => wt.type_key === widgetTypeKey);
@@ -136,7 +139,7 @@ const DashboardPage: React.FC = () => {
 
         const newWidgetId = `${widgetTypeMeta.type_key}-${Date.now()}`;
         const newWidgets: WidgetConfig[] = [...dashboardConfig.widgets, { id: newWidgetId, type: widgetTypeMeta.type_key }];
-        
+
         const defaultWidth = widgetTypeMeta.default_width || 4;
         const newLayoutItem: Layout = {
             i: newWidgetId,
@@ -147,65 +150,72 @@ const DashboardPage: React.FC = () => {
             minW: Math.min(widgetTypeMeta.default_min_width || 0, defaultWidth),
             minH: widgetTypeMeta.default_min_height,
         };
-        
+
         setDashboardConfig(prev => prev ? { widgets: newWidgets, layout: [...prev.layout, newLayoutItem] } : null);
         handleCloseAddWidgetMenu();
     };
 
     const renderWidgetContent = (widget: WidgetConfig) => {
-        // KORRIGIERT: Diese Logik findet nun immer die korrekten Metadaten, auch für alte, gespeicherte Widget-Typen.
-        const typeKeyMapping: { [key: string]: string } = {
-            'bp_actions': 'BusinessPartnerAktionen',
-        };
-        const correctedTypeKey = typeKeyMapping[widget.type] || widget.type;
-        const widgetTypeMeta = availableWidgetTypes.find(wt => wt.type_key === correctedTypeKey);
+        const widgetTypeMeta = availableWidgetTypes.find(wt => wt.type_key === widget.type);
 
-        const componentKey = widgetTypeMeta?.component_key || correctedTypeKey; 
+        let componentKey = widgetTypeMeta?.component_key || widget.type;
+        if (widget.type === 'bp_actions') {
+            componentKey = 'BusinessPartnerAktionen';
+        }
+
         const SpecificWidgetComponent = WidgetComponentMap[componentKey];
-        const config = widgetTypeMeta?.config || {};
-        
+
         const normalizedIconName = widgetTypeMeta?.icon_name?.replace(/icon$/i, '');
         const IconComponent = normalizedIconName && IconMap[normalizedIconName] ? IconMap[normalizedIconName] : HelpOutlineIcon;
 
-        if (!SpecificWidgetComponent) {
+        if (!SpecificWidgetComponent || !widgetTypeMeta) {
             console.error(`Unbekanntes Widget: componentKey='${componentKey}' wurde in WidgetComponentMap nicht gefunden.`);
             return <Box p={2}><Typography>Unbekanntes Widget: {widget.type}</Typography></Box>;
         }
-        
+
+        const config = widgetTypeMeta.config || {};
+        const widgetTitle = config.title || widgetTypeMeta.name;
+        const widgetCategory = config.category || '';
+        const widgetFilterLabel = config.filterLabel || null;
+
         const commonProps = {
             onDelete: handleDeleteWidget,
             widgetId: widget.id,
-            isRemovable: widgetTypeMeta?.is_removable ?? true,
-            title: widgetTypeMeta?.name || 'Widget',
+            isRemovable: widgetTypeMeta.is_removable ?? true,
         };
-        
+
         switch (componentKey) {
             case 'GenericAI':
             case 'GenericScrape':
                 return <SpecificWidgetComponent 
                             {...commonProps} 
-                            {...config}
+                            title={widgetTitle}
+                            category={widgetCategory}
+                            filterLabel={widgetFilterLabel}
+                            description={(widgetTypeMeta as any).description || ''}
                             icon={<IconComponent />}
                         />;
             
             case 'BusinessPartnerInfo':
                 return <SpecificWidgetComponent 
                             {...commonProps} 
+                            title={widgetTypeMeta.name}
                             businessPartner={businessPartner}
                             icon={<IconComponent />}
                         />;
 
             case 'EVStation':
             case 'BusinessPartnerAktionen':
-            case 'bp_actions':
                 return <SpecificWidgetComponent 
                             {...commonProps} 
+                            title={widgetTypeMeta.name}
                             icon={<IconComponent />}
                         />;
 
             default:
                 return <SpecificWidgetComponent 
                             {...commonProps} 
+                            title={widgetTypeMeta.name}
                             loading={loading} 
                             error={error} 
                             icon={<IconComponent />}
@@ -247,10 +257,8 @@ const DashboardPage: React.FC = () => {
                     draggableHandle=".widget-header"
                 >
                     {dashboardConfig.widgets.map((widget: WidgetConfig) => (
-                        <div key={widget.id}>
-                            <Paper elevation={2} sx={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', height: '100%' }}>
-                                {renderWidgetContent(widget)}
-                            </Paper>
+                        <div key={widget.id} data-grid={dashboardConfig.layout.find(l => l.i === widget.id) || {}}>
+                            {renderWidgetContent(widget)}
                         </div>
                     ))}
                 </ResponsiveGridLayout>

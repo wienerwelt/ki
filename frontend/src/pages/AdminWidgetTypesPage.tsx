@@ -40,6 +40,7 @@ interface WidgetType {
     allowed_roles: string[] | null;
     config: object | null;
     component_key: string | null;
+    install_count: number; // NEU: Anzahl der Installationen
 }
 
 interface RoleOption {
@@ -296,7 +297,7 @@ const AdminWidgetTypesPage: React.FC = () => {
                                         <TableCell sortDirection={orderBy === 'type_key' ? order : false}><TableSortLabel active={orderBy === 'type_key'} direction={order} onClick={() => handleSortRequest('type_key')}>Type Key</TableSortLabel></TableCell>
                                         <TableCell sortDirection={orderBy === 'component_key' ? order : false}><TableSortLabel active={orderBy === 'component_key'} direction={order} onClick={() => handleSortRequest('component_key')}>Component Key</TableSortLabel></TableCell>
                                         <TableCell>Beschreibung</TableCell>
-                                        <TableCell>Config</TableCell>
+                                        <TableCell sortDirection={orderBy === 'install_count' ? order : false}><TableSortLabel active={orderBy === 'install_count'} direction={order} onClick={() => handleSortRequest('install_count')}>Installiert</TableSortLabel></TableCell>
                                         <TableCell>Rollen</TableCell>
                                         <TableCell>Aktionen</TableCell>
                                     </TableRow>
@@ -311,11 +312,7 @@ const AdminWidgetTypesPage: React.FC = () => {
                                             <TableCell><code>{wt.type_key}</code></TableCell>
                                             <TableCell><code>{wt.component_key || '-'}</code></TableCell>
                                             <TableCell sx={{ maxWidth: 250 }}>{wt.description || '-'}</TableCell>
-                                            <TableCell>
-                                                <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, fontSize: '0.75rem', backgroundColor: '#f5f5f5', padding: '4px', borderRadius: '4px' }}>
-                                                    {wt.config ? JSON.stringify(wt.config, null, 2) : '-'}
-                                                </pre>
-                                            </TableCell>
+                                            <TableCell align="center">{wt.install_count}</TableCell>
                                             <TableCell>
                                                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                                                     {(wt.allowed_roles || []).map((role) => (<Chip key={role} label={role} size="small" />))}

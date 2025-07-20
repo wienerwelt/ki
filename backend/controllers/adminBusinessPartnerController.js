@@ -7,8 +7,8 @@ exports.getAllBusinessPartners = async (req, res) => {
     try {
         const result = await db.query(
             `SELECT
-                bp.id, bp.name, bp.dashboard_title, bp.address, bp.logo_url, 
-                bp.subscription_start_date, bp.subscription_end_date, bp.color_scheme_id, 
+                bp.id, bp.name, bp.dashboard_title, bp.address, bp.logo_url, bp.email,
+                bp.subscription_start_date, bp.subscription_end_date, bp.color_scheme_id,
                 bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
@@ -32,13 +32,20 @@ exports.getAllBusinessPartners = async (req, res) => {
 };
 
 // GET a single business partner by ID
+// KORREKTUR: SELECT bp.* wurde durch eine explizite Liste aller Spalten ersetzt,
+// um sicherzustellen, dass 'email' und 'url_businesspartner' immer zurückgegeben werden.
 exports.getBusinessPartnerById = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Business Partner ID format.' });
 
     try {
         const result = await db.query(
-            `SELECT bp.*, cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
+            `SELECT
+                bp.id, bp.name, bp.dashboard_title, bp.address, bp.logo_url, bp.email,
+                bp.subscription_start_date, bp.subscription_end_date, bp.color_scheme_id,
+                bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
+                bp.level_1_name, bp.level_2_name, bp.level_3_name,
+                cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
                (SELECT COALESCE(json_agg(
                    jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
                    ORDER BY bpr.is_default DESC, r.name ASC
@@ -63,11 +70,11 @@ exports.getBusinessPartnerById = async (req, res) => {
 
 // CREATE new business partner
 exports.createBusinessPartner = async (req, res) => {
-    const { 
-        name, address, logo_url, subscription_start_date, subscription_end_date, 
-        color_scheme_id, is_active, url_businesspartner, region_ids = [], 
+    const {
+        name, address, logo_url, subscription_start_date, subscription_end_date,
+        color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
-        default_region_id
+        default_region_id, email
     } = req.body;
 
     if (!name) return res.status(400).json({ message: 'Name is required.' });
@@ -75,26 +82,27 @@ exports.createBusinessPartner = async (req, res) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        
+
         const bpResult = await client.query(
             `INSERT INTO business_partners (
-                name, address, logo_url, subscription_start_date, subscription_end_date, 
+                name, address, logo_url, subscription_start_date, subscription_end_date,
                 color_scheme_id, is_active, url_businesspartner, dashboard_title,
-                level_1_name, level_2_name, level_3_name
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+                level_1_name, level_2_name, level_3_name, email
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
             [
-                name, 
-                address || null, 
-                logo_url || null, 
-                subscription_start_date || null, 
-                subscription_end_date || null, 
-                color_scheme_id || null, 
-                is_active, 
-                url_businesspartner || null, 
+                name,
+                address || null,
+                logo_url || null,
+                subscription_start_date || null,
+                subscription_end_date || null,
+                color_scheme_id || null,
+                is_active,
+                url_businesspartner || null,
                 dashboard_title || null,
-                level_1_name || null, 
-                level_2_name || null, 
-                level_3_name || null
+                level_1_name || null,
+                level_2_name || null,
+                level_3_name || null,
+                email || null
             ]
         );
         const newBp = bpResult.rows[0];
@@ -114,6 +122,9 @@ exports.createBusinessPartner = async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error creating business partner:', err.message);
+        if (err.constraint === 'business_partners_email_key') {
+            return res.status(409).json({ message: 'Ein Business Partner mit dieser E-Mail-Adresse existiert bereits.' });
+        }
         res.status(500).send('Server error');
     } finally {
         client.release();
@@ -126,11 +137,11 @@ exports.updateBusinessPartner = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
 
-    const { 
-        name, address, logo_url, subscription_start_date, subscription_end_date, 
-        color_scheme_id, is_active, url_businesspartner, region_ids = [], 
+    const {
+        name, address, logo_url, subscription_start_date, subscription_end_date,
+        color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
-        default_region_id
+        default_region_id, email
     } = req.body;
 
     const client = await db.connect();
@@ -142,12 +153,12 @@ exports.updateBusinessPartner = async (req, res) => {
                 name = $1, address = $2, logo_url = $3, subscription_start_date = $4,
                 subscription_end_date = $5, color_scheme_id = $6, is_active = $7,
                 url_businesspartner = $8, dashboard_title = $9, level_1_name = $10,
-                level_2_name = $11, level_3_name = $12, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $13 RETURNING *`,
+                level_2_name = $11, level_3_name = $12, email = $13, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $14 RETURNING *`,
             [
-                name, address || null, logo_url || null, subscription_start_date || null, subscription_end_date || null, 
-                color_scheme_id || null, is_active, url_businesspartner || null, dashboard_title || null, 
-                level_1_name || null, level_2_name || null, level_3_name || null, id
+                name, address || null, logo_url || null, subscription_start_date || null, subscription_end_date || null,
+                color_scheme_id || null, is_active, url_businesspartner || null, dashboard_title || null,
+                level_1_name || null, level_2_name || null, level_3_name || null, email || null, id
             ]
         );
         if (updatedBpResult.rows.length === 0) throw new Error('Business Partner not found.');
@@ -169,6 +180,9 @@ exports.updateBusinessPartner = async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error updating business partner:', err.message);
+        if (err.constraint === 'business_partners_email_key') {
+            return res.status(409).json({ message: 'Ein anderer Business Partner verwendet diese E-Mail-Adresse bereits.' });
+        }
         res.status(500).send('Server error');
     } finally {
         client.release();
@@ -217,15 +231,15 @@ exports.getBusinessPartnerUserStats = async (req, res) => {
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
     try {
         const statsQuery = `
-            SELECT 
-                is_active, 
-                COUNT(*) as count 
-            FROM users 
-            WHERE business_partner_id = $1 
+            SELECT
+                is_active,
+                COUNT(*) as count
+            FROM users
+            WHERE business_partner_id = $1
             GROUP BY is_active;
         `;
         const result = await db.query(statsQuery, [id]);
-        
+
         const stats = {
             active: 0,
             inactive: 0

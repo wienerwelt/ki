@@ -3,10 +3,32 @@ const db = require('../config/db');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
-// GET all widget types
+// GET all widget types with installation count
 exports.getAllWidgetTypes = async (req, res) => {
     try {
-        const result = await db.query('SELECT * FROM widget_types ORDER BY name ASC');
+        // KORREKTUR: Der Tabellenname wurde von 'dashboard_configs' auf 'dashboard_configurations' geändert.
+        const query = `
+            SELECT
+                wt.*,
+                COALESCE(counts.install_count, 0)::integer AS install_count
+            FROM
+                widget_types wt
+            LEFT JOIN (
+                SELECT
+                    (widget->>'type') AS type_key,
+                    COUNT(*) AS install_count
+                FROM
+                    dashboard_configurations,
+                    jsonb_array_elements(config->'widgets') AS widget
+                WHERE
+                    jsonb_typeof(config->'widgets') = 'array' AND (widget->>'type') IS NOT NULL
+                GROUP BY
+                    type_key
+            ) AS counts ON wt.type_key = counts.type_key
+            ORDER BY
+                wt.name ASC;
+        `;
+        const result = await db.query(query);
         res.json(result.rows);
     } catch (err) {
         console.error('Error fetching all widget types:', err.message);
@@ -55,8 +77,7 @@ exports.createWidgetType = async (req, res) => {
     }
 };
 
-// KORRIGIERT: Diese Funktion baut die UPDATE-Anweisung jetzt dynamisch auf.
-// So werden nur die Felder aktualisiert, die auch wirklich im Request Body vorhanden sind.
+// Diese Funktion baut die UPDATE-Anweisung dynamisch auf.
 exports.updateWidgetType = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) {

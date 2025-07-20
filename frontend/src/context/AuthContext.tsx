@@ -22,6 +22,7 @@ interface UserPayload {
     business_partner_name: string | null;
     dashboard_title: string | null;
     regions: Region[] | null;
+    contribution_score: number;
 }
 
 interface DecodedToken {

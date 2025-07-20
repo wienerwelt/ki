@@ -18,7 +18,9 @@ import TagIcon from '@mui/icons-material/Tag';
 import MonitorIcon from '@mui/icons-material/Monitor';
 import QueryStatsIcon from '@mui/icons-material/QueryStats';
 import CampaignIcon from '@mui/icons-material/Campaign';
-import StarsIcon from '@mui/icons-material/Stars'; // NEU: Icon für Aktionen
+import StarsIcon from '@mui/icons-material/Stars';
+import ScheduleIcon from '@mui/icons-material/Schedule';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
 
 
 const AdminDashboardPage: React.FC = () => {
@@ -33,6 +35,16 @@ const AdminDashboardPage: React.FC = () => {
                 </Typography>
 
                 <Grid container spacing={3}>
+                    {/* NEUE KACHEL FÜR CRONJOBS */}
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <ScheduleIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
+                            <Typography variant="h6" component="h2" gutterBottom>Autom. Aufgaben</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Zentrale Verwaltung aller Cronjobs (KI, Scraping, E-Mails).</Typography>
+                            <Button component={Link} to="/admin/cronjobs" variant="contained" color="primary">Verwalten</Button>
+                        </Paper>
+                    </Grid>
+
                     {/* --- Stammdaten & Benutzer --- */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
@@ -106,7 +118,16 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/ai-prompt-rules" variant="contained" color="info">Verwalten</Button>
                         </Paper>
                     </Grid>
-                    
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <FactCheckIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
+                            <Typography variant="h6" component="h2" gutterBottom>Vertrauensw. Quellen</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
+                                Von Nutzern eingereichte Quellen prüfen und verwalten.
+                            </Typography>
+                            <Button component={Link} to="/admin/sources" variant="contained" color="success">Verwalten</Button>
+                        </Paper>
+                    </Grid>                                        
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <DataObjectIcon sx={{ fontSize: 60, mb: 2 }} color="warning" />

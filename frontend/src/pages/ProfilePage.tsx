@@ -16,6 +16,9 @@ const ProfilePage: React.FC = () => {
     const [linkedinUrl, setLinkedinUrl] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [articleScoreMin, setArticleScoreMin] = useState<number | ''>('');
+    const [articleScoreMax, setArticleScoreMax] = useState<number | ''>('');
+
 
     // Read-only States
     const [email, setEmail] = useState('');
@@ -38,6 +41,8 @@ const ProfilePage: React.FC = () => {
                 setEmail(profile.email);
                 setRole(profile.role);
                 setMembershipLevel(profile.membership_level || 'Kein Level');
+                setArticleScoreMin(profile.article_score_min ?? '');
+                setArticleScoreMax(profile.article_score_max ?? '');
             } catch (err: any) {
                 setError(err.response?.data?.message || 'Fehler beim Laden des Profils.');
             } finally {
@@ -65,6 +70,8 @@ const ProfilePage: React.FC = () => {
                 organization_name: organizationName,
                 linkedin_url: linkedinUrl,
                 password: password || undefined, // Sende Passwort nur, wenn es nicht leer ist
+                article_score_min: articleScoreMin === '' ? null : Number(articleScoreMin),
+                article_score_max: articleScoreMax === '' ? null : Number(articleScoreMax),
             };
             await apiClient.put('/api/users/me', profileData, {
                 headers: { 'x-auth-token': token }
@@ -101,6 +108,40 @@ const ProfilePage: React.FC = () => {
                         <Grid item xs={12}>
                             <TextField label="LinkedIn Profil URL" fullWidth value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} />
                         </Grid>
+
+                        <Grid item xs={12}>
+                            <Typography variant="h6" sx={{ mt: 2 }}>Dashboard-Einstellungen</Typography>
+                        </Grid>
+                        <Grid item xs={12}>
+                           <Typography variant="body2" color="text.secondary" gutterBottom>
+                                Zeige mir nur Artikel mit einem Score im folgenden Bereich an. Leere Felder bedeuten keine Einschränkung.
+                           </Typography>
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                            <TextField
+                                type="number"
+                                label="Score größer als"
+                                fullWidth
+                                value={articleScoreMin}
+                                onChange={(e) => setArticleScoreMin(e.target.value === '' ? '' : Number(e.target.value))}
+                                InputLabelProps={{
+                                    shrink: true,
+                                }}
+                            />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                            <TextField
+                                type="number"
+                                label="Score kleiner als"
+                                fullWidth
+                                value={articleScoreMax}
+                                onChange={(e) => setArticleScoreMax(e.target.value === '' ? '' : Number(e.target.value))}
+                                InputLabelProps={{
+                                    shrink: true,
+                                }}
+                            />
+                        </Grid>
+
                         <Grid item xs={12}>
                             <Typography variant="h6" sx={{ mt: 2 }}>Kontoinformationen</Typography>
                         </Grid>

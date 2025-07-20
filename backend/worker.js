@@ -1,13 +1,14 @@
 // backend/worker.js
 
-// NEU: Lade die Umgebungsvariablen aus der .env-Datei.
+// Lade die Umgebungsvariablen aus der .env-Datei.
 // Diese Zeile muss ganz am Anfang stehen!
 require('dotenv').config();
 
 const { Worker } = require('bullmq');
 const { connection } = require('./services/queueService');
 const { generateAndSaveContentForManualJob } = require('./controllers/adminAIPromptRulesController');
-const { processSubscription } = require('./services/intelligentContentService');
+// NEU: Importiere beide Verarbeitungsfunktionen aus dem intelligentContentService
+const { processSubscription, processSystemSubscription } = require('./services/intelligentContentService');
 
 console.log('Worker-Prozess startet...');
 
@@ -17,14 +18,22 @@ const worker = new Worker('ai-content-generation', async (job) => {
     
     // Unterscheide zwischen verschiedenen Job-Typen
     if (job.name === 'manual-generation') {
-        // Job kommt von der Admin-Seite
+        // Job kommt von der Admin-Seite "KI Prompt-Regeln" -> "Einmalig generieren"
         const { jobId, ruleToExecute, inputText, region, categoryName, categoryId, focus_page, userId } = job.data;
         await generateAndSaveContentForManualJob(jobId, ruleToExecute, inputText, region, categoryName, categoryId, focus_page, userId);
+    
     } else if (job.name === 'subscription-processing') {
-        // Job kommt von der automatischen Abo-Verarbeitung
+        // Job kommt von einem Nutzer-Abonnement (geplant oder manuell gestartet)
         const { subscription } = job.data;
         await processSubscription(subscription);
+
+    } else if (job.name === 'system-job-processing') {
+        // NEU: Job kommt von einem redaktionellen System-Abonnement
+        const { systemSubscription } = job.data;
+        await processSystemSubscription(systemSubscription);
+
     } else {
+        // Fallback für unbekannte Job-Typen
         throw new Error(`Unbekannter Job-Typ: ${job.name}`);
     }
 }, { 

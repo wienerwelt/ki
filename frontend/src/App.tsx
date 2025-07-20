@@ -29,8 +29,11 @@ import AdminTagsPage from './pages/AdminTagsPage';
 import AdminMonitorPage from './pages/AdminMonitorPage';
 import AdminStatisticsPage from './pages/AdminStatisticsPage';
 import AdminAdvertisementsPage from './pages/AdminAdvertisementsPage';
-// NEU: Import für die Aktionen-Seite
 import AdminBpActionsPage from './pages/AdminBpActionsPage';
+import AdminCronjobsPage from './pages/AdminCronjobsPage';
+import AdminSourcesPage from './pages/AdminSourcesPage';
+import TrustedSourcesPage from './pages/TrustedSourcesPage';
+
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
@@ -89,12 +92,12 @@ function App() {
                     <Route element={<ProtectedRoutes />}>
                         <Route path="/dashboard" element={<DashboardPage />} />
                         <Route path="/profile" element={<ProfilePage />} />
+                        <Route path="/trusted-sources" element={<TrustedSourcesPage />} />                        
                         
                         {/* Routen für Admins und Assistenten */}
                         <Route element={<BpStaffAllowedRoutes />}>
                             <Route path="/admin/users" element={<AdminUserManagementPage />} />
                             <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
-                            {/* NEU: Route für die Aktionen-Seite */}
                             <Route path="/admin/actions" element={<AdminBpActionsPage />} />
                         </Route>
 
@@ -114,6 +117,8 @@ function App() {
                             <Route path="monitor" element={<AdminMonitorPage />} />
                             <Route path="statistics" element={<AdminStatisticsPage />} />
                             <Route path="advertisements" element={<AdminAdvertisementsPage />} />
+                            <Route path="cronjobs" element={<AdminCronjobsPage />} />
+                            <Route path="sources" element={<AdminSourcesPage />} />                            
                         </Route>
                     </Route>
                     

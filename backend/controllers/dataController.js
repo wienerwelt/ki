@@ -1,6 +1,7 @@
 // backend/controllers/dataController.js
 const axios = require('axios');
 const db = require('../config/db');
+const { sendEmail } = require('../services/emailService');
 const FUEL_PRICE_API_KEY = process.env.FUEL_PRICE_API_KEY;
 const FUEL_PRICE_API_URL = process.env.FUEL_PRICE_API_URL;
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
@@ -175,7 +176,7 @@ exports.getTrafficInfo = async (req, res) => {
                 paramIndex++;
             }
         }
-        
+
         if (whereClauses.length > 0) {
             query += ` WHERE ${whereClauses.join(' AND ')}`;
         }
@@ -193,7 +194,7 @@ exports.getTrafficInfo = async (req, res) => {
                 ...row,
                 published_at: row.published_at ? row.published_at.toISOString() : null,
                 link: row.link || '#',
-                relevance_score: 0 
+                relevance_score: 0
             })),
         });
     } catch (err) {
@@ -232,15 +233,15 @@ exports.getBpScrapedContent = async (req, res) => {
     }
 
     const sourceIdentifier = `${businessPartnerId}_${category}`;
-    
-    const orderByClause = category === 'events' 
-        ? 'ORDER BY sc.event_date DESC, sc.scraped_at DESC' 
+
+    const orderByClause = category === 'events'
+        ? 'ORDER BY sc.event_date DESC, sc.scraped_at DESC'
         : 'ORDER BY sc.published_date DESC, sc.scraped_at DESC';
 
     try {
         const query = `
-            SELECT 
-                sc.id, sc.title, sc.summary, sc.original_url, sc.published_date, 
+            SELECT
+                sc.id, sc.title, sc.summary, sc.original_url, sc.published_date,
                 sc.event_date, sc.category, sc.scraped_at, sc.region, sc.relevance_score,
                 COALESCE(crv.vote, 0) as user_vote
             FROM scraped_content sc
@@ -282,17 +283,17 @@ exports.getVignettePrices = async (req, res) => {
     try {
         const query = `
             SELECT country_name, year, price, currency_code, vignette_requirement_car, toll_system_truck, provider_url
-            FROM vignette_prices 
+            FROM vignette_prices
             WHERE country_code = $1 AND (year IN ($2, $3) OR year = 2025)
             ORDER BY year ASC
         `;
-        
+
         const result = await db.query(query, [country, currentYear, previousYear]);
-        
+
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Keine Daten für dieses Land gefunden.' });
         }
-        
+
         const rows = result.rows;
         const infoRow = rows[0];
 
@@ -309,7 +310,7 @@ exports.getVignettePrices = async (req, res) => {
                     currency: row.currency_code
                 }))
         };
-        
+
         res.json(responseData);
 
     } catch (err) {
@@ -337,28 +338,28 @@ exports.voteOnContent = async (req, res) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        
+
         const currentVoteRes = await client.query(`SELECT vote FROM ${voteTable} WHERE user_id = $1 AND ${contentIdColumn} = $2`, [userId, contentId]);
         const currentVote = currentVoteRes.rows.length > 0 ? currentVoteRes.rows[0].vote : 0;
-        
+
         let newVote = vote;
         if (currentVote === vote) {
             newVote = 0;
         }
 
         const voteQuery = `
-            INSERT INTO ${voteTable} (user_id, ${contentIdColumn}, vote) VALUES ($1, $2, $3) 
+            INSERT INTO ${voteTable} (user_id, ${contentIdColumn}, vote) VALUES ($1, $2, $3)
             ON CONFLICT (user_id, ${contentIdColumn}) DO UPDATE SET vote = $3;
         `;
         await client.query(voteQuery, [userId, contentId, newVote]);
-        
+
         const scoreQuery = `SELECT SUM(vote) as new_score FROM ${voteTable} WHERE ${contentIdColumn} = $1`;
         const scoreResult = await client.query(scoreQuery, [contentId]);
         const newScore = parseInt(scoreResult.rows[0].new_score || 0, 10);
-        
+
         const updateScoreQuery = `UPDATE ${contentTable} SET relevance_score = $1 WHERE id = $2 RETURNING relevance_score;`;
         const finalResult = await client.query(updateScoreQuery, [newScore, contentId]);
-        
+
         await client.query('COMMIT');
         res.status(200).json(finalResult.rows[0]);
     } catch (err) {
@@ -398,12 +399,12 @@ exports.generateEmailFromContent = async (req, res) => {
     // Hier wird der externe KI-Dienst aufgerufen.
     // WICHTIG: Ersetzen Sie dies durch Ihren tatsächlichen KI-Service-Aufruf (z.B. OpenAI, Google Gemini, etc.)
     // Die folgende Implementierung simuliert den Aufruf und gibt eine strukturierte Antwort zurück.
-    
+
     const prompt = `
         Erstelle einen E-Mail-Newsletter für die Fahrer eines Fuhrparks.
         Der Absender ist der Fuhrparkleiter "${userName}".
         Das Thema ist: "${title}".
-        
+
         Der Inhalt, der zusammengefasst und erklärt werden soll, lautet:
         ---
         ${content}
@@ -442,6 +443,51 @@ exports.generateEmailFromContent = async (req, res) => {
 };
 
 
+exports.shareContentByEmail = async (req, res) => {
+    const { title, summary, source, recipientEmail } = req.body;
+    const { name: senderName, business_partner_id } = req.user;
+
+    if (!title || !summary || !recipientEmail) {
+        return res.status(400).json({ message: 'Titel, Inhalt und Empfänger-E-Mail sind erforderlich.' });
+    }
+
+    try {
+        let fromName = 'KI-Dashboard';
+        if (business_partner_id) {
+            const bpResult = await db.query('SELECT dashboard_title FROM business_partners WHERE id = $1', [business_partner_id]);
+            if (bpResult.rows.length > 0 && bpResult.rows[0].dashboard_title) {
+                fromName = bpResult.rows[0].dashboard_title;
+            }
+        }
+
+        const subject = `Info von ${fromName}: ${title}`;
+        const htmlBody = `
+            <p>Hallo,</p>
+            <p><strong>${senderName}</strong> hat folgende Information mit Ihnen geteilt:</p>
+            <hr>
+            <h3>${title}</h3>
+            <p>${summary}</p>
+            ${source ? `<p>Weitere Details finden Sie in der Originalquelle: <a href="${source}">${source}</a></p>` : ''}
+            <hr>
+            <p style="font-size: 0.8em; color: #777;"><em>Diese E-Mail wurde automatisch von "${fromName}" versendet.</em></p>
+        `;
+
+        await sendEmail({
+            to: recipientEmail,
+            subject: subject,
+            html: htmlBody,
+            fromName: fromName,
+        });
+
+        res.status(200).json({ message: `Information erfolgreich an ${recipientEmail} gesendet.` });
+
+    } catch (error) {
+        console.error('Fehler bei der "Teilen"-Funktion:', error);
+        res.status(500).json({ message: error.message || 'Der Inhalt konnte nicht geteilt werden.' });
+    }
+};
+
+
 exports.getBusinessPartnerUserStatsForUser = async (req, res) => {
     const { bpId } = req.params;
     const { role: requesterRole, business_partner_id: requesterBpId } = req.user;
@@ -455,13 +501,13 @@ exports.getBusinessPartnerUserStatsForUser = async (req, res) => {
 
     try {
         const statsQuery = `
-            SELECT is_active, COUNT(*) as count 
-            FROM users 
-            WHERE business_partner_id = $1 
+            SELECT is_active, COUNT(*) as count
+            FROM users
+            WHERE business_partner_id = $1
             GROUP BY is_active;
         `;
         const result = await db.query(statsQuery, [bpId]);
-        
+
         const stats = { active: 0, inactive: 0 };
         result.rows.forEach(row => {
             if (row.is_active) {
@@ -501,8 +547,7 @@ exports.getCategoriesForUser = async (req, res) => {
 
 exports.getAiContent = async (req, res) => {
     const { id: userId, last_login_at: lastLogin } = req.user;
-    // NEU: Suchparameter wird aus der Anfrage ausgelesen
-    const { category, region, page = 1, limit = 5, search } = req.query; 
+    const { category, region, page = 1, limit = 5, search } = req.query;
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
     if (!category) {
@@ -510,6 +555,13 @@ exports.getAiContent = async (req, res) => {
     }
 
     try {
+        // KORREKTUR: Lädt die aktuellen Benutzereinstellungen direkt aus der DB, um veraltete JWT-Daten zu umgehen.
+        const userSettingsResult = await db.query(
+            'SELECT article_score_min, article_score_max FROM users WHERE id = $1',
+            [userId]
+        );
+        const { article_score_min, article_score_max } = userSettingsResult.rows[0] || {};
+        
         const categoryResult = await db.query("SELECT id FROM categories WHERE name = $1 LIMIT 1", [category]);
         if (categoryResult.rows.length === 0) {
             return res.json({ data: [], counts: { unread: 0, new: 0 }, totalPages: 0 });
@@ -525,14 +577,23 @@ exports.getAiContent = async (req, res) => {
             baseQuery += ` AND region = $${paramIndex++}`;
             queryParams.push(region);
         }
-        
-        // NEU: Wenn ein Suchbegriff vorhanden ist, wird die Query erweitert
+
         if (search) {
             baseQuery += ` AND (title ILIKE $${paramIndex} OR generated_output ILIKE $${paramIndex})`;
-            queryParams.push(`%${search}%`); // Umgibt den Suchbegriff mit % für die Teilstring-Suche
+            queryParams.push(`%${search}%`);
             paramIndex++;
         }
-        
+
+        // Score-Filter aus den frisch geladenen Benutzereinstellungen anwenden
+        if (article_score_min !== null && typeof article_score_min !== 'undefined') {
+            baseQuery += ` AND relevance_score >= $${paramIndex++}`;
+            queryParams.push(article_score_min);
+        }
+        if (article_score_max !== null && typeof article_score_max !== 'undefined') {
+            baseQuery += ` AND relevance_score <= $${paramIndex++}`;
+            queryParams.push(article_score_max);
+        }
+
         // Gesamtzahl der Artikel für die Paginierung ermitteln (berücksichtigt jetzt den Filter)
         const countQuery = `SELECT COUNT(DISTINCT id) as total_items ${baseQuery}`;
         const totalResult = await db.query(countQuery, queryParams);
@@ -545,7 +606,7 @@ exports.getAiContent = async (req, res) => {
                 SELECT id, created_at, user_id
                 ${baseQuery}
             )
-            SELECT 
+            SELECT
                 (SELECT COUNT(*) FROM all_content ac WHERE NOT EXISTS (SELECT 1 FROM user_read_ai_content urac WHERE urac.ai_content_id = ac.id AND urac.user_id = $${paramIndex})) as unread_count,
                 (SELECT COUNT(*) FROM all_content WHERE created_at > $${paramIndex + 1}) as new_count
         `;
@@ -558,7 +619,7 @@ exports.getAiContent = async (req, res) => {
 
         // Daten für die aktuelle Seite abrufen (berücksichtigt jetzt den Filter)
         const dataQuery = `
-            SELECT 
+            SELECT
                 id, title, generated_output as summary, source_reference as original_url,
                 created_at as published_date, relevance_score,
                 CASE
@@ -579,7 +640,7 @@ exports.getAiContent = async (req, res) => {
         `;
         const dataParams = [...queryParams, userId, parseInt(limit, 10), offset];
         const result = await db.query(dataQuery, dataParams);
-        
+
         res.json({
             source: `Intelligenter Feed für: ${category}`,
             timestamp: new Date().toISOString(),
@@ -651,42 +712,99 @@ exports.getEVStations = async (req, res) => {
     }
 };
 
+exports.getTagsForCategory = async (req, res) => {
+    const { category, mainFilter } = req.query;
+
+    if (!category) {
+        return res.status(400).json({ message: 'Eine Kategorie ist erforderlich.' });
+    }
+
+    try {
+        let query;
+        const queryParams = [category];
+        
+        // Wenn ein Hauptfilter gesetzt ist, werden nur "Sub-Tags" gezählt.
+        if (mainFilter) {
+            queryParams.push(mainFilter);
+            query = `
+                SELECT
+                    t.name,
+                    COUNT(sct.scraped_content_id)::integer as count
+                FROM
+                    tags t
+                JOIN
+                    scraped_content_tags sct ON t.id = sct.tag_id
+                WHERE
+                    sct.scraped_content_id IN (
+                        SELECT sc.id
+                        FROM scraped_content sc
+                        JOIN scraped_content_tags sct_main ON sc.id = sct_main.scraped_content_id
+                        JOIN tags t_main ON sct_main.tag_id = t_main.id
+                        WHERE sc.category ILIKE $1 AND t_main.name = $2
+                    )
+                    AND t.name != $2
+                GROUP BY t.name
+                ORDER BY count DESC, t.name ASC;
+            `;
+        } else {
+            // Ohne Hauptfilter werden alle Tags der Kategorie gezählt.
+            query = `
+                SELECT
+                    t.name,
+                    COUNT(sct.scraped_content_id)::integer as count
+                FROM tags t
+                JOIN scraped_content_tags sct ON t.id = sct.tag_id
+                JOIN scraped_content sc ON sct.scraped_content_id = sc.id
+                WHERE sc.category ILIKE $1
+                GROUP BY t.name
+                ORDER BY count DESC, t.name ASC;
+            `;
+        }
+        
+        const result = await db.query(query, queryParams);
+        const tags = result.rows.map(row => ({ name: row.name, count: row.count }));
+        res.json(tags);
+    } catch (err) {
+        console.error(`Error fetching tags for category ${category}:`, err.message);
+        res.status(500).json({ message: 'Fehler beim Abrufen der Tags.' });
+    }
+};
+
+
 exports.getScrapedContent = async (req, res) => {
-    // NEU: Business Partner ID wird aus den Benutzerdaten extrahiert
     const { id: userId, last_login_at: lastLogin, business_partner_id: businessPartnerId } = req.user;
     const {
-        page = 1,
-        limit = 10,
-        sortBy = 'date', // 'date' oder 'relevance'
-        category,
-        region,
-        search
+        page = 1, limit = 10, sortBy = 'date', category, region, search,
+        tag, // Das ist der "Sub-Tag" aus dem Dropdown
+        mainFilter // NEU: Der Hauptfilter aus der Widget-Config
     } = req.query;
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
     try {
+        const userSettingsResult = await db.query(
+            'SELECT article_score_min, article_score_max FROM users WHERE id = $1',
+            [userId]
+        );
+        const { article_score_min, article_score_max } = userSettingsResult.rows[0] || {};
+        
         const queryParams = [];
         let whereClauses = [];
         let paramIndex = 1;
 
         if (category) {
-            // NEU: Logik zur Handhabung von Business-Partner-spezifischen Kategorien
             if (category === 'businesspartner_news' || category === 'businesspartner_events') {
                 if (!businessPartnerId) {
-                    // Wenn der Benutzer keinem BP zugeordnet ist, kann er keine BP-spezifischen Inhalte sehen.
                     return res.json({ data: [], totalPages: 0, counts: { unread: 0, new: 0 } });
                 }
-                // Erstellt den erwarteten source_identifier, z.B. 'uuid-1234_news'
                 const sourceIdentifier = `${businessPartnerId}_${category.split('_')[1]}`;
                 whereClauses.push(`sc.source_identifier = $${paramIndex++}`);
                 queryParams.push(sourceIdentifier);
             } else {
-                // Standard-Filterung für alle anderen Kategorien
                 whereClauses.push(`sc.category = $${paramIndex++}`);
                 queryParams.push(category);
             }
         }
-        
+
         if (region && region !== 'all') {
             whereClauses.push(`sc.region = $${paramIndex++}`);
             queryParams.push(region);
@@ -697,9 +815,37 @@ exports.getScrapedContent = async (req, res) => {
             queryParams.push(`%${search}%`);
             paramIndex++;
         }
+        
+        if (mainFilter) {
+            whereClauses.push(`EXISTS (
+                SELECT 1 FROM scraped_content_tags sct
+                JOIN tags t ON sct.tag_id = t.id
+                WHERE sct.scraped_content_id = sc.id AND t.name = $${paramIndex}
+            )`);
+            queryParams.push(mainFilter);
+            paramIndex++;
+        }
+        
+        if (tag && tag !== 'all') {
+            whereClauses.push(`EXISTS (
+                SELECT 1 FROM scraped_content_tags sct
+                JOIN tags t ON sct.tag_id = t.id
+                WHERE sct.scraped_content_id = sc.id AND t.name = $${paramIndex}
+            )`);
+            queryParams.push(tag);
+            paramIndex++;
+        }
+
+        if (article_score_min !== null && typeof article_score_min !== 'undefined') {
+            whereClauses.push(`sc.relevance_score >= $${paramIndex++}`);
+            queryParams.push(article_score_min);
+        }
+        if (article_score_max !== null && typeof article_score_max !== 'undefined') {
+            whereClauses.push(`sc.relevance_score <= $${paramIndex++}`);
+            queryParams.push(article_score_max);
+        }
 
         const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-        
         const baseQuery = `FROM scraped_content sc ${whereString}`;
 
         const countQuery = `SELECT COUNT(*) as total_items ${baseQuery}`;
@@ -707,13 +853,12 @@ exports.getScrapedContent = async (req, res) => {
         const totalItems = parseInt(totalResult.rows[0].total_items, 10);
         const totalPages = Math.ceil(totalItems / limit);
 
-        // Zählung für "ungelesen" und "neu"
         const countsQuery = `
             WITH filtered_content AS (
                 SELECT id, scraped_at
                 ${baseQuery}
             )
-            SELECT 
+            SELECT
                 (SELECT COUNT(*) FROM filtered_content fc WHERE NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = fc.id AND ursc.user_id = $${paramIndex})) as unread_count,
                 (SELECT COUNT(*) FROM filtered_content WHERE scraped_at > $${paramIndex + 1}) as new_count
         `;
@@ -734,7 +879,7 @@ exports.getScrapedContent = async (req, res) => {
                 sc.id, sc.title, sc.summary, sc.original_url, sc.published_date,
                 sc.event_date, sc.category, sc.scraped_at, sc.relevance_score, sc.region,
                 EXISTS (
-                    SELECT 1 FROM user_read_scraped_content ursc 
+                    SELECT 1 FROM user_read_scraped_content ursc
                     WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex}
                 ) as is_read,
                 COALESCE(crv.vote, 0) as user_vote
@@ -754,7 +899,7 @@ exports.getScrapedContent = async (req, res) => {
             data: result.rows,
             totalPages: totalPages,
             currentPage: parseInt(page, 10),
-            counts: counts, // Zählungen hinzufügen
+            counts: counts,
         });
 
     } catch (err) {
@@ -790,12 +935,12 @@ exports.getActiveAdvertisement = async (req, res) => {
         // 2. Wenn nicht gefunden, eine globale Anzeige, die jetzt aktiv ist.
         const query = `
             SELECT content, id FROM advertisements
-            WHERE 
+            WHERE
                 is_active = TRUE AND
                 (start_date IS NULL OR start_date <= NOW()) AND
                 (end_date IS NULL OR end_date >= NOW()) AND
                 (business_partner_id = $1 OR business_partner_id IS NULL)
-            ORDER BY 
+            ORDER BY
                 business_partner_id DESC NULLS LAST -- Spezifische Anzeigen vor globalen
             LIMIT 1;
         `;
@@ -827,8 +972,8 @@ exports.getActiveActionsForWidget = async (req, res) => {
         // Basis-Query, die nur die notwendigen Spalten abfragt
         const baseQuery = `
             FROM business_partner_actions
-            WHERE 
-                business_partner_id = $1 AND 
+            WHERE
+                business_partner_id = $1 AND
                 is_active = TRUE AND
                 (start_date IS NULL OR start_date <= $2) AND
                 (end_date IS NULL OR end_date >= $2)
@@ -855,7 +1000,7 @@ exports.getActiveActionsForWidget = async (req, res) => {
         const newQuery = `SELECT COUNT(*) FROM business_partner_actions WHERE business_partner_id = $1 AND is_active = TRUE AND created_at >= NOW() - INTERVAL '3 days'`;
         const newResult = await db.query(newQuery, [business_partner_id]);
         const counts = { new: parseInt(newResult.rows[0].count, 10) || 0 };
-        
+
         res.json({ data: dataResult.rows, totalPages, counts });
 
     } catch (err) {
@@ -867,4 +1012,4 @@ exports.getActiveActionsForWidget = async (req, res) => {
         console.error('----------------------------------------------------');
         res.status(500).send('Serverfehler beim Abrufen der Aktionen.');
     }
-};
+}

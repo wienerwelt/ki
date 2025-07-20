@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { 
-    Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
-    TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
+import {
+    Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
+    TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
     TextField, MenuItem, Switch, FormControlLabel, Tooltip as MuiTooltip, TableSortLabel, InputAdornment, Chip,
     Tabs, Tab, Grid
 } from '@mui/material';
@@ -20,7 +20,7 @@ import apiClient from '../apiClient';
 interface Region {
     id: string;
     name: string;
-    is_default?: boolean; // NEU
+    is_default?: boolean;
 }
 
 interface BusinessPartner {
@@ -28,6 +28,7 @@ interface BusinessPartner {
     name: string;
     dashboard_title: string | null;
     address: string | null;
+    email: string | null;
     logo_url: string | null;
     subscription_start_date: string;
     subscription_end_date: string;
@@ -94,12 +95,13 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [formName, setFormName] = useState('');
     const [formDashboardTitle, setFormDashboardTitle] = useState('');
     const [formAddress, setFormAddress] = useState('');
+    const [formEmail, setFormEmail] = useState('');
     const [formLogoUrl, setFormLogoUrl] = useState('');
     const [formSubscriptionStartDate, setFormSubscriptionStartDate] = useState('');
     const [formSubscriptionEndDate, setFormSubscriptionEndDate] = useState('');
     const [formColorSchemeId, setFormColorSchemeId] = useState<string | null>('');
     const [formRegionIds, setFormRegionIds] = useState<string[]>([]);
-    const [formDefaultRegionId, setFormDefaultRegionId] = useState<string | null>(null); // NEU
+    const [formDefaultRegionId, setFormDefaultRegionId] = useState<string | null>(null);
     const [formIsActive, setFormIsActive] = useState(true);
     const [formUrlBusinessPartner, setFormUrlBusinessPartner] = useState('');
     const [formLevel1Name, setFormLevel1Name] = useState('');
@@ -137,12 +139,13 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setFormName('');
         setFormDashboardTitle('');
         setFormAddress('');
+        setFormEmail('');
         setFormLogoUrl('');
         setFormSubscriptionStartDate('');
         setFormSubscriptionEndDate('');
         setFormColorSchemeId('');
         setFormRegionIds([]);
-        setFormDefaultRegionId(null); // NEU
+        setFormDefaultRegionId(null);
         setFormIsActive(true);
         setFormUrlBusinessPartner('');
         setFormLevel1Name('');
@@ -156,13 +159,13 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setFormName(bp.name);
         setFormDashboardTitle(bp.dashboard_title || '');
         setFormAddress(bp.address || '');
+        setFormEmail(bp.email || '');
         setFormLogoUrl(bp.logo_url || '');
         setFormSubscriptionStartDate(bp.subscription_start_date ? bp.subscription_start_date.split('T')[0] : '');
         setFormSubscriptionEndDate(bp.subscription_end_date ? bp.subscription_end_date.split('T')[0] : '');
         setFormColorSchemeId(bp.color_scheme_id || '');
         setFormRegionIds(bp.regions.map(r => r.id));
-        
-        // NEU: Standard-Region setzen
+
         const defaultRegion = bp.regions.find(r => r.is_default);
         setFormDefaultRegionId(defaultRegion?.id || bp.regions[0]?.id || null);
 
@@ -186,12 +189,13 @@ const AdminBusinessPartnersPage: React.FC = () => {
             name: formName,
             dashboard_title: formDashboardTitle || null,
             address: formAddress || null,
+            email: formEmail || null,
             logo_url: formLogoUrl || null,
             subscription_start_date: formSubscriptionStartDate,
             subscription_end_date: formSubscriptionEndDate,
             color_scheme_id: formColorSchemeId || null,
             region_ids: formRegionIds,
-            default_region_id: formDefaultRegionId, // NEU
+            default_region_id: formDefaultRegionId,
             is_active: formIsActive,
             url_businesspartner: formUrlBusinessPartner || null,
             level_1_name: formLevel1Name || null,
@@ -211,7 +215,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
             setError(err.response?.data?.message || 'Fehler beim Speichern.');
         }
     };
-    
+
     const handleDelete = async (id: string) => {
         if (!window.confirm('Sind Sie sicher?')) return;
         try {
@@ -226,7 +230,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const handleViewUsers = (bpId: string, bpName: string) => {
         navigate(`/admin/users/${bpId}`, { state: { businessPartnerName: bpName } });
     };
-    
+
     const handleWidgetAccess = (bpId: string, bpName: string) => {
         navigate(`/admin/bp-widget-access/${bpId}`, { state: { businessPartnerName: bpName } });
     };
@@ -239,7 +243,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
 
     const sortedAndFilteredPartners = useMemo(() => {
         let filtered = [...businessPartners];
-        
+
         if (statusFilter !== 'all') {
             filtered = filtered.filter(bp => bp.is_active === (statusFilter === 'active'));
         }
@@ -249,12 +253,13 @@ const AdminBusinessPartnersPage: React.FC = () => {
             filtered = filtered.filter(bp =>
                 bp.name.toLowerCase().includes(lowercasedFilter) ||
                 (bp.address?.toLowerCase() || '').includes(lowercasedFilter) ||
+                (bp.email?.toLowerCase() || '').includes(lowercasedFilter) ||
                 (bp.regions.some(r => r.name.toLowerCase().includes(lowercasedFilter)))
             );
         }
         return filtered.sort(getComparator(order, orderBy));
     }, [businessPartners, searchTerm, order, orderBy, statusFilter]);
-    
+
     const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('de-AT');
 
     const getDaysRemaining = (endDateString: string | null): { text: string; color: string } => {
@@ -276,7 +281,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
                     <Typography variant="h4" component="h1">Business Partner</Typography>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }}/>
+                        <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }} />
                         <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenAddDialog}>Hinzufügen</Button>
                     </Box>
                 </Box>
@@ -289,8 +294,8 @@ const AdminBusinessPartnersPage: React.FC = () => {
                     </Tabs>
                 </Box>
 
-                {loading ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box> 
-                : error ? <Alert severity="error">{error}</Alert> 
+                {loading ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box>
+                : error ? <Alert severity="error">{error}</Alert>
                 : (
                     <Paper>
                         <TableContainer>
@@ -298,7 +303,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                 <TableHead>
                                     <TableRow>
                                         <TableCell>Logo</TableCell>
-                                        <TableCell sortDirection={orderBy === 'name' ? order : false} sx={{ width: '25%' }}><TableSortLabel active={orderBy === 'name'} direction={order} onClick={() => handleSortRequest('name')}>Name</TableSortLabel></TableCell>
+                                        <TableCell sortDirection={orderBy === 'name' ? order : false} sx={{ width: '25%' }}><TableSortLabel active={orderBy === 'name'} direction={order} onClick={() => handleSortRequest('name')}>Name & E-Mail</TableSortLabel></TableCell>
                                         <TableCell>Adresse</TableCell>
                                         <TableCell sortDirection={orderBy === 'regions' ? order : false}><TableSortLabel active={orderBy === 'regions'} direction={order} onClick={() => handleSortRequest('regions')}>Regionen</TableSortLabel></TableCell>
                                         <TableCell>Abo</TableCell>
@@ -317,7 +322,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                             <TableCell>
                                                 <Box>
                                                     <Typography component="span" sx={{ fontWeight: 'bold' }}>{bp.name}</Typography>
-                                                    <Typography variant="caption" color="text.secondary" display="block">{bp.id}</Typography>
+                                                    <Typography variant="body2" color="text.secondary" display="block">{bp.email || '-'}</Typography>
                                                 </Box>
                                             </TableCell>
                                             <TableCell>{bp.address || '-'}</TableCell>
@@ -367,21 +372,24 @@ const AdminBusinessPartnersPage: React.FC = () => {
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
                         <Grid container spacing={2} sx={{ mt: 1 }}>
                             <Grid item xs={12} sm={6}>
-                                <TextField label="Name" fullWidth value={formName} onChange={(e) => setFormName(e.target.value)} />
+                                <TextField label="Name" fullWidth value={formName} onChange={(e) => setFormName(e.target.value)} required />
                             </Grid>
                             <Grid item xs={12} sm={6}>
-                                <TextField label="Dashboard-Titel" fullWidth value={formDashboardTitle} onChange={(e) => setFormDashboardTitle(e.target.value)} helperText="Dieser Titel wird im Dashboard angezeigt."/>
+                                <TextField label="Dashboard-Titel" fullWidth value={formDashboardTitle} onChange={(e) => setFormDashboardTitle(e.target.value)} helperText="Dieser Titel wird im Dashboard angezeigt." />
                             </Grid>
                             <Grid item xs={12}>
                                 <TextField label="Adresse" fullWidth value={formAddress} onChange={(e) => setFormAddress(e.target.value)} />
                             </Grid>
                             <Grid item xs={12} sm={6}>
-                                <TextField label="Logo URL" fullWidth value={formLogoUrl} onChange={(e) => setFormLogoUrl(e.target.value)} />
+                                <TextField label="E-Mail" type="email" fullWidth value={formEmail} onChange={(e) => setFormEmail(e.target.value)} />
                             </Grid>
-                            <Grid item xs={12} sm={6}>
+                             <Grid item xs={12} sm={6}>
                                 <TextField label="Homepage URL" type="url" fullWidth value={formUrlBusinessPartner} onChange={(e) => setFormUrlBusinessPartner(e.target.value)} />
                             </Grid>
-                             <Grid item xs={12}>
+                            <Grid item xs={12}>
+                                <TextField label="Logo URL" fullWidth value={formLogoUrl} onChange={(e) => setFormLogoUrl(e.target.value)} />
+                            </Grid>
+                            <Grid item xs={12}>
                                 <Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>Mitgliedslevel-Bezeichnungen</Typography>
                             </Grid>
                             <Grid item xs={12} sm={4}>
@@ -400,7 +408,6 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                     {regions.map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))}
                                 </TextField>
                             </Grid>
-                            {/* NEUES FELD FÜR STANDARD-REGION */}
                             <Grid item xs={12}>
                                 <TextField
                                     select
@@ -426,7 +433,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
                             <Grid item xs={12} sm={6}>
                                 <TextField label="Abo Startdatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formSubscriptionStartDate} onChange={(e) => setFormSubscriptionStartDate(e.target.value)} />
                             </Grid>
-                             <Grid item xs={12} sm={6}>
+                            <Grid item xs={12} sm={6}>
                                 <TextField label="Abo Enddatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formSubscriptionEndDate} onChange={(e) => setFormSubscriptionEndDate(e.target.value)} />
                             </Grid>
                             <Grid item xs={12}>
@@ -435,7 +442,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                     {colorSchemes.map((cs) => (<MenuItem key={cs.id} value={cs.id}>{cs.name} <Box sx={{ width: 20, height: 20, bgcolor: cs.primary_color, border: '1px solid grey', ml: 1, display: 'inline-block', verticalAlign: 'middle' }} /></MenuItem>))}
                                 </TextField>
                             </Grid>
-                             <Grid item xs={12}>
+                            <Grid item xs={12}>
                                 <FormControlLabel control={<Switch checked={formIsActive} onChange={(e) => setFormIsActive(e.target.checked)} color="primary" />} label="Aktiv" />
                             </Grid>
                         </Grid>

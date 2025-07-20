@@ -1,9 +1,10 @@
 // backend/controllers/adminSubscriptionsController.js
 const db = require('../config/db');
-const { processSubscription } = require('../services/intelligentContentService');
+const { aiContentQueue } = require('../services/queueService');
+const { setSubscriptionSchedule } = require('../services/jobManagerService');
 
 exports.createSubscription = async (req, res) => {
-    const { id: userId } = req.user; // Holt die ID des eingeloggten Nutzers
+    const { id: userId } = req.user;
     const { ruleId, region, keywords } = req.body;
 
     if (!ruleId || !region || !keywords || keywords.length === 0) {
@@ -11,25 +12,32 @@ exports.createSubscription = async (req, res) => {
     }
 
     try {
-        // Speichert das Abo in der Datenbank oder aktualisiert es
-        const newSubscription = await db.query(
-            `INSERT INTO content_subscriptions (user_id, ai_prompt_rule_id, region, keywords)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (user_id, ai_prompt_rule_id, region) DO UPDATE SET keywords = $4, updated_at = CURRENT_TIMESTAMP
+        // Standard-Zeitplan für die wiederkehrende Ausführung (z.B. täglich um 08:00 Uhr)
+        const defaultSchedule = '0 8 * * *';
+
+        const newSubscriptionRes = await db.query(
+            `INSERT INTO content_subscriptions (user_id, ai_prompt_rule_id, region, keywords, schedule)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (user_id, ai_prompt_rule_id, region) 
+             DO UPDATE SET keywords = EXCLUDED.keywords, updated_at = CURRENT_TIMESTAMP
              RETURNING *`,
-            [userId, ruleId, region, keywords]
+            [userId, ruleId, region, keywords, defaultSchedule]
         );
         
-        // Startet den intelligenten Verarbeitungs-Prozess im Hintergrund
-        processSubscription({
-            ruleId,
-            region,
-            keywords,
-            subscriptionId: newSubscription.rows[0].id,
-            userId: userId // KORREKTUR: Stellt sicher, dass die user_id übergeben wird
-        });
+        const newSubscription = newSubscriptionRes.rows[0];
+        const jobData = { subscription: newSubscription };
 
-        res.status(202).json({ message: 'Abonnement akzeptiert und wird verarbeitet.', subscription: newSubscription.rows[0] });
+        // 1. Job für die Zukunft planen (wiederkehrend)
+        await setSubscriptionSchedule(newSubscription.id, newSubscription.schedule);
+
+        // 2. Job für sofortige Ausführung in die Queue stellen (einmalig)
+        await aiContentQueue.add('subscription-processing', jobData);
+        console.log(`[API] Added immediate job for subscription ${newSubscription.id}`);
+
+        res.status(202).json({ 
+            message: 'Abonnement akzeptiert. Die erste Analyse wird sofort gestartet und zukünftige werden geplant.', 
+            subscription: newSubscription 
+        });
 
     } catch (err) {
         console.error('Error creating content subscription:', err.message);

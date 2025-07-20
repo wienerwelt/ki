@@ -1,91 +1,110 @@
-import React, { useState, useEffect } from 'react';
-import { Box, IconButton, Typography } from '@mui/material';
+import React, { useState, useEffect, useRef } from 'react';
+import { Box, IconButton, Typography, LinearProgress } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useAuth } from '../context/AuthContext';
-import apiClient from '../apiClient';
 
-const AdvertisementBanner: React.FC = () => {
+interface AdvertisementBannerProps {
+    content: string;
+    onClose: () => void;
+}
+
+const AdvertisementBanner: React.FC<AdvertisementBannerProps> = ({ content, onClose }) => {
     const { businessPartner } = useAuth();
-    const [ad, setAd] = useState<{ id: string; content: string } | null>(null);
-    const [isVisible, setIsVisible] = useState(false);
-    const token = localStorage.getItem('jwt_token');
+    const [remainingTime, setRemainingTime] = useState(60000); // Countdown in Millisekunden
+    const requestRef = useRef<number>();
+    const startTimeRef = useRef<number>();
 
     useEffect(() => {
-        const fetchAd = async () => {
-            if (!token) return;
-            try {
-                const response = await apiClient.get('/api/data/active-advertisement', {
-                    headers: { 'x-auth-token': token },
-                });
-                const activeAd = response.data;
-                
-                const closedAds = JSON.parse(localStorage.getItem('closedAds') || '[]');
-                if (activeAd && !closedAds.includes(activeAd.id)) {
-                    setAd(activeAd);
-                    setIsVisible(true);
-                } else {
-                    setIsVisible(false);
-                }
-            } catch (error) {
-                console.error("Fehler beim Laden der Werbung:", error);
-                setIsVisible(false);
+        // Startzeitpunkt der Animation speichern
+        startTimeRef.current = performance.now();
+
+        const animate = (time: number) => {
+            if (!startTimeRef.current) return;
+
+            const elapsedTime = time - startTimeRef.current;
+            const newRemainingTime = 60000 - elapsedTime;
+
+            if (newRemainingTime <= 0) {
+                setRemainingTime(0);
+                onClose();
+            } else {
+                setRemainingTime(newRemainingTime);
+                requestRef.current = requestAnimationFrame(animate);
             }
         };
 
-        fetchAd();
-    }, [token]);
+        requestRef.current = requestAnimationFrame(animate);
 
-    const handleClose = () => {
-        setIsVisible(false);
-        if (ad) {
-            const closedAds = JSON.parse(localStorage.getItem('closedAds') || '[]');
-            localStorage.setItem('closedAds', JSON.stringify([...closedAds, ad.id]));
-        }
-    };
+        // Animation beim Unmounten der Komponente bereinigen
+        return () => {
+            if (requestRef.current) {
+                cancelAnimationFrame(requestRef.current);
+            }
+        };
+    }, [onClose]);
 
-    if (!isVisible || !ad) {
-        return null;
-    }
+    // Berechne den Fortschritt für den Ladebalken und die angezeigten Sekunden
+    const progress = (remainingTime / 60000) * 100;
+    const secondsLeft = Math.ceil(remainingTime / 1000);
 
     return (
         <Box
             sx={{
-                height: '80px', // NEU: Feste Höhe von 80px
+                height: '40px', // Höhe auf 40px reduziert
                 backgroundColor: businessPartner?.secondary_color || 'secondary.main',
                 py: 0.5,
                 px: 2,
                 display: 'flex',
-                alignItems: 'center', // NEU: Vertikal zentriert
-                justifyContent: 'center', // NEU: Horizontal zentriert
+                alignItems: 'center',
+                justifyContent: 'center',
                 position: 'relative',
+                overflow: 'hidden',
             }}
         >
             <Typography 
                 variant="body2" 
                 component="div"
-                dangerouslySetInnerHTML={{ __html: ad.content }}
+                dangerouslySetInnerHTML={{ __html: content }}
                 sx={{
-                    color: '#000000', // NEU: Schwarze Schriftfarbe
-                    textAlign: 'center', // NEU: Text zentrieren
+                    color: '#000000',
+                    textAlign: 'center',
                     '& a': {
-                        color: '#000000', // NEU: Auch Links in schwarz
+                        color: '#000000',
                         fontWeight: 'bold',
                         textDecoration: 'underline',
                     },
                 }}
             />
-            <IconButton
-                size="small"
-                onClick={handleClose}
+            <Box sx={{ position: 'absolute', top: '50%', right: 8, transform: 'translateY(-50%)', display: 'flex', alignItems: 'center' }}>
+                <Typography variant="caption" sx={{ color: '#000000', mr: 1 }}>
+                    {secondsLeft}s
+                </Typography>
+                <IconButton
+                    size="small"
+                    onClick={onClose}
+                    sx={{
+                        color: '#000000',
+                    }}
+                >
+                    <CloseIcon fontSize="small" />
+                </IconButton>
+            </Box>
+
+            <LinearProgress
+                variant="determinate"
+                value={progress}
                 sx={{
-                    color: '#000000', // NEU: Schwarzes Icon
                     position: 'absolute',
-                    top: 8, // Position angepasst für bessere Optik
-                    right: 8,
+                    bottom: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '2px',
+                    backgroundColor: 'rgba(255,255,255,0.3)',
+                    '& .MuiLinearProgress-bar': {
+                        backgroundColor: businessPartner?.primary_color || 'primary.main',
+                    },
                 }}
-            >
-                <CloseIcon fontSize="small" />
-            </IconButton>
+            />
         </Box>
     );
 };

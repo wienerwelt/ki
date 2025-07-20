@@ -1,38 +1,42 @@
-import React, { useState, useEffect, useCallback } from 'react';
+// src/pages/AdminAIPromptRulesPage.tsx
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Grid, List, ListItem,
     ListItemButton, ListItemText, TextField, MenuItem, Divider, LinearProgress,
-    CircularProgress as ButtonSpinner,
-    Tooltip,
-    IconButton
+    CircularProgress as ButtonSpinner, Tooltip, IconButton, Tabs, Tab, Autocomplete, Chip, Snackbar, Stack
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import SaveIcon from '@mui/icons-material/Save';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteIcon from '@mui/icons-material/Delete';
+import ScheduleSendIcon from '@mui/icons-material/ScheduleSend';
+import PersonSearchIcon from '@mui/icons-material/PersonSearch';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import DashboardLayout from '../components/DashboardLayout';
+import AdminScheduleSelector from '../components/AdminScheduleSelector';
 import apiClient from '../apiClient';
 
 // --- Interfaces ---
-interface AIPromptRule {
-    id: string;
-    name: string;
-    prompt_template: string;
-    ai_provider: string | null;
-    output_format: string | null;
-}
-interface Category { id:string; name: string; }
+interface AIPromptRule { id: string; name: string; prompt_template: string; ai_provider: string | null; output_format: string | null; }
+interface Category { id: string; name: string; }
+interface UserOption { id: string; email: string; business_partner_name: string | null; role: string; }
+interface Region { id: string; name: string; }
 
 // --- Konstanten & Initialer Zustand ---
+const PROMPT_SEPARATOR = '<!--PROMPT_PART_SEPARATOR-->';
+const placeholders = ['{{data}}', '{{category}}', '{{region}}', '{{focus_page}}'];
+
 const initialWorkspaceState = {
     ruleId: null as string | null,
     ruleName: '',
-    promptTemplate: '',
+    promptPersona: '',
+    promptTask: '',
+    promptFormat: '',
     ai_provider: '',
     output_format: 'text',
     inputText: '',
@@ -41,12 +45,28 @@ const initialWorkspaceState = {
     focus_page: '',
 };
 
-const europeanCountries = ["EU", "Albanien", "Andorra", "Belgien", "Bosnien und Herzegowina", "Bulgarien", "Dänemark", "Deutschland", "Estland", "Finnland", "Frankreich", "Griechenland", "Irland", "Island", "Italien", "Kosovo", "Kroatien", "Lettland", "Liechtenstein", "Litauen", "Luxemburg", "Malta", "Moldau", "Monaco", "Montenegro", "Niederlande", "Nordmazedonien", "Norwegen", "Österreich", "Polen", "Portugal", "Rumänien", "San Marino", "Schweden", "Schweiz", "Serbien", "Slowakei", "Slowenien", "Spanien", "Tschechien", "Ukraine", "Ungarn", "Vatikanstadt", "Vereinigtes Königreich", "Weißrussland", "Zypern"];
+const formatCronToGerman = (cron: string | null): string => {
+    if (!cron) return "Nicht geplant";
+    try {
+        const parts = cron.split(' ');
+        if (parts.length !== 5) return "Ungültiges Format";
+        const [minute, hour, dayOfMonth, , dayOfWeek] = parts;
+        const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        const weekDays = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+        if (dayOfMonth !== '*' && dayOfWeek === '*') return `Jeden ${dayOfMonth}. des Monats um ${time} Uhr`;
+        if (dayOfWeek !== '*' && dayOfMonth === '*') return `Jeden ${weekDays[parseInt(dayOfWeek, 10)]} um ${time} Uhr`;
+        if (dayOfMonth === '*' && dayOfWeek === '*') return `Täglich um ${time} Uhr`;
+        return cron;
+    } catch { return "Ungültiges Format"; }
+};
 
 const AdminAIPromptRulesPage: React.FC = () => {
+    const navigate = useNavigate();
     const [rules, setRules] = useState<AIPromptRule[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
-    const [aiProviders, setAiProviders] = useState<string[]>([]); // NEU: State für Provider
+    const [aiProviders, setAiProviders] = useState<string[]>([]);
+    const [users, setUsers] = useState<UserOption[]>([]);
+    const [regions, setRegions] = useState<Region[]>([]);
     const [workspaceState, setWorkspaceState] = useState(initialWorkspaceState);
     const [logModalOpen, setLogModalOpen] = useState(false);
     const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -55,23 +75,40 @@ const AdminAIPromptRulesPage: React.FC = () => {
     const [finalJobResult, setFinalJobResult] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
-    const [isGenerating, setIsGenerating] = useState(false);
+    const [isExecuting, setIsExecuting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
+
+    const [executionType, setExecutionType] = useState<'once' | 'scheduled'>('once');
+    const [scheduleKeywords, setScheduleKeywords] = useState<string[]>([]);
+    const [scheduleUserId, setScheduleUserId] = useState('');
+    const [scheduleCategoryId, setScheduleCategoryId] = useState('');
+    const [scheduleCron, setScheduleCron] = useState<string | null>('0 8 * * *');
+    
+    const [activePromptField, setActivePromptField] = useState<keyof typeof initialWorkspaceState | null>(null);
+    const inputRefs = {
+        promptPersona: useRef<HTMLInputElement>(null),
+        promptTask: useRef<HTMLInputElement>(null),
+        promptFormat: useRef<HTMLInputElement>(null),
+    };
 
     const fetchData = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
-            // NEU: Ruft alle Daten parallel ab, inklusive der neuen Provider-Liste
-            const [rulesRes, categoriesRes, providersRes] = await Promise.all([
+            const [rulesRes, categoriesRes, providersRes, usersRes, regionsRes] = await Promise.all([
                 apiClient.get('/api/admin/ai-prompt-rules', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/admin/categories', { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/admin/ai-prompt-rules/providers', { headers: { 'x-auth-token': token } })
+                apiClient.get('/api/admin/ai-prompt-rules/providers', { headers: { 'x-auth-token': token } }),
+                apiClient.get('/api/admin/users', { headers: { 'x-auth-token': token } }),
+                apiClient.get('/api/data/regions', { headers: { 'x-auth-token': token } })
             ]);
             setRules(rulesRes.data);
             setCategories(categoriesRes.data);
             setAiProviders(providersRes.data);
+            setUsers(usersRes.data.map((u: any) => ({ id: u.id, email: u.email, business_partner_name: u.business_partner_name, role: u.role })));
+            setRegions(regionsRes.data);
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Laden der Initialdaten.');
         } finally {
@@ -101,11 +138,14 @@ const AdminAIPromptRulesPage: React.FC = () => {
     }, [currentJobId, logModalOpen, jobStatus]);
 
     const handleSelectRule = (rule: AIPromptRule) => {
+        const [promptPersona = '', promptTask = '', promptFormat = ''] = rule.prompt_template.split(PROMPT_SEPARATOR);
         setWorkspaceState(prev => ({
             ...prev,
             ruleId: rule.id,
             ruleName: rule.name,
-            promptTemplate: rule.prompt_template,
+            promptPersona,
+            promptTask,
+            promptFormat,
             ai_provider: rule.ai_provider || '',
             output_format: rule.output_format || 'text',
         }));
@@ -129,8 +169,8 @@ const AdminAIPromptRulesPage: React.FC = () => {
     };
 
     const handleSaveRule = async () => {
-        if (!workspaceState.ruleName || !workspaceState.promptTemplate || !workspaceState.ai_provider) {
-            setError("Regelname, Vorlage und KI-Provider sind Pflichtfelder.");
+        if (!workspaceState.ruleName || !workspaceState.promptPersona || !workspaceState.promptTask || !workspaceState.ai_provider) {
+            setError("Name, Persona, Aufgabe und KI-Provider sind Pflichtfelder.");
             return;
         }
         setIsSaving(true);
@@ -138,7 +178,9 @@ const AdminAIPromptRulesPage: React.FC = () => {
         const token = localStorage.getItem('jwt_token');
         const ruleData = {
             name: workspaceState.ruleName,
-            prompt_template: workspaceState.promptTemplate,
+            prompt_persona: workspaceState.promptPersona,
+            prompt_task: workspaceState.promptTask,
+            prompt_format: workspaceState.promptFormat,
             ai_provider: workspaceState.ai_provider,
             output_format: workspaceState.output_format,
         };
@@ -150,6 +192,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
                 handleSelectRule(res.data);
             }
             await fetchData();
+            setSnackbar({ open: true, message: 'Regel erfolgreich gespeichert.' });
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Speichern der Regel.');
         } finally {
@@ -157,56 +200,91 @@ const AdminAIPromptRulesPage: React.FC = () => {
         }
     };
 
-    const handleGenerate = async () => {
-        if (!workspaceState.promptTemplate || !workspaceState.ai_provider) {
-            setError("Eine Prompt-Vorlage und ein KI-Provider sind für die Generierung erforderlich.");
-            return;
-        }
-        if (!workspaceState.inputText) {
-            setError("Bitte geben Sie einen Text für die Generierung ein.");
-            return;
-        }
-        
+    const handleExecution = async () => {
         setError(null);
-        setIsGenerating(true);
-        setJobLogs([{ log_level: 'INFO', message: 'Initialisiere KI-Job...', created_at: new Date().toISOString() }]);
-        setFinalJobResult(null);
-        setLogModalOpen(true);
-        setJobStatus('pending');
-
+        setIsExecuting(true);
         const token = localStorage.getItem('jwt_token');
-        
-        const payload = {
-            ruleId: workspaceState.ruleId,
-            ruleData: {
-                name: workspaceState.ruleName,
-                prompt_template: workspaceState.promptTemplate,
-                ai_provider: workspaceState.ai_provider,
-                output_format: workspaceState.output_format,
-            },
-            inputText: workspaceState.inputText,
-            region: workspaceState.region || null,
-            categoryId: workspaceState.categoryId || null,
-            focus_page: workspaceState.focus_page || null,
-        };
 
-        try {
-            const res = await apiClient.post('/api/admin/ai-prompt-rules/execute', payload, { headers: { 'x-auth-token': token } });
-            setCurrentJobId(res.data.jobId);
-            setJobStatus('running');
-        } catch (err: any) {
-            const errorMessage = err.response?.data?.message || 'Fehler bei der Job-Initialisierung.';
-            setJobLogs(prev => [...prev, { log_level: 'ERROR', message: errorMessage, created_at: new Date().toISOString() }]);
-            setJobStatus('failed');
-        } finally {
-            setIsGenerating(false);
+        if (executionType === 'once') {
+            if (!workspaceState.promptPersona || !workspaceState.promptTask || !workspaceState.ai_provider || !workspaceState.inputText) {
+                setError("Für die Generierung sind eine Persona, eine Aufgabe, ein KI-Provider und ein Eingabetext erforderlich.");
+                setIsExecuting(false);
+                return;
+            }
+            setJobLogs([{ log_level: 'INFO', message: 'Initialisiere KI-Job...', created_at: new Date().toISOString() }]);
+            setFinalJobResult(null);
+            setLogModalOpen(true);
+            setJobStatus('pending');
+
+            const payload = {
+                ruleId: workspaceState.ruleId,
+                ruleData: {
+                    name: workspaceState.ruleName,
+                    prompt_template: [workspaceState.promptPersona, workspaceState.promptTask, workspaceState.promptFormat].join(PROMPT_SEPARATOR),
+                    ai_provider: workspaceState.ai_provider,
+                    output_format: workspaceState.output_format,
+                },
+                inputText: workspaceState.inputText,
+                region: workspaceState.region || null,
+                categoryId: workspaceState.categoryId || null,
+                focus_page: workspaceState.focus_page || null,
+            };
+
+            try {
+                const res = await apiClient.post('/api/admin/ai-prompt-rules/execute', payload, { headers: { 'x-auth-token': token } });
+                setCurrentJobId(res.data.jobId);
+                setJobStatus('running');
+            } catch (err: any) {
+                const errorMessage = err.response?.data?.message || 'Fehler bei der Job-Initialisierung.';
+                setJobLogs(prev => [...prev, { log_level: 'ERROR', message: errorMessage, created_at: new Date().toISOString() }]);
+                setJobStatus('failed');
+            }
+        } else {
+            if (!workspaceState.ruleId || !scheduleUserId || scheduleKeywords.length === 0 || !scheduleCron) {
+                setError("Für ein geplantes Abo müssen eine Regel, ein Benutzer, Keywords und ein Zeitplan ausgewählt sein.");
+                setIsExecuting(false);
+                return;
+            }
+            try {
+                await apiClient.post(`/api/admin/ai-prompt-rules/${workspaceState.ruleId}/schedule`, {
+                    userId: scheduleUserId,
+                    keywords: scheduleKeywords,
+                    region: workspaceState.region,
+                    schedule: scheduleCron,
+                    categoryId: scheduleCategoryId || null,
+                }, { headers: { 'x-auth-token': token } });
+                setSnackbar({ open: true, message: 'Geplantes Abonnement erfolgreich erstellt!' });
+                setScheduleKeywords([]);
+                setScheduleUserId('');
+                setScheduleCategoryId('');
+            } catch (err: any) {
+                setError(err.response?.data?.message || 'Fehler beim Erstellen des Abonnements.');
+            }
+        }
+        setIsExecuting(false);
+    };
+    
+    const handleInsertPlaceholder = (placeholder: string) => {
+        if (!activePromptField || !inputRefs[activePromptField]) return;
+        const ref = inputRefs[activePromptField];
+        if (ref.current) {
+            const start = ref.current.selectionStart || 0;
+            const end = ref.current.selectionEnd || 0;
+            const text = workspaceState[activePromptField] || '';
+            const newText = text.substring(0, start) + placeholder + text.substring(end);
+            
+            setWorkspaceState(prev => ({ ...prev, [activePromptField]: newText }));
+            
+            setTimeout(() => {
+                ref.current?.focus();
+                ref.current!.selectionStart = ref.current!.selectionEnd = start + placeholder.length;
+            }, 0);
         }
     };
 
     const handleDuplicateRule = async (ruleId: string, event: React.MouseEvent) => {
         event.stopPropagation();
         if (!window.confirm('Möchten Sie diese Regel wirklich duplizieren?')) return;
-
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.post(`/api/admin/ai-prompt-rules/${ruleId}/duplicate`, {}, { headers: { 'x-auth-token': token } });
@@ -219,14 +297,10 @@ const AdminAIPromptRulesPage: React.FC = () => {
     const handleDeleteRule = async (ruleId: string, event: React.MouseEvent) => {
         event.stopPropagation();
         if (!window.confirm('Sind Sie sicher, dass Sie diese Regel endgültig löschen möchten?')) return;
-
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.delete(`/api/admin/ai-prompt-rules/${ruleId}`, { headers: { 'x-auth-token': token } });
-            
-            if (workspaceState.ruleId === ruleId) {
-                handleNewRule();
-            }
+            if (workspaceState.ruleId === ruleId) handleNewRule();
             await fetchData();
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Löschen der Regel.');
@@ -241,11 +315,13 @@ const AdminAIPromptRulesPage: React.FC = () => {
         setFinalJobResult(null);
     };
 
+    const selectedUser = users.find(u => u.id === scheduleUserId);
+
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
                 <Typography variant="h4" component="h1" gutterBottom>
-                    KI Prompt
+                    KI Prompt-Regeln
                 </Typography>
                 <Grid container spacing={3}>
                     <Grid item xs={12} md={4}>
@@ -258,24 +334,12 @@ const AdminAIPromptRulesPage: React.FC = () => {
                             {loading ? <CircularProgress /> : (
                                 <List sx={{ maxHeight: 'calc(100vh - 220px)', overflowY: 'auto' }}>
                                     {rules.map(rule => (
-                                        <ListItem 
-                                            key={rule.id} 
-                                            disablePadding
-                                            secondaryAction={
-                                                <>
-                                                    <Tooltip title="Regel kopieren">
-                                                        <IconButton edge="end" aria-label="copy" onClick={(e) => handleDuplicateRule(rule.id, e)}>
-                                                            <ContentCopyIcon fontSize="small" />
-                                                        </IconButton>
-                                                    </Tooltip>
-                                                    <Tooltip title="Regel löschen">
-                                                        <IconButton edge="end" aria-label="delete" onClick={(e) => handleDeleteRule(rule.id, e)}>
-                                                            <DeleteIcon fontSize="small" color="error" />
-                                                        </IconButton>
-                                                    </Tooltip>
-                                                </>
-                                            }
-                                        >
+                                        <ListItem key={rule.id} disablePadding secondaryAction={
+                                            <>
+                                                <Tooltip title="Regel kopieren"><IconButton edge="end" onClick={(e) => handleDuplicateRule(rule.id, e)}><ContentCopyIcon fontSize="small" /></IconButton></Tooltip>
+                                                <Tooltip title="Regel löschen"><IconButton edge="end" onClick={(e) => handleDeleteRule(rule.id, e)}><DeleteIcon fontSize="small" color="error" /></IconButton></Tooltip>
+                                            </>
+                                        }>
                                             <ListItemButton selected={workspaceState.ruleId === rule.id} onClick={() => handleSelectRule(rule)}>
                                                 <ListItemText primary={rule.name} secondary={rule.ai_provider} />
                                             </ListItemButton>
@@ -287,66 +351,109 @@ const AdminAIPromptRulesPage: React.FC = () => {
                     </Grid>
                     <Grid item xs={12} md={8}>
                         <Paper sx={{ p: 2 }}>
-                            <Typography variant="h6" gutterBottom>Regel-Editor</Typography>
+                             <Typography variant="h6" gutterBottom>Regel-Editor</Typography>
                             <TextField name="ruleName" label="Name der Regelvorlage" value={workspaceState.ruleName} onChange={handleWorkspaceChange} fullWidth required sx={{ mb: 2 }}/>
                             <TextField select name="ai_provider" label="KI-Provider" value={workspaceState.ai_provider} onChange={handleWorkspaceChange} fullWidth required sx={{ mb: 2 }}>
                                 {aiProviders.map((p) => (<MenuItem key={p} value={p}>{p}</MenuItem>))}
                             </TextField>
-                            <TextField name="promptTemplate" label="Prompt-Vorlage" value={workspaceState.promptTemplate} onChange={handleWorkspaceChange} fullWidth multiline rows={6} required sx={{ mb: 2 }} helperText="Verwenden Sie {{data}}, {{category}}, {{region}} und {{focus_page}} als Platzhalter."/>
+
+                            <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2, mb: 2 }}>
+                                <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>System-Prompt / Rolle der KI</Typography>
+                                <TextField name="promptPersona" value={workspaceState.promptPersona} onChange={handleWorkspaceChange} fullWidth multiline rows={3} required
+                                    inputRef={inputRefs.promptPersona} onFocus={() => setActivePromptField('promptPersona')} helperText="z.B. Du bist ein Experte für die Automobilbranche..."
+                                />
+
+                                <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>Haupt-Aufgabe</Typography>
+                                <TextField name="promptTask" value={workspaceState.promptTask} onChange={handleWorkspaceChange} fullWidth multiline rows={4} required
+                                    inputRef={inputRefs.promptTask} onFocus={() => setActivePromptField('promptTask')} helperText="z.B. Fasse die folgenden Recherche-Ergebnisse in 5 Stichpunkten zusammen."
+                                />
+
+                                <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>Formatierungs-Anweisung (optional)</Typography>
+                                <TextField name="promptFormat" value={workspaceState.promptFormat} onChange={handleWorkspaceChange} fullWidth multiline rows={2}
+                                    inputRef={inputRefs.promptFormat} onFocus={() => setActivePromptField('promptFormat')} helperText="z.B. Antworte NUR als valides JSON-Objekt mit den Schlüsseln 'titel' und 'zusammenfassung'."
+                                />
+                            </Box>
+
+                            <Box sx={{ mb: 2 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>Platzhalter einfügen:</Typography>
+                                <Stack direction="row" spacing={1} component="span">
+                                    {placeholders.map(p => (
+                                        <Chip key={p} label={p} onClick={() => handleInsertPlaceholder(p)} size="small" variant="outlined" clickable />
+                                    ))}
+                                </Stack>
+                            </Box>
                             
-                            <TextField
-                                select
-                                name="output_format"
-                                label="Erwartetes Output-Format"
-                                value={workspaceState.output_format}
-                                onChange={handleWorkspaceChange}
-                                fullWidth
-                                margin="dense"
-                                helperText="Gibt an, ob die KI reinen Text oder strukturiertes JSON zurückgeben soll."
-                                sx={{ mb: 2 }}
-                            >
+                            <TextField select name="output_format" label="Erwartetes Output-Format" value={workspaceState.output_format} onChange={handleWorkspaceChange} fullWidth margin="dense" helperText="Gibt an, ob die KI reinen Text oder strukturiertes JSON zurückgeben soll." sx={{ mb: 2 }}>
                                 <MenuItem value="text">Text</MenuItem>
                                 <MenuItem value="json">JSON</MenuItem>
                             </TextField>
-
-                            <Button
-                                variant="outlined"
-                                startIcon={isSaving ? <ButtonSpinner size={20} /> : <SaveIcon />}
-                                onClick={handleSaveRule}
-                                disabled={isSaving || !workspaceState.ruleName || !workspaceState.promptTemplate || !workspaceState.ai_provider}
-                            >
+                            <Button variant="outlined" startIcon={isSaving ? <ButtonSpinner size={20} /> : <SaveIcon />} onClick={handleSaveRule} disabled={isSaving || !workspaceState.ruleName || !workspaceState.promptPersona || !workspaceState.promptTask || !workspaceState.ai_provider}>
                                 {workspaceState.ruleId ? 'Änderungen speichern' : 'Neue Regel speichern'}
                             </Button>
-                            <Divider sx={{ my: 3 }} />
-                            <Typography variant="h6" gutterBottom>Inhalt generieren</Typography>
-                            <TextField name="inputText" label="Eingabetext (wird zu {{data}})" placeholder="Fügen Sie hier den Text ein..." value={workspaceState.inputText} onChange={handleWorkspaceChange} fullWidth multiline rows={8} required sx={{ mb: 2 }}/>
-                            <Grid container spacing={2} sx={{ mb: 2 }}>
-                                <Grid item xs={12} sm={4}>
-                                    <TextField name="focus_page" label="Fokus-Seite (wird zu {{focus_page}})" value={workspaceState.focus_page} onChange={handleWorkspaceChange} fullWidth helperText="z.B. eine Produkt-URL"/>
-                                </Grid>
-                                <Grid item xs={12} sm={4}>
-                                    <TextField select fullWidth label="Region (wird zu {{region}})" name="region" value={workspaceState.region} onChange={handleWorkspaceChange}>
-                                        <MenuItem value=""><em>Keine</em></MenuItem>
-                                        {europeanCountries.map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}
-                                    </TextField>
-                                </Grid>
-                                <Grid item xs={12} sm={4}>
+                        </Paper>
+
+                        <Paper sx={{ p: 2, mt: 3 }}>
+                            <Typography variant="h6" gutterBottom>Ausführung & Planung</Typography>
+                            <Tabs value={executionType} onChange={(e, newValue) => setExecutionType(newValue)} sx={{ mb: 2 }}>
+                                <Tab value="once" label="Einmalig generieren & testen" />
+                                <Tab value="scheduled" label="Als Abonnement planen" />
+                            </Tabs>
+
+                            <TextField select fullWidth label="Region (wird zu {{region}})" name="region" value={workspaceState.region} onChange={handleWorkspaceChange} sx={{ mb: 2 }}>
+                                <MenuItem value=""><em>Keine</em></MenuItem>
+                                {regions.map(r => <MenuItem key={r.id} value={r.name}>{r.name}</MenuItem>)}
+                            </TextField>
+
+                            {executionType === 'once' && (
+                                <Box>
+                                    <TextField name="inputText" label="Eingabetext (wird zu {{data}})" placeholder="Fügen Sie hier den Text ein..." value={workspaceState.inputText} onChange={handleWorkspaceChange} fullWidth multiline rows={8} required sx={{ mb: 2 }}/>
+                                    <TextField name="focus_page" label="Fokus-Seite (wird zu {{focus_page}})" value={workspaceState.focus_page} onChange={handleWorkspaceChange} fullWidth helperText="z.B. eine Produkt-URL" sx={{ mb: 2 }}/>
                                      <TextField select fullWidth label="Kategorie (wird zu {{category}})" name="categoryId" value={workspaceState.categoryId} onChange={handleWorkspaceChange}>
                                         <MenuItem value=""><em>Keine / KI vorschlagen lassen</em></MenuItem>
                                         {categories.map(cat => (<MenuItem key={cat.id} value={cat.id}>{cat.name}</MenuItem>))}
                                     </TextField>
-                                </Grid>
-                            </Grid>
-                            <Button
-                                variant="contained"
-                                size="large"
-                                startIcon={isGenerating ? <ButtonSpinner size={24} color="inherit" /> : <AutoFixHighIcon />}
-                                onClick={handleGenerate}
-                                disabled={isGenerating || !workspaceState.promptTemplate || !workspaceState.ai_provider || !workspaceState.inputText}
-                            >
-                                Generieren & Log anzeigen
+                                </Box>
+                            )}
+
+                            {executionType === 'scheduled' && (
+                                <Box>
+                                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                        Erstellt ein wiederkehrendes Abonnement für einen Benutzer basierend auf der oben ausgewählten Regel.
+                                    </Typography>
+                                    <Autocomplete multiple freeSolo options={[]} value={scheduleKeywords} onChange={(e, newValue) => setScheduleKeywords(newValue)} renderTags={(val, props) => val.map((opt, i) => <Chip label={opt} {...props({ index: i })} />)} renderInput={(params) => <TextField {...params} label="Hot Topics / Keywords" required />} sx={{ mb: 2 }}/>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                                        <TextField select fullWidth label="Benutzer für das Abo auswählen" value={scheduleUserId} onChange={(e) => setScheduleUserId(e.target.value)}>
+                                            {users.map(user => (
+                                                <MenuItem key={user.id} value={user.id}>
+                                                    {user.email} ({user.business_partner_name || 'Kein Partner'} - {user.role})
+                                                </MenuItem>
+                                            ))}
+                                        </TextField>
+                                        <Tooltip title="Benutzerdetails anzeigen">
+                                            <span>
+                                                <IconButton disabled={!scheduleUserId} onClick={() => navigate('/admin/users', { state: { prefillSearch: selectedUser?.email } })}>
+                                                    <PersonSearchIcon />
+                                                </IconButton>
+                                            </span>
+                                        </Tooltip>
+                                    </Box>
+                                    <TextField select fullWidth label="Kategorie (optional)" value={scheduleCategoryId} onChange={(e) => setScheduleCategoryId(e.target.value)} sx={{ mb: 2 }}>
+                                        <MenuItem value=""><em>Keine / Standard der Regel</em></MenuItem>
+                                        {categories.map(cat => (<MenuItem key={cat.id} value={cat.id}>{cat.name}</MenuItem>))}
+                                    </TextField>
+                                    <AdminScheduleSelector value={scheduleCron} onChange={setScheduleCron} />
+                                    <Tooltip title={formatCronToGerman(scheduleCron)}>
+                                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                                            Geplant: {formatCronToGerman(scheduleCron)}
+                                        </Typography>
+                                    </Tooltip>
+                                </Box>
+                            )}
+
+                            <Button variant="contained" size="large" sx={{ mt: 2 }} startIcon={isExecuting ? <ButtonSpinner size={24} color="inherit" /> : executionType === 'once' ? <AutoFixHighIcon /> : <ScheduleSendIcon />} onClick={handleExecution} disabled={isExecuting || !workspaceState.ruleId}>
+                                {executionType === 'once' ? 'Generieren & Testen' : 'Abonnement erstellen & planen'}
                             </Button>
-                             {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+                            {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
                         </Paper>
                     </Grid>
                 </Grid>
@@ -380,6 +487,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
                         <Button onClick={handleCloseLogModal}>Schließen</Button>
                     </DialogActions>
                 </Dialog>
+                <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={() => setSnackbar({ ...snackbar, open: false })} message={snackbar.message} />
             </Container>
         </DashboardLayout>
     );

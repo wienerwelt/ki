@@ -4,9 +4,8 @@ const cheerio = require('cheerio');
 const xml2js = require('xml2js');
 const { JSDOM } = require('jsdom');
 const { Readability } = require('@mozilla/readability');
-// KORRIGIERT: Notwendige Importe aus date-fns
 const { parse } = require('date-fns');
-const { de } = require('date-fns/locale'); // NEU: Import des deutschen Sprachpakets
+const { de } = require('date-fns/locale');
 const db = require('../config/db');
 const { logActivity } = require('./auditLogService');
 const { callOpenAI } = require('./aiService');
@@ -24,11 +23,9 @@ const logToDb = async (jobId, level, message) => {
     }
 };
 
-// KORRIGIERT: Die parse-Funktion verwendet jetzt das deutsche Sprachpaket
 const parseDateString = (dateString, dateFormat, jobId) => {
     if (!dateString) return null;
     try {
-        // Wenn ein Format angegeben ist, verwende es mit dem deutschen Locale
         const parsedDate = dateFormat 
             ? parse(dateString, dateFormat, new Date(), { locale: de }) 
             : new Date(dateString);
@@ -139,6 +136,32 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
 // ===================================================================================
 // EXPORTIERTE HAUPTFUNKTIONEN
 // ===================================================================================
+
+/**
+ * NEUE FUNKTION: Extrahiert den reinen Text von einer gegebenen URL.
+ * Diese Funktion wird vom intelligentContentService verwendet.
+ * @param {string} url Die URL, von der der Text extrahiert werden soll.
+ * @returns {Promise<string|null>} Der extrahierte Text oder null bei einem Fehler.
+ */
+async function extractTextFromUrl(url) {
+    if (!url) {
+        console.error('extractTextFromUrl wurde ohne URL aufgerufen.');
+        return null;
+    }
+    try {
+        const response = await axios.get(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' },
+            timeout: 20000, // Timeout auf 20 Sekunden erhöht
+            responseType: 'text'
+        });
+        const { textContent } = await _extractDataFromHtml(response.data, url);
+        return textContent;
+    } catch (error) {
+        console.error(`Fehler beim Extrahieren des Textes von ${url}:`, error.message);
+        return null;
+    }
+}
+
 
 async function triggerSingleRuleScrape(ruleId, jobId) {
     let itemsProcessed = 0;
@@ -347,8 +370,10 @@ async function getScrapingRuleSuggestion(url, userId) {
     }
 }
 
+// KORREKTUR: Die neue Funktion wird exportiert
 module.exports = {
     triggerSingleRuleScrape,
     startAllScrapingJobs,
     getScrapingRuleSuggestion,
+    extractTextFromUrl,
 };

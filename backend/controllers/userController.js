@@ -7,9 +7,10 @@ exports.getProfile = async (req, res) => {
     try {
         const userId = req.user.id;
         const result = await db.query(
-            `SELECT 
-                id, username, email, first_name, last_name, organization_name, 
-                linkedin_url, membership_level, role, business_partner_id 
+            `SELECT
+                id, username, email, first_name, last_name, organization_name,
+                linkedin_url, membership_level, role, business_partner_id,
+                article_score_min, article_score_max
              FROM users WHERE id = $1`,
             [userId]
         );
@@ -28,9 +29,9 @@ exports.getProfile = async (req, res) => {
 exports.updateProfile = async (req, res) => {
     try {
         const userId = req.user.id;
-        
+
         // Erlaubte Felder, die der Benutzer ändern darf
-        const { first_name, last_name, organization_name, linkedin_url, password } = req.body;
+        const { first_name, last_name, organization_name, linkedin_url, password, article_score_min, article_score_max } = req.body;
 
         const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
         if (rows.length === 0) {
@@ -47,15 +48,17 @@ exports.updateProfile = async (req, res) => {
 
         // Führt das Update nur mit den erlaubten Feldern durch
         await db.query(
-            `UPDATE users SET 
-                first_name = $1, 
-                last_name = $2, 
-                organization_name = $3, 
-                linkedin_url = $4, 
+            `UPDATE users SET
+                first_name = $1,
+                last_name = $2,
+                organization_name = $3,
+                linkedin_url = $4,
                 password_hash = $5,
-                updated_at = CURRENT_TIMESTAMP 
-             WHERE id = $6`,
-            [first_name, last_name, organization_name, linkedin_url, password_hash, userId]
+                article_score_min = $6,
+                article_score_max = $7,
+                updated_at = CURRENT_TIMESTAMP
+             WHERE id = $8`,
+            [first_name, last_name, organization_name, linkedin_url, password_hash, article_score_min, article_score_max, userId]
         );
 
         res.json({ message: 'Profil erfolgreich aktualisiert.' });
