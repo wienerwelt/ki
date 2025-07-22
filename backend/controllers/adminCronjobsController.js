@@ -1,5 +1,6 @@
 // backend/controllers/adminCronjobsController.js
 const db = require('../config/db');
+const cronParser = require('cron-parser');
 const { aiContentQueue } = require('../services/queueService');
 const jobManager = require('../services/jobManagerService');
 
@@ -11,11 +12,10 @@ exports.getScheduledAISubscriptions = async (req, res) => {
         const jobs = await jobManager.getScheduledSubscriptions();
         res.json(jobs);
     } catch (err) {
-        console.error('Error fetching scheduled AI jobs:', err.message);
+        console.error('Fehler beim Laden der geplanten KI-Jobs:', err.message);
         res.status(500).send('Server error');
     }
 };
-
 
 exports.updateAISubscription = async (req, res) => {
     const { id } = req.params;
@@ -42,7 +42,7 @@ exports.updateAISubscription = async (req, res) => {
         }
 
         values.push(id);
-        const query = `UPDATE content_subscriptions SET ${updateFields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${queryIndex} RETURNING *`;
+        const query = `UPDATE user_ai_content_subscriptions SET ${updateFields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${queryIndex} RETURNING *`;
         const { rows } = await client.query(query, values);
         if (rows.length === 0) throw new Error('Abonnement nicht gefunden.');
 
@@ -71,20 +71,26 @@ exports.getScheduledScrapingRules = async (req, res) => {
             ORDER BY name ASC
         `);
 
+        // Berechne für jede Regel die nächste Ausführungszeit
         const rulesWithNextRun = rows.map(rule => {
             let next_run_at = null;
             try {
                 if (rule.schedule) {
-                    const interval = cronParser.parseExpression(rule.schedule, { currentDate: new Date(), tz: 'Europe/Vienna' });
+                    const interval = cronParser.parseExpression(rule.schedule, { 
+                        currentDate: new Date(),
+                        tz: 'Europe/Vienna' 
+                    });
                     next_run_at = interval.next().toISOString();
                 }
-            } catch (e) { console.error(`Invalid cron for rule ${rule.id}: ${rule.schedule}`); }
+            } catch (e) { 
+                console.error(`Ungültiger Cron-String für Regel ${rule.id}: ${rule.schedule}`);
+            }
             return { ...rule, next_run_at };
         });
 
         res.json(rulesWithNextRun);
     } catch (err) {
-        console.error('Error fetching scheduled scraping rules:', err.message);
+        console.error('Fehler beim Laden der geplanten Scraping-Regeln:', err.message);
         res.status(500).send('Server error');
     }
 };
@@ -93,7 +99,7 @@ exports.getScheduledScrapingRules = async (req, res) => {
 exports.triggerAISubscription = async (req, res) => {
     const { id } = req.params;
     try {
-        const subRes = await db.query('SELECT * FROM content_subscriptions WHERE id = $1', [id]);
+        const subRes = await db.query('SELECT * FROM user_ai_content_subscriptions WHERE id = $1', [id]);
         if (subRes.rows.length === 0) return res.status(404).json({ message: 'Abonnement nicht gefunden.' });
         
         await aiContentQueue.add('subscription-processing', { subscription: subRes.rows[0] });
@@ -114,7 +120,7 @@ exports.deleteAISubscriptions = async (req, res) => {
         await client.query('BEGIN');
         for (const id of ids) {
             await jobManager.removeSubscriptionSchedule(id);
-            await client.query('DELETE FROM content_subscriptions WHERE id = $1', [id]);
+            await client.query('DELETE FROM user_ai_content_subscriptions WHERE id = $1', [id]);
         }
         await client.query('COMMIT');
         res.status(200).json({ message: `${ids.length} Abonnement(s) erfolgreich gelöscht.` });
@@ -130,7 +136,7 @@ exports.deleteAISubscriptions = async (req, res) => {
 exports.getAIJobHistory = async (req, res) => {
     const { subscriptionId } = req.params;
     try {
-        const subRes = await db.query('SELECT ai_prompt_rule_id FROM content_subscriptions WHERE id = $1', [subscriptionId]);
+        const subRes = await db.query('SELECT ai_prompt_rule_id FROM user_ai_content_subscriptions WHERE id = $1', [subscriptionId]);
         if (subRes.rows.length === 0) return res.json([]);
         const ruleId = subRes.rows[0].ai_prompt_rule_id;
         const { rows } = await db.query('SELECT * FROM ai_jobs WHERE ai_prompt_rule_id = $1 ORDER BY started_at DESC LIMIT 50', [ruleId]);
@@ -147,7 +153,7 @@ exports.getSystemSubscriptions = async (req, res) => {
     try {
         const { rows } = await db.query(`
             SELECT sys.*, rules.name as prompt_rule_name 
-            FROM ai_subscriptions sys
+            FROM system_ai_content_subscriptions sys
             JOIN ai_prompt_rules rules ON sys.ai_prompt_rule_id = rules.id
             ORDER BY sys.created_at DESC
         `);
@@ -162,7 +168,7 @@ exports.createSystemSubscription = async (req, res) => {
     const { ai_prompt_rule_id, keywords, region, schedule, is_active } = req.body;
     try {
         const { rows } = await db.query(
-            `INSERT INTO ai_subscriptions (ai_prompt_rule_id, keywords, region, schedule, is_active) 
+            `INSERT INTO system_ai_content_subscriptions (ai_prompt_rule_id, keywords, region, schedule, is_active) 
              VALUES ($1, $2, $3, $4, $5) RETURNING *`,
             [ai_prompt_rule_id, keywords, region, schedule, is_active]
         );
@@ -181,7 +187,7 @@ exports.updateSystemSubscription = async (req, res) => {
     const { ai_prompt_rule_id, keywords, region, schedule, is_active } = req.body;
     try {
         const { rows } = await db.query(
-            `UPDATE ai_subscriptions SET 
+            `UPDATE system_ai_content_subscriptions SET 
              ai_prompt_rule_id = $1, keywords = $2, region = $3, schedule = $4, is_active = $5, updated_at = NOW()
              WHERE id = $6 RETURNING *`,
             [ai_prompt_rule_id, keywords, region, schedule, is_active, id]
@@ -204,7 +210,7 @@ exports.deleteSystemSubscription = async (req, res) => {
         // Zuerst den Job aus Redis entfernen
         await jobManager.removeSystemSubscriptionSchedule(id);
         // Dann aus der Datenbank löschen
-        const result = await db.query('DELETE FROM ai_subscriptions WHERE id = $1', [id]);
+        const result = await db.query('DELETE FROM system_ai_content_subscriptions WHERE id = $1', [id]);
         if (result.rowCount === 0) return res.status(404).json({ message: 'System subscription not found.' });
         res.status(200).json({ message: 'System subscription deleted successfully.' });
     } catch (err) {
@@ -276,4 +282,38 @@ exports.triggerEmailJob = async (req, res) => {
     const { id } = req.params;
     console.log(`Manually triggering email job with ID: ${id}`);
     res.status(202).json({ message: `E-Mail-Job ${id} manuell gestartet (Placeholder).` });
+};
+
+// NEU: Funktion, um nur geplante Scraping-Regeln abzurufen
+exports.getScheduledScrapingRules = async (req, res) => {
+    try {
+        const { rows } = await db.query(`
+            SELECT id, name, source_identifier, region, schedule, last_scraped_at 
+            FROM scraping_rules 
+            WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE
+            ORDER BY name ASC
+        `);
+
+        // Berechne für jede Regel die nächste Ausführungszeit
+        const rulesWithNextRun = rows.map(rule => {
+            let next_run_at = null;
+            try {
+                if (rule.schedule) {
+                    const interval = cronParser.parseExpression(rule.schedule, { 
+                        currentDate: new Date(),
+                        tz: 'Europe/Vienna' 
+                    });
+                    next_run_at = interval.next().toISOString();
+                }
+            } catch (e) { 
+                console.error(`Ungültiger Cron-String für Regel ${rule.id}: ${rule.schedule}`);
+            }
+            return { ...rule, next_run_at };
+        });
+
+        res.json(rulesWithNextRun);
+    } catch (err) {
+        console.error('Fehler beim Laden der geplanten Scraping-Regeln:', err.message);
+        res.status(500).send('Server error');
+    }
 };

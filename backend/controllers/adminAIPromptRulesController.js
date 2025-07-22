@@ -1,12 +1,10 @@
 // backend/controllers/adminAIPromptRulesController.js
 const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
-const { generateAIContent } = require('../services/aiExecutionService');
 const { aiContentQueue } = require('../services/queueService');
 const jobManager = require('../services/jobManagerService');
 
-// WICHTIG: Die Konstante, die zum Zusammenfügen der Prompt-Teile verwendet wird.
-const PROMPT_SEPARATOR = '<!--PROMPT_PART_SEPARATOR-->';
+const PROMPT_SEPARATOR = '';
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
@@ -26,19 +24,23 @@ exports.getAIProviders = (req, res) => {
 };
 
 exports.createAIPromptRule = async (req, res) => {
-    const { name, prompt_persona, prompt_task, prompt_format, ai_provider, output_format } = req.body;
+    const { name, prompt_persona, prompt_task, prompt_format, ai_provider, output_format, keywords, region, schedule, is_active, category_id } = req.body;
     if (!name || !prompt_persona || !prompt_task || !ai_provider) {
         return res.status(400).json({ message: 'Name, Persona, Aufgabe und KI-Provider sind Pflichtfelder.' });
     }
     try {
         const prompt_template = [prompt_persona, prompt_task, prompt_format || ''].join(PROMPT_SEPARATOR);
-
-        const newRule = await db.query(
-            `INSERT INTO ai_prompt_rules (id, name, prompt_template, ai_provider, output_format)
-             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [uuidv4(), name, prompt_template, ai_provider, output_format || 'text']
+        const newRuleRes = await db.query(
+            `INSERT INTO ai_prompt_rules (id, name, prompt_template, ai_provider, output_format, keywords, region, schedule, is_active, default_category_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+            [uuidv4(), name, prompt_template, ai_provider, output_format || 'text', keywords, region, schedule, is_active, category_id]
         );
-        res.status(201).json(newRule.rows[0]);
+        const newRule = newRuleRes.rows[0];
+
+        if (newRule.schedule && newRule.is_active) {
+            await jobManager.setSystemSubscriptionSchedule(newRule.id, newRule.schedule);
+        }
+        res.status(201).json(newRule);
     } catch (err) {
         console.error('Error creating AI prompt rule:', err.message);
         res.status(500).send('Server error');
@@ -49,21 +51,30 @@ exports.updateAIPromptRule = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
 
-    const { name, prompt_persona, prompt_task, prompt_format, ai_provider, output_format } = req.body;
+    const { name, prompt_persona, prompt_task, prompt_format, ai_provider, output_format, keywords, region, schedule, is_active, category_id } = req.body;
     if (!name || !prompt_persona || !prompt_task || !ai_provider) {
         return res.status(400).json({ message: 'Name, Persona, Aufgabe und KI-Provider sind Pflichtfelder.' });
     }
     try {
         const prompt_template = [prompt_persona, prompt_task, prompt_format || ''].join(PROMPT_SEPARATOR);
-
         const result = await db.query(
-            `UPDATE ai_prompt_rules 
-             SET name = $1, prompt_template = $2, ai_provider = $3, output_format = $4, updated_at = CURRENT_TIMESTAMP 
-             WHERE id = $5 RETURNING *`,
-            [name, prompt_template, ai_provider, output_format || 'text', id]
+            `UPDATE ai_prompt_rules SET 
+             name = $1, prompt_template = $2, ai_provider = $3, output_format = $4, keywords = $5, 
+             region = $6, schedule = $7, is_active = $8, default_category_id = $9, updated_at = CURRENT_TIMESTAMP 
+             WHERE id = $10 RETURNING *`,
+            [name, prompt_template, ai_provider, output_format || 'text', keywords, region, schedule, is_active, category_id, id]
         );
         if (result.rows.length === 0) return res.status(404).json({ message: 'Regel nicht gefunden.' });
-        res.json(result.rows[0]);
+        
+        const updatedRule = result.rows[0];
+        
+        if (updatedRule.is_active && updatedRule.schedule) {
+            await jobManager.setSystemSubscriptionSchedule(updatedRule.id, updatedRule.schedule);
+        } else {
+            await jobManager.removeSystemSubscriptionSchedule(updatedRule.id);
+        }
+        
+        res.json(updatedRule);
     } catch (err) {
         console.error('Error updating AI prompt rule:', err.message);
         res.status(500).send('Server error');
@@ -74,6 +85,7 @@ exports.deleteAIPromptRule = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
     try {
+        await jobManager.removeSystemSubscriptionSchedule(id);
         const result = await db.query('DELETE FROM ai_prompt_rules WHERE id = $1 RETURNING id', [id]);
         if (result.rows.length === 0) return res.status(404).json({ message: 'Regel nicht gefunden.' });
         res.json({ message: 'AI Prompt Rule deleted successfully' });
@@ -94,9 +106,9 @@ exports.duplicateAIPromptRule = async (req, res) => {
         const newName = `${originalRule.name} (Kopie)`;
 
         const newRule = await db.query(
-            `INSERT INTO ai_prompt_rules (id, name, prompt_template, ai_provider, output_format)
-             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [uuidv4(), newName, originalRule.prompt_template, originalRule.ai_provider, originalRule.output_format]
+            `INSERT INTO ai_prompt_rules (id, name, prompt_template, ai_provider, output_format, keywords, region, schedule, is_active, default_category_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+            [uuidv4(), newName, originalRule.prompt_template, originalRule.ai_provider, originalRule.output_format, originalRule.keywords, originalRule.region, null, false, originalRule.default_category_id]
         );
         res.status(201).json(newRule.rows[0]);
     } catch (err) {
@@ -105,18 +117,47 @@ exports.duplicateAIPromptRule = async (req, res) => {
     }
 };
 
+
+exports.triggerRule = async (req, res) => {
+    const { id: ruleId } = req.params;
+    if (!isValidUUID(ruleId)) {
+        return res.status(400).json({ message: 'Invalid ID format.' });
+    }
+
+    try {
+        const ruleRes = await db.query('SELECT * FROM ai_prompt_rules WHERE id = $1', [ruleId]);
+        if (ruleRes.rows.length === 0) {
+            return res.status(404).json({ message: 'Die angegebene KI-Regel wurde nicht gefunden.' });
+        }
+        const rule = ruleRes.rows[0];
+
+        if (!rule.keywords || rule.keywords.length === 0) {
+            return res.status(400).json({ message: 'Die Regel kann nicht gestartet werden, da keine Keywords konfiguriert sind.' });
+        }
+
+        // Füge einen einmaligen System-Job zur Warteschlange hinzu
+        await aiContentQueue.add('system-job-processing', { systemSubscription: rule });
+        console.log(`[API] Manually triggered system job for rule ${ruleId}`);
+
+        res.status(202).json({ message: 'Job wurde manuell zur Warteschlange hinzugefügt.' });
+
+    } catch (err) {
+        console.error(`Error triggering rule ${ruleId}:`, err.message);
+        res.status(500).send('Serverfehler');
+    }
+};
+
+
 exports.executeRule = async (req, res) => {
     const { ruleId, ruleData, inputText, region, categoryId, focus_page } = req.body;
     const { id: userId } = req.user;
     if (!inputText) return res.status(400).json({ message: 'Eingabetext ist erforderlich.' });
-
     try {
         const jobRes = await db.query(
             `INSERT INTO ai_jobs (ai_prompt_rule_id, status, is_automated) VALUES ($1, 'pending', FALSE) RETURNING id`,
             [ruleId]
         );
         const jobId = jobRes.rows[0].id;
-
         await aiContentQueue.add('manual-generation', {
             jobId,
             ruleToExecute: { id: ruleId, ...ruleData },
@@ -126,7 +167,6 @@ exports.executeRule = async (req, res) => {
             focus_page,
             userId
         });
-        
         res.status(202).json({ message: 'AI-Job zur Verarbeitung in die Warteschlange gestellt.', jobId: jobId });
     } catch (error) {
         console.error('Fehler beim Hinzufügen des manuellen AI-Jobs:', error);
@@ -134,36 +174,34 @@ exports.executeRule = async (req, res) => {
     }
 };
 
+// Diese Funktion ist für das Planen von NUTZER-Abos, nicht System-Jobs.
 exports.scheduleRule = async (req, res) => {
     const { id: ruleId } = req.params;
     const { userId, keywords, region, schedule, categoryId } = req.body;
-
     if (!userId || !keywords || keywords.length === 0 || !schedule) {
         return res.status(400).json({ message: 'Benutzer, Keywords und ein Zeitplan sind erforderlich.' });
     }
-
     try {
         const newSubscriptionRes = await db.query(
-            `INSERT INTO content_subscriptions (user_id, ai_prompt_rule_id, region, keywords, schedule, is_active, category_id)
+            `INSERT INTO user_ai_content_subscriptions (user_id, ai_prompt_rule_id, region, keywords, schedule, is_active, category_id)
              VALUES ($1, $2, $3, $4, $5, TRUE, $6)
-             RETURNING *`,
+             ON CONFLICT (user_id, ai_prompt_rule_id, region) 
+             DO UPDATE SET keywords = EXCLUDED.keywords, schedule = EXCLUDED.schedule, category_id = EXCLUDED.category_id, is_active = TRUE, updated_at = CURRENT_TIMESTAMP
+             RETURNING *;`,
             [userId, ruleId, region || null, keywords, schedule, categoryId || null]
         );
         const newSubscription = newSubscriptionRes.rows[0];
-
         await jobManager.setSubscriptionSchedule(newSubscription.id, newSubscription.schedule);
-
         res.status(201).json({ 
-            message: 'Abonnement erfolgreich erstellt und geplant.', 
+            message: 'Abonnement erfolgreich erstellt oder aktualisiert und geplant.', 
             subscription: newSubscription 
         });
     } catch (err) {
-        console.error('Error creating scheduled subscription:', err.message);
+        console.error('Error creating/updating scheduled subscription:', err.message);
         res.status(500).send('Serverfehler');
     }
 };
 
-// Diese Funktion wird vom Worker aufgerufen.
 async function generateAndSaveContentForManualJob(jobId, rule, inputText, region, categoryName, categoryId, focus_page, userId) {
     const client = await db.connect();
     try {

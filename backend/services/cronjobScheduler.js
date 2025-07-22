@@ -16,7 +16,7 @@ const runScheduledJobs = async () => {
     const client = await db.connect();
     try {
         // 1. Execute scheduled AI Subscriptions
-        const aiSubs = await client.query("SELECT * FROM content_subscriptions WHERE is_active = TRUE AND schedule IS NOT NULL");
+        const aiSubs = await client.query("SELECT * FROM user_ai_content_subscriptions WHERE is_active = TRUE AND schedule IS NOT NULL");
         for (const sub of aiSubs.rows) {
             try {
                 const interval = cronParser.parseExpression(sub.schedule, { currentDate: now, tz: 'Europe/Vienna' });

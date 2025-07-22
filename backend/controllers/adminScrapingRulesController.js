@@ -2,7 +2,7 @@
 const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
 const { triggerSingleRuleScrape, getScrapingRuleSuggestion } = require('../services/scraperService');
-const jobManager = require('../services/jobManagerService'); // Wichtig: Importieren
+const jobManager = require('../services/jobManagerService');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
@@ -41,11 +41,8 @@ exports.createScrapingRule = async (req, res) => {
 
     try {
         const newRuleRes = await db.query(
-            `INSERT INTO scraping_rules (
-                id, name, source_identifier, url_pattern, content_container_selector, title_selector, 
-                date_selector, description_selector, link_selector, date_format, category_default, 
-                is_active, region, schedule
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+            `INSERT INTO scraping_rules (id, name, source_identifier, url_pattern, content_container_selector, title_selector, date_selector, description_selector, link_selector, date_format, category_default, is_active, region, schedule)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
             [
                 uuidv4(), name, source_identifier, url_pattern, content_container_selector, title_selector,
                 date_selector, description_selector, link_selector, date_format, category_default,
@@ -54,7 +51,6 @@ exports.createScrapingRule = async (req, res) => {
         );
         const newRule = newRuleRes.rows[0];
 
-        // Nach dem Erstellen den Zeitplan im Job Manager setzen
         if (newRule.schedule) {
             await jobManager.setScrapingSchedule(newRule.id, newRule.schedule);
         }
@@ -95,7 +91,6 @@ exports.updateScrapingRule = async (req, res) => {
         
         const updatedRule = result.rows[0];
         
-        // Nach dem Update den Zeitplan im Job Manager synchronisieren
         await jobManager.setScrapingSchedule(updatedRule.id, updatedRule.schedule);
 
         res.json(updatedRule);
@@ -109,10 +104,8 @@ exports.deleteScrapingRule = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
     try {
-        // Zuerst den geplanten Job aus Redis entfernen
         await jobManager.removeScrapingSchedule(id);
         
-        // Dann die Regel aus der Datenbank löschen
         const result = await db.query('DELETE FROM scraping_rules WHERE id = $1 RETURNING id', [id]);
         if (result.rows.length === 0) return res.status(404).json({ message: 'Regel nicht gefunden.' });
         
@@ -126,6 +119,8 @@ exports.deleteScrapingRule = async (req, res) => {
 exports.updateScrapingRuleSchedule = async (req, res) => {
     const { id } = req.params;
     const { schedule } = req.body;
+
+    if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
 
     try {
         const { rows } = await db.query(
@@ -152,7 +147,6 @@ exports.triggerScrapeJob = async (req, res) => {
         );
         const jobId = jobResult.rows[0].id;
         
-        // Diese Funktion sollte intern den Job zur Queue hinzufügen
         triggerSingleRuleScrape(ruleId, jobId).catch(err => {
             console.error(`[FATAL] Unhandled error from background scrape job ${jobId}:`, err.message);
         });

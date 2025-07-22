@@ -314,7 +314,7 @@ const processAllActiveSubscriptions = async () => {
     console.log(`[Cronjob] Starte das Hinzufügen aller aktiven Abonnements zur Job-Warteschlange...`);
     const client = await db.connect();
     try {
-        const activeSubsRes = await client.query(`SELECT * FROM content_subscriptions WHERE is_active = TRUE`);
+        const activeSubsRes = await client.query(`SELECT * FROM user_ai_content_subscriptions WHERE is_active = TRUE`);
         const subscriptions = activeSubsRes.rows;
         
         if (subscriptions.length === 0) {

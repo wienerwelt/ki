@@ -2,38 +2,30 @@
 const express = require('express');
 const router = express.Router();
 const adminAuth = require('../middleware/adminAuth');
-
-const {
-    getAllAIPromptRules,
-    createAIPromptRule,
-    updateAIPromptRule,
-    deleteAIPromptRule,
-    executeRule,
-    duplicateAIPromptRule,
-    getAIProviders // NEU: Importiere die neue Funktion
-} = require('../controllers/adminAIPromptRulesController');
+const controller = require('../controllers/adminAIPromptRulesController');
 
 router.use(adminAuth);
 
-// GET / -> Holt alle Regeln
-router.get('/', getAllAIPromptRules);
+// --- GET Routes ---
+router.get('/', controller.getAllAIPromptRules);
+router.get('/providers', controller.getAIProviders);
 
-// NEU: GET /providers -> Holt die Liste der verfügbaren KI-Anbieter
-router.get('/providers', getAIProviders);
+// --- POST Routes ---
+router.post('/', controller.createAIPromptRule);
+router.post('/:id/duplicate', controller.duplicateAIPromptRule);
+router.post('/execute', controller.executeRule);
 
-// POST / -> Erstellt eine neue Regel
-router.post('/', createAIPromptRule);
+// Route zum Erstellen eines ABONNEMENTS für einen NUTZER aus einer Regel heraus
+router.post('/:id/schedule', controller.scheduleRule);
 
-// POST /:id/duplicate -> Dupliziert eine Regel
-router.post('/:id/duplicate', duplicateAIPromptRule);
+// NEU: Route zum manuellen Starten (Triggern) einer REDAKTIONELLEN Regel
+router.post('/:id/trigger', controller.triggerRule);
 
-// POST /execute -> Führt eine Regel manuell aus
-router.post('/execute', executeRule);
 
-// PUT /:id -> Aktualisiert eine Regel
-router.put('/:id', updateAIPromptRule);
+// --- PUT Route ---
+router.put('/:id', controller.updateAIPromptRule);
 
-// DELETE /:id -> Löscht eine Regel
-router.delete('/:id', deleteAIPromptRule);
+// --- DELETE Route ---
+router.delete('/:id', controller.deleteAIPromptRule);
 
 module.exports = router;

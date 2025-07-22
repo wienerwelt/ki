@@ -1,10 +1,11 @@
 // backend/controllers/adminSubscriptionsController.js
 const db = require('../config/db');
 const { aiContentQueue } = require('../services/queueService');
-const { setSubscriptionSchedule } = require('../services/jobManagerService');
+// Der jobManagerService wird hier bewusst NICHT verwendet, da Nutzer keine Zeitpläne setzen.
 
 exports.createSubscription = async (req, res) => {
-    const { id: userId } = req.user;
+    // Wichtig: Holt die ID des aktuell eingeloggten Nutzers, egal welche Rolle er hat.
+    const { id: userId } = req.user; 
     const { ruleId, region, keywords } = req.body;
 
     if (!ruleId || !region || !keywords || keywords.length === 0) {
@@ -12,30 +13,25 @@ exports.createSubscription = async (req, res) => {
     }
 
     try {
-        // Standard-Zeitplan für die wiederkehrende Ausführung (z.B. täglich um 08:00 Uhr)
-        const defaultSchedule = '0 8 * * *';
-
+        // Es wird kein 'schedule' gesetzt. Die Spalte bleibt NULL, was korrekt ist.
         const newSubscriptionRes = await db.query(
-            `INSERT INTO content_subscriptions (user_id, ai_prompt_rule_id, region, keywords, schedule)
-             VALUES ($1, $2, $3, $4, $5)
+            `INSERT INTO user_ai_content_subscriptions (user_id, ai_prompt_rule_id, region, keywords)
+             VALUES ($1, $2, $3, $4)
              ON CONFLICT (user_id, ai_prompt_rule_id, region) 
              DO UPDATE SET keywords = EXCLUDED.keywords, updated_at = CURRENT_TIMESTAMP
              RETURNING *`,
-            [userId, ruleId, region, keywords, defaultSchedule]
+            [userId, ruleId, region, keywords]
         );
         
         const newSubscription = newSubscriptionRes.rows[0];
         const jobData = { subscription: newSubscription };
 
-        // 1. Job für die Zukunft planen (wiederkehrend)
-        await setSubscriptionSchedule(newSubscription.id, newSubscription.schedule);
-
-        // 2. Job für sofortige Ausführung in die Queue stellen (einmalig)
+        // Der Job wird einmalig und mit sofortiger Wirkung in die Warteschlange gestellt.
         await aiContentQueue.add('subscription-processing', jobData);
-        console.log(`[API] Added immediate job for subscription ${newSubscription.id}`);
+        console.log(`[API] Added immediate one-off job for user subscription ${newSubscription.id}`);
 
         res.status(202).json({ 
-            message: 'Abonnement akzeptiert. Die erste Analyse wird sofort gestartet und zukünftige werden geplant.', 
+            message: 'Abonnement akzeptiert. Die Analyse wird sofort gestartet.', 
             subscription: newSubscription 
         });
 

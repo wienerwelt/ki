@@ -59,26 +59,31 @@ const AdminScheduleSelector: React.FC<Props> = ({ value, onChange }) => {
         triggerChange(type, day, newTime);
     };
 
+    // -------- FIX: KEINE führenden Nullen mehr im Cronstring! --------
     const triggerChange = (currentType: typeof type, currentDay: string, currentTime: string) => {
         if (currentType === 'none') {
             onChange(null);
             return;
         }
-        const [hour, minute] = currentTime.split(':');
+        let [hour, minute] = currentTime.split(':');
+        minute = String(Number(minute) || 0);
+        hour = String(Number(hour) || 9);
+
         let cronString = '';
         switch (currentType) {
             case 'monthly':
-                cronString = `${minute || '0'} ${hour || '9'} ${currentDay} * *`;
+                cronString = `${minute} ${hour} ${currentDay} * *`;
                 break;
             case 'weekly':
-                cronString = `${minute || '0'} ${hour || '9'} * * ${currentDay}`;
+                cronString = `${minute} ${hour} * * ${currentDay}`;
                 break;
             default:
-                cronString = `${minute || '0'} ${hour || '9'} * * *`;
+                cronString = `${minute} ${hour} * * *`;
                 break;
         }
         onChange(cronString);
     };
+    // ----------------------------------------------------------------
 
     return (
         <>
