@@ -18,6 +18,7 @@ router.get('/system-subscriptions', controller.getSystemSubscriptions);
 router.post('/system-subscriptions', controller.createSystemSubscription);
 router.put('/system-subscriptions/:id', controller.updateSystemSubscription);
 router.delete('/system-subscriptions/:id', controller.deleteSystemSubscription);
+router.get('/scraping-rules', controller.getScheduledScrapingRules);
 
 // --- Routen für E-Mail-Jobs ---
 router.get('/emails', controller.getAllEmailJobs);
@@ -25,6 +26,8 @@ router.post('/emails', controller.createEmailJob);
 router.put('/emails/:id', controller.updateEmailJob);
 router.delete('/emails/:id', controller.deleteEmailJob);
 router.post('/emails/:id/trigger', controller.triggerEmailJob);
+
+
 
 
 module.exports = router;

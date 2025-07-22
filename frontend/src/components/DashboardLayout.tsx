@@ -1,8 +1,9 @@
+// frontend/src/components/DashboardLayout.tsx
 import React, { useState, useEffect } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { 
     AppBar, Toolbar, Typography, Button, Box, Drawer, List, ListItem, ListItemText, 
-    IconButton, Avatar, Divider, Menu, MenuItem, Tooltip
+    IconButton, Avatar, Divider, Menu, MenuItem, Tooltip, Badge
 } from '@mui/material';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import AccountCircle from '@mui/icons-material/AccountCircle';
@@ -40,7 +41,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
-    // --- NEU: Logik für den Werbebanner ---
+    // --- Logik für den Werbebanner ---
     const [ad, setAd] = useState<{ id: string; content: string } | null>(null);
     const [isAdVisible, setIsAdVisible] = useState(false);
     const token = localStorage.getItem('jwt_token');
@@ -102,6 +103,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         navigate('/');
     };
 
+
     const dashboardTitle = user?.dashboard_title || businessPartner?.name || 'Fleet KI-Dashboard';
 
     const drawerContent = (
@@ -113,10 +115,10 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     <DashboardIcon sx={{ mr: 2 }} />
                     <ListItemText primary="Mein Dashboard" />
                 </ListItem>
-<ListItem button component={RouterLink} to="/trusted-sources" onClick={toggleDrawer(false)}>
-    <FactCheckIcon sx={{ mr: 2 }} />
-    <ListItemText primary="Vertrauensw. Quellen" />
-</ListItem>                
+                <ListItem button component={RouterLink} to="/trusted-sources" onClick={toggleDrawer(false)}>
+                    <FactCheckIcon sx={{ mr: 2 }} />
+                    <ListItemText primary="Vertrauensw. Quellen" />
+                </ListItem>                
                 <Divider sx={{ my: 1 }} />
                 {user?.role === 'assistenz' && (
                    <>
@@ -154,6 +156,15 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItem button component={RouterLink} to="/admin/users" onClick={toggleDrawer(false)}><GroupIcon sx={{ mr: 2 }} /><ListItemText primary="Benutzer" /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/widget-types" onClick={toggleDrawer(false)}><WidgetsIcon sx={{ mr: 2 }} /><ListItemText primary="Widget-Typen" /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/bp-widget-access" onClick={toggleDrawer(false)}><SubscriptionsIcon sx={{ mr: 2 }} /><ListItemText primary="Abonnements" /></ListItem>
+                            
+                            {/* ================================================================== */}
+                            {/* NEUER LINK FÜR ADMINS HIER EINGEFÜGT: */}
+                            {/* ================================================================== */}
+                            <ListItem button component={RouterLink} to="/admin/sources" onClick={toggleDrawer(false)}>
+                                <FactCheckIcon sx={{ mr: 2 }} />
+                                <ListItemText primary="Quellen-Verwaltung" />
+                            </ListItem>
+
                             <ListItem button component={RouterLink} to="/admin/scraped-content" onClick={toggleDrawer(false)}><DataObjectIcon sx={{ mr: 2 }} /><ListItemText primary="Gescrapte Inhalte" /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/scraping-rules" onClick={toggleDrawer(false)}><PolicyIcon sx={{ mr: 2 }} /><ListItemText primary="Scraping-Regeln" /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/ai-prompt-rules" onClick={toggleDrawer(false)}><AutoAwesomeIcon sx={{ mr: 2 }} /><ListItemText primary="KI-Prompt-Regeln" /></ListItem>
@@ -170,7 +181,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     return (
         <Box sx={{ display: 'flex', minHeight: '100vh' }}>
             <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
-                {/* Banner wird hier oben im Header gerendert, wenn er sichtbar ist */}
                 {isAdVisible && ad && (
                     <AdvertisementBanner
                         content={ad.content}
@@ -192,13 +202,18 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
                     {user && (
                         <div>
-                            <Tooltip title="Benutzerkonto">
+                            <Tooltip title={`Sie haben ${user.contribution_score} Punkte gesammelt. Punkte erhalten Sie für das Vorschlagen und Bewerten von vertrauenswürdigen Quellen.`}>
                                 <IconButton
                                     size="large"
                                     onClick={handleMenu}
                                     color="inherit"
                                 >
-                                    <AccountCircle />
+                                    <Badge badgeContent={user.contribution_score} color="secondary"
+                                        // Badge nur anzeigen, wenn Punkte vorhanden sind
+                                        invisible={!user.contribution_score || user.contribution_score === 0}
+                                    >
+                                        <AccountCircle />
+                                    </Badge>
                                 </IconButton>
                             </Tooltip>
                             <Menu
@@ -229,9 +244,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 {drawerContent}
             </Drawer>
             <Box component="main" sx={{ flexGrow: 1, p: 3, width: '100%' }}>
-                {/* Spacer für den fixierten Header */}
                 <Toolbar />
-                {/* Zusätzlicher Spacer für den Banner, wenn er sichtbar ist */}
                 {isAdVisible && <Box sx={{ height: '50px' }} />}
                 {children}
             </Box>

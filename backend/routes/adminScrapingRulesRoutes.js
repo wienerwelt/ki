@@ -21,4 +21,6 @@ router.post('/suggest', adminSrController.getSuggestionForUrl);
 router.post('/:id/trigger-scrape', adminSrController.triggerScrapeJob);
 router.get('/logs/:jobId', adminSrController.getScrapeLogs);
 
+router.put('/:id/schedule', adminSrController.updateScrapingRuleSchedule);
+
 module.exports = router;

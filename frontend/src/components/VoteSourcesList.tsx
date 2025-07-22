@@ -1,6 +1,6 @@
 // frontend/src/components/VoteSourcesList.tsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Paper, Typography, CircularProgress, Alert, Rating, Button, List, ListItem, Divider, Link as MuiLink } from '@mui/material';
+import { Box, Paper, Typography, CircularProgress, Alert, Rating, List, Link as MuiLink } from '@mui/material';
 import apiClient from '../apiClient';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 
@@ -9,6 +9,7 @@ interface PendingSource {
     url: string;
     description: string | null;
     category_name: string | null;
+    category_name_lang: string | null; // NEU
 }
 
 export const VoteSourcesList: React.FC = () => {
@@ -36,13 +37,10 @@ export const VoteSourcesList: React.FC = () => {
 
     const handleVote = async (sourceId: string, rating: number | null) => {
         if (!rating) return;
-
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.post(`/api/sources/${sourceId}/vote`, { rating }, { headers: { 'x-auth-token': token } });
-            
             setSources(prev => prev.filter(s => s.id !== sourceId));
-
         } catch (err: any) {
             alert(err.response?.data?.message || 'Fehler bei der Abstimmung.');
         }
@@ -59,7 +57,7 @@ export const VoteSourcesList: React.FC = () => {
             </Typography>
             {sources.length > 0 ? (
                 <List>
-                    {sources.map((source, index) => (
+                    {sources.map((source) => (
                         <React.Fragment key={source.id}>
                             <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
                                 <Typography variant="body1" sx={{ fontWeight: 'bold' }}>
@@ -68,7 +66,8 @@ export const VoteSourcesList: React.FC = () => {
                                         <OpenInNewIcon fontSize="small" />
                                     </MuiLink>
                                 </Typography>
-                                {source.category_name && <Typography variant="caption" color="text.secondary">Kategorie: {source.category_name}</Typography>}
+                                {/* HIER DIE ÄNDERUNG: Nutze name_lang für die Anzeige */}
+                                {(source.category_name_lang || source.category_name) && <Typography variant="caption" color="text.secondary">Kategorie: {source.category_name_lang || source.category_name}</Typography>}
                                 <Typography variant="body2" sx={{ my: 1 }}>{source.description || 'Keine Beschreibung vorhanden.'}</Typography>
                                 
                                 <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>

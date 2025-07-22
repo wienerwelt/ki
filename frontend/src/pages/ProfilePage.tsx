@@ -1,15 +1,16 @@
+// frontend/src/pages/ProfilePage.tsx
 import React, { useState, useEffect } from 'react';
 import { Container, Typography, Box, TextField, Button, Grid, Paper, CircularProgress, Alert, Snackbar } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../apiClient';
 
 const ProfilePage: React.FC = () => {
-    const { user } = useAuth();
+    const { user, updateUser } = useAuth();
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
 
-    // Form States
+    // Lokale States nur noch für Formular-Eingaben
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
     const [organizationName, setOrganizationName] = useState('');
@@ -18,12 +19,6 @@ const ProfilePage: React.FC = () => {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [articleScoreMin, setArticleScoreMin] = useState<number | ''>('');
     const [articleScoreMax, setArticleScoreMax] = useState<number | ''>('');
-
-
-    // Read-only States
-    const [email, setEmail] = useState('');
-    const [role, setRole] = useState('');
-    const [membershipLevel, setMembershipLevel] = useState('');
 
     useEffect(() => {
         const fetchProfile = async () => {
@@ -34,15 +29,16 @@ const ProfilePage: React.FC = () => {
                     headers: { 'x-auth-token': token }
                 });
                 const profile = response.data;
+                
+                updateUser(profile);
+
                 setFirstName(profile.first_name || '');
                 setLastName(profile.last_name || '');
                 setOrganizationName(profile.organization_name || '');
                 setLinkedinUrl(profile.linkedin_url || '');
-                setEmail(profile.email);
-                setRole(profile.role);
-                setMembershipLevel(profile.membership_level || 'Kein Level');
                 setArticleScoreMin(profile.article_score_min ?? '');
                 setArticleScoreMax(profile.article_score_max ?? '');
+
             } catch (err: any) {
                 setError(err.response?.data?.message || 'Fehler beim Laden des Profils.');
             } finally {
@@ -50,7 +46,9 @@ const ProfilePage: React.FC = () => {
             }
         };
 
-        fetchProfile();
+        if (user) {
+            fetchProfile();
+        }
     }, []);
 
     const handleSubmit = async (event: React.FormEvent) => {
@@ -69,7 +67,7 @@ const ProfilePage: React.FC = () => {
                 last_name: lastName,
                 organization_name: organizationName,
                 linkedin_url: linkedinUrl,
-                password: password || undefined, // Sende Passwort nur, wenn es nicht leer ist
+                password: password || undefined,
                 article_score_min: articleScoreMin === '' ? null : Number(articleScoreMin),
                 article_score_max: articleScoreMax === '' ? null : Number(articleScoreMax),
             };
@@ -84,7 +82,7 @@ const ProfilePage: React.FC = () => {
         }
     };
 
-    if (loading) {
+    if (loading || !user) {
         return <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box>;
     }
 
@@ -146,14 +144,17 @@ const ProfilePage: React.FC = () => {
                             <Typography variant="h6" sx={{ mt: 2 }}>Kontoinformationen</Typography>
                         </Grid>
                         <Grid item xs={12} sm={6}>
-                            <TextField label="E-Mail" fullWidth value={email} disabled />
+                            <TextField label="E-Mail" fullWidth value={user.email} disabled />
                         </Grid>
                         <Grid item xs={12} sm={6}>
-                            <TextField label="Rolle" fullWidth value={role} disabled />
+                            <TextField label="Rolle" fullWidth value={user.role} disabled />
                         </Grid>
                         <Grid item xs={12} sm={6}>
-                            <TextField label="Mitgliedslevel" fullWidth value={membershipLevel} disabled />
+                            <TextField label="Mitgliedslevel" fullWidth value={user.membership_level || 'Kein Level'} disabled />
                         </Grid>
+                        <Grid item xs={12} sm={6}>
+                            <TextField label="Community-Punkte" fullWidth value={user.contribution_score || 0} disabled />
+                        </Grid>                        
                         <Grid item xs={12}>
                             <Typography variant="h6" sx={{ mt: 2 }}>Passwort ändern</Typography>
                         </Grid>

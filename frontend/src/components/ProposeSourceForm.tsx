@@ -6,6 +6,7 @@ import apiClient from '../apiClient';
 interface Category {
     id: string;
     name: string;
+    name_lang: string | null;
 }
 
 interface ProposeSourceFormProps {
@@ -89,7 +90,7 @@ export const ProposeSourceForm: React.FC<ProposeSourceFormProps> = ({ onSuccess 
             />
             <Autocomplete
                 options={allCategories}
-                getOptionLabel={(option) => option.name}
+                getOptionLabel={(option) => option.name_lang || option.name}
                 value={category}
                 onChange={(event, newValue) => setCategory(newValue)}
                 isOptionEqualToValue={(option, value) => option.id === value.id}

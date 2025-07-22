@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+// src/pages/AdminScrapingRulesPage.tsx
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Link as RouterLink, useLocation } from 'react-router-dom';
 import { 
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
     TextField, MenuItem, Switch, FormControlLabel, Chip, Tooltip as MuiTooltip, TableSortLabel, InputAdornment, LinearProgress,
     SelectChangeEvent,
-    Link as MuiLink
+    Link as MuiLink,
+    Snackbar
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -14,6 +16,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SearchIcon from '@mui/icons-material/Search';
 import TipsAndUpdatesIcon from '@mui/icons-material/TipsAndUpdates';
 import DashboardLayout from '../components/DashboardLayout';
+import AdminScheduleSelector from '../components/AdminScheduleSelector';
 import apiClient from '../apiClient';
 
 // --- Interfaces ---
@@ -35,6 +38,7 @@ interface ScrapingRule {
     current_entry_count: number;
     region: string | null;
     link_selector: string | null;
+    schedule: string | null;
 }
 
 interface Category {
@@ -46,8 +50,10 @@ interface Category {
 type Order = 'asc' | 'desc';
 
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
-    if (b[orderBy] < a[orderBy]) return -1;
-    if (b[orderBy] > a[orderBy]) return 1;
+    const valA = a[orderBy] ?? '';
+    const valB = b[orderBy] ?? '';
+    if (valB < valA) return -1;
+    if (valB > valA) return 1;
     return 0;
 }
 
@@ -71,9 +77,9 @@ const initialFormState = {
     category_default: '',
     is_active: true,
     region: '',
+    schedule: null as string | null,
 };
 
-// ERWEITERT: Zusätzliche Datumsformate hinzugefügt
 const commonDateFormats = [
     { value: 'yyyy-MM-dd', label: '2025-06-29 (ISO 8601)' },
     { value: 'dd.MM.yyyy', label: '29.06.2025 (Deutsch, Punkt)' },
@@ -87,13 +93,14 @@ const commonDateFormats = [
 const europeanCountries = ["EU", "Albanien", "Andorra", "Belgien", "Bosnien und Herzegowina", "Bulgarien", "Dänemark", "Deutschland", "Estland", "Finnland", "Frankreich", "Griechenland", "Irland", "Island", "Italien", "Kosovo", "Kroatien", "Lettland", "Liechtenstein", "Litauen", "Luxemburg", "Malta", "Moldau", "Monaco", "Montenegro", "Niederlande", "Nordmazedonien", "Norwegen", "Österreich", "Polen", "Portugal", "Rumänien", "San Marino", "Schweden", "Schweiz", "Serbien", "Slowakei", "Slowenien", "Spanien", "Tschechien", "Ukraine", "Ungarn", "Vatikanstadt", "Vereinigtes Königreich", "Weißrussland", "Zypern"];
 
 const AdminScrapingRulesPage: React.FC = () => {
+    const location = useLocation();
     const [rules, setRules] = useState<ScrapingRule[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [openDialog, setOpenDialog] = useState(false);
-    const [editingRule, setEditingRule] = useState<ScrapingRule | null>(null);
-    const [searchTerm, setSearchTerm] = useState('');
+    const [editingRule, setEditingRule] = useState<Partial<ScrapingRule> | null>(null);
+    const [searchTerm, setSearchTerm] = useState(location.state?.prefillSearch || '');
     const [order, setOrder] = useState<Order>('asc');
     const [orderBy, setOrderBy] = useState<keyof ScrapingRule>('name');
     
@@ -106,9 +113,9 @@ const AdminScrapingRulesPage: React.FC = () => {
     
     const [suggesting, setSuggesting] = useState(false);
     const [suggestionAlert, setSuggestionAlert] = useState<string | null>(null);
+    const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
 
-
-    const fetchInitialData = async () => {
+    const fetchInitialData = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
@@ -124,9 +131,9 @@ const AdminScrapingRulesPage: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
-    useEffect(() => { fetchInitialData(); }, []);
+    useEffect(() => { fetchInitialData(); }, [fetchInitialData]);
 
     useEffect(() => {
         if (!currentJobId || !logModalOpen || (jobStatus !== 'running' && jobStatus !== 'pending')) return;
@@ -161,18 +168,19 @@ const AdminScrapingRulesPage: React.FC = () => {
     const handleOpenEditDialog = (rule: ScrapingRule) => {
         setEditingRule(rule);
         setFormState({
-            name: rule.name || '',
-            source_identifier: rule.source_identifier,
-            url_pattern: rule.url_pattern || '',
-            content_container_selector: rule.content_container_selector || '',
-            title_selector: rule.title_selector || '',
-            date_selector: rule.date_selector || '',
-            description_selector: rule.description_selector || '',
-            link_selector: rule.link_selector || '',
-            date_format: rule.date_format || '',
-            category_default: rule.category_default || '',
+            name: rule.name ?? '',
+            source_identifier: rule.source_identifier ?? '',
+            url_pattern: rule.url_pattern ?? '',
+            content_container_selector: rule.content_container_selector ?? '',
+            title_selector: rule.title_selector ?? '',
+            date_selector: rule.date_selector ?? '',
+            description_selector: rule.description_selector ?? '',
+            link_selector: rule.link_selector ?? '',
+            date_format: rule.date_format ?? '',
+            category_default: rule.category_default ?? '',
             is_active: rule.is_active,
-            region: rule.region || '',
+            region: rule.region ?? '',
+            schedule: rule.schedule ?? null,
         });
         setOpenDialog(true);
         setSuggestionAlert(null);
@@ -186,26 +194,23 @@ const AdminScrapingRulesPage: React.FC = () => {
     };
 
     const handleSubmit = async () => {
-        setLoading(true);
         setError(null);
         const token = localStorage.getItem('jwt_token');
-        const ruleData = {
-            ...formState,
-            name: formState.name || null,
-            url_pattern: formState.url_pattern || null,
-        };
         try {
-            if (editingRule) {
-                await apiClient.put(`/api/admin/scraping-rules/${editingRule.id}`, ruleData, { headers: { 'x-auth-token': token } });
-            } else {
-                await apiClient.post('/api/admin/scraping-rules', ruleData, { headers: { 'x-auth-token': token } });
-            }
+            const ruleData = { ...formState };
+            const method = editingRule?.id ? 'put' : 'post';
+            const url = editingRule?.id ? `/api/admin/scraping-rules/${editingRule.id}` : '/api/admin/scraping-rules';
+            
+            const response = await apiClient[method](url, ruleData, { headers: { 'x-auth-token': token } });
+            const savedRule = response.data;
+
+            await apiClient.put(`/api/admin/scraping-rules/${savedRule.id}/schedule`, { schedule: savedRule.schedule }, { headers: { 'x-auth-token': token } });
+            
+            setSnackbar({ open: true, message: 'Regel erfolgreich gespeichert und geplant.' });
             handleCloseDialog();
             fetchInitialData();
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Speichern.');
-        } finally {
-            setLoading(false);
         }
     };
 
@@ -335,7 +340,7 @@ const AdminScrapingRulesPage: React.FC = () => {
                                         <TableCell>URL</TableCell>
                                         <TableCell sortDirection={orderBy === 'category_default' ? order : false}><TableSortLabel active={orderBy === 'category_default'} direction={order} onClick={() => handleSortRequest('category_default')}>Kategorie</TableSortLabel></TableCell>
                                         <TableCell align="center" sortDirection={orderBy === 'current_entry_count' ? order : false}><TableSortLabel active={orderBy === 'current_entry_count'} direction={order} onClick={() => handleSortRequest('current_entry_count')}>Einträge</TableSortLabel></TableCell>
-                                        <TableCell align="center" sortDirection={orderBy === 'is_active' ? order : false}><TableSortLabel active={orderBy === 'is_active'} direction={order} onClick={() => handleSortRequest('is_active')}>Im Cronjob aktiv</TableSortLabel></TableCell>
+                                        <TableCell align="center">Im Cronjob aktiv</TableCell>
                                         <TableCell sortDirection={orderBy === 'last_scraped_at' ? order : false}><TableSortLabel active={orderBy === 'last_scraped_at'} direction={order} onClick={() => handleSortRequest('last_scraped_at')}>Zuletzt gescrapt</TableSortLabel></TableCell>
                                         <TableCell>Aktionen</TableCell>
                                     </TableRow>
@@ -357,7 +362,21 @@ const AdminScrapingRulesPage: React.FC = () => {
                                                     {rule.current_entry_count}
                                                 </MuiLink>
                                             </TableCell>
-                                            <TableCell align="center">{rule.is_active ? 'Ja' : 'Nein'}</TableCell>
+                                            <TableCell align="center">
+                                                {rule.schedule ? (
+                                                    <Button
+                                                        component={RouterLink}
+                                                        to="/admin/cronjobs"
+                                                        state={{ tab: 2, prefillSearch: rule.name || rule.source_identifier }}
+                                                        size="small"
+                                                        variant="outlined"
+                                                    >
+                                                        Anzeigen
+                                                    </Button>
+                                                ) : (
+                                                    'Nein'
+                                                )}
+                                            </TableCell>
                                             <TableCell>{rule.last_scraped_at ? new Date(rule.last_scraped_at).toLocaleString('de-AT') : '-'}</TableCell>
                                             <TableCell>
                                                 <IconButton size="small" color="primary" onClick={() => handleOpenEditDialog(rule)}><EditIcon /></IconButton>
@@ -373,7 +392,7 @@ const AdminScrapingRulesPage: React.FC = () => {
                 )}
                 
                 <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
-                    <DialogTitle>{editingRule ? 'Scraping-Regel bearbeiten' : 'Neue Scraping-Regel hinzufügen'}</DialogTitle>
+                    <DialogTitle>{editingRule?.id ? 'Scraping-Regel bearbeiten' : 'Neue Scraping-Regel hinzufügen'}</DialogTitle>
                     <DialogContent>
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
                         {suggestionAlert && <Alert severity="info" sx={{ mb: 2 }}>{suggestionAlert}</Alert>}
@@ -429,7 +448,16 @@ const AdminScrapingRulesPage: React.FC = () => {
                             {categories.map((cat) => ( <MenuItem key={cat.id} value={cat.name}>{cat.name}</MenuItem>))}
                         </TextField>
                         
-                        <FormControlLabel control={<Switch name="is_active" checked={formState.is_active} onChange={handleFormChange} />} label="Im Cronjob ausführen" />
+                        <FormControlLabel control={<Switch name="is_active" checked={formState.is_active} onChange={handleFormChange} />} label="Regel für Scraping aktiv" />
+
+                        <Box sx={{ mt: 3, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                            <Typography variant="subtitle1" gutterBottom>Automatisierung (Cronjob)</Typography>
+                            <AdminScheduleSelector
+                                value={formState.schedule || null}
+                                onChange={(cronString) => setFormState(prev => ({ ...prev, schedule: cronString }))}
+                            />
+                        </Box>
+
                     </DialogContent>
                     <DialogActions>
                         <Button onClick={handleCloseDialog}>Abbrechen</Button>
@@ -457,6 +485,7 @@ const AdminScrapingRulesPage: React.FC = () => {
                         <Button onClick={handleCloseLogModal}>Schließen</Button>
                     </DialogActions>
                 </Dialog>
+                <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={() => setSnackbar({ ...snackbar, open: false })} message={snackbar.message} />
             </Container>
         </DashboardLayout>
     );

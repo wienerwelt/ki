@@ -1,12 +1,14 @@
 // frontend/src/pages/TrustedSourcesPage.tsx
-import React, { useState, useEffect } from 'react';
-import { Container, Typography, Box, Paper, Tabs, Tab, CircularProgress, Alert } from '@mui/material';
+import React, { useState, useEffect, useMemo } from 'react';
+// HIER IST DIE ÄNDERUNG: useLocation wird benötigt
+import { useLocation } from 'react-router-dom';
+import { Container, Typography, Box, Paper, Tabs, Tab, CircularProgress, Alert, Tooltip } from '@mui/material';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
-
 import { ProposeSourceForm } from '../components/ProposeSourceForm';
 import { VoteSourcesList } from '../components/VoteSourcesList';
-import { BrowseSourcesList } from '../components/BrowseSourcesList'; // <-- NEUER IMPORT
+import { BrowseSourcesList } from '../components/BrowseSourcesList';
 
 interface TabPanelProps {
     children?: React.ReactNode;
@@ -25,8 +27,16 @@ function TabPanel(props: TabPanelProps) {
 
 const TrustedSourcesPage: React.FC = () => {
     const { user } = useAuth();
-    const [tabIndex, setTabIndex] = useState(0); 
+    // HIER IST DIE ÄNDERUNG: useLocation wird hier aufgerufen
+    const location = useLocation();
+
+    // HIER IST DIE ÄNDERUNG: Der Start-Tab wird aus dem State der Navigation gelesen
+    const [tabIndex, setTabIndex] = useState(location.state?.tab || 0);
     const [contributionScore, setContributionScore] = useState(user?.contribution_score || 0);
+
+    const votePower = useMemo(() => {
+        return (1 + contributionScore / 100).toFixed(2);
+    }, [contributionScore]);
 
     const refreshUserScore = async () => {
         try {
@@ -38,9 +48,7 @@ const TrustedSourcesPage: React.FC = () => {
         }
     };
 
-    useEffect(() => {
-        refreshUserScore();
-    }, []);
+    useEffect(() => { refreshUserScore(); }, []);
 
     const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
         setTabIndex(newValue);
@@ -52,11 +60,21 @@ const TrustedSourcesPage: React.FC = () => {
                 <Typography variant="h4" component="h1">
                     Vertrauenswürdige Quellen
                 </Typography>
-                <Paper elevation={2} sx={{ p: '4px 12px', borderRadius: '16px' }}>
-                    <Typography variant="h6" component="span">
-                        Ihre Punkte: <strong>{contributionScore}</strong>
-                    </Typography>
-                </Paper>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                    <Paper elevation={2} sx={{ p: '4px 12px', borderRadius: '16px' }}>
+                        <Typography variant="h6" component="span">
+                            Ihre Punkte: <strong>{contributionScore}</strong>
+                        </Typography>
+                    </Paper>
+                    <Tooltip title={`Mit ${contributionScore} Punkten zählt Ihre Stimme ${votePower}-fach.`}>
+                        <Paper elevation={2} sx={{ p: '4px 12px', borderRadius: '16px', display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Typography variant="h6" component="span" color="primary">
+                                Stimmkraft: <strong>x{votePower}</strong>
+                            </Typography>
+                            <InfoOutlinedIcon fontSize="small" color="action" />
+                        </Paper>
+                    </Tooltip>
+                </Box>
             </Box>
             <Paper>
                 <Tabs value={tabIndex} onChange={handleTabChange} centered variant="scrollable" scrollButtons="auto">

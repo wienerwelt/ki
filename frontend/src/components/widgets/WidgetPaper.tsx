@@ -3,9 +3,8 @@ import { Paper, Box, Typography, Tooltip, IconButton } from '@mui/material';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import DeleteIcon from '@mui/icons-material/Delete';
 
-// 1. KORREKTUR: Das Interface wird angepasst, um React.ReactNode für den Titel zu erlauben
 export interface WidgetPaperProps {
-    title: React.ReactNode; // Kann jetzt ein String oder ein JSX-Element sein
+    title: React.ReactNode;
     children: React.ReactNode;
     widgetId: string;
     onDelete?: (id: string) => void;
@@ -34,16 +33,16 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                 borderBottom: '1px solid',
                 borderColor: 'divider',
                 cursor: 'move',
-                backgroundColor: 'rgba(0,0,0,0.02)'
+                // HIER IST DIE ÄNDERUNG: Hintergrundfarbe wird themenabhängig gesetzt
+                backgroundColor: (theme) => theme.palette.mode === 'dark' ? theme.palette.grey[800] : theme.palette.grey[100],
             }}
         >
             <Box sx={{ display: 'flex', alignItems: 'center', flexGrow: 1 }}>
                 <DragIndicatorIcon sx={{ mr: 1, color: 'text.disabled' }} />
-                {/* 2. KORREKTUR: Intelligente Anzeige des Titels */}
                 {typeof title === 'string' ? (
                     <Typography variant="h6" component="div">{title}</Typography>
                 ) : (
-                    title // Wenn es bereits ein Element ist, wird es direkt gerendert
+                    title
                 )}
             </Box>
             {onDelete && isRemovable && (

@@ -1,5 +1,5 @@
 // backend/controllers/userController.js
-const db = require('../config/db');
+const db = require('../config/db'); // KORREKTUR: Der Pfad zur Datenbank-Datei wurde korrigiert.
 const bcrypt = require('bcryptjs');
 
 // Holt die Profildaten des aktuell eingeloggten Benutzers
@@ -10,7 +10,8 @@ exports.getProfile = async (req, res) => {
             `SELECT
                 id, username, email, first_name, last_name, organization_name,
                 linkedin_url, membership_level, role, business_partner_id,
-                article_score_min, article_score_max
+                article_score_min, article_score_max,
+                contribution_score
              FROM users WHERE id = $1`,
             [userId]
         );

@@ -62,6 +62,33 @@ exports.updateAISubscription = async (req, res) => {
     }
 };
 
+exports.getScheduledScrapingRules = async (req, res) => {
+    try {
+        const { rows } = await db.query(`
+            SELECT id, name, source_identifier, region, schedule, last_scraped_at 
+            FROM scraping_rules 
+            WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE
+            ORDER BY name ASC
+        `);
+
+        const rulesWithNextRun = rows.map(rule => {
+            let next_run_at = null;
+            try {
+                if (rule.schedule) {
+                    const interval = cronParser.parseExpression(rule.schedule, { currentDate: new Date(), tz: 'Europe/Vienna' });
+                    next_run_at = interval.next().toISOString();
+                }
+            } catch (e) { console.error(`Invalid cron for rule ${rule.id}: ${rule.schedule}`); }
+            return { ...rule, next_run_at };
+        });
+
+        res.json(rulesWithNextRun);
+    } catch (err) {
+        console.error('Error fetching scheduled scraping rules:', err.message);
+        res.status(500).send('Server error');
+    }
+};
+
 
 exports.triggerAISubscription = async (req, res) => {
     const { id } = req.params;

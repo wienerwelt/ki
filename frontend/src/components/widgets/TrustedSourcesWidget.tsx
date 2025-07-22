@@ -1,17 +1,34 @@
 // frontend/src/components/widgets/TrustedSourcesWidget.tsx
-import React from 'react';
-import { Box, Typography, Button, Stack, Divider } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Box, Typography, Button, Stack, Divider, Badge } from '@mui/material';
+// HIER IST DIE ÄNDERUNG: Wir importieren Link anstatt useNavigate
+import { Link } from 'react-router-dom';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
+import apiClient from '../../apiClient';
 
-interface TrustedSourcesWidgetProps extends BaseWidgetProps {
-    // Ggf. weitere Props wie pendingVotesCount
-}
+const TrustedSourcesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRemovable }) => {
+    // useNavigate wird nicht mehr benötigt
+    const [pendingCount, setPendingCount] = useState(0);
+    const [loading, setLoading] = useState(true);
 
-const TrustedSourcesWidget: React.FC<TrustedSourcesWidgetProps> = ({ onDelete, widgetId, isRemovable }) => {
-    const navigate = useNavigate();
+    useEffect(() => {
+        const fetchPendingCount = async () => {
+            setLoading(true);
+            try {
+                const token = localStorage.getItem('jwt_token');
+                const response = await apiClient.get('/api/sources/pending', { headers: { 'x-auth-token': token } });
+                setPendingCount(response.data.length);
+            } catch (error) {
+                console.error("Fehler beim Laden der ausstehenden Quellen:", error);
+                setPendingCount(0);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchPendingCount();
+    }, []);
 
     return (
         <WidgetPaper
@@ -24,6 +41,7 @@ const TrustedSourcesWidget: React.FC<TrustedSourcesWidgetProps> = ({ onDelete, w
             widgetId={widgetId}
             onDelete={onDelete}
             isRemovable={isRemovable}
+            loading={loading}
         >
             <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
                 <Typography variant="body1" sx={{ textAlign: 'center' }}>
@@ -33,10 +51,28 @@ const TrustedSourcesWidget: React.FC<TrustedSourcesWidgetProps> = ({ onDelete, w
                     Schlagen Sie neue Quellen vor oder bewerten Sie die Vorschläge anderer Nutzer.
                 </Typography>
                 <Stack spacing={1} divider={<Divider />}>
-                    <Button variant="contained" onClick={() => navigate('/trusted-sources')}>
-                        Jetzt mitmachen
-                    </Button>
-                     <Button variant="outlined" onClick={() => navigate('/trusted-sources', { state: { tab: 2 } })}>
+                    <Badge badgeContent={pendingCount} color="primary" sx={{ width: '100%' }}>
+                        {/* HIER IST DIE ÄNDERUNG: Der Button ist jetzt in einem Link verpackt */}
+                        <Button
+                            component={Link}
+                            to="/trusted-sources"
+                            state={{ tab: 1 }} // Führt direkt zum Abstimmen-Tab
+                            variant="contained"
+                            fullWidth
+                            disabled={pendingCount === 0}
+                            sx={{ textDecoration: 'none' }} // Verhindert Unterstreichung
+                        >
+                            {pendingCount > 0 ? 'Jetzt Abstimmen' : 'Keine Abstimmungen'}
+                        </Button>
+                    </Badge>
+                     {/* HIER IST DIE ÄNDERUNG: Auch dieser Button ist jetzt ein Link */}
+                     <Button
+                        component={Link}
+                        to="/trusted-sources"
+                        state={{ tab: 2 }} // Führt direkt zum Vorschlagen-Tab
+                        variant="outlined"
+                        sx={{ textDecoration: 'none' }}
+                     >
                         Neue Quelle vorschlagen
                     </Button>
                 </Stack>

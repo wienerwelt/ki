@@ -6,7 +6,6 @@ import apiClient from '../apiClient';
 import { Region } from '../types/dashboard.types';
 
 // --- Interfaces ---
-
 interface BusinessPartnerData {
     id: string; name: string; address: string; logo_url: string;
     subscription_start_date: string; subscription_end_date: string;
@@ -16,13 +15,15 @@ interface BusinessPartnerData {
 
 interface UserPayload {
     id: string;
-    username: string; 
+    username: string;
+    email: string; // NEU
     role: string;
     business_partner_id: string | null;
     business_partner_name: string | null;
     dashboard_title: string | null;
     regions: Region[] | null;
     contribution_score: number;
+    membership_level: string | null; // NEU
 }
 
 interface DecodedToken {
@@ -41,6 +42,7 @@ interface AuthContextType {
     logout: () => void;
     renewSession: () => Promise<void>;
     fetchBusinessPartnerData: () => Promise<void>;
+    updateUser: (newUserData: Partial<UserPayload>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -111,12 +113,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const logout = () => {
-        // Token aus dem Local Storage entfernen
         localStorage.removeItem('jwt_token');
-        // NEU: Liste der geschlossenen Werbeanzeigen ebenfalls entfernen
         localStorage.removeItem('closedAds');
-
-        // Lokalen Zustand der App zurücksetzen
         setUser(null);
         setBusinessPartner(null);
         setTokenExp(null);
@@ -138,9 +136,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
+    const updateUser = (newUserData: Partial<UserPayload>) => {
+        setUser(prevUser => {
+            if (!prevUser) return null;
+            return { ...prevUser, ...newUserData };
+        });
+    };
+
     const value = {
         isAuthenticated: !!user, user, businessPartner, isLoading, tokenExp,
-        login, logout, renewSession, fetchBusinessPartnerData
+        login, logout, renewSession, fetchBusinessPartnerData,
+        updateUser
     };
 
     return (

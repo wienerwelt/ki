@@ -1,9 +1,13 @@
 // backend/controllers/sourcesController.js
-
 const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
-
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
+const sanitizeHtml = require('sanitize-html');
+const dns = require('dns'); // Node.js DNS-Modul importieren
+const util = require('util'); // Node.js Utility-Modul importieren
+
+// dns.lookup in eine Promise-basierte Funktion umwandeln für async/await
+const dnsLookup = util.promisify(dns.lookup);
 
 // @desc    Alle genehmigten Quellen abrufen
 // @route   GET /api/sources
@@ -14,7 +18,10 @@ exports.getAllApprovedSources = async (req, res) => {
 
     try {
         let query = `
-            SELECT s.id, s.url, s.description, s.average_rating, s.vote_count, s.created_at, c.name as category_name
+            SELECT 
+                s.id, s.url, s.description, s.average_rating, s.vote_count, s.created_at, 
+                c.name as category_name, 
+                c.name_lang as category_name_lang 
             FROM sources s
             LEFT JOIN categories c ON s.category_id = c.id
             WHERE s.status = 'approved'
@@ -43,7 +50,10 @@ exports.getAllApprovedSources = async (req, res) => {
 exports.getPendingSourcesForVote = async (req, res) => {
     try {
         const query = `
-            SELECT s.id, s.url, s.description, s.created_at, c.name as category_name
+            SELECT 
+                s.id, s.url, s.description, s.created_at, 
+                c.name as category_name, 
+                c.name_lang as category_name_lang
             FROM sources s
             LEFT JOIN categories c ON s.category_id = c.id
             WHERE s.status = 'pending_review'
@@ -89,12 +99,47 @@ exports.getSourceById = async (req, res) => {
 // @route   POST /api/sources
 // @access  Private (auth)
 exports.createSource = async (req, res) => {
-    const { url, description, category_id } = req.body;
-    const userId = req.user.id; // Aus der auth-Middleware
+    let { url, description, category_id } = req.body;
+    const userId = req.user.id;
 
     if (!url) {
-        return res.status(400).json({ message: 'URL is required.' });
+        return res.status(400).json({ message: 'URL ist ein Pflichtfeld.' });
     }
+
+    // --- ERWEITERTE VALIDIERUNG ---
+
+    let validatedUrl;
+    // 1. Syntaktische URL-Prüfung
+    try {
+        validatedUrl = new URL(url);
+        if (!['http:', 'https:'].includes(validatedUrl.protocol)) {
+            return res.status(400).json({ message: 'URL muss mit http:// oder https:// beginnen.' });
+        }
+    } catch (error) {
+        return res.status(400).json({ message: 'Ungültiges URL-Format.' });
+    }
+
+    // 2. DNS-Prüfung auf Existenz der Domain
+    try {
+        await dnsLookup(validatedUrl.hostname);
+    } catch (error) {
+        // Dieser Fehler (ENOTFOUND) tritt auf, wenn die Domain nicht existiert
+        if (error.code === 'ENOTFOUND') {
+            return res.status(400).json({ message: 'Die Domain der angegebenen URL konnte nicht gefunden werden.' });
+        }
+        // Fallback für andere DNS- oder Netzwerkfehler
+        return res.status(500).json({ message: 'Die URL konnte nicht verifiziert werden.' });
+    }
+    
+    // 3. Beschreibung bereinigen (Sanitization)
+    if (description) {
+        description = sanitizeHtml(description, {
+            allowedTags: [],
+            allowedAttributes: {}
+        });
+    }
+
+    // --- Ende der Validierung ---
 
     try {
         const newSource = await db.query(
@@ -104,8 +149,8 @@ exports.createSource = async (req, res) => {
         res.status(201).json(newSource.rows[0]);
     } catch (err) {
         console.error('Error creating source:', err.message);
-        if (err.code === '23505') { // Unique violation für URL
-            return res.status(409).json({ message: 'This URL has already been suggested.' });
+        if (err.code === '23505') {
+            return res.status(409).json({ message: 'Diese URL wurde bereits vorgeschlagen.' });
         }
         res.status(500).send('Server error');
     }
@@ -138,13 +183,27 @@ exports.voteOnSource = async (req, res) => {
         // 2. Dem abstimmenden Nutzer +1 Punkt geben
         await client.query('UPDATE users SET contribution_score = contribution_score + 1 WHERE id = $1', [userId]);
 
-        // 3. average_rating und vote_count in der 'sources' Tabelle aktualisieren
+        // 3. average_rating (gewichtet) und vote_count in der 'sources' Tabelle aktualisieren
         await client.query(
-            `UPDATE sources
+            `UPDATE sources s
              SET
-                vote_count = (SELECT COUNT(*) FROM source_votes WHERE source_id = $1),
-                average_rating = (SELECT AVG(rating) FROM source_votes WHERE source_id = $1)
-             WHERE id = $1`,
+                vote_count = (SELECT COUNT(*) FROM source_votes WHERE source_id = s.id),
+                average_rating = (
+                    SELECT
+                        -- Berechne die Summe von (Bewertung * Gewicht)
+                        SUM(sv.rating * (1 + u.contribution_score / 100.0))
+                        /
+                        -- Teile sie durch die Summe der Gewichte
+                        SUM(1 + u.contribution_score / 100.0)
+                    FROM
+                        source_votes sv
+                    JOIN
+                        users u ON sv.user_id = u.id
+                    WHERE
+                        sv.source_id = s.id
+                )
+             WHERE
+                s.id = $1`,
             [sourceId]
         );
 

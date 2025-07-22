@@ -39,9 +39,17 @@ async function getScheduledSubscriptions() {
     try {
         const { rows: subsFromDB } = await db.query(`
             SELECT 
-                cs.id, cs.is_active, cs.schedule, u.id as user_id, u.email as user_email, 
-                bp.name as business_partner_name, apr.id as prompt_rule_id, apr.name as prompt_rule_name, 
-                cs.keywords, cs.region, cs.created_at
+                cs.id, 
+                cs.is_active, 
+                cs.schedule,
+                u.id as user_id,
+                u.email as user_email, 
+                bp.name as business_partner_name,
+                apr.id as prompt_rule_id,
+                apr.name as prompt_rule_name, 
+                cs.keywords, 
+                cs.region, 
+                cs.created_at
             FROM content_subscriptions cs
             JOIN users u ON cs.user_id = u.id
             JOIN ai_prompt_rules apr ON cs.ai_prompt_rule_id = apr.id
@@ -97,6 +105,35 @@ async function removeSystemSubscriptionSchedule(subscriptionId) {
     }
 }
 
+// ========================================================================
+// == Funktionen für Scraping-Regeln (scraping_rules)
+// ========================================================================
+
+async function setScrapingSchedule(ruleId, cronPattern) {
+    const jobId = `scrape:${ruleId}`;
+    await removeScrapingSchedule(ruleId);
+
+    if (cronPattern) {
+        const ruleRes = await db.query('SELECT * FROM scraping_rules WHERE id = $1', [ruleId]);
+        if (ruleRes.rows.length === 0) throw new Error('Scraping rule not found');
+        
+        await aiContentQueue.add('scraping-rule-processing', { rule: ruleRes.rows[0] }, {
+            jobId: jobId,
+            repeat: { cron: cronPattern, tz: 'Europe/Vienna' },
+        });
+        console.log(`[JobManager] Scheduled scraping job '${jobId}' with pattern '${cronPattern}'.`);
+    }
+}
+
+async function removeScrapingSchedule(ruleId) {
+    const jobId = `scrape:${ruleId}`;
+    const repeatableJobs = await aiContentQueue.getRepeatableJobs();
+    const jobToRemove = repeatableJobs.find(job => job.id === jobId);
+    if (jobToRemove) {
+        await aiContentQueue.removeRepeatableByKey(jobToRemove.key);
+        console.log(`[JobManager] Removed scheduled scraping job '${jobId}'.`);
+    }
+}
 
 // ========================================================================
 // == Zentrale Synchronisations-Funktion
@@ -136,6 +173,19 @@ async function synchronizeSchedulesFromDB() {
             }
         }
 
+        // 3. Synchronisiere Scraping-Regeln
+        const { rows: scrapingRules } = await client.query(
+            "SELECT id, schedule FROM scraping_rules WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE"
+        );
+        for (const rule of scrapingRules) {
+            const jobId = `scrape:${rule.id}`;
+            if (!scheduledJobIds.has(jobId)) {
+                console.log(`[JobManager] Found scraping rule ${rule.id} in DB without a schedule in Redis. Adding it...`);
+                await setScrapingSchedule(rule.id, rule.schedule);
+                addedCount++;
+            }
+        }
+
         console.log(`[JobManager] Synchronization complete. Added/verified ${addedCount} missing scheduled jobs to the queue.`);
 
     } catch (error) {
@@ -153,6 +203,9 @@ module.exports = {
     // System-Jobs
     setSystemSubscriptionSchedule,
     removeSystemSubscriptionSchedule,
+    // Scraping-Jobs
+    setScrapingSchedule,
+    removeScrapingSchedule,
     // Synchronisation
     synchronizeSchedulesFromDB,
 };

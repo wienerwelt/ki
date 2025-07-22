@@ -1,3 +1,5 @@
+// frontend/src/pages/DashboardPage.tsx
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Container, Paper, Alert, Box, CircularProgress, Typography, Menu, MenuItem, Button } from '@mui/material';
@@ -8,6 +10,7 @@ import 'react-resizable/css/styles.css';
 import { DashboardSavedConfig, WidgetConfig, WidgetTypeMeta } from '../types/dashboard.types';
 import apiClient from '../apiClient';
 
+// Widget-Komponenten
 import GenericAIWidget from '../components/widgets/GenericAIWidget';
 import GenericScrapeWidget from '../components/widgets/GenericScrapeWidget';
 import BusinessPartnerInfoWidget from '../components/widgets/BusinessPartnerInfoWidget';
@@ -20,6 +23,7 @@ import EVStationWidget from '../components/widgets/EVStationWidget';
 import BusinessPartnerActionsWidget from '../components/widgets/BusinessPartnerActionsWidget';
 import TrustedSourcesWidget from '../components/widgets/TrustedSourcesWidget';
 
+// Icons
 import SpaIcon from '@mui/icons-material/Spa';
 import BusinessIcon from '@mui/icons-material/Business';
 import TrafficIcon from '@mui/icons-material/Traffic';
@@ -47,7 +51,7 @@ const WidgetComponentMap: { [key: string]: React.ElementType<any> } = {
     EVStation: EVStationWidget,
     GenericScrape: GenericScrapeWidget,
     BusinessPartnerAktionen: BusinessPartnerActionsWidget,
-    TrustedSources: TrustedSourcesWidget,    
+    TrustedSources: TrustedSourcesWidget,
 };
 
 const IconMap: { [key: string]: React.ElementType<any> } = {
@@ -107,7 +111,7 @@ const DashboardPage: React.FC = () => {
         if (!dashboardConfig) return alert('Keine Konfiguration zum Speichern vorhanden.');
         try {
             const token = localStorage.getItem('jwt_token');
-            await apiClient.post('/api/dashboard/config', 
+            await apiClient.post('/api/dashboard/config',
                 { name: 'Default Dashboard', config: dashboardConfig },
                 { headers: { 'x-auth-token': token } }
             );
@@ -144,7 +148,7 @@ const DashboardPage: React.FC = () => {
         const newLayoutItem: Layout = {
             i: newWidgetId,
             x: 0,
-            y: Infinity, 
+            y: Infinity,
             w: defaultWidth,
             h: widgetTypeMeta.default_height || 8,
             minW: Math.min(widgetTypeMeta.default_min_width || 0, defaultWidth),
@@ -183,12 +187,12 @@ const DashboardPage: React.FC = () => {
             widgetId: widget.id,
             isRemovable: widgetTypeMeta.is_removable ?? true,
         };
-
+        
         switch (componentKey) {
             case 'GenericAI':
             case 'GenericScrape':
-                return <SpecificWidgetComponent 
-                            {...commonProps} 
+                return <SpecificWidgetComponent
+                            {...commonProps}
                             title={widgetTitle}
                             category={widgetCategory}
                             filterLabel={widgetFilterLabel}
@@ -197,27 +201,28 @@ const DashboardPage: React.FC = () => {
                         />;
             
             case 'BusinessPartnerInfo':
-                return <SpecificWidgetComponent 
-                            {...commonProps} 
+                return <SpecificWidgetComponent
+                            {...commonProps}
                             title={widgetTypeMeta.name}
                             businessPartner={businessPartner}
                             icon={<IconComponent />}
                         />;
 
+            case 'TrustedSources':
             case 'EVStation':
             case 'BusinessPartnerAktionen':
-                return <SpecificWidgetComponent 
-                            {...commonProps} 
+                return <SpecificWidgetComponent
+                            {...commonProps}
                             title={widgetTypeMeta.name}
                             icon={<IconComponent />}
                         />;
 
             default:
-                return <SpecificWidgetComponent 
-                            {...commonProps} 
+                return <SpecificWidgetComponent
+                            {...commonProps}
                             title={widgetTypeMeta.name}
-                            loading={loading} 
-                            error={error} 
+                            loading={loading}
+                            error={error}
                             icon={<IconComponent />}
                         />;
         }
@@ -231,8 +236,19 @@ const DashboardPage: React.FC = () => {
                     {availableWidgetTypes.map((widgetType) => {
                         const normalizedIconName = widgetType.icon_name?.replace(/icon$/i, '');
                         const Icon = normalizedIconName && IconMap[normalizedIconName] ? IconMap[normalizedIconName] : HelpOutlineIcon;
+                        
+                        // ==================================================================
+                        // NEUE LOGIK ZUR PRÜFUNG, OB DAS WIDGET BEREITS EXISTIERT
+                        // ==================================================================
+                        const isAlreadyAdded = dashboardConfig?.widgets.some(w => w.type === widgetType.type_key) ?? false;
+
                         return (
-                            <MenuItem key={widgetType.id} onClick={() => handleAddWidget(widgetType.type_key)}>
+                            <MenuItem
+                                key={widgetType.id}
+                                onClick={() => handleAddWidget(widgetType.type_key)}
+                                // HIER WIRD DER MENÜEINTRAG DEAKTIVIERT, WENN BEREITS VORHANDEN
+                                disabled={isAlreadyAdded}
+                            >
                                 <Icon sx={{ mr: 1.5 }} />
                                 {widgetType.name}
                             </MenuItem>

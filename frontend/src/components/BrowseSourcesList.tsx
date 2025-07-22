@@ -16,12 +16,14 @@ interface ApprovedSource {
     average_rating: number;
     vote_count: number;
     category_name: string | null;
+    category_name_lang: string | null; // NEU
     created_at: string;
 }
 
 interface Category {
     id: string;
     name: string;
+    name_lang: string | null; // NEU
 }
 
 export const BrowseSourcesList: React.FC = () => {
@@ -60,7 +62,8 @@ export const BrowseSourcesList: React.FC = () => {
                 source.url.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 (source.description && source.description.toLowerCase().includes(searchTerm.toLowerCase()));
             
-            const matchesCategory = !selectedCategory || source.category_name === selectedCategory.name;
+            // Filterlogik nutzt jetzt den Namen der ausgewählten Kategorie
+            const matchesCategory = !selectedCategory || (source.category_name_lang === selectedCategory.name_lang) || (source.category_name === selectedCategory.name);
 
             return matchesSearch && matchesCategory;
         });
@@ -85,7 +88,8 @@ export const BrowseSourcesList: React.FC = () => {
                 />
                 <Autocomplete
                     options={allCategories}
-                    getOptionLabel={(option) => option.name}
+                    // HIER DIE ÄNDERUNG: Nutze name_lang für die Anzeige im Filter
+                    getOptionLabel={(option) => option.name_lang || option.name}
                     value={selectedCategory}
                     onChange={(event, newValue) => setSelectedCategory(newValue)}
                     sx={{ width: 250 }}
@@ -98,7 +102,8 @@ export const BrowseSourcesList: React.FC = () => {
                     <Grid item xs={12} sm={6} md={4} key={source.id}>
                         <Paper variant="outlined" sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
                             <Box sx={{ flexGrow: 1 }}>
-                                {source.category_name && <Chip label={source.category_name} size="small" sx={{ mb: 1 }} />}
+                                {/* HIER DIE ÄNDERUNG: Nutze name_lang für die Anzeige im Chip */}
+                                {(source.category_name_lang || source.category_name) && <Chip label={source.category_name_lang || source.category_name} size="small" sx={{ mb: 1 }} />}
                                 <Typography variant="body1" sx={{ fontWeight: 'bold', wordBreak: 'break-all' }}>
                                     {source.url}
                                 </Typography>
