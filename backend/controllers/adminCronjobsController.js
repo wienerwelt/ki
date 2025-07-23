@@ -148,21 +148,46 @@ exports.getAIJobHistory = async (req, res) => {
 };
 
 
-// --- System Subscription (Editorial) Functions ---
 exports.getSystemSubscriptions = async (req, res) => {
     try {
         const { rows } = await db.query(`
-            SELECT sys.*, rules.name as prompt_rule_name 
+            SELECT 
+                sys.id, 
+                sys.keywords, 
+                sys.region, 
+                sys.schedule, 
+                sys.is_active,
+                rules.name as prompt_rule_name 
             FROM system_ai_content_subscriptions sys
             JOIN ai_prompt_rules rules ON sys.ai_prompt_rule_id = rules.id
-            ORDER BY sys.created_at DESC
+            WHERE sys.schedule IS NOT NULL AND sys.schedule <> '' AND sys.is_active = TRUE
+            ORDER BY rules.name ASC
         `);
-        res.json(rows);
+
+        const jobsWithNextRun = rows.map(job => {
+            let next_run_at = null;
+            try {
+                if (job.schedule) {
+                    const interval = cronParser.parseExpression(job.schedule, { 
+                        currentDate: new Date(),
+                        tz: 'Europe/Vienna' 
+                    });
+                    next_run_at = interval.next().toISOString();
+                }
+            } catch (e) { 
+                console.error(`Ungültiger Cron-String für System-Job ${job.id}: ${job.schedule}`);
+            }
+            return { ...job, next_run_at };
+        });
+
+        res.json(jobsWithNextRun);
     } catch (err) {
-        console.error('Error fetching system subscriptions:', err.message);
+        console.error('Fehler beim Laden der System-Jobs:', err.message);
         res.status(500).send('Server error');
     }
 };
+
+
 
 exports.createSystemSubscription = async (req, res) => {
     const { ai_prompt_rule_id, keywords, region, schedule, is_active } = req.body;

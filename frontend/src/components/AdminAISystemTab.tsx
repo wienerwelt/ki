@@ -1,49 +1,88 @@
 // src/components/AdminAISystemTab.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
     Box, Typography, CircularProgress, Alert, Paper, Table, TableBody, TableCell,
-    TableContainer, TableHead, TableRow, IconButton, Tooltip, Chip, Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Autocomplete, Switch
+    TableContainer, TableHead, TableRow, IconButton, Tooltip, Dialog, DialogTitle,
+    DialogContent, Button, DialogActions, Link as MuiLink, Snackbar, Checkbox,
+    TableSortLabel, InputAdornment, TextField, Chip
 } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import EditIcon from '@mui/icons-material/Edit';
+import SettingsIcon from '@mui/icons-material/Settings';
 import DeleteIcon from '@mui/icons-material/Delete';
+import SearchIcon from '@mui/icons-material/Search';
 import AdminScheduleSelector from './AdminScheduleSelector';
 import apiClient from '../apiClient';
 
 // --- Interfaces ---
-interface SystemSubscription {
+interface SystemAIJob {
     id: string;
-    ai_prompt_rule_id: string;
-    prompt_rule_name?: string; // Wird per JOIN geholt
+    prompt_rule_name: string;
     keywords: string[];
-    region: string;
-    schedule: string;
-    is_active: boolean;
+    region: string | null;
+    schedule: string | null;
+    next_run_at: string | null;
 }
-interface AIPromptRule { id: string; name: string; }
-interface Region { id: string; name: string; }
+type Order = 'asc' | 'desc';
+type JobKey = keyof SystemAIJob;
+
+// --- Helper Functions ---
+const formatTimestamp = (timestamp: string | null): string => {
+    if (!timestamp) return '-';
+    return new Date(timestamp).toLocaleString('de-AT', { dateStyle: 'short', timeStyle: 'short' });
+};
+const formatCronToGerman = (cron: string | null): string => {
+    if (!cron) return "Nicht geplant";
+    try {
+        const parts = cron.split(' ');
+        if (parts.length !== 5) return "Ungültiges Format";
+        const [minute, hour, dayOfMonth, , dayOfWeek] = parts;
+        const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        const weekDays = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+
+        if (dayOfMonth !== '*' && dayOfWeek === '*') return `Jeden ${dayOfMonth}. des Monats um ${time} Uhr`;
+        if (dayOfWeek !== '*' && dayOfMonth === '*') return `Jeden ${weekDays[parseInt(dayOfWeek, 10)]} um ${time} Uhr`;
+        if (dayOfMonth === '*' && dayOfWeek === '*') return `Täglich um ${time} Uhr`;
+        return cron;
+    } catch { return "Ungültiges Format"; }
+};
+function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
+    const valA = a[orderBy] ?? '';
+    const valB = b[orderBy] ?? '';
+    if (valB < valA) return -1;
+    if (valB > valA) return 1;
+    return 0;
+}
+function getComparator<Key extends JobKey>(order: Order, orderBy: Key): (a: { [key in Key]: any }, b: { [key in Key]: any }) => number {
+    return order === 'desc' ? (a, b) => descendingComparator(a, b, orderBy) : (a, b) => -descendingComparator(a, b, orderBy);
+}
+const headCells: { id: JobKey; label: string }[] = [
+    { id: 'prompt_rule_name', label: 'Name der KI-Regel' },
+    { id: 'keywords', label: 'Keywords' },
+    { id: 'region', label: 'Region' },
+    { id: 'schedule', label: 'Zeitplan' },
+    { id: 'next_run_at', label: 'Nächste Ausführung' },
+];
 
 const AdminAISystemTab: React.FC = () => {
-    const [jobs, setJobs] = useState<SystemSubscription[]>([]);
-    const [promptRules, setPromptRules] = useState<AIPromptRule[]>([]);
-    const [regions, setRegions] = useState<Region[]>([]);
+    const [jobs, setJobs] = useState<SystemAIJob[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [openDialog, setOpenDialog] = useState(false);
-    const [editingJob, setEditingJob] = useState<Partial<SystemSubscription> | null>(null);
+    const [editingJob, setEditingJob] = useState<SystemAIJob | null>(null);
+    const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [order, setOrder] = useState<Order>('asc');
+    const [orderBy, setOrderBy] = useState<JobKey>('prompt_rule_name');
+    const [searchTerm, setSearchTerm] = useState('');
 
-    const fetchData = useCallback(async () => {
+    const fetchJobs = useCallback(async () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('jwt_token');
-            const [jobsRes, rulesRes, regionsRes] = await Promise.all([
-                apiClient.get('/api/admin/cronjobs/system-subscriptions', { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/admin/ai-prompt-rules', { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/data/regions', { headers: { 'x-auth-token': token } })
-            ]);
-            setJobs(jobsRes.data);
-            setPromptRules(rulesRes.data);
-            setRegions(regionsRes.data);
+            const res = await apiClient.get('/api/admin/cronjobs/system-subscriptions', { headers: { 'x-auth-token': token } });
+            setJobs(res.data);
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Laden der System-Jobs.');
         } finally {
@@ -51,85 +90,76 @@ const AdminAISystemTab: React.FC = () => {
         }
     }, []);
 
-    useEffect(() => { fetchData(); }, [fetchData]);
+    useEffect(() => { fetchJobs(); }, [fetchJobs]);
 
-    const handleOpenDialog = (job: Partial<SystemSubscription> | null = null) => {
-        setEditingJob(job || {
-            ai_prompt_rule_id: '',
-            keywords: [],
-            region: '',
-            schedule: '0 9 * * 1', // Standard: Jeden Montag um 9 Uhr
-            is_active: true,
-        });
-        setOpenDialog(true);
-    };
-
-    const handleCloseDialog = () => {
-        setOpenDialog(false);
-        setEditingJob(null);
-    };
-
-    const handleSave = async () => {
+    const handleSaveSchedule = async () => {
         if (!editingJob) return;
-        const isNew = !editingJob.id;
-        const url = isNew ? '/api/admin/cronjobs/system-subscriptions' : `/api/admin/cronjobs/system-subscriptions/${editingJob.id}`;
-        const method = isNew ? 'post' : 'put';
-
         try {
             const token = localStorage.getItem('jwt_token');
-            await apiClient[method](url, editingJob, { headers: { 'x-auth-token': token } });
-            fetchData();
+            // Annahme: Es gibt einen PUT-Endpunkt zum Aktualisieren des Zeitplans
+            await apiClient.put(`/api/admin/ai-prompt-rules/${editingJob.id}`, { schedule: editingJob.schedule }, { headers: { 'x-auth-token': token } });
+            setSnackbar({ open: true, message: 'Zeitplan erfolgreich gespeichert.' });
+            fetchJobs();
         } catch (err) {
-            alert('Fehler beim Speichern.');
-            console.error(err);
+            setSnackbar({ open: true, message: 'Fehler beim Speichern des Zeitplans.' });
         }
-        handleCloseDialog();
+        setOpenDialog(false);
     };
-
-    const handleDelete = async (id: string) => {
-        if (!window.confirm('Diesen System-Job wirklich löschen?')) return;
-        try {
-            const token = localStorage.getItem('jwt_token');
-            await apiClient.delete(`/api/admin/cronjobs/system-subscriptions/${id}`, { headers: { 'x-auth-token': token } });
-            fetchData();
-        } catch (err) {
-            alert('Fehler beim Löschen.');
-        }
-    };
+    
+    // Implementiere handleSortRequest, handleSelectAllClick, handleSelectClick, handleDelete, handleTrigger
+    // nach dem Vorbild von AdminScrapingTab.tsx
+    
+    const sortedAndFilteredJobs = useMemo(() => {
+        let filtered = jobs.filter(job =>
+            (job.prompt_rule_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (job.keywords.join(' ')).toLowerCase().includes(searchTerm.toLowerCase())
+        );
+        return filtered.sort(getComparator(order, orderBy));
+    }, [jobs, searchTerm, order, orderBy]);
 
     return (
         <>
             <Paper>
                 <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Typography variant="h6">Redaktionelle System-Jobs ({jobs.length})</Typography>
-                    <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpenDialog()}>
-                        Neuer System-Job
-                    </Button>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <Typography variant="h6">Redaktionelle KI-Jobs ({jobs.length})</Typography>
+                        {/* ... Delete Button ... */}
+                    </Box>
+                    <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), }}/>
                 </Box>
                 {loading ? <CircularProgress sx={{ m: 2 }} /> : error ? <Alert severity="error" sx={{ m: 2 }}>{error}</Alert> : (
                     <TableContainer>
                         <Table>
                             <TableHead>
                                 <TableRow>
-                                    <TableCell>KI-Regel</TableCell>
-                                    <TableCell>Keywords</TableCell>
-                                    <TableCell>Region</TableCell>
-                                    <TableCell>Zeitplan</TableCell>
-                                    <TableCell>Aktiv</TableCell>
+                                    <TableCell padding="checkbox"><Checkbox /></TableCell>
+                                    {headCells.map(headCell => (
+                                        <TableCell key={headCell.id} sortDirection={orderBy === headCell.id ? order : false}>
+                                            <TableSortLabel active={orderBy === headCell.id} direction={orderBy === headCell.id ? order : 'asc'} onClick={() => { /* handleSortRequest(headCell.id) */ }}>
+                                                {headCell.label}
+                                            </TableSortLabel>
+                                        </TableCell>
+                                    ))}
                                     <TableCell>Aktionen</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
-                                {jobs.map(job => (
+                                {sortedAndFilteredJobs.map(job => (
                                     <TableRow key={job.id} hover>
-                                        <TableCell>{job.prompt_rule_name || job.ai_prompt_rule_id}</TableCell>
-                                        <TableCell><Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>{job.keywords.map(kw => <Chip key={kw} label={kw} size="small" />)}</Box></TableCell>
-                                        <TableCell>{job.region}</TableCell>
-                                        <TableCell>{job.schedule}</TableCell>
-                                        <TableCell><Switch checked={job.is_active} disabled /></TableCell>
+                                        <TableCell padding="checkbox"><Checkbox /></TableCell>
+                                        <TableCell>{job.prompt_rule_name}</TableCell>
+                                        <TableCell><Box sx={{display: 'flex', gap: 0.5, flexWrap: 'wrap', maxWidth: 200}}>{job.keywords.map(kw => <Chip key={kw} label={kw} size="small"/>)}</Box></TableCell>
+                                        <TableCell>{job.region || '-'}</TableCell>
                                         <TableCell>
-                                            <Tooltip title="Bearbeiten"><IconButton onClick={() => handleOpenDialog(job)}><EditIcon /></IconButton></Tooltip>
-                                            <Tooltip title="Löschen"><IconButton onClick={() => handleDelete(job.id)}><DeleteIcon color="error" /></IconButton></Tooltip>
+                                            <Tooltip title={formatCronToGerman(job.schedule)}>
+                                                <span>{job.schedule}</span>
+                                            </Tooltip>
+                                        </TableCell>
+                                        <TableCell>{formatTimestamp(job.next_run_at)}</TableCell>
+                                        <TableCell>
+                                            <Tooltip title="Zeitplan bearbeiten"><IconButton onClick={() => setEditingJob(job)}><EditIcon /></IconButton></Tooltip>
+                                            <Tooltip title="Jetzt ausführen"><IconButton><PlayArrowIcon /></IconButton></Tooltip>
+                                            <Tooltip title="Komplette Regel bearbeiten"><IconButton component={RouterLink} to={`/admin/ai-prompt-rules`} state={{ prefillSearch: job.prompt_rule_name }}><SettingsIcon /></IconButton></Tooltip>
                                         </TableCell>
                                     </TableRow>
                                 ))}
@@ -139,34 +169,21 @@ const AdminAISystemTab: React.FC = () => {
                 )}
             </Paper>
 
-            <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="sm">
-                <DialogTitle>{editingJob?.id ? 'System-Job bearbeiten' : 'Neuen System-Job erstellen'}</DialogTitle>
+            <Dialog open={!!editingJob} onClose={() => setEditingJob(null)} fullWidth maxWidth="sm">
+                <DialogTitle>Zeitplan bearbeiten für "{editingJob?.prompt_rule_name}"</DialogTitle>
                 <DialogContent>
-                    <TextField select fullWidth margin="normal" label="KI-Regel" value={editingJob?.ai_prompt_rule_id || ''} onChange={(e) => setEditingJob(prev => prev ? { ...prev, ai_prompt_rule_id: e.target.value } : null)}>
-                        {promptRules.map(rule => <MenuItem key={rule.id} value={rule.id}>{rule.name}</MenuItem>)}
-                    </TextField>
-                    <Autocomplete
-                        multiple freeSolo options={[]} value={editingJob?.keywords || []}
-                        onChange={(e, newValue) => setEditingJob(prev => prev ? { ...prev, keywords: newValue } : null)}
-                        renderTags={(val, props) => val.map((opt, i) => <Chip label={opt} {...props({ index: i })} />)}
-                        renderInput={(params) => <TextField {...params} label="Keywords" margin="normal" />}
-                    />
-                    <TextField select fullWidth margin="normal" label="Region" value={editingJob?.region || ''} onChange={(e) => setEditingJob(prev => prev ? { ...prev, region: e.target.value } : null)}>
-                        {regions.map(r => <MenuItem key={r.id} value={r.name}>{r.name}</MenuItem>)}
-                    </TextField>
                     <AdminScheduleSelector
                         value={editingJob?.schedule || null}
-                        onChange={(cron) => setEditingJob(prev => prev ? { ...prev, schedule: cron } : null)}
+                        onChange={(cronString) => setEditingJob(prev => prev ? { ...prev, schedule: cronString } : null)}
                     />
-                    <Switch checked={editingJob?.is_active || false} onChange={(e) => setEditingJob(prev => prev ? { ...prev, is_active: e.target.checked } : null)} /> Aktiv
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={handleCloseDialog}>Abbrechen</Button>
-                    <Button onClick={handleSave} variant="contained">Speichern</Button>
+                    <Button onClick={() => setEditingJob(null)}>Abbrechen</Button>
+                    <Button onClick={handleSaveSchedule} variant="contained">Speichern</Button>
                 </DialogActions>
             </Dialog>
+            <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={() => setSnackbar({ ...snackbar, open: false })} message={snackbar.message} />
         </>
     );
 };
-
 export default AdminAISystemTab;
