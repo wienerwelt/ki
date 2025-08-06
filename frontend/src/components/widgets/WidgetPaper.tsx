@@ -1,7 +1,7 @@
 import React from 'react';
 import { Paper, Box, Typography, Tooltip, IconButton } from '@mui/material';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
-import DeleteIcon from '@mui/icons-material/Delete';
+import CloseIcon from '@mui/icons-material/Close'; // NEU: CloseIcon importiert
 
 export interface WidgetPaperProps {
     title: React.ReactNode;
@@ -24,7 +24,7 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
 }) => (
     <Paper elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
         <Box 
-            className="widget-header" // Wichtig für den Drag-Handle
+            className="widget-header"
             sx={{ 
                 display: 'flex', 
                 justifyContent: 'space-between', 
@@ -33,7 +33,6 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                 borderBottom: '1px solid',
                 borderColor: 'divider',
                 cursor: 'move',
-                // HIER IST DIE ÄNDERUNG: Hintergrundfarbe wird themenabhängig gesetzt
                 backgroundColor: (theme) => theme.palette.mode === 'dark' ? theme.palette.grey[800] : theme.palette.grey[100],
             }}
         >
@@ -52,7 +51,8 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                         onClick={() => onDelete(widgetId)}
                         onMouseDown={(e) => e.stopPropagation()}
                     >
-                        <DeleteIcon fontSize="small" />
+                        {/* KORREKTUR: Icon ausgetauscht */}
+                        <CloseIcon fontSize="small" />
                     </IconButton>
                 </Tooltip>
             )}

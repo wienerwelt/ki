@@ -5,7 +5,8 @@ const dataController = require('../controllers/dataController');
 
 router.use(authMiddleware);
 
-router.get('/fuel-prices', dataController.getFuelPrices);
+router.get('/fuel/search', dataController.fuelSearch);
+router.get('/fuel/prices-by-ids', dataController.getPricesByIds);
 router.get('/traffic-info', dataController.getTrafficInfo);
 router.get('/ai-content', dataController.getAiContent);
 router.get('/scraped-content', dataController.getScrapedContent);

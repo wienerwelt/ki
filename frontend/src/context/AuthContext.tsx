@@ -6,24 +6,26 @@ import apiClient from '../apiClient';
 import { Region } from '../types/dashboard.types';
 
 // --- Interfaces ---
+// NEU: Die Schnittstelle wurde um 'primary_text_color' erweitert.
 interface BusinessPartnerData {
     id: string; name: string; address: string; logo_url: string;
     subscription_start_date: string; subscription_end_date: string;
     primary_color: string; secondary_color: string; text_color: string;
     background_color: string; accent_color?: string;
+    primary_text_color: string;
 }
 
 interface UserPayload {
     id: string;
     username: string;
-    email: string; // NEU
+    email: string;
     role: string;
     business_partner_id: string | null;
     business_partner_name: string | null;
     dashboard_title: string | null;
     regions: Region[] | null;
     contribution_score: number;
-    membership_level: string | null; // NEU
+    membership_level: string | null;
 }
 
 interface DecodedToken {

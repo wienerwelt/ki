@@ -10,7 +10,7 @@ import 'react-resizable/css/styles.css';
 import { DashboardSavedConfig, WidgetConfig, WidgetTypeMeta } from '../types/dashboard.types';
 import apiClient from '../apiClient';
 
-// Widget-Komponenten
+// Widget Components
 import GenericAIWidget from '../components/widgets/GenericAIWidget';
 import GenericScrapeWidget from '../components/widgets/GenericScrapeWidget';
 import BusinessPartnerInfoWidget from '../components/widgets/BusinessPartnerInfoWidget';
@@ -83,7 +83,7 @@ const DashboardPage: React.FC = () => {
         setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
-            if (!token) throw new Error("Kein Authentifizierungstoken gefunden.");
+            if (!token) throw new Error("No authentication token found.");
 
             const [widgetTypesResponse, configResponse] = await Promise.all([
                 apiClient.get('/api/widgets/types', { headers: { 'x-auth-token': token } }),
@@ -93,7 +93,7 @@ const DashboardPage: React.FC = () => {
             setAvailableWidgetTypes(widgetTypesResponse.data);
             setDashboardConfig(configResponse.data.config || { layout: [], widgets: [] });
         } catch (error: any) {
-            setError(error.response?.data?.message || 'Fehler beim Laden der Dashboard-Konfiguration.');
+            setError(error.response?.data?.message || 'Error loading dashboard configuration.');
         } finally {
             setLoading(false);
         }
@@ -108,16 +108,16 @@ const DashboardPage: React.FC = () => {
     };
 
     const handleSaveConfig = async () => {
-        if (!dashboardConfig) return alert('Keine Konfiguration zum Speichern vorhanden.');
+        if (!dashboardConfig) return alert('No configuration to save.');
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.post('/api/dashboard/config',
                 { name: 'Default Dashboard', config: dashboardConfig },
                 { headers: { 'x-auth-token': token } }
             );
-            alert('Layout gespeichert!');
+            alert('Layout saved!');
         } catch (error) {
-            alert('Fehler beim Speichern des Layouts.');
+            alert('Error saving layout.');
         }
     };
 
@@ -173,8 +173,8 @@ const DashboardPage: React.FC = () => {
         const IconComponent = normalizedIconName && IconMap[normalizedIconName] ? IconMap[normalizedIconName] : HelpOutlineIcon;
 
         if (!SpecificWidgetComponent || !widgetTypeMeta) {
-            console.error(`Unbekanntes Widget: componentKey='${componentKey}' wurde in WidgetComponentMap nicht gefunden.`);
-            return <Box p={2}><Typography>Unbekanntes Widget: {widget.type}</Typography></Box>;
+            console.error(`Unknown widget: componentKey='${componentKey}' not found in WidgetComponentMap.`);
+            return <Box p={2}><Typography>Unknown Widget: {widget.type}</Typography></Box>;
         }
 
         const config = widgetTypeMeta.config || {};
@@ -231,22 +231,33 @@ const DashboardPage: React.FC = () => {
     return (
         <Container maxWidth={false} sx={{ mt: 0, px: { xs: 1, sm: 2 } }}>
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2, gap: 2 }}>
-                <Button variant="outlined" onClick={handleOpenAddWidgetMenu} startIcon={<AddCircleOutlineIcon />}>Widget hinzufügen</Button>
+                <Button
+                    variant="outlined"
+                    onClick={handleOpenAddWidgetMenu}
+                    startIcon={<AddCircleOutlineIcon />}
+                    sx={{
+                        borderColor: businessPartner?.primary_color || '#1976d2',
+                        color: businessPartner?.primary_color || '#1976d2',
+                        '&:hover': {
+                            backgroundColor: businessPartner?.secondary_color || '#115293',
+                            color: businessPartner?.primary_text_color || '#ffffff',
+                            borderColor: businessPartner?.secondary_color || '#115293',
+                        }
+                    }}
+                >
+                    Widget hinzufügen
+                </Button>
                 <Menu anchorEl={anchorEl} open={openAddWidgetMenu} onClose={handleCloseAddWidgetMenu}>
                     {availableWidgetTypes.map((widgetType) => {
                         const normalizedIconName = widgetType.icon_name?.replace(/icon$/i, '');
                         const Icon = normalizedIconName && IconMap[normalizedIconName] ? IconMap[normalizedIconName] : HelpOutlineIcon;
                         
-                        // ==================================================================
-                        // NEUE LOGIK ZUR PRÜFUNG, OB DAS WIDGET BEREITS EXISTIERT
-                        // ==================================================================
                         const isAlreadyAdded = dashboardConfig?.widgets.some(w => w.type === widgetType.type_key) ?? false;
 
                         return (
                             <MenuItem
                                 key={widgetType.id}
                                 onClick={() => handleAddWidget(widgetType.type_key)}
-                                // HIER WIRD DER MENÜEINTRAG DEAKTIVIERT, WENN BEREITS VORHANDEN
                                 disabled={isAlreadyAdded}
                             >
                                 <Icon sx={{ mr: 1.5 }} />
@@ -255,7 +266,19 @@ const DashboardPage: React.FC = () => {
                         );
                     })}
                 </Menu>
-                <Button variant="contained" onClick={handleSaveConfig}>Layout Speichern</Button>
+                <Button
+                    variant="contained"
+                    onClick={handleSaveConfig}
+                    sx={{
+                        backgroundColor: businessPartner?.primary_color || '#1976d2',
+                        color: businessPartner?.primary_text_color || '#ffffff',
+                        '&:hover': {
+                            backgroundColor: businessPartner?.secondary_color || '#115293'
+                        }
+                    }}
+                >
+                    Layout Speichern
+                </Button>
             </Box>
             
             {loading && <Box sx={{display: 'flex', justifyContent: 'center', p: 5}}><CircularProgress /></Box>}
