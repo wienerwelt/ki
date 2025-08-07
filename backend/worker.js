@@ -7,8 +7,9 @@ require('dotenv').config();
 const { Worker } = require('bullmq');
 const { connection } = require('./services/queueService');
 const { generateAndSaveContentForManualJob } = require('./controllers/adminAIPromptRulesController');
-// NEU: Importiere beide Verarbeitungsfunktionen aus dem intelligentContentService
 const { processSubscription, processSystemSubscription } = require('./services/intelligentContentService');
+// NEU: Importiere die Funktion zum Aktualisieren der Rohstoffpreise
+const { updateAllCommodityPrices } = require('./services/updateCommodityPrices');
 
 console.log('Worker-Prozess startet...');
 
@@ -18,31 +19,30 @@ const worker = new Worker('ai-content-generation', async (job) => {
     
     // Unterscheide zwischen verschiedenen Job-Typen
     if (job.name === 'manual-generation') {
-        // Job kommt von der Admin-Seite "KI Prompt-Regeln" -> "Einmalig generieren"
         const { jobId, ruleToExecute, inputText, region, categoryName, categoryId, focus_page, userId } = job.data;
         await generateAndSaveContentForManualJob(jobId, ruleToExecute, inputText, region, categoryName, categoryId, focus_page, userId);
     
     } else if (job.name === 'subscription-processing') {
-        // Job kommt von einem Nutzer-Abonnement (geplant oder manuell gestartet)
         const { subscription } = job.data;
         await processSubscription(subscription);
 
     } else if (job.name === 'system-job-processing') {
-        // NEU: Job kommt von einem redaktionellen System-Abonnement
         const { systemSubscription } = job.data;
         await processSystemSubscription(systemSubscription);
 
+    // NEU: Fügt die Logik für den neuen Job-Typ hinzu
+    } else if (job.name === 'update_commodity_prices') {
+        await updateAllCommodityPrices();
+        
     } else {
-        // Fallback für unbekannte Job-Typen
         throw new Error(`Unbekannter Job-Typ: ${job.name}`);
     }
 }, { 
     connection,
-    // Erhöhe das Timeout für einzelne Jobs, da KI-Aufrufe lange dauern können
-    concurrency: 5, // Verarbeite bis zu 5 Jobs gleichzeitig
+    concurrency: 5,
     limiter: {
-        max: 10, // Maximal 10 Jobs
-        duration: 1000, // pro Sekunde
+        max: 10,
+        duration: 1000,
     },
 });
 

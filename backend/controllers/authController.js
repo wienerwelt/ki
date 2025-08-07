@@ -43,6 +43,7 @@ exports.register = async (req, res) => {
     }
 };
 
+
 // === Login ===
 exports.login = async (req, res) => {
     const { identifier, password } = req.body;
@@ -78,14 +79,6 @@ exports.login = async (req, res) => {
         if (userResult.rows.length === 0) return res.status(400).json({ message: 'Ungültige Anmeldedaten.' });
         const user = userResult.rows[0];
 
-        await logActivity({
-            userId: user.id,
-            username: user.username,
-            actionType: 'USER_LOGIN',
-            status: 'success',
-            ipAddress: req.ip
-        });
-
         if (!user.is_active) {
             return res.status(403).json({ message: 'Ihr Benutzerkonto ist deaktiviert.' });
         }
@@ -98,7 +91,6 @@ exports.login = async (req, res) => {
             return res.status(400).json({ message: 'Ungültige Anmeldedaten.' });
         }
 
-        // NEU: Login-Zähler erhöhen und last_login_at aktualisieren
         await db.query(
             'UPDATE users SET login_count = login_count + 1, last_login_at = CURRENT_TIMESTAMP WHERE id = $1',
             [user.id]
@@ -108,26 +100,23 @@ exports.login = async (req, res) => {
             user: {
                 id: user.id,
                 username: user.username,
+                email: user.email,
                 role: user.role,
                 business_partner_id: user.business_partner_id,
                 business_partner_name: user.business_partner_name,
                 dashboard_title: user.dashboard_title,
-                regions: user.regions
+                regions: user.regions,
+                contribution_score: user.contribution_score,
+                membership_level: user.membership_level,
+                has_seen_welcome_widget: user.has_seen_welcome_widget
             }
         };
 
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1h' });
 
-        return res.json({ token, user: { id: user.id, name: user.organization_name, email: user.email, role: user.role } });
+        return res.json({ token, user: payload.user });
 
     } catch (err) {
-        await logActivity({
-            username: identifier,
-            actionType: 'USER_LOGIN_FAILURE',
-            status: 'failure',
-            details: { error: err.message },
-            ipAddress: req.ip
-        });
         console.error('Login error:', err.message);
         return res.status(500).send('Serverfehler');
     }
@@ -138,21 +127,17 @@ exports.googleLogin = async (req, res) => {
     const { token } = req.body;
 
     if (!token) {
-        console.warn('⚠️ Kein Token erhalten in googleLogin');
         return res.status(400).json({ message: 'Kein Google-Token erhalten.' });
     }
 
     try {
-        console.log('✅ Google-Token empfangen:', token.slice(0, 15) + '...');
-        console.log('🔐 Verwende CLIENT_ID:', process.env.GOOGLE_CLIENT_ID);
-
         const ticket = await client.verifyIdToken({
             idToken: token,
             audience: process.env.GOOGLE_CLIENT_ID,
         });
 
         const payload = ticket.getPayload();
-        if (!payload) throw new Error('❌ Ungültiges Google-Token: Kein Payload');
+        if (!payload) throw new Error('Ungültiges Google-Token: Kein Payload');
 
         const { email, name } = payload;
         const username = email.split('@')[0];
@@ -175,22 +160,26 @@ exports.googleLogin = async (req, res) => {
             `;
             const newUser = await db.query(insertQuery, [username, email, name, defaultBusinessPartnerId]);
             user = newUser.rows[0];
-            console.log('🆕 Neuer Google-Nutzer erstellt:', user.username);
         } else {
             user = userResult.rows[0];
-            console.log('🔁 Bestehender Google-Nutzer eingeloggt:', user.username);
         }
 
-        const jwtToken = jwt.sign({
+        const jwtPayload = {
             user: {
                 id: user.id,
                 username: user.username,
+                email: user.email,
                 role: user.role,
                 business_partner_id: user.business_partner_id,
-                email: user.email,
-                name: user.name
+                has_seen_welcome_widget: user.has_seen_welcome_widget,
+                // Fügen Sie hier bei Bedarf weitere Felder hinzu
+                regions: user.regions,
+                contribution_score: user.contribution_score,
+                membership_level: user.membership_level
             }
-        }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1h' });
+        };
+        
+        const jwtToken = jwt.sign(jwtPayload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1h' });
 
         await logActivity({
             userId: user.id,
@@ -200,16 +189,9 @@ exports.googleLogin = async (req, res) => {
             ipAddress: req.ip
         });
 
-        res.status(200).json({ token: jwtToken, user });
+        res.status(200).json({ token: jwtToken, user: jwtPayload.user });
     } catch (error) {
-        console.error('❌ Google-Login fehlgeschlagen:', error.message);
-        await logActivity({
-            username: '[google]',
-            actionType: 'GOOGLE_LOGIN_FAILURE',
-            status: 'failure',
-            details: { error: error.message },
-            ipAddress: req.ip
-        });
+        console.error('Google-Login fehlgeschlagen:', error.message);
         res.status(500).json({ message: 'Google login error', error: error.message });
     }
 };

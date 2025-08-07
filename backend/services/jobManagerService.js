@@ -198,12 +198,26 @@ async function synchronizeSchedulesFromDB() {
             }
         }
 
-        // 3. NEU: Synchronisiere Scraping-Regeln
+        // 3. Synchronisiere Scraping-Regeln
         const { rows: scrapingRules } = await client.query("SELECT id, schedule FROM scraping_rules WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE");
         for (const rule of scrapingRules) {
             const jobId = `scrape:${rule.id}`;
             if (!scheduledJobIds.has(jobId)) {
                 await setScrapingSchedule(rule.id, rule.schedule);
+                addedCount++;
+            }
+        }
+
+        // NEU: 4. Synchronisiere generische System-Jobs
+        const { rows: systemJobs } = await client.query("SELECT job_name, schedule FROM system_jobs WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE");
+        for (const job of systemJobs) {
+            const jobId = `system:${job.job_name}`;
+            if (!scheduledJobIds.has(jobId)) {
+                 await aiContentQueue.add(job.job_name, { jobDetails: job }, {
+                    jobId: jobId,
+                    repeat: { cron: job.schedule, tz: 'Europe/Vienna' },
+                });
+                console.log(`[JobManager] Scheduled system job '${jobId}' with pattern '${job.schedule}'.`);
                 addedCount++;
             }
         }

@@ -22,6 +22,8 @@ import VignetteWidget from '../components/widgets/VignetteWidget';
 import EVStationWidget from '../components/widgets/EVStationWidget';
 import BusinessPartnerActionsWidget from '../components/widgets/BusinessPartnerActionsWidget';
 import TrustedSourcesWidget from '../components/widgets/TrustedSourcesWidget';
+import CommodityPricesWidget from '../components/widgets/CommodityPricesWidget';
+import WelcomeWidget from '../components/widgets/WelcomeWidget';
 
 // Icons
 import SpaIcon from '@mui/icons-material/Spa';
@@ -37,6 +39,7 @@ import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import StarsIcon from '@mui/icons-material/Stars';
 import FactoryIcon from '@mui/icons-material/Factory';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
 
@@ -52,6 +55,7 @@ const WidgetComponentMap: { [key: string]: React.ElementType<any> } = {
     GenericScrape: GenericScrapeWidget,
     BusinessPartnerAktionen: BusinessPartnerActionsWidget,
     TrustedSources: TrustedSourcesWidget,
+    CommodityPrices: CommodityPricesWidget,
 };
 
 const IconMap: { [key: string]: React.ElementType<any> } = {
@@ -67,6 +71,7 @@ const IconMap: { [key: string]: React.ElementType<any> } = {
     Stars: StarsIcon,
     Factory: FactoryIcon,
     FactCheck: FactCheckIcon,
+    TrendingUp: TrendingUpIcon,
 };
 
 const DashboardPage: React.FC = () => {
@@ -209,6 +214,12 @@ const DashboardPage: React.FC = () => {
                         />;
 
             case 'TrustedSources':
+            case 'CommodityPrices':
+                return <SpecificWidgetComponent
+                    {...commonProps}
+                    title={widgetTypeMeta.name}
+                    icon={<IconComponent />}
+                />;            
             case 'EVStation':
             case 'BusinessPartnerAktionen':
                 return <SpecificWidgetComponent
@@ -230,6 +241,7 @@ const DashboardPage: React.FC = () => {
 
     return (
         <Container maxWidth={false} sx={{ mt: 0, px: { xs: 1, sm: 2 } }}>
+            <WelcomeWidget />
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2, gap: 2 }}>
                 <Button
                     variant="outlined"

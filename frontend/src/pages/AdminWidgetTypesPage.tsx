@@ -2,12 +2,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
-    TextField, MenuItem, Switch, FormControlLabel, Chip, Grid, TableSortLabel, InputAdornment, Link as MuiLink, FormHelperText
+    TextField, MenuItem, Switch, FormControlLabel, Tooltip, Chip, Grid, TableSortLabel, InputAdornment, Link as MuiLink, FormHelperText
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
+import BusinessIcon from '@mui/icons-material/Business';
+import PersonIcon from '@mui/icons-material/Person';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 
@@ -18,10 +20,10 @@ import TrafficIcon from '@mui/icons-material/Traffic';
 import SpaIcon from '@mui/icons-material/Spa';
 import GavelIcon from '@mui/icons-material/Gavel';
 import CommuteIcon from '@mui/icons-material/Commute';
-import BusinessIcon from '@mui/icons-material/Business';
-import ConfirmationNumberIcon from '@mui/icons-material/ConfirmationNumber'; // Wird als "Vignette" verwendet
+import ConfirmationNumberIcon from '@mui/icons-material/ConfirmationNumber';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-
+import FactCheckIcon from '@mui/icons-material/FactCheck';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 
 // --- Interfaces ---
 interface WidgetType {
@@ -40,7 +42,8 @@ interface WidgetType {
     allowed_roles: string[] | null;
     config: object | null;
     component_key: string | null;
-    install_count: number; // NEU: Anzahl der Installationen
+    business_partner_install_count: number;
+    user_install_count: number;
 }
 
 interface RoleOption {
@@ -59,19 +62,17 @@ const availableIcons = {
     'Commute': <CommuteIcon />,
     'Business': <BusinessIcon />,
     'Vignette': <ConfirmationNumberIcon />,
+    'FactCheck': <FactCheckIcon />,
+    'TrendingUp': <TrendingUpIcon />,
 };
 
-// KORRIGIERT: Diese Komponente ist jetzt robuster und ignoriert Groß-/Kleinschreibung und das Suffix "Icon".
 const DynamicIcon: React.FC<{ iconName: string | null }> = ({ iconName }) => {
     if (!iconName) {
         return <HelpOutlineIcon color="disabled" />;
     }
     
-    // Konvertiert den eingegebenen Namen in ein einheitliches Format zum Vergleichen
-    // und entfernt optional das Suffix "Icon" (case-insensitive)
     const normalizedIconName = iconName.trim().toLowerCase().replace(/icon$/, '');
     
-    // Findet den passenden Schlüssel im 'availableIcons'-Objekt (case-insensitive)
     const iconKey = Object.keys(availableIcons).find(
         key => key.toLowerCase() === normalizedIconName
     );
@@ -297,7 +298,20 @@ const AdminWidgetTypesPage: React.FC = () => {
                                         <TableCell sortDirection={orderBy === 'type_key' ? order : false}><TableSortLabel active={orderBy === 'type_key'} direction={order} onClick={() => handleSortRequest('type_key')}>Type Key</TableSortLabel></TableCell>
                                         <TableCell sortDirection={orderBy === 'component_key' ? order : false}><TableSortLabel active={orderBy === 'component_key'} direction={order} onClick={() => handleSortRequest('component_key')}>Component Key</TableSortLabel></TableCell>
                                         <TableCell>Beschreibung</TableCell>
-                                        <TableCell sortDirection={orderBy === 'install_count' ? order : false}><TableSortLabel active={orderBy === 'install_count'} direction={order} onClick={() => handleSortRequest('install_count')}>Installiert</TableSortLabel></TableCell>
+                                        <TableCell align="center" sortDirection={orderBy === 'business_partner_install_count' ? order : false}>
+                                            <TableSortLabel active={orderBy === 'business_partner_install_count'} direction={order} onClick={() => handleSortRequest('business_partner_install_count')}>
+                                                <Tooltip title="Installiert bei Business Partnern">
+                                                    <BusinessIcon sx={{ verticalAlign: 'middle' }} />
+                                                </Tooltip>
+                                            </TableSortLabel>
+                                        </TableCell>
+                                        <TableCell align="center" sortDirection={orderBy === 'user_install_count' ? order : false}>
+                                            <TableSortLabel active={orderBy === 'user_install_count'} direction={order} onClick={() => handleSortRequest('user_install_count')}>
+                                                <Tooltip title="Installiert bei Nutzern">
+                                                    <PersonIcon sx={{ verticalAlign: 'middle' }} />
+                                                </Tooltip>
+                                            </TableSortLabel>
+                                        </TableCell>
                                         <TableCell>Rollen</TableCell>
                                         <TableCell>Aktionen</TableCell>
                                     </TableRow>
@@ -312,7 +326,8 @@ const AdminWidgetTypesPage: React.FC = () => {
                                             <TableCell><code>{wt.type_key}</code></TableCell>
                                             <TableCell><code>{wt.component_key || '-'}</code></TableCell>
                                             <TableCell sx={{ maxWidth: 250 }}>{wt.description || '-'}</TableCell>
-                                            <TableCell align="center">{wt.install_count}</TableCell>
+                                            <TableCell align="center" sx={{ fontWeight: 'bold' }}>{wt.business_partner_install_count}</TableCell>
+                                            <TableCell align="center" sx={{ fontWeight: 'bold' }}>{wt.user_install_count}</TableCell>
                                             <TableCell>
                                                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                                                     {(wt.allowed_roles || []).map((role) => (<Chip key={role} label={role} size="small" />))}

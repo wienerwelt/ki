@@ -37,6 +37,7 @@ const adminBpActionsRoutes = require('./routes/adminBpActionsRoutes');
 const adminCronjobsRoutes = require('./routes/adminCronjobsRoutes.js');
 const sourcesRoutes = require('./routes/sourcesRoutes.js');
 const adminSourcesRoutes = require('./routes/adminSourcesRoutes.js');
+const feedbackRoutes = require('./routes/feedbackRoutes');
 
 // Controller-Importe
 const dataController = require('./controllers/dataController');
@@ -99,6 +100,7 @@ app.use('/api/data', dataRoutes);
 app.use('/api/business-partner', businessPartnerRoutes);
 app.use('/api/widgets', widgetRoutes);
 app.use('/api/sources', sourcesRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 // Einzelne, geschützte Route
 app.get('/api/data/active-advertisement', auth, dataController.getActiveAdvertisement);

@@ -13,4 +13,7 @@ router.get('/me', userController.getProfile);
 // Route zum Aktualisieren des eigenen Profils
 router.put('/me', userController.updateProfile);
 
+// Fügen Sie diese Route zu Ihrer userRoutes-Datei hinzu
+router.post('/mark-welcome-seen', authMiddleware, userController.markWelcomeAsSeen);
+
 module.exports = router;

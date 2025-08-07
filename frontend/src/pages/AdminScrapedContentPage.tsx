@@ -3,7 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { 
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
-    TextField, MenuItem, Chip, Grid, TableSortLabel, InputAdornment, SelectChangeEvent, Link as MuiLink, Tooltip
+    TextField, MenuItem, Chip, Grid, TableSortLabel, InputAdornment, SelectChangeEvent, Link as MuiLink, Tooltip,
+    Checkbox // NEU
 } from '@mui/material';
 import { Autocomplete } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
@@ -52,7 +53,6 @@ function getComparator(order: Order, orderBy: keyof UnifiedContent): (a: Unified
 }
 function useQuery() { return new URLSearchParams(useLocation().search); }
 
-// KORREKTUR: Der vollständige Form-State wird wiederhergestellt
 const initialFormState = {
     source_identifier: '',
     original_url: '',
@@ -76,6 +76,7 @@ const AdminScrapedContentPage: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [openDialog, setOpenDialog] = useState(false);
     const [editingContent, setEditingContent] = useState<UnifiedContent | null>(null);
+    const [selected, setSelected] = useState<string[]>([]); // NEU: State für ausgewählte Zeilen
 
     const [searchTerm, setSearchTerm] = useState('');
     const [order, setOrder] = useState<Order>('desc');
@@ -115,7 +116,6 @@ const AdminScrapedContentPage: React.FC = () => {
 
     useEffect(() => { fetchInitialData(); }, [sourceIdentifierFilter]);
 
-    // KORREKTUR: Die Handler sind wieder vollständig und für alle Felder ausgelegt
     const handleFormChange = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent<string>) => {
         const { name, value } = event.target;
         setFormState(prevState => ({ ...prevState, [name]: value }));
@@ -157,7 +157,7 @@ const AdminScrapedContentPage: React.FC = () => {
         const token = localStorage.getItem('jwt_token');
         const contentData = {
             ...formState,
-            tags: formState.tags.map(t => t.id), // Nur die IDs der Tags senden
+            tags: formState.tags.map(t => t.id),
             summary: formState.summary || null,
             full_text: formState.full_text || null,
             published_date: formState.published_date || null,
@@ -192,6 +192,26 @@ const AdminScrapedContentPage: React.FC = () => {
         }
     };
 
+    // NEU: Handler für Bulk-Delete
+    const handleBulkDelete = async () => {
+        if (!window.confirm(`Sind Sie sicher, dass Sie ${selected.length} Einträge löschen möchten?`)) return;
+        setLoading(true);
+        const token = localStorage.getItem('jwt_token');
+        try {
+            for (const id of selected) {
+                const item = content.find(c => c.id === id);
+                if (item) {
+                    await apiClient.delete(`/api/admin/scraped-content/${item.id}?dataType=${item.data_type}`, { headers: { 'x-auth-token': token } });
+                }
+            }
+            setSelected([]);
+            fetchInitialData();
+        } catch (err: any) {
+            alert(err.response?.data?.message || 'Fehler beim Löschen der Inhalte.');
+            setLoading(false);
+        }
+    };
+
     const handleSortRequest = (property: keyof UnifiedContent) => {
         const isAsc = orderBy === property && order === 'asc';
         setOrder(isAsc ? 'desc' : 'asc');
@@ -214,6 +234,37 @@ const AdminScrapedContentPage: React.FC = () => {
         return filtered.sort(getComparator(order, orderBy));
     }, [content, searchTerm, order, orderBy]);
 
+    // NEU: Handler für Checkboxen
+    const handleSelectAllClick = (event: React.ChangeEvent<HTMLInputElement>) => {
+        if (event.target.checked) {
+            const newSelecteds = sortedAndFilteredContent.map((n) => n.id);
+            setSelected(newSelecteds);
+            return;
+        }
+        setSelected([]);
+    };
+
+    const handleClick = (event: React.MouseEvent<unknown>, id: string) => {
+        const selectedIndex = selected.indexOf(id);
+        let newSelected: string[] = [];
+
+        if (selectedIndex === -1) {
+            newSelected = newSelected.concat(selected, id);
+        } else if (selectedIndex === 0) {
+            newSelected = newSelected.concat(selected.slice(1));
+        } else if (selectedIndex === selected.length - 1) {
+            newSelected = newSelected.concat(selected.slice(0, -1));
+        } else if (selectedIndex > 0) {
+            newSelected = newSelected.concat(
+                selected.slice(0, selectedIndex),
+                selected.slice(selectedIndex + 1),
+            );
+        }
+        setSelected(newSelected);
+    };
+    
+    const isSelected = (id: string) => selected.indexOf(id) !== -1;
+
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
@@ -226,7 +277,14 @@ const AdminScrapedContentPage: React.FC = () => {
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                         <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), }} />
-                        <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenAddDialog}>Inhalt hinzufügen</Button>
+                        {/* NEU: Bulk-Delete-Button wird angezeigt, wenn etwas ausgewählt ist */}
+                        {selected.length > 0 ? (
+                            <Button variant="contained" color="error" startIcon={<DeleteIcon />} onClick={handleBulkDelete}>
+                                {selected.length} Auswahl löschen
+                            </Button>
+                        ) : (
+                            <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenAddDialog}>Inhalt hinzufügen</Button>
+                        )}
                     </Box>
                 </Box>
 
@@ -238,6 +296,14 @@ const AdminScrapedContentPage: React.FC = () => {
                             <Table stickyHeader>
                                 <TableHead>
                                     <TableRow>
+                                        {/* NEU: Checkbox im Header */}
+                                        <TableCell padding="checkbox">
+                                            <Checkbox
+                                                indeterminate={selected.length > 0 && selected.length < sortedAndFilteredContent.length}
+                                                checked={sortedAndFilteredContent.length > 0 && selected.length === sortedAndFilteredContent.length}
+                                                onChange={handleSelectAllClick}
+                                            />
+                                        </TableCell>
                                         <TableCell sortDirection={orderBy === 'source_identifier' ? order : false}><TableSortLabel active={orderBy === 'source_identifier'} direction={order} onClick={() => handleSortRequest('source_identifier')}>Quelle</TableSortLabel></TableCell>
                                         <TableCell sortDirection={orderBy === 'title' ? order : false}><TableSortLabel active={orderBy === 'title'} direction={order} onClick={() => handleSortRequest('title')}>Titel</TableSortLabel></TableCell>
                                         <TableCell sortDirection={orderBy === 'category' ? order : false}><TableSortLabel active={orderBy === 'category'} direction={order} onClick={() => handleSortRequest('category')}>Kategorie</TableSortLabel></TableCell>
@@ -248,21 +314,28 @@ const AdminScrapedContentPage: React.FC = () => {
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
-                                    {sortedAndFilteredContent.map((item) => (
-                                        <TableRow key={`${item.data_type}-${item.id}`} hover>
-                                            <TableCell><Chip label={item.source_identifier} size="small" variant="outlined" color={item.data_type === 'traffic' ? 'secondary' : 'default'} /><Typography variant="caption" display="block" sx={{ mt: 0.5 }}>{item.rule_name || ''}</Typography></TableCell>
-                                            <TableCell sx={{ maxWidth: 350, wordBreak: 'break-word' }}>{item.title}</TableCell>
-                                            <TableCell><Chip label={item.category || '-'} size="small" /></TableCell>
-                                            <TableCell><Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{(item.tags || []).map(tag => (<Chip key={tag} label={tag} size="small" variant="filled" />))}</Box></TableCell>
-                                            <TableCell align="center">{item.relevance_score ?? '-'}</TableCell>
-                                            <TableCell>{new Date(item.published_date || item.scraped_at).toLocaleDateString('de-AT')}</TableCell>
-                                            <TableCell>
-                                                <Tooltip title="Original-URL öffnen"><IconButton component="a" href={item.original_url} target="_blank" rel="noopener noreferrer"><LinkIcon /></IconButton></Tooltip>
-                                                <Tooltip title="Inhalt bearbeiten"><span><IconButton onClick={() => handleOpenEditDialog(item)} disabled={item.data_type === 'traffic'}><EditIcon /></IconButton></span></Tooltip>
-                                                <Tooltip title="Löschen"><span><IconButton onClick={() => handleDelete(item.id, item.data_type)}><DeleteIcon color="error" /></IconButton></span></Tooltip>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
+                                    {sortedAndFilteredContent.map((item) => {
+                                        const isItemSelected = isSelected(item.id);
+                                        return (
+                                            <TableRow key={`${item.data_type}-${item.id}`} hover onClick={(event) => handleClick(event, item.id)} role="checkbox" aria-checked={isItemSelected} selected={isItemSelected}>
+                                                {/* NEU: Checkbox in jeder Zeile */}
+                                                <TableCell padding="checkbox">
+                                                    <Checkbox checked={isItemSelected} />
+                                                </TableCell>
+                                                <TableCell><Chip label={item.source_identifier} size="small" variant="outlined" color={item.data_type === 'traffic' ? 'secondary' : 'default'} /><Typography variant="caption" display="block" sx={{ mt: 0.5 }}>{item.rule_name || ''}</Typography></TableCell>
+                                                <TableCell sx={{ maxWidth: 350, wordBreak: 'break-word' }}>{item.title}</TableCell>
+                                                <TableCell><Chip label={item.category || '-'} size="small" /></TableCell>
+                                                <TableCell><Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{(item.tags || []).map(tag => (<Chip key={tag} label={tag} size="small" variant="filled" />))}</Box></TableCell>
+                                                <TableCell align="center">{item.relevance_score ?? '-'}</TableCell>
+                                                <TableCell>{new Date(item.published_date || item.scraped_at).toLocaleDateString('de-AT')}</TableCell>
+                                                <TableCell>
+                                                    <Tooltip title="Original-URL öffnen"><IconButton component="a" href={item.original_url} target="_blank" rel="noopener noreferrer"><LinkIcon /></IconButton></Tooltip>
+                                                    <Tooltip title="Inhalt bearbeiten"><span><IconButton onClick={() => handleOpenEditDialog(item)} disabled={item.data_type === 'traffic'}><EditIcon /></IconButton></span></Tooltip>
+                                                    <Tooltip title="Löschen"><span><IconButton onClick={() => handleDelete(item.id, item.data_type)}><DeleteIcon color="error" /></IconButton></span></Tooltip>
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })}
                                 </TableBody>
                             </Table>
                         </TableContainer>

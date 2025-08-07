@@ -30,6 +30,7 @@ import { useAuth } from '../context/AuthContext';
 import SessionTimer from './SessionTimer';
 import AdvertisementBanner from './AdvertisementBanner';
 import apiClient from '../apiClient';
+import FeedbackIcon from '@mui/icons-material/Feedback'; // Icon importieren
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -119,6 +120,10 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     <FactCheckIcon sx={{ mr: 2 }} />
                     <ListItemText primary="Vertrauensw. Quellen" />
                 </ListItem>
+                <ListItem button component={RouterLink} to="/feedback" onClick={toggleDrawer(false)}>
+                    <FeedbackIcon sx={{ mr: 2 }} />
+                    <ListItemText primary="Feedback & Ideen" />
+                </ListItem>                
                 <Divider sx={{ my: 1 }} />
                 {user?.role === 'assistenz' && (
                    <>

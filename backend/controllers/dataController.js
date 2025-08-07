@@ -140,33 +140,33 @@ exports.getPricesByIds = async (req, res) => {
                 prices = deResponse.data.prices;
                 break;
             
-case 'AT': {
-    const atApiBaseUrl = 'https://api.e-control.at/sprit/1.0';
-    const idArray = ids.split(',');
-    const priceRequests = idArray.map(id =>
-        axios.get(`${atApiBaseUrl}/gas-station/${id}`, {
-            headers: { 'User-Agent': 'Fleet-KI-Dashboard/1.0' }
-        })
-    );
-    const priceResponses = await Promise.all(priceRequests);
+            case 'AT':
+                const atApiBaseUrl = 'https://spritpreisrechner.e-control.at/api';
+                const idArray = ids.split(',');
+                
+                // KORREKTUR: Die E-Control API benötigt für die Preisabfrage einen öffentlichen API-Schlüssel als Bearer Token.
+                const atApiKey = 'pe4852-95a7-4524-a842-adp95920ge72';
+                const atHeaders = {
+                    'Authorization': `Bearer ${atApiKey}`,
+                    'User-Agent': 'Fleet-KI-Dashboard/1.0'
+                };
 
-    priceResponses.forEach(resp => {
-        // resp.data enthält alle Infos zu dieser Tankstelle inkl. Preisen!
-        const station = resp.data;
-        const id = station.id?.toString();
-        // Die Preisdaten stehen in station.prices
-        if (station.prices && id) {
-            prices[id] = {
-                status: station.status || 'open',
-                diesel: station.prices.find(p => p.fuelType === 'DIE')?.amount || null,
-                e5: station.prices.find(p => p.fuelType === 'SUP')?.amount || null,
-                e10: null, // Wird von E-Control nicht geliefert!
-            };
-        }
-    });
-    break;
-}
-
+                const priceRequests = idArray.map(id => axios.get(`${atApiBaseUrl}/get-prices/${id}`, { headers: atHeaders }));
+                const priceResponses = await Promise.all(priceRequests);
+                
+                priceResponses.forEach(resp => {
+                    const stationPrices = resp.data;
+                    if (stationPrices.length > 0) {
+                        const id = stationPrices[0].id;
+                        prices[id] = {
+                            status: 'open',
+                            diesel: stationPrices.find(p => p.fuelType === 'DIE')?.price || null,
+                            e5: stationPrices.find(p => p.fuelType === 'SUP')?.price || null,
+                            e10: null,
+                        };
+                    }
+                });
+                break;
 
             case 'FR':
             case 'ES':
@@ -183,6 +183,7 @@ case 'AT': {
         return res.status(500).json({ ok: false, message: `Fehler bei der Kommunikation mit dem Provider für ${country.toUpperCase()}.` });
     }
 };
+
 
 // --- NEU: Hilfsfunktion zur Anzeige der SQL-Abfrage ---
 const logQuery = (query, params) => {
@@ -327,6 +328,76 @@ exports.getFleetAssociationNews = async (req, res) => {
             timestamp: new Date().toISOString(),
             data: [],
         });
+    }
+};
+
+exports.getCommodityPrices = async (req, res) => {
+    try {
+        // Diese Liste kann zukünftig erweitert werden, das Widget passt sich an.
+        const indicators = ['BRENT_OIL', 'EUR_USD']; 
+        const results = {};
+
+        for (const indicator of indicators) {
+            // Aktuellsten Preis und Quelle holen
+            const latestPriceQuery = `
+                SELECT value, unit, data_timestamp, source 
+                FROM economic_indicators
+                WHERE indicator_name = $1
+                ORDER BY data_timestamp DESC
+                LIMIT 1;
+            `;
+            const latestPriceResult = await db.query(latestPriceQuery, [indicator]);
+
+            if (latestPriceResult.rows.length === 0) continue;
+
+            const latest = latestPriceResult.rows[0];
+            const currentPrice = parseFloat(latest.value);
+            
+            // Preis von vor einer Woche holen
+            const weekAgoQuery = `
+                SELECT value FROM economic_indicators
+                WHERE indicator_name = $1 AND data_timestamp <= $2::date - interval '7 days'
+                ORDER BY data_timestamp DESC
+                LIMIT 1;
+            `;
+            const weekAgoResult = await db.query(weekAgoQuery, [indicator, latest.data_timestamp]);
+            const weekAgoPrice = weekAgoResult.rows.length > 0 ? parseFloat(weekAgoResult.rows[0].value) : null;
+
+            // Preis von vor einem Monat holen
+            const monthAgoQuery = `
+                SELECT value FROM economic_indicators
+                WHERE indicator_name = $1 AND data_timestamp <= $2::date - interval '1 month'
+                ORDER BY data_timestamp DESC
+                LIMIT 1;
+            `;
+            const monthAgoResult = await db.query(monthAgoQuery, [indicator, latest.data_timestamp]);
+            const monthAgoPrice = monthAgoResult.rows.length > 0 ? parseFloat(monthAgoResult.rows[0].value) : null;
+
+            // Trend bestimmen (Vergleich mit dem Wert von vor einer Woche)
+            let trend = 'stable';
+            if (weekAgoPrice) {
+                if (currentPrice > weekAgoPrice) trend = 'up';
+                if (currentPrice < weekAgoPrice) trend = 'down';
+            }
+
+            results[indicator] = {
+                currentPrice: currentPrice,
+                unit: latest.unit,
+                lastUpdate: latest.data_timestamp,
+                source: latest.source,
+                trend: trend,
+                historical: {
+                  weekAgo: weekAgoPrice,
+                  monthAgo: monthAgoPrice
+                }
+            };
+        }
+
+        res.json({ ok: true, data: results });
+
+    } catch (error) {
+        console.error('Fehler beim Abrufen der Rohstoffpreise aus der DB:', error.message);
+        res.status(500).json({ ok: false, message: 'Fehler beim Abrufen der Rohstoffdaten.' });
     }
 };
 

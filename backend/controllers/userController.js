@@ -68,3 +68,14 @@ exports.updateProfile = async (req, res) => {
         res.status(500).send('Serverfehler');
     }
 };
+
+exports.markWelcomeAsSeen = async (req, res) => {
+    const { id: userId } = req.user;
+    try {
+        await db.query('UPDATE users SET has_seen_welcome_widget = TRUE WHERE id = $1', [userId]);
+        res.status(200).json({ message: 'Welcome widget marked as seen.' });
+    } catch (err) {
+        console.error('Error marking welcome widget as seen:', err.message);
+        res.status(500).send('Server error');
+    }
+};

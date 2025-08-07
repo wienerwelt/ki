@@ -6,6 +6,9 @@ const sessionController = require('../controllers/sessionController');
 
 // Route zum Erneuern der Session.
 // authMiddleware stellt sicher, dass nur ein eingeloggter Benutzer mit gültigem Token zugreifen kann.
-router.post('/renew', authMiddleware, sessionController.renewToken);
+
+// KORREKTUR: Der Funktionsname wurde von 'renewToken' auf 'renew' geändert, 
+// damit er mit dem Export im sessionController übereinstimmt.
+router.post('/renew', authMiddleware, sessionController.renew);
 
 module.exports = router;

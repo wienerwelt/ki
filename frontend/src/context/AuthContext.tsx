@@ -26,6 +26,7 @@ interface UserPayload {
     regions: Region[] | null;
     contribution_score: number;
     membership_level: string | null;
+    has_seen_welcome_widget: boolean;
 }
 
 interface DecodedToken {

@@ -33,6 +33,8 @@ import AdminBpActionsPage from './pages/AdminBpActionsPage';
 import AdminCronjobsPage from './pages/AdminCronjobsPage';
 import AdminSourcesPage from './pages/AdminSourcesPage';
 import TrustedSourcesPage from './pages/TrustedSourcesPage';
+// NEU: FeedbackCenterPage importieren
+import FeedbackCenterPage from './pages/FeedbackCenterPage';
 
 
 // --- ROUTE GUARDS ---
@@ -49,7 +51,6 @@ const AdminRoutes: React.FC = () => {
     return user?.role === 'admin' ? <Outlet /> : <Navigate to="/dashboard" replace />;
 };
 
-// Dieser Guard wird nun für alle Seiten verwendet, auf die Admins und Assistenten Zugriff haben
 const BpStaffAllowedRoutes: React.FC = () => {
     const { user } = useAuth();
     const isAllowed = user?.role === 'admin' || user?.role === 'assistenz';
@@ -92,7 +93,10 @@ function App() {
                     <Route element={<ProtectedRoutes />}>
                         <Route path="/dashboard" element={<DashboardPage />} />
                         <Route path="/profile" element={<ProfilePage />} />
-                        <Route path="/trusted-sources" element={<TrustedSourcesPage />} />                        
+                        <Route path="/trusted-sources" element={<TrustedSourcesPage />} />
+                        
+                        {/* NEU: Route für das Feedback-Center hinzufügen */}
+                        <Route path="/feedback" element={<FeedbackCenterPage />} />
                         
                         {/* Routen für Admins und Assistenten */}
                         <Route element={<BpStaffAllowedRoutes />}>

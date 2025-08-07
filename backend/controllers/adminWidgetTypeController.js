@@ -3,28 +3,34 @@ const db = require('../config/db');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
-// GET all widget types with installation count
+// GET all widget types with detailed installation counts
 exports.getAllWidgetTypes = async (req, res) => {
     try {
-        // KORREKTUR: Der Tabellenname wurde von 'dashboard_configs' auf 'dashboard_configurations' geändert.
+        // KORREKTUR: Die Abfrage verwendet jetzt den korrekten Tabellennamen 'dashboard_configurations'
+        // und eine vereinfachte Zähl-Logik.
         const query = `
             SELECT
                 wt.*,
-                COALESCE(counts.install_count, 0)::integer AS install_count
+
+                -- Zählt Business Partner Installationen (angenommen über die User, die zu einem BP gehören)
+                (
+                    SELECT COUNT(DISTINCT u.business_partner_id)
+                    FROM dashboard_configurations dc
+                    JOIN users u ON dc.user_id = u.id,
+                         jsonb_array_elements(dc.config -> 'widgets') widget
+                    WHERE widget ->> 'type' = wt.type_key AND u.business_partner_id IS NOT NULL
+                ) AS business_partner_install_count,
+
+                -- Zählt Nutzer Installationen
+                (
+                    SELECT COUNT(DISTINCT dc.user_id)
+                    FROM dashboard_configurations dc,
+                         jsonb_array_elements(dc.config -> 'widgets') widget
+                    WHERE widget ->> 'type' = wt.type_key
+                ) AS user_install_count
+
             FROM
                 widget_types wt
-            LEFT JOIN (
-                SELECT
-                    (widget->>'type') AS type_key,
-                    COUNT(*) AS install_count
-                FROM
-                    dashboard_configurations,
-                    jsonb_array_elements(config->'widgets') AS widget
-                WHERE
-                    jsonb_typeof(config->'widgets') = 'array' AND (widget->>'type') IS NOT NULL
-                GROUP BY
-                    type_key
-            ) AS counts ON wt.type_key = counts.type_key
             ORDER BY
                 wt.name ASC;
         `;

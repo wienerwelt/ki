@@ -21,12 +21,22 @@ import { useAuth } from '../../context/AuthContext';
 
 type FuelType = 'diesel' | 'e5' | 'e10';
 type ViewMode = 'favorites' | 'search';
-type SortByType = 'price' | 'dist'; // NEU
+type SortByType = 'price' | 'dist';
+
+interface FuelPricesWidgetProps extends BaseWidgetProps {
+    title: string;
+    widgetTypeKey: string;
+}
 
 const fuelTypeColors: { [key in FuelType]: 'primary' | 'success' | 'warning' } = {
     diesel: 'primary',
     e5: 'success',
     e10: 'warning',
+};
+
+const providerInfo: { [key: string]: { name: string; url: string } } = {
+    DE: { name: 'Tankerkönig', url: 'https://www.tankerkoenig.de' },
+    AT: { name: 'E-Control', url: 'https://www.e-control.at/spritpreisrechner' },
 };
 
 interface FavoriteStation {
@@ -95,7 +105,7 @@ const formatTimeAgo = (date: Date | null): string => {
 };
 
 
-const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRemovable }) => {
+const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId, isRemovable, title, widgetTypeKey }) => {
     const { user } = useAuth();
     const [favorites, setFavorites] = useLocalStorage<FavoriteStation[]>('fuelFavorites', []);
     const [pricedFavorites, setPricedFavorites] = useState<StationPrice[]>([]);
@@ -105,13 +115,14 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
     
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    
+    const [partialErrors, setPartialErrors] = useState<string[]>([]);
+
     const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
     const [fuelType, setFuelType] = useState<FuelType>('diesel');
     const [searchTerm, setSearchTerm] = useState('');
     const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
     const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
-    const [sortBy, setSortBy] = useState<SortByType>('price'); // NEU: State für die Sortierung
+    const [sortBy, setSortBy] = useState<SortByType>('price');
 
     useEffect(() => {
         if (user?.regions && user.regions.length > 0) {
@@ -122,9 +133,7 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
 
     useEffect(() => {
         navigator.geolocation.getCurrentPosition(
-            (position) => {
-                setUserLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
-            },
+            (position) => setUserLocation({ lat: position.coords.latitude, lng: position.coords.longitude }),
             (err) => console.warn("Standort konnte nicht ermittelt werden:", err.message)
         );
     }, []);
@@ -137,28 +146,40 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
         
         setIsLoading(true);
         setError(null);
+        setPartialErrors([]);
         try {
             const token = localStorage.getItem('jwt_token');
             const favoritesByCountry: { [key: string]: string[] } = {};
             favorites.forEach(fav => {
-                if (!favoritesByCountry[fav.countryCode]) {
-                    favoritesByCountry[fav.countryCode] = [];
-                }
+                if (!favoritesByCountry[fav.countryCode]) favoritesByCountry[fav.countryCode] = [];
                 favoritesByCountry[fav.countryCode].push(fav.id);
             });
 
-            let allPriceData: any = {};
-
-            for (const countryCode of Object.keys(favoritesByCountry)) {
-                const response = await apiClient.get('/api/data/fuel/prices-by-ids', {
-                    params: { ids: favoritesByCountry[countryCode].join(','), country: countryCode },
+            const pricePromises = Object.entries(favoritesByCountry).map(([countryCode, ids]) =>
+                apiClient.get('/api/data/fuel/prices-by-ids', {
+                    params: { ids: ids.join(','), country: countryCode },
                     headers: { 'x-auth-token': token }
-                });
-                if (response.data.ok) {
-                    allPriceData = { ...allPriceData, ...response.data.prices };
+                })
+            );
+
+            const results = await Promise.allSettled(pricePromises);
+            
+            let allPriceData: any = {};
+            const failedProviders: string[] = [];
+
+            results.forEach((result, index) => {
+                const countryCode = Object.keys(favoritesByCountry)[index];
+                if (result.status === 'fulfilled' && result.value.data.ok) {
+                    allPriceData = { ...allPriceData, ...result.value.data.prices };
                 } else {
-                    throw new Error(response.data.message || `Preise für ${countryCode} konnten nicht geladen werden.`);
+                    const providerName = providerInfo[countryCode]?.name || countryCode;
+                    failedProviders.push(providerName);
+                    console.error(`Fehler bei Preisabfrage für ${providerName}:`, result.status === 'rejected' ? result.reason : 'API-Fehler');
                 }
+            });
+
+            if (failedProviders.length > 0) {
+                setPartialErrors(failedProviders.map(p => `Preise für ${p} konnten nicht geladen werden.`));
             }
             
             setLastFetchTime(new Date());
@@ -166,18 +187,13 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
             const pricedList = favorites.map(fav => {
                 const priceInfo = allPriceData[fav.id];
                 const distance = userLocation ? getDistance(userLocation.lat, userLocation.lng, fav.lat, fav.lng) : undefined;
-                return {
-                    ...fav,
-                    price: priceInfo ? priceInfo[fuelType] : undefined,
-                    isOpen: priceInfo ? priceInfo.status === 'open' : false,
-                    distance: distance
-                };
+                return { ...fav, price: priceInfo?.[fuelType], isOpen: priceInfo?.status === 'open', distance };
             }).sort((a, b) => (a.price || 999) - (b.price || 999));
 
             setPricedFavorites(pricedList);
 
         } catch (err: any) {
-            setError(err?.response?.data?.message || err.message || 'Fehler beim Abrufen der Preise.');
+            setError('Ein unerwarteter Fehler ist aufgetreten.');
         } finally {
             setIsLoading(false);
         }
@@ -187,22 +203,16 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
         fetchFavoritePrices();
     }, [favorites, fetchFavoritePrices]);
 
-
     const handleSearch = useCallback(async (useCurrentLocation = false) => {
-        if (!selectedRegion || (!searchTerm && !useCurrentLocation)) return;
+        if (!selectedRegion) return;
+        if (!searchTerm && !useCurrentLocation) return;
         
         setIsLoading(true);
         setError(null);
         setSearchResults([]);
-        
         try {
             const token = localStorage.getItem('jwt_token');
-            const params: any = {
-                country: selectedRegion.code,
-                fuelType: fuelType,
-                sortBy: sortBy, // NEU: Sortierungsparameter senden
-            };
-
+            const params: any = { country: selectedRegion.code, fuelType, sortBy };
             if (useCurrentLocation && userLocation) {
                 params.lat = userLocation.lat;
                 params.lng = userLocation.lng;
@@ -210,14 +220,9 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
             } else {
                 params.query = searchTerm;
             }
-            
             const response = await apiClient.get('/api/data/fuel/search', { params, headers: { 'x-auth-token': token } });
-
-            if (response.data.ok) {
-                setSearchResults(response.data.stations);
-            } else {
-                setError(response.data.message || 'Suche fehlgeschlagen.');
-            }
+            if (response.data.ok) setSearchResults(response.data.stations);
+            else setError(response.data.message || 'Suche fehlgeschlagen.');
         } catch (err: any) {
             setError(err?.response?.data?.message || 'Fehler bei der Tankstellensuche.');
         } finally {
@@ -225,12 +230,12 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
         }
     }, [selectedRegion, searchTerm, userLocation, fuelType, sortBy]);
     
-    // NEU: Löst eine neue Suche aus, wenn die Sortierung geändert wird
     useEffect(() => {
-        if (viewMode === 'search' && (searchTerm || userLocation)) {
-            handleSearch(!!userLocation && !searchTerm);
+        if (viewMode === 'search' && searchResults.length > 0) {
+            const isLocationSearch = !!userLocation && !searchTerm;
+            handleSearch(isLocationSearch);
         }
-    }, [sortBy, viewMode]);
+    }, [sortBy, viewMode, handleSearch, searchResults.length, searchTerm, userLocation]);
 
     const clearSearch = () => {
         setSearchTerm('');
@@ -244,51 +249,21 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
         if (isFavorite(station.id)) {
             setFavorites(favorites.filter(f => f.id !== station.id));
         } else {
-            if (favorites.length < 10) {
-                setFavorites([...favorites, station]);
-            } else {
-                alert("Sie können maximal 10 Favoriten speichern.");
-            }
+            if (favorites.length < 10) setFavorites([...favorites, station]);
+            else alert("Sie können maximal 10 Favoriten speichern.");
         }
     };
 
     const renderHeader = () => (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', width: '100%', p: 1 }}>
             <LocalGasStationIcon />
-            <Typography variant="h6">Kraftstoffpreise</Typography>
-            
+            <Typography variant="h6">{title}</Typography>
             <Box sx={{ flexGrow: 1, minWidth: '150px' }} onMouseDown={(e) => e.stopPropagation()}>
-                <ToggleButtonGroup 
-                    value={fuelType} 
-                    exclusive 
-                    size="small" 
-                    onChange={(_e, newType) => newType && setFuelType(newType)} 
-                    color={fuelTypeColors[fuelType]}
-                    fullWidth
-                >
+                <ToggleButtonGroup value={fuelType} exclusive size="small" onChange={(_e, newType) => newType && setFuelType(newType)} color={fuelTypeColors[fuelType]} fullWidth>
                     <ToggleButton value="diesel" sx={{ flex: 1 }}>Diesel</ToggleButton>
                     <ToggleButton value="e5" sx={{ flex: 1 }}>E5</ToggleButton>
                     <ToggleButton value="e10" sx={{ flex: 1 }}>E10</ToggleButton>
                 </ToggleButtonGroup>
-            </Box>
-
-            <Box onMouseDown={(e) => e.stopPropagation()}>
-                {user?.regions && (
-                    <TextField select value={selectedRegion?.id || ''} size="small" variant="outlined"
-                        onChange={(e) => {
-                            setError(null);
-                            setSelectedRegion(user.regions?.find(r => r.id === e.target.value) || null)
-                        }}
-                    >
-                        {user.regions.map((region) => (
-                            <MenuItem key={region.id} value={region.id}>
-                                <Tooltip title={region.name} placement="right">
-                                    <img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name}/>
-                                </Tooltip>
-                            </MenuItem>
-                        ))}
-                    </TextField>
-                )}
             </Box>
              <Tooltip title={viewMode === 'favorites' ? "Favoriten suchen" : "Zurück zur Favoriten-Ansicht"}>
                 <IconButton onMouseDown={(e) => e.stopPropagation()} onClick={() => {
@@ -305,56 +280,24 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
         const pricedStation = station as StationPrice;
         const fullAddress = `${station.brand} ${station.name}, ${station.street} ${station.houseNumber || ''}, ${station.postCode} ${station.city}`;
         const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}`;
-
         return (
-             <ListItem
-                key={station.id}
-                secondaryAction={
-                     <IconButton edge="end" onClick={(e) => {
-                         e.stopPropagation();
-                         toggleFavorite(station as FavoriteStation);
-                     }}>
-                        {isSearchResult ? (
-                             <Tooltip title={isFavorite(station.id) ? "Favorit entfernen" : "Als Favorit speichern"}>
-                                {isFavorite(station.id) ? <StarIcon color="warning"/> : <StarBorderIcon />}
-                             </Tooltip>
-                        ) : (
-                             <Tooltip title="Favorit entfernen">
-                                <DeleteIcon />
-                             </Tooltip>
-                        )}
-                    </IconButton>
-                }
-                sx={{ '&:hover': { bgcolor: 'action.hover' }, p: 1, pr: 6 }}
-            >
+             <ListItem key={station.id} secondaryAction={
+                 <IconButton edge="end" onClick={(e) => { e.stopPropagation(); toggleFavorite(station as FavoriteStation); }}>
+                    {isSearchResult ? (<Tooltip title={isFavorite(station.id) ? "Favorit entfernen" : "Als Favorit speichern"}>{isFavorite(station.id) ? <StarIcon color="warning"/> : <StarBorderIcon />}</Tooltip>) : (<Tooltip title="Favorit entfernen"><DeleteIcon /></Tooltip>)}
+                 </IconButton>
+             } sx={{ '&:hover': { bgcolor: 'action.hover' }, p: 1, pr: 6 }}>
                 <Stack direction="row" alignItems="center" sx={{ width: '100%' }}>
-                     <ListItemText 
-                        primary={<Typography variant="body2" sx={{fontWeight: 'bold'}}>{station.brand} - {station.city}</Typography>}
+                     <ListItemText primary={<Typography variant="body2" sx={{fontWeight: 'bold'}}>{station.brand} - {station.city}</Typography>}
                         secondary={
-                            <MuiLink
-                                href={mapUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                variant="caption"
-                                color="text.secondary"
-                                sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, textDecoration: 'none' }}
-                                onClick={(e) => e.stopPropagation()}
-                            >
+                            <MuiLink href={mapUrl} target="_blank" rel="noopener noreferrer" variant="caption" color="text.secondary" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>
                                 <LocationOnIcon sx={{ fontSize: '0.875rem' }} />
-                                {`${station.street} ${station.houseNumber || ''}, ${station.postCode}`}
+                                {`${station.street} ${station.houseNumber || ''}, ${station.postCode} ${station.city}`}
                             </MuiLink>
                         }
                     />
                     {!isSearchResult && (
                         <Stack direction="row" spacing={2} alignItems="center" sx={{ ml: 'auto', pl: 1 }}>
-                            {pricedStation.price ? (
-                                <Chip 
-                                    label={`${pricedStation.price} €`}
-                                    color={pricedStation.isOpen ? fuelTypeColors[fuelType] : 'default'}
-                                    size="small"
-                                    variant={pricedStation.isOpen ? 'filled' : 'outlined'}
-                                />
-                             ) : <Chip label="N/A" size="small"/>}
+                            {pricedStation.price ? (<Chip label={`${pricedStation.price} €`} color={pricedStation.isOpen ? fuelTypeColors[fuelType] : 'default'} size="small" variant={pricedStation.isOpen ? 'filled' : 'outlined'} />) : <Chip label="N/A" size="small"/>}
                             {pricedStation.distance && <Typography variant="caption" sx={{ minWidth: '50px', textAlign: 'right' }}>{pricedStation.distance.toFixed(1)} km</Typography>}
                         </Stack>
                     )}
@@ -367,12 +310,11 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
         <>
             {isLoading && <Box sx={{display: 'flex', justifyContent: 'center', p: 2}}><CircularProgress size={24}/></Box>}
             {error && <Alert severity="error" sx={{m: 1}}>{error}</Alert>}
-            {!isLoading && !error && pricedFavorites.length > 0 && (
-                <List dense sx={{ p: 0 }}>
-                    {pricedFavorites.map(station => renderStationListItem(station, false))}
-                </List>
+            {partialErrors.map(err => <Alert key={err} severity="warning" sx={{m: 1, mt: 0}}>{err}</Alert>)}
+            {!isLoading && pricedFavorites.length > 0 && (
+                <List dense sx={{ p: 0 }}>{pricedFavorites.map(station => renderStationListItem(station, false))}</List>
             )}
-             {!isLoading && !error && favorites.length === 0 && (
+            {!isLoading && !error && favorites.length === 0 && (
                 <Box sx={{textAlign: 'center', p: 3}}>
                     <Typography color="text.secondary">Sie haben noch keine Favoriten.</Typography>
                     <Button startIcon={<AddIcon/>} sx={{mt: 1}} onClick={() => setViewMode('search')}>Jetzt Tankstellen suchen</Button>
@@ -384,40 +326,24 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
     const renderSearchView = () => (
          <Box>
             <Stack direction="row" spacing={1} sx={{ p: 1, alignItems: 'center' }}>
-                <TextField
-                    fullWidth
-                    size="small"
-                    variant="outlined"
-                    placeholder="PLZ oder Stadt suchen..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                    InputProps={{
-                        endAdornment: searchTerm && (
-                            <InputAdornment position="end">
-                                <IconButton onClick={clearSearch} edge="end" size="small">
-                                    <ClearIcon />
-                                </IconButton>
-                            </InputAdornment>
-                        ),
-                    }}
+                {user?.regions && (
+                    <Box onMouseDown={(e) => e.stopPropagation()}>
+                        <TextField select value={selectedRegion?.id || ''} size="small" variant="outlined" sx={{ minWidth: 80 }}
+                            onChange={(e) => setSelectedRegion(user.regions?.find(r => r.id === e.target.value) || null)}
+                        >
+                            {user.regions.map((region) => (
+                                <MenuItem key={region.id} value={region.id}><Tooltip title={region.name} placement="right"><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name}/></Tooltip></MenuItem>
+                            ))}
+                        </TextField>
+                    </Box>
+                )}
+                <TextField fullWidth size="small" variant="outlined" placeholder="PLZ oder Stadt suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                    InputProps={{ endAdornment: searchTerm && (<InputAdornment position="end"><IconButton onClick={clearSearch} edge="end" size="small"><ClearIcon /></IconButton></InputAdornment>)}}
                 />
-                 <Tooltip title="In meiner Nähe suchen (10km)">
-                    <span>
-                        <IconButton onClick={() => handleSearch(true)} disabled={!userLocation}>
-                            <MyLocationIcon />
-                        </IconButton>
-                    </span>
-                </Tooltip>
+                 <Tooltip title="In meiner Nähe suchen"><IconButton onClick={() => handleSearch(true)} disabled={!userLocation}><MyLocationIcon /></IconButton></Tooltip>
             </Stack>
-            {/* NEU: Sortier-Umschalter */}
             <Box sx={{ px: 1, pb: 1, display: 'flex', justifyContent: 'flex-end' }}>
-                <ToggleButtonGroup
-                    value={sortBy}
-                    exclusive
-                    size="small"
-                    onChange={(_e, newSort) => newSort && setSortBy(newSort)}
-                >
+                <ToggleButtonGroup value={sortBy} exclusive size="small" onChange={(_e, newSort) => newSort && setSortBy(newSort)}>
                     <ToggleButton value="price">Preis</ToggleButton>
                     <ToggleButton value="dist">Distanz</ToggleButton>
                 </ToggleButtonGroup>
@@ -426,26 +352,43 @@ const FuelPricesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRem
             {isLoading && <Box sx={{display: 'flex', justifyContent: 'center', p: 2}}><CircularProgress size={24}/></Box>}
             {error && <Alert severity="error" sx={{m: 1}}>{error}</Alert>}
             {!isLoading && !error && searchResults.length > 0 && (
-                 <List dense sx={{maxHeight: 300, overflowY: 'auto', p: 0 }}>
-                    {searchResults.map(station => renderStationListItem(station, true))}
-                </List>
+                 <List dense sx={{maxHeight: 300, overflowY: 'auto', p: 0 }}>{searchResults.map(station => renderStationListItem(station, true))}</List>
             )}
-             {!isLoading && !error && searchResults.length === 0 && <Typography sx={{p: 2, textAlign: 'center'}} color="text.secondary">Keine Ergebnisse oder Suche starten.</Typography>}
+            {!isLoading && !error && searchResults.length === 0 && <Typography sx={{p: 2, textAlign: 'center'}} color="text.secondary">Keine Ergebnisse oder Suche starten.</Typography>}
         </Box>
     );
 
-    return (
-        <WidgetPaper title={renderHeader()} widgetId={widgetId} onDelete={onDelete} isRemovable={isRemovable} noPadding>
-            <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
-                {viewMode === 'favorites' ? renderFavoritesView() : renderSearchView()}
+    const getProviderAttribution = () => {
+        const activeProviders = [...new Set(favorites.map(f => f.countryCode).map(code => providerInfo[code]).filter(Boolean))];
+        if (activeProviders.length === 0) return <MuiLink href="https://tankerkoenig.de" target="_blank" rel="noopener">Daten von Tankerkönig</MuiLink>;
+        
+        return (
+            <Box component="span">
+                Daten von:{' '}
+                {activeProviders.map((provider, index) => (
+                    <React.Fragment key={provider.name}>
+                        <MuiLink href={provider.url} target="_blank" rel="noopener">{provider.name}</MuiLink>
+                        {index < activeProviders.length - 1 ? ', ' : ''}
+                    </React.Fragment>
+                ))}
             </Box>
+        );
+    };
+
+    return (
+        <WidgetPaper 
+            title={renderHeader()} 
+            widgetTitle={title}
+            widgetTypeKey={widgetTypeKey}
+            widgetId={widgetId} 
+            onDelete={onDelete} 
+            isRemovable={isRemovable} 
+            noPadding
+        >
+            <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>{viewMode === 'favorites' ? renderFavoritesView() : renderSearchView()}</Box>
             <Box sx={{ p: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: 1, borderColor: 'divider' }}>
-                <Typography variant="caption" color="text.secondary">
-                    {lastFetchTime ? `${lastFetchTime.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr ${formatTimeAgo(lastFetchTime)}` : ''}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                    Daten von <MuiLink href="https://tankerkoenig.de" target="_blank" rel="noopener">Tankerkönig</MuiLink>
-                </Typography>
+                <Typography variant="caption" color="text.secondary">{lastFetchTime ? `${lastFetchTime.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr ${formatTimeAgo(lastFetchTime)}` : ''}</Typography>
+                <Typography variant="caption" color="text.secondary">{getProviderAttribution()}</Typography>
             </Box>
         </WidgetPaper>
     );

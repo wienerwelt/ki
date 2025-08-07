@@ -7,6 +7,7 @@ router.use(authMiddleware);
 
 router.get('/fuel/search', dataController.fuelSearch);
 router.get('/fuel/prices-by-ids', dataController.getPricesByIds);
+router.get('/commodities', dataController.getCommodityPrices);
 router.get('/traffic-info', dataController.getTrafficInfo);
 router.get('/ai-content', dataController.getAiContent);
 router.get('/scraped-content', dataController.getScrapedContent);
