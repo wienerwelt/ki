@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
     TextField, MenuItem, Switch, FormControlLabel, Tooltip as MuiTooltip, TableSortLabel, InputAdornment, Chip,
-    Tabs, Tab, Grid
+    Tabs, Tab, Grid, Link as MuiLink
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import GroupIcon from '@mui/icons-material/Group';
-import LinkIcon from '@mui/icons-material/Link';
 import SearchIcon from '@mui/icons-material/Search';
 import WidgetsIcon from '@mui/icons-material/Widgets';
 import DashboardLayout from '../components/DashboardLayout';
@@ -37,6 +36,7 @@ interface BusinessPartner {
     primary_color: string | null;
     is_active: boolean;
     user_count: string;
+    widget_count: string;
     url_businesspartner: string | null;
     regions: Region[];
     level_1_name: string | null;
@@ -235,6 +235,19 @@ const AdminBusinessPartnersPage: React.FC = () => {
         navigate(`/admin/bp-widget-access/${bpId}`, { state: { businessPartnerName: bpName } });
     };
 
+    const getDaysRemaining = (endDateString: string | null): { text: string; color: string } => {
+        if (!endDateString) return { text: 'Unbefristet', color: 'text.secondary' };
+        const endDate = new Date(endDateString);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const diffTime = endDate.getTime() - today.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays < 0) return { text: `Abgelaufen`, color: 'error.main' };
+        if (diffDays <= 30) return { text: `Läuft in ${diffDays} Tagen ab`, color: 'warning.main' };
+        return { text: `Gültig für ${diffDays} Tage`, color: 'success.main' };
+    };
+
     const handleSortRequest = (property: keyof BusinessPartner) => {
         const isAsc = orderBy === property && order === 'asc';
         setOrder(isAsc ? 'desc' : 'asc');
@@ -259,21 +272,6 @@ const AdminBusinessPartnersPage: React.FC = () => {
         }
         return filtered.sort(getComparator(order, orderBy));
     }, [businessPartners, searchTerm, order, orderBy, statusFilter]);
-
-    const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('de-AT');
-
-    const getDaysRemaining = (endDateString: string | null): { text: string; color: string } => {
-        if (!endDateString) return { text: '', color: 'text.secondary' };
-        const endDate = new Date(endDateString);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const diffTime = endDate.getTime() - today.getTime();
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-        if (diffDays < 0) return { text: `Abgelaufen`, color: 'error.main' };
-        if (diffDays <= 30) return { text: `Noch ${diffDays} Tage`, color: 'warning.main' };
-        return { text: ``, color: 'success.main' };
-    };
 
     return (
         <DashboardLayout>
@@ -303,12 +301,13 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                 <TableHead>
                                     <TableRow>
                                         <TableCell>Logo</TableCell>
-                                        <TableCell sortDirection={orderBy === 'name' ? order : false} sx={{ width: '25%' }}><TableSortLabel active={orderBy === 'name'} direction={order} onClick={() => handleSortRequest('name')}>Name & E-Mail</TableSortLabel></TableCell>
-                                        <TableCell>Adresse</TableCell>
+                                        {/* === GEÄNDERT === */}
+                                        <TableCell sortDirection={orderBy === 'name' ? order : false} sx={{ width: '25%' }}><TableSortLabel active={orderBy === 'name'} direction={order} onClick={() => handleSortRequest('name')}>Name</TableSortLabel></TableCell>
+                                        <TableCell>Adresse & E-Mail</TableCell>
                                         <TableCell sortDirection={orderBy === 'regions' ? order : false}><TableSortLabel active={orderBy === 'regions'} direction={order} onClick={() => handleSortRequest('regions')}>Regionen</TableSortLabel></TableCell>
                                         <TableCell>Abo</TableCell>
                                         <TableCell>Farbschema</TableCell>
-                                        <TableCell align="center">User</TableCell>
+                                        <TableCell align="center">Nutzer</TableCell>
                                         <TableCell align="center">Widgets</TableCell>
                                         <TableCell>Aktionen</TableCell>
                                     </TableRow>
@@ -317,27 +316,37 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                     {sortedAndFilteredPartners.map((bp) => (
                                         <TableRow key={bp.id} hover sx={{ '& > *': { verticalAlign: 'top' } }}>
                                             <TableCell sx={{ p: 1 }}>
-                                                <img src={bp.logo_url || 'https://placehold.co/60x40/eee/ccc?text=Logo'} alt="Logo" style={{ height: '40px', width: '60px', objectFit: 'contain', borderRadius: '4px' }} />
+                                                <MuiLink href={bp.url_businesspartner || '#'} target="_blank" rel="noopener noreferrer">
+                                                    <img src={bp.logo_url || 'https://placehold.co/60x40/eee/ccc?text=Logo'} alt="Logo" style={{ height: '40px', width: '60px', objectFit: 'contain', borderRadius: '4px' }} />
+                                                </MuiLink>
                                             </TableCell>
+                                            {/* === GEÄNDERT === */}
                                             <TableCell>
                                                 <Box>
                                                     <Typography component="span" sx={{ fontWeight: 'bold' }}>{bp.name}</Typography>
+                                                    <Typography variant="body2" color="text.secondary" display="block">Einladungscode: <code>{bp.id.substring(0, 8)}</code></Typography>
+                                                    <Typography variant="caption" color="text.secondary" display="block">ID: {bp.id}</Typography>
+                                                </Box>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Box>
+                                                    <Typography component="span">{bp.address || '-'}</Typography>
                                                     <Typography variant="body2" color="text.secondary" display="block">{bp.email || '-'}</Typography>
                                                 </Box>
                                             </TableCell>
-                                            <TableCell>{bp.address || '-'}</TableCell>
                                             <TableCell>
                                                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                                                     {bp.regions.map(region => <Chip key={region.id} label={region.name} size="small" variant={region.is_default ? 'filled' : 'outlined'} color={region.is_default ? 'primary' : 'default'} />)}
                                                 </Box>
                                             </TableCell>
+                                            {/* === GEÄNDERT === */}
                                             <TableCell>
-                                                <Box>
-                                                    {bp.subscription_start_date && bp.subscription_end_date ? `${formatDate(bp.subscription_start_date)} - ${formatDate(bp.subscription_end_date)}` : '-'}
-                                                    <Typography variant="caption" display="block" sx={{ color: getDaysRemaining(bp.subscription_end_date).color, fontWeight: 'bold' }}>
-                                                        {getDaysRemaining(bp.subscription_end_date).text}
-                                                    </Typography>
-                                                </Box>
+                                                <Typography variant="body2" display="block">
+                                                    {bp.subscription_start_date ? new Date(bp.subscription_start_date).toLocaleDateString('de-DE') : 'N/A'} - {bp.subscription_end_date ? new Date(bp.subscription_end_date).toLocaleDateString('de-DE') : 'N/A'}
+                                                </Typography>
+                                                <Typography variant="body2" display="block" sx={{ color: getDaysRemaining(bp.subscription_end_date).color, fontWeight: 'bold' }}>
+                                                    {getDaysRemaining(bp.subscription_end_date).text}
+                                                </Typography>
                                             </TableCell>
                                             <TableCell>
                                                 <MuiTooltip title={bp.color_scheme_name || 'Kein Schema'}><Box sx={{ width: 24, height: 24, bgcolor: bp.primary_color || 'transparent', border: '1px solid grey', borderRadius: '4px' }} /></MuiTooltip>
@@ -352,7 +361,13 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                                 </MuiTooltip>
                                             </TableCell>
                                             <TableCell align="center">
-                                                <MuiTooltip title="Widget-Zugriff verwalten"><IconButton color="secondary" component={Link} to={`/admin/bp-widget-access/${bp.id}`} state={{ businessPartnerName: bp.name }}><WidgetsIcon /></IconButton></MuiTooltip>
+                                                <MuiTooltip title="Widget-Zugriff verwalten">
+                                                    <span>
+                                                        <IconButton color="secondary" onClick={() => handleWidgetAccess(bp.id, bp.name)} disabled={parseInt(bp.widget_count) === 0}>
+                                                            <WidgetsIcon /> {bp.widget_count}
+                                                        </IconButton>
+                                                    </span>
+                                                </MuiTooltip>
                                             </TableCell>
                                             <TableCell>
                                                 <MuiTooltip title="Bearbeiten"><IconButton color="primary" onClick={() => handleOpenEditDialog(bp)}><EditIcon /></IconButton></MuiTooltip>

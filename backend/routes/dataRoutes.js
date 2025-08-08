@@ -26,6 +26,7 @@ router.get('/regions', dataController.getAllRegions);
 router.get('/ev-stations', authMiddleware, dataController.getEVStations);
 router.post('/scraped-content/:contentId/mark-as-read', dataController.markScrapedContentAsRead);
 router.post('/share-content-by-email', authMiddleware, dataController.shareContentByEmail);
+router.get('/vignette-countries', dataController.getVignetteCountries);
 
 // Diese Route sollte jetzt funktionieren, da die Funktion im dataController existiert
 router.get('/actions', authMiddleware, dataController.getActiveActionsForWidget);

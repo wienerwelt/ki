@@ -3,6 +3,7 @@ const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
 const { triggerSingleRuleScrape, getScrapingRuleSuggestion } = require('../services/scraperService');
 const jobManager = require('../services/jobManagerService');
+const { parse } = require('date-fns');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
@@ -32,7 +33,7 @@ exports.createScrapingRule = async (req, res) => {
     const {
         name, source_identifier, url_pattern, content_container_selector, title_selector,
         date_selector, description_selector, link_selector, date_format,
-        category_default, is_active, region, schedule
+        category_default, is_active, region, schedule, scrape_after_date // Hinzugefügt
     } = req.body;
 
     if (!source_identifier || !url_pattern || !category_default) {
@@ -41,12 +42,12 @@ exports.createScrapingRule = async (req, res) => {
 
     try {
         const newRuleRes = await db.query(
-            `INSERT INTO scraping_rules (id, name, source_identifier, url_pattern, content_container_selector, title_selector, date_selector, description_selector, link_selector, date_format, category_default, is_active, region, schedule)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+            `INSERT INTO scraping_rules (id, name, source_identifier, url_pattern, content_container_selector, title_selector, date_selector, description_selector, link_selector, date_format, category_default, is_active, region, schedule, scrape_after_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
             [
                 uuidv4(), name, source_identifier, url_pattern, content_container_selector, title_selector,
                 date_selector, description_selector, link_selector, date_format, category_default,
-                is_active, region, schedule
+                is_active, region, schedule, scrape_after_date // Hinzugefügt
             ]
         );
         const newRule = newRuleRes.rows[0];
@@ -69,7 +70,7 @@ exports.updateScrapingRule = async (req, res) => {
     const {
         name, source_identifier, url_pattern, content_container_selector, title_selector,
         date_selector, description_selector, link_selector, date_format,
-        category_default, is_active, region, schedule
+        category_default, is_active, region, schedule, scrape_after_date // Hinzugefügt
     } = req.body;
 
     try {
@@ -78,12 +79,12 @@ exports.updateScrapingRule = async (req, res) => {
              name = $1, source_identifier = $2, url_pattern = $3, content_container_selector = $4,
              title_selector = $5, date_selector = $6, description_selector = $7, link_selector = $8,
              date_format = $9, category_default = $10, is_active = $11, region = $12, schedule = $13,
-             updated_at = CURRENT_TIMESTAMP
-             WHERE id = $14 RETURNING *`,
+             scrape_after_date = $14, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $15 RETURNING *`,
             [
                 name, source_identifier, url_pattern, content_container_selector, title_selector,
                 date_selector, description_selector, link_selector, date_format, category_default,
-                is_active, region, schedule, id
+                is_active, region, schedule, scrape_after_date, id // Hinzugefügt
             ]
         );
 
@@ -189,4 +190,54 @@ exports.getSuggestionForUrl = async (req, res) => {
         console.error('Error getting scraping rule suggestion:', err.message);
         res.status(500).json({ message: err.message });
     }
+};
+
+exports.testDateFormat = async (req, res) => {
+    const { dateString, formatString } = req.body;
+    if (!dateString || !formatString) {
+        return res.status(400).json({ message: 'dateString und formatString sind erforderlich.' });
+    }
+    try {
+        const referenceDate = new Date(); 
+        const parsedDate = parse(dateString, formatString, referenceDate);
+        if (!isNaN(parsedDate.getTime())) {
+            res.json({
+                success: true,
+                message: 'Format ist korrekt.',
+                parsedResult: parsedDate.toISOString(),
+            });
+        } else {
+            throw new Error('Das resultierende Datum ist ungültig.');
+        }
+    } catch (err) {
+        res.status(400).json({
+            success: false,
+            message: 'Format-Fehler: Das angegebene Format passt nicht auf den Datums-String.',
+        });
+    }
+};
+
+exports.inferDateFormat = async (req, res) => {
+    const { dateString } = req.body;
+    if (!dateString) {
+        return res.status(400).json({ message: 'Ein Beispiel-Datumsstring (dateString) ist erforderlich.' });
+    }
+    const formatsToTry = [
+        'd.M.yy HH:mm:ss', 'dd.MM.yyyy HH:mm:ss', 'yyyy-MM-dd HH:mm:ss',
+        'd.M.yy HH:mm', 'dd.MM.yyyy HH:mm', 'd. MMMM yyyy, HH:mm', 'yyyy-MM-dd HH:mm',
+        'dd.MM.yy', 'd.MM.yy', 'dd.M.yy', 'dd.MM.yyyy', 'd.MM.yyyy', 'dd.M.yyyy',
+        'd. MMMM yyyy', 'd. MMM yyyy', 'yyyy-MM-dd', 'yyyy/MM/dd', 'MM/dd/yyyy',
+        "EEE, dd MMM yyyy HH:mm:ss 'GMT'", "EEE, dd MMM yyyy HH:mm:ss xx",
+        "yyyy-MM-dd'T'HH:mm:ss.SSSX", "yyyy-M-d'T'H:m:sX", "yyyy-MM-dd'T'HH:mm:ssX",
+        'dd-MM-yy', 'd-M-yy', 'dd-MM-yyyy',
+    ];
+    for (const format of formatsToTry) {
+        try {
+            const parsedDate = parse(dateString, format, new Date());
+            if (!isNaN(parsedDate.getTime())) {
+                return res.json({ success: true, format: format, message: `Format gefunden: ${format}` });
+            }
+        } catch (e) { /* Geplant, weiter machen */ }
+    }
+    res.status(400).json({ success: false, message: 'Konnte kein passendes Datumsformat für den angegebenen Text finden.' });
 };

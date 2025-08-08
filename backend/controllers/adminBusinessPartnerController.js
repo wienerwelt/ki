@@ -5,6 +5,7 @@ const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F
 // GET all business partners
 exports.getAllBusinessPartners = async (req, res) => {
     try {
+        // KORREKTUR: Die Abfrage wurde um die Zählung der abonnierten Widgets erweitert.
         const result = await db.query(
             `SELECT
                 bp.id, bp.name, bp.dashboard_title, bp.address, bp.logo_url, bp.email,
@@ -13,6 +14,8 @@ exports.getAllBusinessPartners = async (req, res) => {
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
                 (SELECT COUNT(*) FROM users u WHERE u.business_partner_id = bp.id) AS user_count,
+                -- NEU: Zählt die Anzahl der zugewiesenen Widgets pro Partner
+                (SELECT COUNT(*) FROM business_partner_widget_access wa WHERE wa.business_partner_id = bp.id) AS widget_count,
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
                     ORDER BY bpr.is_default DESC, r.name ASC

@@ -36,8 +36,6 @@ import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
 import Groups3Icon from '@mui/icons-material/Groups3';
 
 // --- Interfaces ---
-
-// Lokale Definition der benötigten Typen, um Fehler zu beheben und die Komponente eigenständig zu machen.
 interface Region {
     id: string;
     name: string;
@@ -62,7 +60,6 @@ interface BusinessPartner {
     regions: Region[];
 }
 
-// Props für das Widget mit dem korrekten Typ
 interface BusinessPartnerInfoWidgetProps extends Omit<BaseWidgetProps, 'businessPartner'> {
     businessPartner: BusinessPartner;
 }
@@ -124,8 +121,6 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({ b
         setLoadingContent(true);
         setContentError(null);
         try {
-            // KORREKTUR: Der API-Endpunkt für User-Stats wurde korrigiert, um den 404-Fehler zu beheben.
-            // Er zielt jetzt auf /api/data/... statt auf /api/admin/...
             const [newsRes, eventsRes, statsRes] = await Promise.all([
                 apiClient.get(`/api/data/bp-scraped-content?businessPartnerId=${businessPartner.id}&category=news`, { headers: { 'x-auth-token': token } }),
                 apiClient.get(`/api/data/bp-scraped-content?businessPartnerId=${businessPartner.id}&category=events`, { headers: { 'x-auth-token': token } }),
@@ -190,7 +185,6 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({ b
         <WidgetPaper
             title={
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    {/* ANPASSUNG: Titel verwendet jetzt immer 'name' */}
                     <Typography variant="h6">{businessPartner?.name || 'Business Partner'}</Typography>
                     {defaultRegion && (
                         <Tooltip title={`Standard Region: ${defaultRegion.name}`}>
@@ -199,21 +193,22 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({ b
                     )}
                 </Box>
             }
+            widgetTitle={businessPartner?.name}
+            widgetTypeKey="business-partner-info"
             widgetId={widgetId || ''}
             onDelete={onDelete}
             isRemovable={isRemovable}
+            // === GEÄNDERT: loading und error werden jetzt an WidgetPaper übergeben ===
             loading={loading}
             error={error}
             noPadding
         >
-            {loading ? <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}><CircularProgress /></Box> :
-             error ? <Alert severity="error" sx={{ m: 2 }}>{error}</Alert> :
-             businessPartner && (
+            {/* Die alte Lade- & Fehlerlogik wurde entfernt, da WidgetPaper sie nun übernimmt */}
+            {businessPartner && (
                  <Card variant="outlined" sx={{ height: '100%', border: 'none', display: 'flex', flexDirection: 'column' }}>
                     <CardContent sx={{ flexGrow: 1, overflowY: 'auto', pt: 2 }}>
                         <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', px: 2, mb: 2 }}>
-                            {/* ANPASSUNG: Logo auf 80px vergrößert */}
-                            <Avatar src={businessPartner.logo_url || undefined} sx={{ width: 80, height: 80, bgcolor: businessPartner.primary_color, mt: 0.5 }} variant="rounded">
+                            <Avatar src={businessPartner.logo_url || undefined} sx={{ width: 90, height: 60, bgcolor: businessPartner.primary_color, mt: 0.5 }} variant="rounded">
                                 {businessPartner.name.charAt(0)}
                             </Avatar>
                             <Stack spacing={0.5} sx={{ flexGrow: 1 }}>
@@ -273,11 +268,10 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({ b
                                 <List dense>
                                     {bpEvents.length > 0 ? bpEvents.map((item, index) => (
                                         <React.Fragment key={item.id}>
-                                            <ListItem
-                                                secondaryAction={
+                                            <ListItem>
+                                                 <Box sx={{ mr: 2, display: 'flex', alignItems: 'center' }}>
                                                     <Button size="small" variant="outlined" href={item.original_url} target="_blank" onMouseDown={(e) => e.stopPropagation()}>Anmelden</Button>
-                                                }
-                                            >
+                                                </Box>
                                                 <ListItemText
                                                     primary={<Typography variant="body2">{item.title}</Typography>}
                                                     secondaryTypographyProps={{ component: 'div' }}

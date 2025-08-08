@@ -27,8 +27,8 @@ const parseDateString = (dateString, dateFormat, jobId) => {
     if (!dateString) return null;
     try {
         const parsedDate = dateFormat 
-            ? parse(dateString, dateFormat, new Date(), { locale: de }) 
-            : new Date(dateString);
+            ? parse(dateString.trim(), dateFormat, new Date(), { locale: de }) 
+            : new Date(dateString.trim());
 
         if (parsedDate instanceof Date && !isNaN(parsedDate.getTime())) {
             return parsedDate;
@@ -90,8 +90,21 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
     await logToDb(jobId, 'INFO', `Verarbeite ${feedItems.length} Einträge für Regel '${sourceIdentifier}'.`);
 
     for (const item of feedItems) {
+        const title = item.title?._ || item.title || 'Kein Titel';
+        const parsedDate = parseDateString(item.pubDate || item.updated, dateFormat, jobId);
+
+        // === NEUE LOGIK: DATUMSPRÜFUNG GEGEN DEN STICHTAG ===
+        if (rule.scrape_after_date && parsedDate) {
+            const cutoffDate = new Date(rule.scrape_after_date);
+            cutoffDate.setUTCHours(0, 0, 0, 0);
+            if (parsedDate < cutoffDate) {
+                await logToDb(jobId, 'INFO', `Feed-Eintrag übersprungen (vor Stichtag ${cutoffDate.toLocaleDateString('de-DE')}): "${title}"`);
+                continue; // Springe zum nächsten Eintrag
+            }
+        }
+        // === ENDE DER NEUEN LOGIK ===
+
         if (sourceIdentifier.includes('traffic')) {
-            const title = item.title || 'Unbekannte Meldung';
             const link = item.link?.href || item.link || null;
             const guid = item.guid?._ || item.guid || link;
             if (!guid) continue;
@@ -100,7 +113,7 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
                 `INSERT INTO traffic_incidents (title, description, link, published_at, road_name, region, type, source_identifier, scraping_rule_id, original_item_guid)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                  ON CONFLICT (link) DO UPDATE SET description = EXCLUDED.description, published_at = EXCLUDED.published_at, title = EXCLUDED.title;`,
-                [title, item.description || null, link, parseDateString(item.pubDate || item.updated, dateFormat, jobId), title.split(',')[0], ruleRegion, 'Stau', sourceIdentifier, ruleId, guid]
+                [title, item.description || null, link, parsedDate, title.split(',')[0], ruleRegion, 'Stau', sourceIdentifier, ruleId, guid]
             );
             if(result.rowCount > 0) itemsInserted++;
 
@@ -108,10 +121,9 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
             const link = item.link?.href || item.link || null;
             if (!link) continue;
 
-            const cleanTitle = sanitizeHtml(item.title?._ || item.title || 'Kein Titel');
+            const cleanTitle = sanitizeHtml(title);
             const cleanDescription = sanitizeHtml(item.description?._ || item.summary?._ || item.description || item.summary || null);
             const foundTagIds = extractTags(`${cleanTitle} ${cleanDescription}`, availableTags);
-            const parsedDate = parseDateString(item.pubDate || item.updated, dateFormat, jobId);
 
             const contentResult = await db.query(
                 `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, event_date, category, region)
@@ -137,12 +149,6 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
 // EXPORTIERTE HAUPTFUNKTIONEN
 // ===================================================================================
 
-/**
- * NEUE FUNKTION: Extrahiert den reinen Text von einer gegebenen URL.
- * Diese Funktion wird vom intelligentContentService verwendet.
- * @param {string} url Die URL, von der der Text extrahiert werden soll.
- * @returns {Promise<string|null>} Der extrahierte Text oder null bei einem Fehler.
- */
 async function extractTextFromUrl(url) {
     if (!url) {
         console.error('extractTextFromUrl wurde ohne URL aufgerufen.');
@@ -151,7 +157,7 @@ async function extractTextFromUrl(url) {
     try {
         const response = await axios.get(url, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' },
-            timeout: 20000, // Timeout auf 20 Sekunden erhöht
+            timeout: 20000,
             responseType: 'text'
         });
         const { textContent } = await _extractDataFromHtml(response.data, url);
@@ -161,7 +167,6 @@ async function extractTextFromUrl(url) {
         return null;
     }
 }
-
 
 async function triggerSingleRuleScrape(ruleId, jobId) {
     let itemsProcessed = 0;
@@ -206,6 +211,18 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
                     const summary = rule.description_selector ? element.find(rule.description_selector).text().trim() : null;
                     const dateString = rule.date_selector ? element.find(rule.date_selector).text().trim() : null;
                     const parsedDate = parseDateString(dateString, rule.date_format, jobId);
+
+                    // === NEUE LOGIK: DATUMSPRÜFUNG GEGEN DEN STICHTAG ===
+                    if (rule.scrape_after_date && parsedDate) {
+                        const cutoffDate = new Date(rule.scrape_after_date);
+                        cutoffDate.setUTCHours(0, 0, 0, 0); // Wichtig: UTC für konsistenten Vergleich
+                        if (parsedDate < cutoffDate) {
+                            await logToDb(jobId, 'INFO', `Artikel übersprungen (vor Stichtag ${cutoffDate.toLocaleDateString('de-DE')}): "${title}"`);
+                            continue; // Springe zum nächsten Artikel in der Schleife
+                        }
+                    }
+                    // === ENDE DER NEUEN LOGIK ===
+
                     const foundTagIds = extractTags(`${title} ${summary}`, availableTags);
 
                     const contentResult = await db.query(
@@ -306,23 +323,37 @@ async function getScrapingRuleSuggestion(url, userId) {
     }
 
     const prompt = `
-        Du bist ein Experte für Datenextraktion. Deine Aufgabe ist es, den folgenden Webinhalt zu analysieren, sein Format (HTML, RSS, Atom XML) zu erkennen und Regeln zur Extraktion einer LISTE VON ARTIKELN vorzuschlagen.
+        Du bist ein Experte für Web-Strukturanalysen und Datenextraktion. Deine Aufgabe ist es, den HTML-Code einer Webseite zu analysieren und präzise, robuste CSS-Selektoren für eine Artikelliste zu generieren.
 
-        ANWEISUNGEN:
-        1.  FORMAT ERKENNEN: Identifiziere das Format. Mögliche Werte sind: 'html', 'rss', 'atom'.
-        2.  REGELN VORSCHLAGEN:
-            * Wenn Format 'html': Finde die CSS-Selektoren für eine Artikelliste.
-                - \`content_container_selector\`: Der CSS-Selektor, der JEDEN EINZELNEN Artikel in der Liste umschließt.
-                - \`title_selector\`: Der CSS-Selektor für den Titel, relativ zum Container.
-                - \`date_selector\`: Der CSS-Selektor für das Datum, relativ zum Container.
-                - \`description_selector\`: Der CSS-Selektor für den Teaser-Text, relativ zum Container.
-                - \`link_selector\`: Der CSS-Selektor für den Link ('<a>'-Tag) zur Detailseite, relativ zum Container.
-            * Wenn Format 'rss' oder 'atom': Gib eine Standardnachricht aus.
-        3.  ANTWORTFORMAT: Gib deine Antwort NUR als valides JSON-Objekt zurück.
-            * Wenn du das Format absolut nicht bestimmen kannst, antworte so:
-              \`\`\`json
-              { "format": "unknown", "rules": { "message": "Das Format der Seite konnte nicht automatisch erkannt werden." } }
-              \`\`\`
+        ANWEISUNGEN - Führe die folgenden Schritte exakt aus:
+        1.  **FINDE DEN CONTAINER:** Identifiziere zuerst den wichtigsten, sich wiederholenden CSS-Selektor, der jeden einzelnen Artikel oder Eintrag in einer Liste umschließt. Dieser 'content_container_selector' muss stabil und prägnant sein (z.B. 'article.news-item', nicht 'div > div > div').
+        2.  **ANALYSIERE INNERHALB DES CONTAINERS:** Konzentriere dich nun auf den Inhalt EINES DIESER CONTAINER. Finde die folgenden Elemente und gib ihre Selektoren relativ zum Container an.
+            * \`title_selector\`: Der Selektor für die Hauptüberschrift.
+            * \`link_selector\`: Der Selektor für den '<a>'-Tag, der zur Detailseite führt.
+            * \`date_selector\`: Der Selektor für das Veröffentlichungsdatum.
+            * \`description_selector\`: Der Selektor für den kurzen Anreißertext oder die Zusammenfassung.
+        3.  **ANALYSIERE DAS DATUMSFORMAT:** Nimm den Textinhalt des gefundenen Datums, analysiere sein Format und gib den passenden 'date-fns' Format-String zurück (z.B. 'dd.MM.yyyy' oder 'd. MMMM yyyy').
+        4.  **ANTWORTFORMAT:** Gib deine Antwort AUSSCHLIESSLICH als ein einziges, valides JSON-Objekt zurück. Integriere alle gefundenen Informationen.
+
+        Beispiel für eine perfekte Antwort:
+        \`\`\`json
+        {
+          "format": "html",
+          "rules": {
+            "content_container_selector": ".post-listing-item",
+            "title_selector": "h2.post-title a",
+            "link_selector": "h2.post-title a",
+            "date_selector": "span.post-date",
+            "description_selector": "p.post-excerpt",
+            "date_format": "d. MMMM yyyy"
+          }
+        }
+        \`\`\`
+        
+        Wenn du das Seitenformat absolut nicht bestimmen kannst, antworte mit:
+        \`\`\`json
+        { "format": "unknown", "rules": { "message": "Das Format der Seite konnte nicht automatisch erkannt werden." } }
+        \`\`\`
 
         HIER IST DER ZU ANALYSIERENDE INHALT (max. 40000 Zeichen):
         \`\`\`
@@ -370,7 +401,6 @@ async function getScrapingRuleSuggestion(url, userId) {
     }
 }
 
-// KORREKTUR: Die neue Funktion wird exportiert
 module.exports = {
     triggerSingleRuleScrape,
     startAllScrapingJobs,

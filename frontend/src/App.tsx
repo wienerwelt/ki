@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider, createTheme, Theme } from '@mui/material/styles';
-import CssBaseline from '@mui/material/CssBaseline';
-import { Box, CircularProgress } from '@mui/material';
+import { CssBaseline, Box, CircularProgress } from '@mui/material';
 
 // Layout
 import DashboardLayout from './components/DashboardLayout';
@@ -11,6 +10,13 @@ import DashboardLayout from './components/DashboardLayout';
 // Öffentliche Seiten
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
+import VerifyEmailPage from './pages/VerifyEmailPage';
+// KORREKTUR: Korrekte Import-Pfade
+import TermsPage from './pages/TermsPage';
+import PrivacyPage from './pages/PrivacyPage';
+
 
 // Geschützte Seiten
 import DashboardPage from './pages/DashboardPage';
@@ -33,7 +39,6 @@ import AdminBpActionsPage from './pages/AdminBpActionsPage';
 import AdminCronjobsPage from './pages/AdminCronjobsPage';
 import AdminSourcesPage from './pages/AdminSourcesPage';
 import TrustedSourcesPage from './pages/TrustedSourcesPage';
-// NEU: FeedbackCenterPage importieren
 import FeedbackCenterPage from './pages/FeedbackCenterPage';
 
 
@@ -88,14 +93,18 @@ function App() {
                     <Route path="/" element={<LandingPage />} />
                     <Route path="/login" element={<LoginPage />} />
                     <Route path="/register" element={<LoginPage isRegister={true} />} />
+                    <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+                    <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
+                    <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
+                    {/* KORREKTUR: Routen für die rechtlichen Dokumente */}
+                    <Route path="/terms" element={<TermsPage />} />
+                    <Route path="/privacy" element={<PrivacyPage />} />
                     
                     {/* Geschützte Routen */}
                     <Route element={<ProtectedRoutes />}>
                         <Route path="/dashboard" element={<DashboardPage />} />
                         <Route path="/profile" element={<ProfilePage />} />
                         <Route path="/trusted-sources" element={<TrustedSourcesPage />} />
-                        
-                        {/* NEU: Route für das Feedback-Center hinzufügen */}
                         <Route path="/feedback" element={<FeedbackCenterPage />} />
                         
                         {/* Routen für Admins und Assistenten */}

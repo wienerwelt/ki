@@ -32,7 +32,8 @@ const WelcomeWidget: React.FC = () => {
     };
 
     return (
-        <Paper elevation={3} sx={{ p: 3, backgroundColor: 'primary.light', color: 'primary.contrastText' }}>
+        // KORREKTUR: mb: 2 fügt einen Abstand von 16px nach unten hinzu.
+        <Paper elevation={3} sx={{ p: 3, backgroundColor: 'primary.light', color: 'primary.contrastText', mb: 2 }}>
             <Typography variant="h5" gutterBottom>
                 Willkommen beim KI-Dashboard, {user.username}!
             </Typography>

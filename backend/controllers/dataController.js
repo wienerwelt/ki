@@ -268,6 +268,21 @@ exports.getFuelPrices = async (req, res) => {
     }
 };
 
+exports.getVignetteCountries = async (req, res) => {
+    try {
+        const query = `
+            SELECT DISTINCT country_code as code, country_name as name
+            FROM vignette_prices
+            ORDER BY country_name ASC
+        `;
+        const result = await db.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Fehler beim Abrufen der Vignetten-Länder:', err);
+        res.status(500).json({ message: 'Serverfehler beim Abrufen der Länderliste.' });
+    }
+};
+
 exports.getTaxChanges = async (req, res) => {
     try {
         const twoYearsAgo = new Date();

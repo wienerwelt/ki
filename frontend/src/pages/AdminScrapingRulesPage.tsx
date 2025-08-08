@@ -1,13 +1,15 @@
 // src/pages/AdminScrapingRulesPage.tsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link as RouterLink, useLocation } from 'react-router-dom';
-import { 
-    Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
-    TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
+import {
+    Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
+    TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
     TextField, MenuItem, Switch, FormControlLabel, Chip, Tooltip as MuiTooltip, TableSortLabel, InputAdornment, LinearProgress,
     SelectChangeEvent,
     Link as MuiLink,
-    Snackbar
+    Snackbar,
+    Autocomplete,
+    Grid
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -39,6 +41,7 @@ interface ScrapingRule {
     region: string | null;
     link_selector: string | null;
     schedule: string | null;
+    scrape_after_date: string | null; // Hinzugefügt
 }
 
 interface Category {
@@ -78,6 +81,7 @@ const initialFormState = {
     is_active: true,
     region: '',
     schedule: null as string | null,
+    scrape_after_date: '', // Hinzugefügt
 };
 
 const commonDateFormats = [
@@ -114,6 +118,9 @@ const AdminScrapingRulesPage: React.FC = () => {
     const [suggesting, setSuggesting] = useState(false);
     const [suggestionAlert, setSuggestionAlert] = useState<string | null>(null);
     const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
+
+    const [testDateString, setTestDateString] = useState('');
+    const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
     const fetchInitialData = useCallback(async () => {
         setLoading(true);
@@ -163,6 +170,8 @@ const AdminScrapingRulesPage: React.FC = () => {
         setFormState(initialFormState);
         setOpenDialog(true);
         setSuggestionAlert(null);
+        setTestDateString('');
+        setTestResult(null);
     };
 
     const handleOpenEditDialog = (rule: ScrapingRule) => {
@@ -181,9 +190,12 @@ const AdminScrapingRulesPage: React.FC = () => {
             is_active: rule.is_active,
             region: rule.region ?? '',
             schedule: rule.schedule ?? null,
+            scrape_after_date: rule.scrape_after_date ? rule.scrape_after_date.split('T')[0] : '', // Hinzugefügt
         });
         setOpenDialog(true);
         setSuggestionAlert(null);
+        setTestDateString('');
+        setTestResult(null);
     };
 
     const handleCloseDialog = () => {
@@ -191,13 +203,19 @@ const AdminScrapingRulesPage: React.FC = () => {
         setEditingRule(null);
         setError(null);
         setSuggestionAlert(null);
+        setTestDateString('');
+        setTestResult(null);
     };
 
     const handleSubmit = async () => {
         setError(null);
         const token = localStorage.getItem('jwt_token');
         try {
-            const ruleData = { ...formState };
+            // Stelle sicher, dass ein leerer String als null gesendet wird
+            const ruleData = { 
+                ...formState,
+                scrape_after_date: formState.scrape_after_date || null
+            };
             const method = editingRule?.id ? 'put' : 'post';
             const url = editingRule?.id ? `/api/admin/scraping-rules/${editingRule.id}` : '/api/admin/scraping-rules';
             
@@ -284,12 +302,14 @@ const AdminScrapingRulesPage: React.FC = () => {
                             date_selector: data.rules.date_selector || '',
                             description_selector: data.rules.description_selector || '',
                             link_selector: data.rules.link_selector || '',
+                            date_format: data.rules.date_format || prevState.date_format,
                         }));
+                         setSuggestionAlert('Selektoren wurden erfolgreich analysiert und eingefügt!');
                     } else {
                          setError('Die KI hat ein ungültiges Regel-Format für HTML zurückgegeben.');
                     }
-                } else if (data.format === 'rss' || data.format === 'atom' || data.format === 'unknown') {
-                    setSuggestionAlert(data.rules.message || 'RSS/Atom-Feed erkannt. Keine Selektoren notwendig.');
+                } else if (data.format === 'rss' || data.format === 'atom' || data.format === 'xml' || data.format === 'unknown') {
+                    setSuggestionAlert(data.rules.message || 'RSS/Atom/XML-Feed erkannt. Keine Selektoren notwendig.');
                 } else {
                     setError(`Unbekanntes Format "${data.format}" von der KI empfangen.`);
                 }
@@ -301,6 +321,32 @@ const AdminScrapingRulesPage: React.FC = () => {
             setError(err.response?.data?.message || 'Fehler beim Abrufen der Vorschläge.');
         } finally {
             setSuggesting(false);
+        }
+    };
+
+    const handleFindDateFormat = async () => {
+        setTestResult(null);
+        if (!testDateString) return;
+
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const response = await apiClient.post(
+                '/api/admin/scraping-rules/infer-date-format',
+                { dateString: testDateString },
+                { headers: { 'x-auth-token': token } }
+            );
+            
+            setFormState(prev => ({ ...prev, date_format: response.data.format }));
+
+            setTestResult({
+                success: true,
+                message: `Format gefunden und eingefügt: ${response.data.format}`
+            });
+        } catch (err: any) {
+            setTestResult({
+                success: false,
+                message: err.response?.data?.message || 'Format konnte nicht bestimmt werden.'
+            });
         }
     };
 
@@ -394,70 +440,147 @@ const AdminScrapingRulesPage: React.FC = () => {
                 <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
                     <DialogTitle>{editingRule?.id ? 'Scraping-Regel bearbeiten' : 'Neue Scraping-Regel hinzufügen'}</DialogTitle>
                     <DialogContent>
-                        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-                        {suggestionAlert && <Alert severity="info" sx={{ mb: 2 }}>{suggestionAlert}</Alert>}
+                        <Grid container spacing={2} sx={{ mt: 1 }}>
+                            <Grid item xs={12}>
+                                {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+                                {suggestionAlert && <Alert severity="info" sx={{ mb: 2 }}>{suggestionAlert}</Alert>}
+                            </Grid>
 
-                        <TextField name="name" label="Name der Regel" fullWidth value={formState.name} onChange={handleFormChange} margin="dense" />
-                        <TextField name="source_identifier" label="Source Identifier" fullWidth value={formState.source_identifier} onChange={handleFormChange} margin="dense" required disabled={!!editingRule} />
-                        <TextField select name="region" label="Region" fullWidth value={formState.region} onChange={handleFormChange} margin="dense">
-                            <MenuItem value=""><em>Keine Region</em></MenuItem>
-                            {europeanCountries.map((country) => (
-                                <MenuItem key={country} value={country}>{country}</MenuItem>
-                            ))}
-                        </TextField>
-                        
-                        <TextField 
-                            name="url_pattern" 
-                            label="URL der Übersichtsseite oder des Feeds" 
-                            fullWidth value={formState.url_pattern} 
-                            onChange={handleFormChange} 
-                            margin="dense"
-                            required
-                            helperText="URL der Seite, die eine Liste von Artikeln enthält."
-                            InputProps={{
-                                endAdornment: (
-                                    <InputAdornment position="end">
-                                        <Button 
-                                            onClick={handleSuggestSelectors} 
-                                            disabled={suggesting || !formState.url_pattern}
-                                            startIcon={suggesting ? <CircularProgress size={20} /> : <TipsAndUpdatesIcon />}
-                                            sx={{ mr: -1 }}
-                                        >
-                                            {suggesting ? 'Analysiere...' : 'Vorschlagen'}
-                                        </Button>
-                                    </InputAdornment>
-                                )
-                            }}
-                        />
+                            <Grid item xs={12} sm={8}>
+                                <TextField name="name" label="Name der Regel" fullWidth value={formState.name} onChange={handleFormChange} margin="dense" />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                                <TextField name="source_identifier" label="Source Identifier" fullWidth value={formState.source_identifier} onChange={handleFormChange} margin="dense" required disabled={!!editingRule} />
+                            </Grid>
+                            <Grid item xs={12}>
+                                <TextField 
+                                    name="url_pattern" 
+                                    label="URL der Übersichtsseite oder des Feeds" 
+                                    fullWidth value={formState.url_pattern} 
+                                    onChange={handleFormChange} 
+                                    margin="dense"
+                                    required
+                                    helperText="URL der Seite, die eine Liste von Artikeln enthält."
+                                    InputProps={{
+                                        endAdornment: (
+                                            <InputAdornment position="end">
+                                                <Button 
+                                                    onClick={handleSuggestSelectors} 
+                                                    disabled={suggesting || !formState.url_pattern}
+                                                    startIcon={suggesting ? <CircularProgress size={20} /> : <TipsAndUpdatesIcon />}
+                                                    sx={{ mr: -1 }}
+                                                >
+                                                    {suggesting ? 'Analysiere...' : 'Vorschlagen'}
+                                                </Button>
+                                            </InputAdornment>
+                                        )
+                                    }}
+                                />
+                            </Grid>
+                            
+                            <Grid item xs={12}><Typography variant="subtitle2" sx={{ mt: 1 }}>HTML-Selektoren</Typography></Grid>
+                            <Grid item xs={12}><TextField name="content_container_selector" label="Container Selektor (einzelner Artikel)" fullWidth value={formState.content_container_selector} onChange={handleFormChange} margin="dense" /></Grid>
+                            <Grid item xs={12} sm={6}><TextField name="title_selector" label="Titel Selektor (relativ zum Container)" fullWidth value={formState.title_selector} onChange={handleFormChange} margin="dense" /></Grid>
+                            <Grid item xs={12} sm={6}><TextField name="link_selector" label="Link Selektor (relativ zum Container)" fullWidth value={formState.link_selector} onChange={handleFormChange} margin="dense" /></Grid>
+                            <Grid item xs={12} sm={6}><TextField name="date_selector" label="Datum Selektor (relativ zum Container)" fullWidth value={formState.date_selector} onChange={handleFormChange} margin="dense" /></Grid>
+                            <Grid item xs={12} sm={6}><TextField name="description_selector" label="Beschreibung Selektor (relativ zum Container)" fullWidth value={formState.description_selector} onChange={handleFormChange} margin="dense" /></Grid>
 
-                        <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>HTML-Listen-Selektoren</Typography>
-                        <TextField name="content_container_selector" label="Container Selektor (einzelner Artikel)" fullWidth value={formState.content_container_selector} onChange={handleFormChange} margin="dense" />
-                        <TextField name="title_selector" label="Titel Selektor (relativ zum Container)" fullWidth value={formState.title_selector} onChange={handleFormChange} margin="dense" />
-                        <TextField name="date_selector" label="Datum Selektor (relativ zum Container)" fullWidth value={formState.date_selector} onChange={handleFormChange} margin="dense" />
-                        <TextField name="description_selector" label="Beschreibung Selektor (relativ zum Container)" fullWidth value={formState.description_selector} onChange={handleFormChange} margin="dense" />
-                        <TextField name="link_selector" label="Link Selektor (relativ zum Container)" fullWidth value={formState.link_selector} onChange={handleFormChange} margin="dense" />
-                        
-                        <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Allgemeine Einstellungen</Typography>
-                        <TextField select name="date_format" label="Datum Format (optional)" fullWidth value={formState.date_format} onChange={handleFormChange} margin="dense" helperText="Format des Datums, falls es nicht automatisch erkannt wird.">
-                            <MenuItem value=""><em>Automatische Erkennung</em></MenuItem>
-                            {commonDateFormats.map((format) => ( <MenuItem key={format.value} value={format.value}>{format.label}</MenuItem>))}
-                        </TextField>
+                            <Grid item xs={12}><Typography variant="subtitle2" sx={{ mt: 1 }}>Einstellungen</Typography></Grid>
+                            
+                            <Grid item xs={12}>
+                                <Autocomplete
+                                    freeSolo
+                                    options={commonDateFormats.map(option => option.value)}
+                                    getOptionLabel={(option) => {
+                                        const found = commonDateFormats.find(o => o.value === option);
+                                        return found ? `${found.label} (${found.value})` : option;
+                                    }}
+                                    value={formState.date_format || ''}
+                                    onInputChange={(event, newValue) => {
+                                        setFormState(prev => ({ ...prev, date_format: newValue }));
+                                    }}
+                                    renderInput={(params) => (
+                                        <TextField
+                                            {...params}
+                                            label="Datum Format (optional)"
+                                            margin="dense"
+                                            helperText="Automatisch erkennen, aus der Liste wählen oder manuell eingeben."
+                                        />
+                                    )}
+                                />
+                            </Grid>
 
-                        <TextField select name="category_default" label="Standard-Kategorie" fullWidth value={formState.category_default} onChange={handleFormChange} margin="dense" required>
-                            <MenuItem value=""><em>Wählen Sie eine Kategorie</em></MenuItem>
-                            {categories.map((cat) => ( <MenuItem key={cat.id} value={cat.name}>{cat.name}</MenuItem>))}
-                        </TextField>
-                        
-                        <FormControlLabel control={<Switch name="is_active" checked={formState.is_active} onChange={handleFormChange} />} label="Regel für Scraping aktiv" />
+                            <Grid item xs={12}>
+                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mt: 1, mb: 1, p: 1.5, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
+                                    <TextField
+                                        label="Beispiel-Datum von Webseite"
+                                        size="small"
+                                        value={testDateString}
+                                        onChange={(e) => {
+                                            setTestDateString(e.target.value);
+                                            setTestResult(null);
+                                        }}
+                                        helperText="Datum von der Webseite kopieren und hier einfügen"
+                                        sx={{ flexGrow: 1 }}
+                                    />
+                                    <Button
+                                        variant="contained"
+                                        onClick={handleFindDateFormat}
+                                        disabled={!testDateString}
+                                        sx={{ mt: '8px' }}
+                                    >
+                                        Format finden
+                                    </Button>
+                                </Box>
+                                {testResult && (
+                                    <Alert severity={testResult.success ? 'success' : 'error'} sx={{ mb: 1 }}>
+                                        {testResult.message}
+                                    </Alert>
+                                )}
+                            </Grid>
 
-                        <Box sx={{ mt: 3, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-                            <Typography variant="subtitle1" gutterBottom>Automatisierung (Cronjob)</Typography>
-                            <AdminScheduleSelector
-                                value={formState.schedule || null}
-                                onChange={(cronString) => setFormState(prev => ({ ...prev, schedule: cronString }))}
-                            />
-                        </Box>
+                            <Grid item xs={12} sm={6}>
+                                <TextField select name="category_default" label="Standard-Kategorie" fullWidth value={formState.category_default} onChange={handleFormChange} margin="dense" required>
+                                    <MenuItem value=""><em>Wählen Sie eine Kategorie</em></MenuItem>
+                                    {categories.map((cat) => ( <MenuItem key={cat.id} value={cat.name}>{cat.name}</MenuItem>))}
+                                </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField select name="region" label="Region" fullWidth value={formState.region} onChange={handleFormChange} margin="dense">
+                                    <MenuItem value=""><em>Keine Region</em></MenuItem>
+                                    {europeanCountries.map((country) => ( <MenuItem key={country} value={country}>{country}</MenuItem>))}
+                                </TextField>
+                            </Grid>
 
+                            {/* === NEUES DATUMSFELD === */}
+                            <Grid item xs={12}>
+                                <TextField
+                                    name="scrape_after_date"
+                                    label="Inhalte nur nach diesem Datum scrapen (optional)"
+                                    type="date"
+                                    fullWidth
+                                    value={formState.scrape_after_date || ''}
+                                    onChange={handleFormChange}
+                                    InputLabelProps={{ shrink: true }}
+                                    helperText="Wenn gesetzt, werden nur Artikel importiert, die nach diesem Datum veröffentlicht wurden. Ideal für den ersten Import."
+                                    margin="dense"
+                                />
+                            </Grid>
+
+                            <Grid item xs={12}>
+                                <FormControlLabel control={<Switch name="is_active" checked={formState.is_active} onChange={handleFormChange} />} label="Regel für Scraping aktiv" />
+                            </Grid>
+
+                            <Grid item xs={12}>
+                                <Box sx={{ mt: 2, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                                    <Typography variant="subtitle1" gutterBottom>Automatisierung (Cronjob)</Typography>
+                                    <AdminScheduleSelector
+                                        value={formState.schedule || null}
+                                        onChange={(cronString) => setFormState(prev => ({ ...prev, schedule: cronString }))}
+                                    />
+                                </Box>
+                            </Grid>
+                        </Grid>
                     </DialogContent>
                     <DialogActions>
                         <Button onClick={handleCloseDialog}>Abbrechen</Button>
