@@ -140,32 +140,26 @@ exports.getPricesByIds = async (req, res) => {
                 prices = deResponse.data.prices;
                 break;
             
+            // === KORRIGIERTER BLOCK FÜR ÖSTERREICH ===
             case 'AT':
-                const atApiBaseUrl = 'https://spritpreisrechner.e-control.at/api';
+                const atApiUrl = 'https://api.e-control.at/sprit/1.0/get-prices/by-ids';
                 const idArray = ids.split(',');
-                
-                // KORREKTUR: Die E-Control API benötigt für die Preisabfrage einen öffentlichen API-Schlüssel als Bearer Token.
-                const atApiKey = 'pe4852-95a7-4524-a842-adp95920ge72';
-                const atHeaders = {
-                    'Authorization': `Bearer ${atApiKey}`,
-                    'User-Agent': 'Fleet-KI-Dashboard/1.0'
-                };
 
-                const priceRequests = idArray.map(id => axios.get(`${atApiBaseUrl}/get-prices/${id}`, { headers: atHeaders }));
-                const priceResponses = await Promise.all(priceRequests);
-                
-                priceResponses.forEach(resp => {
-                    const stationPrices = resp.data;
-                    if (stationPrices.length > 0) {
-                        const id = stationPrices[0].id;
-                        prices[id] = {
-                            status: 'open',
-                            diesel: stationPrices.find(p => p.fuelType === 'DIE')?.price || null,
-                            e5: stationPrices.find(p => p.fuelType === 'SUP')?.price || null,
-                            e10: null,
-                        };
-                    }
+                // Die E-Control API kann mehrere IDs in einem einzigen Aufruf verarbeiten.
+                const atResponse = await axios.post(atApiUrl, idArray, {
+                    headers: { 'Content-Type': 'application/json' }
                 });
+
+                if (atResponse.data && atResponse.data.length > 0) {
+                    atResponse.data.forEach(station => {
+                        prices[station.id] = {
+                            status: 'open', // Annahme, da die neue API keinen Status pro ID liefert
+                            diesel: station.prices.find(p => p.fuelType === 'DIE')?.amount || null,
+                            e5: station.prices.find(p => p.fuelType === 'SUP')?.amount || null,
+                            e10: null, // E-Control liefert kein separates E10
+                        };
+                    });
+                }
                 break;
 
             case 'FR':

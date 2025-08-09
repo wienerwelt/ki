@@ -1,8 +1,10 @@
+// frontend/src/pages/AdminWidgetTypesPage.tsx
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
-    TextField, MenuItem, Switch, FormControlLabel, Tooltip, Chip, Grid, TableSortLabel, InputAdornment, Link as MuiLink, FormHelperText
+    TextField, MenuItem, Switch, FormControlLabel, Tooltip, Chip, Grid, TableSortLabel, InputAdornment
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -10,101 +12,41 @@ import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import BusinessIcon from '@mui/icons-material/Business';
 import PersonIcon from '@mui/icons-material/Person';
+import ScienceIcon from '@mui/icons-material/Science';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
+import { Responsive, WidthProvider, Layout } from 'react-grid-layout';
+import 'react-grid-layout/css/styles.css';
+import 'react-resizable/css/styles.css';
+import { WIDGET_COMPONENTS } from '../components/widgetMapping'; 
+import { getIcon, ICON_MAP } from '../components/iconMapping';
+import { BusinessPartner } from '../types/dashboard.types';
 
-// Icon-Importe
-import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
-import EvStationIcon from '@mui/icons-material/EvStation';
-import TrafficIcon from '@mui/icons-material/Traffic';
-import SpaIcon from '@mui/icons-material/Spa';
-import GavelIcon from '@mui/icons-material/Gavel';
-import CommuteIcon from '@mui/icons-material/Commute';
-import ConfirmationNumberIcon from '@mui/icons-material/ConfirmationNumber';
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import FactCheckIcon from '@mui/icons-material/FactCheck';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-
-// --- Interfaces ---
+// --- Interfaces & Hilfskomponenten ---
 interface WidgetType {
-    id: string;
-    name: string;
-    type_key: string;
-    description: string | null;
-    icon_name: string | null;
-    is_removable: boolean;
-    is_resizable: boolean;
-    is_draggable: boolean;
-    default_width: number;
-    default_height: number;
-    default_min_width: number;
-    default_min_height: number;
-    allowed_roles: string[] | null;
-    config: object | null;
-    component_key: string | null;
-    business_partner_install_count: number;
-    user_install_count: number;
+    id: string; name: string; type_key: string; description: string | null; icon_name: string | null; is_removable: boolean; is_resizable: boolean; is_draggable: boolean; default_width: number; default_height: number; default_min_width: number; default_min_height: number; allowed_roles: string[] | null; config: any; component_key: string | null; business_partner_install_count: number; user_install_count: number;
 }
-
-interface RoleOption {
-    name: string;
-    description: string;
-}
-
-// --- Hilfskomponenten ---
-
-const availableIcons = {
-    'LocalGasStation': <LocalGasStationIcon />,
-    'EvStation': <EvStationIcon />,
-    'Traffic': <TrafficIcon />,
-    'Spa': <SpaIcon />,
-    'Gavel': <GavelIcon />,
-    'Commute': <CommuteIcon />,
-    'Business': <BusinessIcon />,
-    'Vignette': <ConfirmationNumberIcon />,
-    'FactCheck': <FactCheckIcon />,
-    'TrendingUp': <TrendingUpIcon />,
-};
-
-const DynamicIcon: React.FC<{ iconName: string | null }> = ({ iconName }) => {
-    if (!iconName) {
-        return <HelpOutlineIcon color="disabled" />;
-    }
-    
-    const normalizedIconName = iconName.trim().toLowerCase().replace(/icon$/, '');
-    
-    const iconKey = Object.keys(availableIcons).find(
-        key => key.toLowerCase() === normalizedIconName
-    );
-
-    if (iconKey) {
-        return availableIcons[iconKey as keyof typeof availableIcons];
-    }
-    
-    return <HelpOutlineIcon color="disabled" />;
-};
-
-
+interface RoleOption { name: string; description: string; }
 type Order = 'asc' | 'desc';
-
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
-    const valA = a[orderBy] ?? '';
-    const valB = b[orderBy] ?? '';
-    if (valB < valA) return -1;
-    if (valB > valA) return 1;
-    return 0;
+    if (orderBy === 'user_install_count' || orderBy === 'business_partner_install_count') {
+        return Number(b[orderBy]) - Number(a[orderBy]);
+    }
+    const valA = a[orderBy] ?? ''; const valB = b[orderBy] ?? '';
+    if (valB < valA) return -1; if (valB > valA) return 1; return 0;
+}
+function getComparator<Key extends keyof any>(order: Order, orderBy: Key): (a: { [key in Key]: any }, b: { [key in Key]: any }) => number {
+    return order === 'desc' ? (a, b) => descendingComparator(a, b, orderBy) : (a, b) => -descendingComparator(a, b, orderBy);
 }
 
-function getComparator<Key extends keyof any>(
-    order: Order,
-    orderBy: Key,
-): (a: { [key in Key]: any }, b: { [key in Key]: any }) => number {
-    return order === 'desc'
-        ? (a, b) => descendingComparator(a, b, orderBy)
-        : (a, b) => -descendingComparator(a, b, orderBy);
-}
+const ResponsiveGridLayout = WidthProvider(Responsive);
+
+const dummyBusinessPartner: BusinessPartner = {
+    id: 'preview-bp-id', name: 'Vorschau Partner GmbH', dashboard_title: 'Partner Dashboard Vorschau', logo_url: 'https://placehold.co/90x60/6c63ff/FFF?text=Logo', primary_color: '#6c63ff', secondary_color: '#5249d9', regions: [{ id: 'at', name: 'Österreich', code: 'AT', is_default: true }]
+};
 
 const AdminWidgetTypesPage: React.FC = () => {
+    // --- States ---
     const [widgetTypes, setWidgetTypes] = useState<WidgetType[]>([]);
     const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
     const [loading, setLoading] = useState(true);
@@ -112,282 +54,141 @@ const AdminWidgetTypesPage: React.FC = () => {
     const [dialogError, setDialogError] = useState<string | null>(null);
     const [openDialog, setOpenDialog] = useState(false);
     const [editingWt, setEditingWt] = useState<WidgetType | null>(null);
-
-    // Form states
-    const [formName, setFormName] = useState('');
-    const [formTypeKey, setFormTypeKey] = useState('');
-    const [formDescription, setFormDescription] = useState('');
-    const [formIconName, setFormIconName] = useState('');
-    const [formIsRemovable, setFormIsRemovable] = useState(true);
-    const [formIsResizable, setFormIsResizable] = useState(true);
-    const [formIsDraggable, setFormIsDraggable] = useState(true);
-    const [formDefaultWidth, setFormDefaultWidth] = useState(4);
-    const [formDefaultHeight, setFormDefaultHeight] = useState(6);
-    const [formDefaultMinWidth, setFormDefaultMinWidth] = useState(3);
-    const [formDefaultMinHeight, setFormDefaultMinHeight] = useState(4);
-    const [formAllowedRoles, setFormAllowedRoles] = useState<string[]>([]);
-    const [formComponentKey, setFormComponentKey] = useState('');
-    const [formConfig, setFormConfig] = useState('');
-
-    // States für Suche und Sortierung
-    const [searchTerm, setSearchTerm] = useState('');
-    const [order, setOrder] = useState<Order>('asc');
-    const [orderBy, setOrderBy] = useState<keyof WidgetType>('name');
+    const [formName, setFormName] = useState(''); const [formTypeKey, setFormTypeKey] = useState(''); const [formDescription, setFormDescription] = useState(''); const [formIconName, setFormIconName] = useState(''); const [formIsRemovable, setFormIsRemovable] = useState(true); const [formIsResizable, setFormIsResizable] = useState(true); const [formIsDraggable, setFormIsDraggable] = useState(true); const [formDefaultWidth, setFormDefaultWidth] = useState(4); const [formDefaultHeight, setFormDefaultHeight] = useState(6); const [formDefaultMinWidth, setFormDefaultMinWidth] = useState(3); const [formDefaultMinHeight, setFormDefaultMinHeight] = useState(4); const [formAllowedRoles, setFormAllowedRoles] = useState<string[]>([]); const [formComponentKey, setFormComponentKey] = useState(''); const [formConfig, setFormConfig] = useState('');
+    const [searchTerm, setSearchTerm] = useState(''); const [order, setOrder] = useState<Order>('asc'); const [orderBy, setOrderBy] = useState<keyof WidgetType>('name');
+    const [testWidget, setTestWidget] = useState<WidgetType | null>(null);
+    const [testLayout, setTestLayout] = useState<Layout>({ i: 'test', w: 6, h: 8, x: 0, y: 0 });
 
     const fetchInitialData = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const token = localStorage.getItem('jwt_token');
-            const [widgetRes, rolesRes] = await Promise.all([
-                apiClient.get('/api/admin/widget-types', { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/admin/roles', { headers: { 'x-auth-token': token } })
-            ]);
-            setWidgetTypes(widgetRes.data);
-            setRoleOptions(rolesRes.data);
-        } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Laden der Daten.');
-        } finally {
-            setLoading(false);
-        }
+        setLoading(true); setError(null);
+        try { const token = localStorage.getItem('jwt_token'); const [widgetRes, rolesRes] = await Promise.all([ apiClient.get('/api/admin/widget-types', { headers: { 'x-auth-token': token } }), apiClient.get('/api/admin/roles', { headers: { 'x-auth-token': token } }) ]); setWidgetTypes(widgetRes.data); setRoleOptions(rolesRes.data); } catch (err: any) { setError(err.response?.data?.message || 'Fehler beim Laden der Daten.'); } finally { setLoading(false); }
     };
-
-    useEffect(() => {
-        fetchInitialData();
-    }, []);
+    useEffect(() => { fetchInitialData(); }, []);
 
     const handleOpenAddDialog = () => {
-        setEditingWt(null);
-        setFormName('');
-        setFormTypeKey('');
-        setFormDescription('');
-        setFormIconName('');
-        setFormIsRemovable(true);
-        setFormIsResizable(true);
-        setFormIsDraggable(true);
-        setFormDefaultWidth(4);
-        setFormDefaultHeight(6);
-        setFormDefaultMinWidth(3);
-        setFormDefaultMinHeight(4);
-        setFormAllowedRoles([]);
-        setFormComponentKey('');
-        setFormConfig('');
-        setOpenDialog(true);
+        setEditingWt(null); setFormName(''); setFormTypeKey(''); setFormDescription(''); setFormIconName(''); setFormIsRemovable(true); setFormIsResizable(true); setFormIsDraggable(true); setFormDefaultWidth(4); setFormDefaultHeight(6); setFormDefaultMinWidth(3); setFormDefaultMinHeight(4); setFormAllowedRoles([]); setFormComponentKey(''); setFormConfig(''); setOpenDialog(true);
     };
-
     const handleOpenEditDialog = (wt: WidgetType) => {
-        setEditingWt(wt);
-        setFormName(wt.name);
-        setFormTypeKey(wt.type_key);
-        setFormDescription(wt.description || '');
-        setFormIconName(wt.icon_name || '');
-        setFormIsRemovable(wt.is_removable);
-        setFormIsResizable(wt.is_resizable);
-        setFormIsDraggable(wt.is_draggable);
-        setFormDefaultWidth(wt.default_width);
-        setFormDefaultHeight(wt.default_height);
-        setFormDefaultMinWidth(wt.default_min_width);
-        setFormDefaultMinHeight(wt.default_min_height);
-        setFormAllowedRoles(wt.allowed_roles || []);
-        setFormComponentKey(wt.component_key || '');
-        setFormConfig(wt.config ? JSON.stringify(wt.config, null, 2) : '');
-        setOpenDialog(true);
+        setEditingWt(wt); setFormName(wt.name); setFormTypeKey(wt.type_key); setFormDescription(wt.description || ''); setFormIconName(wt.icon_name || ''); setFormIsRemovable(wt.is_removable); setFormIsResizable(wt.is_resizable); setFormIsDraggable(wt.is_draggable); setFormDefaultWidth(wt.default_width); setFormDefaultHeight(wt.default_height); setFormDefaultMinWidth(wt.default_min_width); setFormDefaultMinHeight(wt.default_min_height); setFormAllowedRoles(wt.allowed_roles || []); setFormComponentKey(wt.component_key || ''); setFormConfig(wt.config ? JSON.stringify(wt.config, null, 2) : ''); setOpenDialog(true);
     };
-
-    const handleCloseDialog = () => {
-        setOpenDialog(false);
-        setEditingWt(null);
-        setDialogError(null);
-    };
-
+    const handleCloseDialog = () => { setOpenDialog(false); setEditingWt(null); setDialogError(null); };
     const handleSubmit = async () => {
-        setDialogError(null);
-        let configObject = null;
-        if (formConfig) {
-            try {
-                configObject = JSON.parse(formConfig);
-            } catch (e) {
-                setDialogError('Das "Config"-Feld enthält ungültiges JSON.');
-                return;
-            }
-        }
-
-        const token = localStorage.getItem('jwt_token');
-        const wtData = {
-            name: formName,
-            type_key: formTypeKey,
-            description: formDescription || null,
-            icon_name: formIconName || null,
-            is_removable: formIsRemovable,
-            is_resizable: formIsResizable,
-            is_draggable: formIsDraggable,
-            default_width: formDefaultWidth,
-            default_height: formDefaultHeight,
-            default_min_width: formDefaultMinWidth,
-            default_min_height: formDefaultMinHeight,
-            allowed_roles: formAllowedRoles.length > 0 ? formAllowedRoles : null,
-            component_key: formComponentKey || null,
-            config: configObject,
-        };
-
-        try {
-            if (editingWt) {
-                await apiClient.put(`/api/admin/widget-types/${editingWt.id}`, wtData, { headers: { 'x-auth-token': token } });
-            } else {
-                await apiClient.post('/api/admin/widget-types', wtData, { headers: { 'x-auth-token': token } });
-            }
-            handleCloseDialog();
-            fetchInitialData();
-        } catch (err: any) {
-            setDialogError(err.response?.data?.message || 'Fehler beim Speichern.');
-        }
+        setDialogError(null); let configObject = null; if (formConfig && formConfig.trim() !== '') { try { configObject = JSON.parse(formConfig); } catch (e) { setDialogError('Das "Config"-Feld enthält ungültiges JSON.'); return; } }
+        const token = localStorage.getItem('jwt_token'); const wtData = { name: formName, type_key: formTypeKey, description: formDescription || null, icon_name: formIconName || null, is_removable: formIsRemovable, is_resizable: formIsResizable, is_draggable: formIsDraggable, default_width: formDefaultWidth, default_height: formDefaultHeight, default_min_width: formDefaultMinWidth, default_min_height: formDefaultMinHeight, allowed_roles: formAllowedRoles.length > 0 ? formAllowedRoles : null, component_key: formComponentKey || null, config: configObject, };
+        try { if (editingWt) { await apiClient.put(`/api/admin/widget-types/${editingWt.id}`, wtData, { headers: { 'x-auth-token': token } }); } else { await apiClient.post('/api/admin/widget-types', wtData, { headers: { 'x-auth-token': token } }); } handleCloseDialog(); fetchInitialData(); } catch (err: any) { setDialogError(err.response?.data?.message || 'Fehler beim Speichern.'); }
     };
-
-    const handleDelete = async (id: string) => {
-        if (!window.confirm('Sind Sie sicher?')) return;
-        try {
-            const token = localStorage.getItem('jwt_token');
-            await apiClient.delete(`/api/admin/widget-types/${id}`, { headers: { 'x-auth-token': token } });
-            fetchInitialData();
-        } catch (err: any) {
-            alert(err.response?.data?.message || 'Fehler beim Löschen.');
-        }
-    };
-
-    const handleSortRequest = (property: keyof WidgetType) => {
-        const isAsc = orderBy === property && order === 'asc';
-        setOrder(isAsc ? 'desc' : 'asc');
-        setOrderBy(property);
-    };
-
+    const handleDelete = async (id: string) => { if (!window.confirm('Sind Sie sicher?')) return; try { const token = localStorage.getItem('jwt_token'); await apiClient.delete(`/api/admin/widget-types/${id}`, { headers: { 'x-auth-token': token } }); fetchInitialData(); } catch (err: any) { alert(err.response?.data?.message || 'Fehler beim Löschen.'); } };
+    const handleSortRequest = (property: keyof WidgetType) => { const isAsc = orderBy === property && order === 'asc'; setOrder(isAsc ? 'desc' : 'asc'); setOrderBy(property); };
     const sortedAndFilteredTypes = useMemo(() => {
-        let filtered = [...widgetTypes];
-        if (searchTerm) {
-            const lowercasedFilter = searchTerm.toLowerCase();
-            filtered = widgetTypes.filter(wt =>
-                wt.name.toLowerCase().includes(lowercasedFilter) ||
-                wt.type_key.toLowerCase().includes(lowercasedFilter) ||
-                (wt.description?.toLowerCase() || '').includes(lowercasedFilter) ||
-                (wt.component_key?.toLowerCase() || '').includes(lowercasedFilter)
-            );
-        }
-        return filtered.sort(getComparator(order, orderBy));
+        let filtered = [...widgetTypes]; if (searchTerm) { const lowercasedFilter = searchTerm.toLowerCase(); filtered = widgetTypes.filter(wt => wt.name.toLowerCase().includes(lowercasedFilter) || wt.type_key.toLowerCase().includes(lowercasedFilter) || (wt.description?.toLowerCase() || '').includes(lowercasedFilter) || (wt.component_key?.toLowerCase() || '').includes(lowercasedFilter)); } return filtered.sort(getComparator(order, orderBy));
     }, [widgetTypes, searchTerm, order, orderBy]);
+
+    const handleOpenTestModal = (wt: WidgetType) => {
+        setTestWidget(wt);
+        setTestLayout({ i: 'test-widget', x: 0, y: 0, w: wt.default_width, h: wt.default_height });
+    };
+    const handleCloseTestModal = () => setTestWidget(null);
+    const handleTestLayoutChange = (layout: Layout[]) => {
+        if (layout[0]) { setTestLayout(layout[0]); }
+    };
+    
+    const WidgetToTest = testWidget?.type_key ? WIDGET_COMPONENTS[testWidget.type_key] : null;
 
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                     <Typography variant="h4" component="h1">Widget-Typen ({sortedAndFilteredTypes.length})</Typography>
-                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                         <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }}/>
                         <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenAddDialog}>Hinzufügen</Button>
                     </Box>
                 </Box>
-
-                {loading ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box> 
-                : error ? <Alert severity="error">{error}</Alert> 
-                : (
-                    <Paper>
-                        <TableContainer>
-                            <Table>
-                                <TableHead>
-                                    <TableRow>
-                                        <TableCell sx={{ width: '1%' }}>Icon</TableCell>
-                                        <TableCell sortDirection={orderBy === 'name' ? order : false}><TableSortLabel active={orderBy === 'name'} direction={order} onClick={() => handleSortRequest('name')}>Name</TableSortLabel></TableCell>
-                                        <TableCell sortDirection={orderBy === 'type_key' ? order : false}><TableSortLabel active={orderBy === 'type_key'} direction={order} onClick={() => handleSortRequest('type_key')}>Type Key</TableSortLabel></TableCell>
-                                        <TableCell sortDirection={orderBy === 'component_key' ? order : false}><TableSortLabel active={orderBy === 'component_key'} direction={order} onClick={() => handleSortRequest('component_key')}>Component Key</TableSortLabel></TableCell>
-                                        <TableCell>Beschreibung</TableCell>
-                                        <TableCell align="center" sortDirection={orderBy === 'business_partner_install_count' ? order : false}>
-                                            <TableSortLabel active={orderBy === 'business_partner_install_count'} direction={order} onClick={() => handleSortRequest('business_partner_install_count')}>
-                                                <Tooltip title="Installiert bei Business Partnern">
-                                                    <BusinessIcon sx={{ verticalAlign: 'middle' }} />
-                                                </Tooltip>
-                                            </TableSortLabel>
-                                        </TableCell>
-                                        <TableCell align="center" sortDirection={orderBy === 'user_install_count' ? order : false}>
-                                            <TableSortLabel active={orderBy === 'user_install_count'} direction={order} onClick={() => handleSortRequest('user_install_count')}>
-                                                <Tooltip title="Installiert bei Nutzern">
-                                                    <PersonIcon sx={{ verticalAlign: 'middle' }} />
-                                                </Tooltip>
-                                            </TableSortLabel>
-                                        </TableCell>
-                                        <TableCell>Rollen</TableCell>
-                                        <TableCell>Aktionen</TableCell>
-                                    </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                    {sortedAndFilteredTypes.map((wt) => (
-                                        <TableRow key={wt.id} hover>
-                                            <TableCell>
-                                                <DynamicIcon iconName={wt.icon_name} />
-                                            </TableCell>
-                                            <TableCell sx={{ fontWeight: 'bold' }}>{wt.name}</TableCell>
-                                            <TableCell><code>{wt.type_key}</code></TableCell>
-                                            <TableCell><code>{wt.component_key || '-'}</code></TableCell>
-                                            <TableCell sx={{ maxWidth: 250 }}>{wt.description || '-'}</TableCell>
-                                            <TableCell align="center" sx={{ fontWeight: 'bold' }}>{wt.business_partner_install_count}</TableCell>
-                                            <TableCell align="center" sx={{ fontWeight: 'bold' }}>{wt.user_install_count}</TableCell>
-                                            <TableCell>
-                                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                                                    {(wt.allowed_roles || []).map((role) => (<Chip key={role} label={role} size="small" />))}
-                                                </Box>
-                                            </TableCell>
-                                            <TableCell>
-                                                <IconButton color="primary" onClick={() => handleOpenEditDialog(wt)}><EditIcon /></IconButton>
-                                                <IconButton color="error" onClick={() => handleDelete(wt.id)}><DeleteIcon /></IconButton>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </TableContainer>
-                    </Paper>
+                
+                {loading ? <CircularProgress /> : error ? <Alert severity="error">{error}</Alert> : (
+                    <Paper><TableContainer><Table>
+                        <TableHead><TableRow>
+                            <TableCell>Icon</TableCell>
+                            <TableCell sortDirection={orderBy === 'name' ? order : false}><TableSortLabel active={orderBy === 'name'} direction={orderBy === 'name' ? order : 'asc'} onClick={() => handleSortRequest('name')}>Name / Type Key</TableSortLabel></TableCell>
+                            <TableCell sortDirection={orderBy === 'component_key' ? order : false}><TableSortLabel active={orderBy === 'component_key'} direction={orderBy === 'component_key' ? order : 'asc'} onClick={() => handleSortRequest('component_key')}>Component Key</TableSortLabel></TableCell>
+                            <TableCell>Dimensionen (B/H)</TableCell>
+                            <TableCell align="center" sortDirection={orderBy === 'user_install_count' ? order : false}><TableSortLabel active={orderBy === 'user_install_count'} direction={orderBy === 'user_install_count' ? order : 'asc'} onClick={() => handleSortRequest('user_install_count')}>Installationen</TableSortLabel></TableCell>
+                            <TableCell>Rollen</TableCell>
+                            <TableCell>Aktionen</TableCell>
+                        </TableRow></TableHead>
+                        <TableBody>{sortedAndFilteredTypes.map((wt) => {
+                            const IconComponent = getIcon(wt.icon_name);
+                            return (
+                                <TableRow key={wt.id} hover>
+                                    <TableCell><IconComponent /></TableCell>
+                                    <TableCell>
+                                        <Typography variant="body2" sx={{ fontWeight: 'bold' }}>{wt.name}</Typography>
+                                        <Typography variant="caption" color="text.secondary" component="code">{wt.type_key}</Typography>
+                                    </TableCell>
+                                    <TableCell><code>{wt.component_key || '-'}</code></TableCell>
+                                    <TableCell>
+                                        <Typography variant="body2" component="div">Default: <strong>{wt.default_width} / {wt.default_height}</strong></Typography>
+                                        <Typography variant="caption" color="text.secondary" component="div">Min: {wt.default_min_width} / {wt.default_min_height}</Typography>
+                                    </TableCell>
+                                    <TableCell align="center">
+                                        <Tooltip title="Business Partner Installationen"><Chip icon={<BusinessIcon fontSize="small" />} label={wt.business_partner_install_count} size="small" sx={{ mr: 0.5, mb: 0.5 }} variant="outlined" /></Tooltip>
+                                        <Tooltip title="Nutzer Installationen"><Chip icon={<PersonIcon fontSize="small" />} label={wt.user_install_count} size="small" sx={{ mb: 0.5 }} variant="outlined" /></Tooltip>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxWidth: 180 }}>
+                                            {(wt.allowed_roles || []).map((role) => (<Chip key={role} label={role} size="small" />))}
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Tooltip title="Bearbeiten"><IconButton size="small" color="primary" onClick={() => handleOpenEditDialog(wt)}><EditIcon /></IconButton></Tooltip>
+                                        <Tooltip title="Widget Test">
+                                            <span>
+                                                <IconButton size="small" color="secondary" onClick={() => handleOpenTestModal(wt)} disabled={!wt.type_key || !WIDGET_COMPONENTS[wt.type_key]}>
+                                                    <ScienceIcon />
+                                                </IconButton>
+                                            </span>
+                                        </Tooltip>
+                                        <Tooltip title="Löschen"><IconButton size="small" color="error" onClick={() => handleDelete(wt.id)}><DeleteIcon /></IconButton></Tooltip>
+                                    </TableCell>
+                                </TableRow>
+                            );
+                        })}</TableBody>
+                    </Table></TableContainer></Paper>
                 )}
-
-                <Box sx={{ mt: 2, textAlign: 'center' }}>
-                    <Typography variant="body2">
-                        Für das Feld "Icon Name" können alle Icons von Material-UI verwendet werden. 
-                        <MuiLink href="https://mui.com/material-ui/material-icons/" target="_blank" rel="noopener noreferrer" sx={{ ml: 0.5 }}>
-                            Hier finden Sie eine Übersicht.
-                        </MuiLink>
-                    </Typography>
-                </Box>
-
+                
                 <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
                     <DialogTitle>{editingWt ? 'Widget-Typ bearbeiten' : 'Neuen Widget-Typ hinzufügen'}</DialogTitle>
                     <DialogContent>
                         {dialogError && <Alert severity="error" sx={{ mb: 2 }}>{dialogError}</Alert>}
-                        <Grid container spacing={2}>
-                            <Grid item xs={12} sm={6}><TextField margin="dense" label="Name" fullWidth value={formName} onChange={(e) => setFormName(e.target.value)} /></Grid>
-                            <Grid item xs={12} sm={6}><TextField margin="dense" label="Type Key (Eindeutig)" fullWidth value={formTypeKey} onChange={(e) => setFormTypeKey(e.target.value)} disabled={!!editingWt} /></Grid>
-                            <Grid item xs={12}><TextField margin="dense" label="Beschreibung" fullWidth multiline rows={2} value={formDescription} onChange={(e) => setFormDescription(e.target.value)} /></Grid>
+                        <Grid container spacing={2} sx={{pt: 1}}>
+                            <Grid item xs={12} sm={6}><TextField label="Name" fullWidth value={formName} onChange={(e) => setFormName(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={6}>
-                                <TextField 
-                                    margin="dense" 
-                                    label="Icon Name (Material-UI)" 
-                                    fullWidth 
-                                    value={formIconName} 
-                                    onChange={(e) => setFormIconName(e.target.value)} 
-                                />
-                                <FormHelperText>
-                                    Verfügbar: {Object.keys(availableIcons).join(', ')}
-                                </FormHelperText>
+                                <TextField select label="Icon Name" fullWidth value={formIconName} onChange={(e) => setFormIconName(e.target.value)}>
+                                    <MenuItem value=""><em>Kein Icon</em></MenuItem>
+                                    {Object.keys(ICON_MAP).sort().map(iconKey => {
+                                        const IconComponent = ICON_MAP[iconKey];
+                                        return (
+                                            <MenuItem key={iconKey} value={iconKey}>
+                                                <Box sx={{ display: 'flex', alignItems: 'center' }}><IconComponent sx={{ mr: 1.5 }} />{iconKey}</Box>
+                                            </MenuItem>
+                                        );
+                                    })}
+                                </TextField>
                             </Grid>
-                            <Grid item xs={12} sm={6}><TextField margin="dense" label="Component Key (z.B. GenericAI)" fullWidth value={formComponentKey} onChange={(e) => setFormComponentKey(e.target.value)} /></Grid>
-                            <Grid item xs={12}><TextField margin="dense" label="Config (als JSON)" fullWidth multiline rows={4} value={formConfig} onChange={(e) => setFormConfig(e.target.value)} placeholder='{ "title": "Mein Titel", "category": "meine_kategorie" }' /></Grid>
-                            <Grid item xs={6} md={3}><TextField margin="dense" label="Standardbreite" type="number" fullWidth value={formDefaultWidth} onChange={(e) => setFormDefaultWidth(parseInt(e.target.value))} /></Grid>
-                            <Grid item xs={6} md={3}><TextField margin="dense" label="Standardhöhe" type="number" fullWidth value={formDefaultHeight} onChange={(e) => setFormDefaultHeight(parseInt(e.target.value))} /></Grid>
-                            <Grid item xs={6} md={3}><TextField margin="dense" label="Min. Breite" type="number" fullWidth value={formDefaultMinWidth} onChange={(e) => setFormDefaultMinWidth(parseInt(e.target.value))} /></Grid>
-                            <Grid item xs={6} md={3}><TextField margin="dense" label="Min. Höhe" type="number" fullWidth value={formDefaultMinHeight} onChange={(e) => setFormDefaultMinHeight(parseInt(e.target.value))} /></Grid>
+                            <Grid item xs={12} sm={6}><TextField label="Type Key (Eindeutig)" fullWidth value={formTypeKey} onChange={(e) => setFormTypeKey(e.target.value)} disabled={!!editingWt} /></Grid>
+                            <Grid item xs={12} sm={6}><TextField label="Component Key" helperText="Muss Key aus widgetMapping.ts sein" fullWidth value={formComponentKey} onChange={(e) => setFormComponentKey(e.target.value)} /></Grid>
+                            <Grid item xs={12}><TextField label="Beschreibung" fullWidth multiline rows={2} value={formDescription} onChange={(e) => setFormDescription(e.target.value)} /></Grid>
+                            <Grid item xs={12}><TextField label="Config (als JSON)" fullWidth multiline rows={4} value={formConfig} onChange={(e) => setFormConfig(e.target.value)} placeholder='{ "title": "Mein Titel", "category": "meine_kategorie" }' /></Grid>
+                            <Grid item xs={6} md={3}><TextField label="Standardbreite" type="number" fullWidth value={formDefaultWidth} onChange={(e) => setFormDefaultWidth(parseInt(e.target.value))} /></Grid>
+                            <Grid item xs={6} md={3}><TextField label="Standardhöhe" type="number" fullWidth value={formDefaultHeight} onChange={(e) => setFormDefaultHeight(parseInt(e.target.value))} /></Grid>
+                            <Grid item xs={6} md={3}><TextField label="Min. Breite" type="number" fullWidth value={formDefaultMinWidth} onChange={(e) => setFormDefaultMinWidth(parseInt(e.target.value))} /></Grid>
+                            <Grid item xs={6} md={3}><TextField label="Min. Höhe" type="number" fullWidth value={formDefaultMinHeight} onChange={(e) => setFormDefaultMinHeight(parseInt(e.target.value))} /></Grid>
                             <Grid item xs={4}><FormControlLabel control={<Switch checked={formIsRemovable} onChange={(e) => setFormIsRemovable(e.target.checked)} />} label="Entfernbar" /></Grid>
                             <Grid item xs={4}><FormControlLabel control={<Switch checked={formIsResizable} onChange={(e) => setFormIsResizable(e.target.checked)} />} label="Größe änderbar" /></Grid>
                             <Grid item xs={4}><FormControlLabel control={<Switch checked={formIsDraggable} onChange={(e) => setFormIsDraggable(e.target.checked)} />} label="Verschiebbar" /></Grid>
-                            <Grid item xs={12}>
-                                <TextField select margin="dense" label="Erlaubte Rollen" fullWidth SelectProps={{ multiple: true, renderValue: (selected) => (<Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{(selected as string[]).map(role => <Chip key={role} label={role} size="small" />)}</Box>) }} value={formAllowedRoles} onChange={(e) => setFormAllowedRoles(e.target.value as unknown as string[])}>
-                                    {roleOptions.map((role) => (<MenuItem key={role.name} value={role.name} title={role.description}>{role.name}</MenuItem>))}
-                                </TextField>
-                            </Grid>
+                            <Grid item xs={12}><TextField select label="Erlaubte Rollen" fullWidth SelectProps={{ multiple: true, renderValue: (selected) => (<Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{(selected as string[]).map(role => <Chip key={role} label={role} size="small" />)}</Box>) }} value={formAllowedRoles} onChange={(e) => setFormAllowedRoles(e.target.value as unknown as string[])}>
+                                {roleOptions.map((role) => (<MenuItem key={role.name} value={role.name} title={role.description}>{role.name}</MenuItem>))}
+                            </TextField></Grid>
                         </Grid>
                     </DialogContent>
                     <DialogActions>
@@ -395,6 +196,44 @@ const AdminWidgetTypesPage: React.FC = () => {
                         <Button onClick={handleSubmit} disabled={loading}>{editingWt ? 'Speichern' : 'Hinzufügen'}</Button>
                     </DialogActions>
                 </Dialog>
+
+                <Dialog open={!!testWidget} onClose={handleCloseTestModal} fullWidth maxWidth="lg">
+                    <DialogTitle>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            Widget Test: "{testWidget?.name}"
+                            <Paper elevation={2} sx={{ p: '4px 12px' }}>
+                                <Typography variant="h6">
+                                    w: <Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>{testLayout.w}</Box> / h: <Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>{testLayout.h}</Box>
+                                </Typography>
+                            </Paper>
+                        </Box>
+                    </DialogTitle>
+                    <DialogContent sx={{ bgcolor: 'grey.200', minHeight: '60vh', p: 1 }}>
+                        {WidgetToTest ? (
+                            <ResponsiveGridLayout
+                                className="layout" layouts={{ lg: [testLayout] }} breakpoints={{ lg: 1200 }} cols={{ lg: 12 }} rowHeight={30}
+                                onResizeStop={handleTestLayoutChange} onDragStop={handleTestLayoutChange} draggableHandle=".widget-header"
+                            >
+                                <div key={testLayout.i}>
+                                    <WidgetToTest 
+                                        widgetId="test-widget"
+                                        isRemovable={false}
+                                        onDelete={() => {}}
+                                        title={testWidget?.config?.title || testWidget?.name}
+                                        icon={React.createElement(getIcon(testWidget?.icon_name))}
+                                        widgetTypeKey={testWidget?.type_key}
+                                        businessPartner={dummyBusinessPartner}
+                                        {...testWidget?.config}
+                                    />
+                                </div>
+                            </ResponsiveGridLayout>
+                        ) : <Alert severity="warning">Widget mit Type Key "{testWidget?.type_key}" kann nicht getestet werden (nicht in `widgetMapping.ts` gefunden).</Alert>}
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={handleCloseTestModal}>Schließen</Button>
+                    </DialogActions>
+                </Dialog>
+
             </Container>
         </DashboardLayout>
     );

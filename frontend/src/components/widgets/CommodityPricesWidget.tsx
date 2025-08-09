@@ -19,7 +19,7 @@ import apiClient from '../../apiClient';
 interface CommodityPricesWidgetProps extends BaseWidgetProps {
     icon?: React.ReactNode;
     title: string;
-    widgetTypeKey: string; // Hinzugefügt für das Feedback-System
+    widgetTypeKey: string;
 }
 
 interface HistoricalData {
@@ -43,6 +43,8 @@ interface ApiData {
 const indicatorDisplayInfo: { [key: string]: { name: string; formatOptions: Intl.NumberFormatOptions } } = {
     'BRENT_OIL': { name: 'Brent Rohöl', formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 2 } },
     'EUR_USD': { name: 'Wechselkurs EUR/USD', formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 4 } },
+    'EURIBOR_3M': { name: 'Euribor 3M', formatOptions: { style: 'decimal', minimumFractionDigits: 3, maximumFractionDigits: 3 } },
+    'CO2_PRICE': { name: 'CO2-Emissionspreis', formatOptions: { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 } },
     'NICKEL': { name: 'Nickel', formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 0 } },
     'COBALT': { name: 'Kobalt', formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 0 } },
 };
@@ -50,6 +52,8 @@ const indicatorDisplayInfo: { [key: string]: { name: string; formatOptions: Intl
 const sourceUrls: { [key: string]: string } = {
     'oilpriceapi.com': 'https://oilpriceapi.com/',
     'metalpriceapi.com': 'https://metalpriceapi.com/',
+    'ecb.europa.eu': 'https://www.ecb.europa.eu/stats/financial_markets_and_interest_rates/euro_area_yield_curves/html/index.en.html',
+    'commodities-api.com': 'https://commodities-api.com/',
 };
 
 // --- Hilfskomponenten ---
@@ -65,6 +69,9 @@ const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = (
 
     const formatPrice = (price: number | null | undefined) => {
         if (price == null) return 'N/A';
+        if (data.unit === '%') {
+            return `${price.toLocaleString('de-DE', displayInfo.formatOptions)}%`;
+        }
         return new Intl.NumberFormat('de-DE', displayInfo.formatOptions).format(price);
     };
 
@@ -79,7 +86,9 @@ const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = (
                     </Box>
                 </Tooltip>
             </Box>
-            <Typography variant="caption" color="text.secondary">pro {data.unit}</Typography>
+            <Typography variant="caption" color="text.secondary">
+                {data.unit !== '%' ? `pro ${data.unit}` : 'Zinssatz'}
+            </Typography>
             
             <Divider sx={{ my: 1.5 }} />
 
@@ -95,15 +104,13 @@ const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = (
             </Stack>
 
             <Box sx={{ mt: 2, pt: 1, borderTop: 1, borderColor: 'divider' }}>
-                <MuiLink href={sourceUrl} target="_blank" rel="noopener" variant="caption" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                    <PublicIcon sx={{ fontSize: '0.8rem' }} />
-                    Quelle: {data.source} (Stand: {new Date(data.lastUpdate).toLocaleDateString('de-DE')})
-                </MuiLink>
+                <Typography variant="caption">
+                    Quelle: <MuiLink href={sourceUrl} target="_blank" rel="noopener">{data.source}</MuiLink> (Stand: {new Date(data.lastUpdate).toLocaleDateString('de-DE')})
+                </Typography>
             </Box>
         </Paper>
     );
 };
-
 
 // --- Hauptkomponente ---
 const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, widgetTypeKey }) => {
@@ -144,6 +151,11 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
         });
     };
 
+    const sortedDataEntries = data ? Object.entries(data).sort(([keyA], [keyB]) => {
+        const order = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'CO2_PRICE'];
+        return order.indexOf(keyA) - order.indexOf(keyB);
+    }) : [];
+
     return (
         <WidgetPaper
             title={
@@ -178,9 +190,10 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
                 </Alert>
             )}
 
-            {!isLoading && !error && data && Object.keys(data).length > 0 ? (
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2, height: '100%' }}>
-                    {Object.entries(data).map(([key, value]) => (
+            {!isLoading && !error && sortedDataEntries.length > 0 ? (
+                // === GEÄNDERT: Mindestbreite der Kacheln reduziert für besseres Nebeneinander ===
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 2, height: '100%' }}>
+                    {sortedDataEntries.map(([key, value]) => (
                        <CommodityItem key={key} indicatorKey={key} data={value} />
                     ))}
                 </Box>
