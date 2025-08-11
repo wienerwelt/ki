@@ -149,7 +149,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 <ScheduleIcon sx={{ mr: 2 }} />
                                 <ListItemText primary="Autom. Aufgaben" />
                             </ListItem>
-                            <ListItem button component="a" href="http://localhost:5000/api/admin/jobs/" target="_blank" onClick={toggleDrawer(false)}>
+                            <ListItem button component="a" href="/api/admin/jobs/" target="_blank" onClick={toggleDrawer(false)}>
                                 <DnsIcon sx={{ mr: 2 }} />
                                 <ListItemText primary="Job-Warteschlange" />
                             </ListItem>

@@ -65,8 +65,19 @@ createBullBoard({
 });
 
 // --- CORS Setup ---
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://dashboard.mobiliti.at'
+];
+
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
 }));
 
@@ -74,7 +85,6 @@ app.use(cors({
 // --- Standard Middleware ---
 app.use(express.json());
 app.use(cookieParser());
-app.use('/public', express.static(path.join(__dirname, '..', 'frontend', 'public')));
 
 // --- Logging aller Requests ---
 app.use((req, res, next) => {
@@ -86,7 +96,6 @@ app.use((req, res, next) => {
 db.query('SELECT 1')
     .then(() => {
         console.log('PostgreSQL connected successfully!');
-        // Starte die Synchronisation der Zeitpläne aus der DB mit der Redis-Queue
         jobManager.synchronizeSchedulesFromDB();
     })
     .catch(err => console.error('PostgreSQL connection error:', err));
@@ -101,8 +110,6 @@ app.use('/api/business-partner', businessPartnerRoutes);
 app.use('/api/widgets', widgetRoutes);
 app.use('/api/sources', sourcesRoutes);
 app.use('/api/feedback', feedbackRoutes);
-
-// Einzelne, geschützte Route
 app.get('/api/data/active-advertisement', auth, dataController.getActiveAdvertisement);
 
 // --- Admin-API-Routen ---
@@ -127,26 +134,33 @@ app.use('/api/admin/cronjobs', adminCronjobsRoutes);
 app.use('/api/admin/jobs', serverAdapter.getRouter());
 app.use('/api/admin/sources', adminSourcesRoutes);
 
-// Testroute
-app.get('/', (req, res) => {
-    res.send('Welcome to KI-Dashboard Backend!');
+// =================================================================
+// SERVE FRONTEND STATIC FILES
+// =================================================================
+const frontendDistPath = path.resolve(__dirname, '..', 'frontend', 'dist');
+app.use(express.static(frontendDistPath));
+
+app.get('*', (req, res, next) => {
+  // If the request is for an API route, pass it to the next middleware (the error handler)
+  if (req.originalUrl.startsWith('/api/')) {
+    return next();
+  }
+  // Otherwise, send the frontend's index.html file
+  res.sendFile(path.join(frontendDistPath, 'index.html'));
 });
+// =================================================================
 
 // --- Globale Fehlerbehandlungs-Middleware ---
 app.use((err, req, res, next) => {
     console.error('UNHANDLED ERROR:', err);
-    logActivity({
-        actionType: 'CRITICAL_ERROR',
-        status: 'failure',
-        details: {
-            error: err.message,
-            stack: err.stack,
-            path: req.path,
-            method: req.method
-        },
-        ipAddress: req.ip
+    
+    // Temporarily for debugging: Send the detailed error to the client
+    // WARNING: Do not use this in a live production environment for long.
+    res.status(500).json({
+        message: err.message,
+        stack: err.stack,
+        error: err 
     });
-    res.status(500).send('Ein interner Serverfehler ist aufgetreten.');
 });
 
 // --- Serverstart ---

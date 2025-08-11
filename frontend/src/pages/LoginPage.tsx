@@ -69,7 +69,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ isRegister = false }) => {
                 ? { name: identifier, email, password, voucher, consentGiven: consent } 
                 : { identifier, password };
 
-            const response = await fetch(`http://localhost:5000/api/auth/${endpoint}`, {
+            const response = await fetch(`/api/auth/${endpoint}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
@@ -100,7 +100,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ isRegister = false }) => {
             setLoading(true);
             setError(null);
             try {
-                const res = await fetch('http://localhost:5000/api/auth/google', {
+                const res = await fetch('/api/auth/google', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ token: credentialResponse.credential }),

@@ -88,7 +88,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         try {
-            const response = await axios.get('http://localhost:5000/api/business-partner/me', {
+            const response = await axios.get('/api/business-partner/me', {
                 headers: { 'x-auth-token': token },
             });
             setBusinessPartner(response.data);

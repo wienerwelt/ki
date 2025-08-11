@@ -279,8 +279,14 @@ exports.login = async (req, res) => {
 
         return res.json({ token, user: payload.user });
 
-    } catch (err) {
-        console.error('Login error:', err.message);
-        return res.status(500).send('Serverfehler');
-    }
+} catch (err) {
+    console.error('Login error:', err);
+
+    // Finale, sichere Debugging-Version:
+    // Wir erstellen ein neues, sauberes Objekt, um JSON-Fehler zu vermeiden.
+    return res.status(500).json({
+        message: err.message || 'Ein unbekannter Fehler ist aufgetreten.',
+        stack: err.stack || 'Kein Stack Trace verfügbar.'
+    });
+}
 };
