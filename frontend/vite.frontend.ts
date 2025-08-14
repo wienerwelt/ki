@@ -22,13 +22,13 @@ export default defineConfig({
             type: 'image/png',
           },
           {
-            src: 'pwa-512x512.png',
-            sizes: '512x512',
+            src: 'pwa-500x500.png',
+            sizes: '500x500',
             type: 'image/png',
           },
           {
-            src: 'pwa-512x512.png',
-            sizes: '512x512',
+            src: 'pwa-500x500.png',
+            sizes: '500x500',
             type: 'image/png',
             purpose: 'any maskable',
           },
@@ -39,5 +39,16 @@ export default defineConfig({
       },
     }),
   ],
-
+  // ======================================================
+  // KORREKTER PROXY-BLOCK
+  // ======================================================
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
+    },
+  },
+  // ======================================================
 });

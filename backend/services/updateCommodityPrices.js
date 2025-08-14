@@ -3,11 +3,10 @@ const db = require('../config/db'); // Passen Sie den Pfad ggf. an
 
 const METALPRICE_API_KEY = process.env.METALPRICE_API_KEY;
 const OILPRICE_API_KEY = process.env.OILPRICE_API_KEY;
-const CO2_API_KEY = process.env.CO2_API_KEY; // NEU
+const CO2_API_KEY = process.env.CO2_API_KEY;
 
 /**
  * Robuste "Upsert"-Logik für einen Wirtschaftsindikator.
- * Prüft, ob für den Tag bereits ein Eintrag existiert und fügt ihn ein oder aktualisiert ihn.
  */
 const upsertIndicator = async (indicator) => {
     const { name, value, unit, timestamp, source, countryCode = null } = indicator;
@@ -134,7 +133,6 @@ const fetchAndStoreCO2Price = async () => {
         });
         if (!response.data.success) throw new Error(response.data.error.info);
         
-        // Die API gibt den Preis pro Tonne in der Basiswährung (EUR) zurück.
         const co2Price = response.data.data.rates.CARBON;
 
         await upsertIndicator({

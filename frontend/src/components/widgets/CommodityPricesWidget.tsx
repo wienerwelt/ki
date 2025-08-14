@@ -25,6 +25,7 @@ interface CommodityPricesWidgetProps extends BaseWidgetProps {
 interface HistoricalData {
     weekAgo?: number | null;
     monthAgo?: number | null;
+    yearAgo?: number | null;
 }
 
 interface CommodityData {
@@ -101,6 +102,13 @@ const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = (
                     <Typography variant="body2" color="text.secondary">-1 Monat:</Typography>
                     <Typography variant="body2">{formatPrice(data.historical.monthAgo)}</Typography>
                 </Box>
+                {/* === NEU: Zeigt den Jahreswert nur an, wenn er existiert === */}
+                {data.historical.yearAgo != null && (
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <Typography variant="body2" color="text.secondary">-1 Jahr:</Typography>
+                        <Typography variant="body2">{formatPrice(data.historical.yearAgo)}</Typography>
+                    </Box>
+                )}
             </Stack>
 
             <Box sx={{ mt: 2, pt: 1, borderTop: 1, borderColor: 'divider' }}>
@@ -191,7 +199,6 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
             )}
 
             {!isLoading && !error && sortedDataEntries.length > 0 ? (
-                // === GEÄNDERT: Mindestbreite der Kacheln reduziert für besseres Nebeneinander ===
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 2, height: '100%' }}>
                     {sortedDataEntries.map(([key, value]) => (
                        <CommodityItem key={key} indicatorKey={key} data={value} />

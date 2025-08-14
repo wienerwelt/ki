@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -13,10 +15,8 @@ import LoginPage from './pages/LoginPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import VerifyEmailPage from './pages/VerifyEmailPage';
-// KORREKTUR: Korrekte Import-Pfade
 import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
-
 
 // Geschützte Seiten
 import DashboardPage from './pages/DashboardPage';
@@ -40,114 +40,146 @@ import AdminCronjobsPage from './pages/AdminCronjobsPage';
 import AdminSourcesPage from './pages/AdminSourcesPage';
 import TrustedSourcesPage from './pages/TrustedSourcesPage';
 import FeedbackCenterPage from './pages/FeedbackCenterPage';
-
+// === NEUER IMPORT START ===
+import FileManagementPage from './pages/FileManagementPage';
+// === NEUER IMPORT ENDE ===
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
-    const { user, isLoading } = useAuth();
-    if (isLoading) {
-        return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}><CircularProgress /></Box>;
-    }
-    return user ? <DashboardLayout><Outlet /></DashboardLayout> : <Navigate to="/login" replace />;
+  const { user, isLoading } = useAuth();
+  if (isLoading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+  return user ? (
+    <DashboardLayout>
+      <Outlet />
+    </DashboardLayout>
+  ) : (
+    <Navigate to="/login" replace />
+  );
 };
 
 const AdminRoutes: React.FC = () => {
-    const { user } = useAuth();
-    return user?.role === 'admin' ? <Outlet /> : <Navigate to="/dashboard" replace />;
+  const { user } = useAuth();
+  return user?.role === 'admin' ? <Outlet /> : <Navigate to="/dashboard" replace />;
 };
 
 const BpStaffAllowedRoutes: React.FC = () => {
-    const { user } = useAuth();
-    const isAllowed = user?.role === 'admin' || user?.role === 'assistenz';
-    return isAllowed ? <Outlet /> : <Navigate to="/dashboard" replace />;
+  const { user } = useAuth();
+  const isAllowed = user?.role === 'admin' || user?.role === 'assistenz';
+  return isAllowed ? <Outlet /> : <Navigate to="/dashboard" replace />;
 };
 
 function App() {
-    const { businessPartner, isLoading } = useAuth();
-    const [currentTheme, setCurrentTheme] = useState<Theme | null>(null);
+  const { businessPartner, isLoading } = useAuth();
+  const [currentTheme, setCurrentTheme] = useState<Theme | null>(null);
 
-    useEffect(() => {
-        if (!isLoading) {
-             const newTheme = createTheme({
-                palette: {
-                    primary: { main: businessPartner?.primary_color || '#2196f3' },
-                    secondary: { main: businessPartner?.secondary_color || '#ff9800' },
-                    text: { primary: businessPartner?.text_color || '#333333' },
-                    background: { default: businessPartner?.background_color || '#f4f6f8', paper: '#ffffff' },
-                },
-            });
-            setCurrentTheme(newTheme);
-        }
-    }, [businessPartner, isLoading]);
-
-    if (!currentTheme) {
-        return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}><CircularProgress /></Box>;
+  useEffect(() => {
+    if (!isLoading) {
+      const newTheme = createTheme({
+        palette: {
+          primary: { main: businessPartner?.primary_color || '#2196f3' },
+          secondary: { main: businessPartner?.secondary_color || '#ff9800' },
+          text: { primary: businessPartner?.text_color || '#333333' },
+          background: { default: businessPartner?.background_color || '#f4f6f8', paper: '#ffffff' },
+        },
+      });
+      setCurrentTheme(newTheme);
     }
+  }, [businessPartner, isLoading]);
 
+  if (!currentTheme) {
     return (
-        <ThemeProvider theme={currentTheme}>
-            <CssBaseline />
-            <Router>
-                <Routes>
-                    {/* Öffentliche Routen */}
-                    <Route path="/" element={<LandingPage />} />
-                    <Route path="/login" element={<LoginPage />} />
-                    <Route path="/register" element={<LoginPage isRegister={true} />} />
-                    <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-                    <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
-                    <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
-                    {/* KORREKTUR: Routen für die rechtlichen Dokumente */}
-                    <Route path="/terms" element={<TermsPage />} />
-                    <Route path="/privacy" element={<PrivacyPage />} />
-                    
-                    {/* Geschützte Routen */}
-                    <Route element={<ProtectedRoutes />}>
-                        <Route path="/dashboard" element={<DashboardPage />} />
-                        <Route path="/profile" element={<ProfilePage />} />
-                        <Route path="/trusted-sources" element={<TrustedSourcesPage />} />
-                        <Route path="/feedback" element={<FeedbackCenterPage />} />
-                        
-                        {/* Routen für Admins und Assistenten */}
-                        <Route element={<BpStaffAllowedRoutes />}>
-                            <Route path="/admin/users" element={<AdminUserManagementPage />} />
-                            <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
-                            <Route path="/admin/actions" element={<AdminBpActionsPage />} />
-                        </Route>
-
-                        {/* Routen nur für Admins */}
-                        <Route path="/admin" element={<AdminRoutes />}>
-                            <Route index element={<AdminDashboardPage />} />
-                            <Route path="business-partners" element={<AdminBusinessPartnersPage />} />
-                            <Route path="widget-types" element={<AdminWidgetTypesPage />} />
-                            <Route path="bp-widget-access" element={<AdminBpWidgetAccessPage />} />
-                            <Route path="bp-widget-access/:bpId" element={<AdminBpWidgetAccessPage />} />
-                            <Route path="scraped-content" element={<AdminScrapedContentPage />} />
-                            <Route path="scraping-rules" element={<AdminScrapingRulesPage />} />
-                            <Route path="ai-prompt-rules" element={<AdminAIPromptRulesPage />} />
-                            <Route path="ai-content" element={<AdminAIContentPage />} />
-                            <Route path="categories" element={<AdminCategoriesPage />} />
-                            <Route path="tags" element={<AdminTagsPage />} />
-                            <Route path="monitor" element={<AdminMonitorPage />} />
-                            <Route path="statistics" element={<AdminStatisticsPage />} />
-                            <Route path="advertisements" element={<AdminAdvertisementsPage />} />
-                            <Route path="cronjobs" element={<AdminCronjobsPage />} />
-                            <Route path="sources" element={<AdminSourcesPage />} />                            
-                        </Route>
-                    </Route>
-                    
-                    <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
-            </Router>
-        </ThemeProvider>
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <CircularProgress />
+      </Box>
     );
+  }
+
+  const AnyThemeProvider = ThemeProvider as unknown as React.ComponentType<{ theme: Theme; children?: React.ReactNode }>;
+
+  return (
+    <AnyThemeProvider theme={currentTheme}>
+      <CssBaseline />
+      <Router>
+        <Routes>
+          {/* Öffentliche Routen */}
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<LoginPage isRegister={true} />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
+          <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
+          <Route path="/terms" element={<TermsPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
+
+          {/* Geschützte Routen */}
+          <Route element={<ProtectedRoutes />}>
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/trusted-sources" element={<TrustedSourcesPage />} />
+            <Route path="/feedback" element={<FeedbackCenterPage />} />
+            {/* === NEUE ROUTE START === */}
+            <Route path="/files" element={<FileManagementPage />} />
+            {/* === NEUE ROUTE ENDE === */}
+
+            {/* Routen für Admins und Assistenten */}
+            <Route element={<BpStaffAllowedRoutes />}>
+              <Route path="/admin/users" element={<AdminUserManagementPage />} />
+              <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
+              <Route path="/admin/actions" element={<AdminBpActionsPage />} />
+            </Route>
+
+            {/* Routen nur für Admins */}
+            <Route path="/admin" element={<AdminRoutes />}>
+              <Route index element={<AdminDashboardPage />} />
+              <Route path="business-partners" element={<AdminBusinessPartnersPage />} />
+              <Route path="widget-types" element={<AdminWidgetTypesPage />} />
+              <Route path="bp-widget-access" element={<AdminBpWidgetAccessPage />} />
+              <Route path="bp-widget-access/:bpId" element={<AdminBpWidgetAccessPage />} />
+              <Route path="scraped-content" element={<AdminScrapedContentPage />} />
+              <Route path="scraping-rules" element={<AdminScrapingRulesPage />} />
+              <Route path="ai-prompt-rules" element={<AdminAIPromptRulesPage />} />
+              <Route path="ai-content" element={<AdminAIContentPage />} />
+              <Route path="categories" element={<AdminCategoriesPage />} />
+              <Route path="tags" element={<AdminTagsPage />} />
+              <Route path="monitor" element={<AdminMonitorPage />} />
+              <Route path="statistics" element={<AdminStatisticsPage />} />
+              <Route path="advertisements" element={<AdminAdvertisementsPage />} />
+              <Route path="cronjobs" element={<AdminCronjobsPage />} />
+              <Route path="sources" element={<AdminSourcesPage />} />
+            </Route>
+          </Route>
+
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Router>
+    </AnyThemeProvider>
+  );
 }
 
 function AppWrapper() {
-    return (
-        <AuthProvider>
-            <App />
-        </AuthProvider>
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
+  if (typeof clientId === 'string' && /^['"].*['"]$/.test(clientId.trim())) {
+    console.warn(
+      '%cWARNUNG:',
+      'color: yellow; font-weight: bold;',
+      'Deine GOOGLE_CLIENT_ID enthält Anführungszeichen im Wert:',
+      clientId,
+      '\n→ Entferne die " oder \' aus der .env-Datei, sonst erkennt Google die ID nicht.'
     );
+  }
+
+  return (
+    <AuthProvider>
+      <App />
+    </AuthProvider>
+  );
 }
 
 export default AppWrapper;

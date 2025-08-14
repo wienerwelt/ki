@@ -18,7 +18,6 @@ exports.getMyBusinessPartner = async (req, res) => {
         const businessPartnerId = userResult.rows[0].business_partner_id;
 
         // Dann die Details des Business Partners inklusive Farbschema und Regionen abfragen
-        // KORREKTUR: Die Abfrage wurde erweitert, um alle für das Widget benötigten Felder explizit abzufragen.
         const bpResult = await db.query(
             `SELECT
                 bp.id,
@@ -38,6 +37,7 @@ exports.getMyBusinessPartner = async (req, res) => {
                 cs.text_color,
                 cs.background_color,
                 cs.accent_color,
+                cs.primary_text_color, -- === KORREKTUR: Dieses Feld wurde hinzugefügt ===
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
                     ORDER BY bpr.is_default DESC, r.name ASC

@@ -198,18 +198,19 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({ b
             widgetId={widgetId || ''}
             onDelete={onDelete}
             isRemovable={isRemovable}
-            // === GEÄNDERT: loading und error werden jetzt an WidgetPaper übergeben ===
             loading={loading}
             error={error}
             noPadding
         >
-            {/* Die alte Lade- & Fehlerlogik wurde entfernt, da WidgetPaper sie nun übernimmt */}
             {businessPartner && (
                  <Card variant="outlined" sx={{ height: '100%', border: 'none', display: 'flex', flexDirection: 'column' }}>
                     <CardContent sx={{ flexGrow: 1, overflowY: 'auto', pt: 2 }}>
                         <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', px: 2, mb: 2 }}>
                             <Avatar src={businessPartner.logo_url || undefined} sx={{ width: 90, height: 60, bgcolor: businessPartner.primary_color, mt: 0.5 }} variant="rounded">
-                                {businessPartner.name.charAt(0)}
+                                {/* === KORREKTUR START === */}
+                                {/* Prüft, ob 'name' ein String ist, bevor charAt aufgerufen wird */}
+                                {typeof businessPartner.name === 'string' && businessPartner.name.length > 0 ? businessPartner.name.charAt(0) : null}
+                                {/* === KORREKTUR ENDE === */}
                             </Avatar>
                             <Stack spacing={0.5} sx={{ flexGrow: 1 }}>
                                 {businessPartner.url_businesspartner && (

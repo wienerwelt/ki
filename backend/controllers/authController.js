@@ -41,7 +41,7 @@ exports.register = async (req, res) => {
         const emailToken = crypto.randomBytes(32).toString('hex');
         
         const newUserQuery = `
-            INSERT INTO users (username, email, name, password_hash, role, business_partner_id, consent_timestamp, email_verification_token) 
+            INSERT INTO users (username, email, first_name, password_hash, role, business_partner_id, consent_timestamp, email_verification_token)
             VALUES ($1, $2, $3, $4, 'fleet_manager', $5, NOW(), $6) RETURNING id, email
         `;
         await db.query(newUserQuery, [username, email, name, password_hash, businessPartnerId, emailToken]);
@@ -89,7 +89,7 @@ exports.googleLogin = async (req, res) => {
             const defaultBusinessPartnerId = defaultBpResult.rows[0].id;
 
             const insertQuery = `
-                INSERT INTO users (username, email, name, password_hash, role, business_partner_id, is_email_verified, consent_timestamp)
+                INSERT INTO users (username, email, first_name, password_hash, role, business_partner_id, is_email_verified, consent_timestamp)
                 VALUES ($1, $2, $3, NULL, 'fleet_manager', $4, TRUE, NOW())
                 RETURNING *;
             `;
@@ -253,6 +253,15 @@ exports.login = async (req, res) => {
         if (!isMatch) {
             return res.status(400).json({ message: 'Ungültige Anmeldedaten.' });
         }
+
+        // ======================================================
+        // HIER DIE KONSOLENAUSGABE HINZUFÜGEN
+        // ======================================================
+        console.log("========================================");
+        console.log("LOGIN ERFOLGREICH - GEFUNDENER BENUTZER:");
+        console.log(user);
+        console.log("========================================");
+        // ======================================================
 
         await db.query(
             'UPDATE users SET login_count = login_count + 1, last_login_at = CURRENT_TIMESTAMP WHERE id = $1',

@@ -5,7 +5,7 @@ import TimerIcon from '@mui/icons-material/Timer';
 import AutorenewIcon from '@mui/icons-material/Autorenew';
 
 const SessionTimer: React.FC = () => {
-    const { tokenExp, logout, renewSession } = useAuth(); // NEU: renewSession aus dem Context holen
+    const { tokenExp, logout, renewSession } = useAuth();
     const [timeLeft, setTimeLeft] = useState<number | null>(null);
     const [isRenewing, setIsRenewing] = useState(false);
 
@@ -40,7 +40,6 @@ const SessionTimer: React.FC = () => {
         setIsRenewing(false);
     };
 
-    // Zeigt den Timer nur an, wenn weniger als 60 Minuten verbleiben
     if (timeLeft === null || timeLeft > 3600) {
         return null;
     }
@@ -51,14 +50,16 @@ const SessionTimer: React.FC = () => {
     return (
         <>
             <Chip
-                icon={<TimerIcon />}
+                icon={<TimerIcon sx={{ color: 'inherit' }} />} // Icon erbt jetzt die Farbe
                 label={`Sitzung läuft ab in: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`}
                 color={timeLeft < 300 ? "error" : "warning"}
                 variant="outlined"
-                sx={{ mr: 1, color: 'white', borderColor: 'rgba(255, 255, 255, 0.7)' }}
+                // === KORREKTUR: 'color: white' entfernt und durch 'inherit' ersetzt ===
+                sx={{ mr: 1, color: 'inherit', borderColor: 'rgba(255, 255, 255, 0.7)' }}
             />
             <Tooltip title="Sitzung verlängern">
-                <IconButton onClick={handleRenew} disabled={isRenewing} sx={{ color: 'white' }}>
+                {/* === KORREKTUR: 'color: white' entfernt und durch 'inherit' ersetzt === */}
+                <IconButton onClick={handleRenew} disabled={isRenewing} sx={{ color: 'inherit' }}>
                     <AutorenewIcon />
                 </IconButton>
             </Tooltip>

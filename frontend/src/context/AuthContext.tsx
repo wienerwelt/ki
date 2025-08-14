@@ -3,19 +3,10 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { jwtDecode } from 'jwt-decode';
 import axios from 'axios';
 import apiClient from '../apiClient';
-import { Region } from '../types/dashboard.types';
+import { Region } from '../types/dashboard.types'; // Region wird weiterhin importiert
 
-// --- Interfaces ---
-// NEU: Die Schnittstelle wurde um 'primary_text_color' erweitert.
-interface BusinessPartnerData {
-    id: string; name: string; address: string; logo_url: string;
-    subscription_start_date: string; subscription_end_date: string;
-    primary_color: string; secondary_color: string; text_color: string;
-    background_color: string; accent_color?: string;
-    primary_text_color: string;
-}
-
-interface UserPayload {
+// === KORREKTUR: Fehlende Interfaces direkt hier definieren ===
+export interface UserPayload {
     id: string;
     username: string;
     email: string;
@@ -29,6 +20,22 @@ interface UserPayload {
     has_seen_welcome_widget: boolean;
 }
 
+export interface BusinessPartnerData {
+    id: string;
+    name: string;
+    address: string | null;
+    logo_url: string | null;
+    subscription_start_date: string | null;
+    subscription_end_date: string | null;
+    primary_color: string | null;
+    secondary_color: string | null;
+    text_color: string | null;
+    background_color: string | null;
+    accent_color?: string | null;
+    primary_text_color: string | null;
+}
+// === KORREKTUR ENDE ===
+
 interface DecodedToken {
     user: UserPayload;
     iat: number;
@@ -41,7 +48,7 @@ interface AuthContextType {
     businessPartner: BusinessPartnerData | null;
     isLoading: boolean;
     tokenExp: number | null;
-    login: (token: string) => void;
+    login: (token: string, userData: UserPayload) => void;
     logout: () => void;
     renewSession: () => Promise<void>;
     fetchBusinessPartnerData: () => Promise<void>;
@@ -57,10 +64,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [tokenExp, setTokenExp] = useState<number | null>(null);
 
     const setDecodedTokenInfo = (token: string) => {
-        const decoded: DecodedToken = jwtDecode(token);
-        setUser(decoded.user);
-        setTokenExp(decoded.exp);
-        localStorage.setItem('jwt_token', token);
+        try {
+            const decoded: DecodedToken = jwtDecode(token);
+            setUser(decoded.user);
+            setTokenExp(decoded.exp);
+            localStorage.setItem('jwt_token', token);
+        } catch (e) {
+            console.error("Failed to decode token", e);
+            logout();
+        }
     };
 
     useEffect(() => {
@@ -82,33 +94,50 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, []);
     
     const fetchBusinessPartnerData = useCallback(async () => {
+        console.log('[AuthContext] Führe fetchBusinessPartnerData aus...');
         const token = localStorage.getItem('jwt_token');
+        
         if (!token || !user?.business_partner_id) {
+            console.error('[AuthContext] fetchBusinessPartnerData ABGEBROCHEN. Grund:', {
+                hasToken: !!token,
+                userObject: user,
+                hasUserBpId: !!user?.business_partner_id
+            });
             setBusinessPartner(null);
             return;
         }
+
+        console.log(`[AuthContext] Sende Anfrage an /api/business-partner/me für BP ID: ${user.business_partner_id}`);
         try {
-            const response = await axios.get('/api/business-partner/me', {
+            const response = await apiClient.get('/api/business-partner/me', {
                 headers: { 'x-auth-token': token },
             });
+            console.log('%c[AuthContext] ERFOLG! Antwort von /api/business-partner/me:', 'color: green; font-weight: bold;', response.data);
             setBusinessPartner(response.data);
         } catch (error) {
-            console.error('Error fetching business partner data:', error);
+            console.error('%c[AuthContext] FEHLER beim Laden der Business Partner Daten:', 'color: red; font-weight: bold;', error);
             setBusinessPartner(null);
         }
-    }, [user?.business_partner_id]);
+    }, [user]);
 
     useEffect(() => {
+        console.log('[AuthContext] useEffect für User-Änderung getriggert. Aktueller User-State:', user);
         if (user && user.business_partner_id) {
+            console.log('[AuthContext] User hat eine business_partner_id. Rufe fetchBusinessPartnerData auf.');
             fetchBusinessPartnerData();
         } else {
+            console.log('[AuthContext] User hat KEINE business_partner_id oder ist null. Setze businessPartner auf null.');
             setBusinessPartner(null);
         }
     }, [user, fetchBusinessPartnerData]);
 
-    const login = (token: string) => {
+    const login = (token: string, userData: UserPayload) => {
+        console.log('[AuthContext] login-Funktion aufgerufen. Setze User-State:', userData);
+        localStorage.setItem('jwt_token', token);
+        setUser(userData);
         try {
-            setDecodedTokenInfo(token);
+            const decoded: DecodedToken = jwtDecode(token);
+            setTokenExp(decoded.exp);
         } catch (e) {
             console.error("Failed to decode token on login", e);
             logout();

@@ -342,8 +342,7 @@ exports.getFleetAssociationNews = async (req, res) => {
 
 exports.getCommodityPrices = async (req, res) => {
     try {
-        // Diese Liste kann zukünftig erweitert werden, das Widget passt sich an.
-        const indicators = ['BRENT_OIL', 'EUR_USD']; 
+        const indicators = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M']; 
         const results = {};
 
         for (const indicator of indicators) {
@@ -381,6 +380,16 @@ exports.getCommodityPrices = async (req, res) => {
             `;
             const monthAgoResult = await db.query(monthAgoQuery, [indicator, latest.data_timestamp]);
             const monthAgoPrice = monthAgoResult.rows.length > 0 ? parseFloat(monthAgoResult.rows[0].value) : null;
+            
+            // === NEU: Preis von vor einem Jahr holen ===
+            const yearAgoQuery = `
+                SELECT value FROM economic_indicators
+                WHERE indicator_name = $1 AND data_timestamp <= $2::date - interval '1 year'
+                ORDER BY data_timestamp DESC
+                LIMIT 1;
+            `;
+            const yearAgoResult = await db.query(yearAgoQuery, [indicator, latest.data_timestamp]);
+            const yearAgoPrice = yearAgoResult.rows.length > 0 ? parseFloat(yearAgoResult.rows[0].value) : null;
 
             // Trend bestimmen (Vergleich mit dem Wert von vor einer Woche)
             let trend = 'stable';
@@ -397,7 +406,8 @@ exports.getCommodityPrices = async (req, res) => {
                 trend: trend,
                 historical: {
                   weekAgo: weekAgoPrice,
-                  monthAgo: monthAgoPrice
+                  monthAgo: monthAgoPrice,
+                  yearAgo: yearAgoPrice // === NEU: Jahreswert zum Ergebnis hinzugefügt ===
                 }
             };
         }

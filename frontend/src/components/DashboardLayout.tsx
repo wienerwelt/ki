@@ -30,7 +30,11 @@ import { useAuth } from '../context/AuthContext';
 import SessionTimer from './SessionTimer';
 import AdvertisementBanner from './AdvertisementBanner';
 import apiClient from '../apiClient';
-import FeedbackIcon from '@mui/icons-material/Feedback'; // Icon importieren
+import FeedbackIcon from '@mui/icons-material/Feedback';
+// === NEUER IMPORT START ===
+import FolderIcon from '@mui/icons-material/Folder';
+// === NEUER IMPORT ENDE ===
+
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -116,6 +120,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     <DashboardIcon sx={{ mr: 2 }} />
                     <ListItemText primary="Mein Dashboard" />
                 </ListItem>
+                {/* === NEUER LINK START === */}
+                <ListItem button component={RouterLink} to="/files" onClick={toggleDrawer(false)}>
+                    <FolderIcon sx={{ mr: 2 }} />
+                    <ListItemText primary="Dateiverzeichnis" />
+                </ListItem>
+                {/* === NEUER LINK ENDE === */}
                 <ListItem button component={RouterLink} to="/trusted-sources" onClick={toggleDrawer(false)}>
                     <FactCheckIcon sx={{ mr: 2 }} />
                     <ListItemText primary="Vertrauensw. Quellen" />

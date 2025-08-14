@@ -38,17 +38,18 @@ const adminCronjobsRoutes = require('./routes/adminCronjobsRoutes.js');
 const sourcesRoutes = require('./routes/sourcesRoutes.js');
 const adminSourcesRoutes = require('./routes/adminSourcesRoutes.js');
 const feedbackRoutes = require('./routes/feedbackRoutes');
+const fileRoutes = require('./routes/fileRoutes');
 
 // Controller-Importe
 const dataController = require('./controllers/dataController');
 
 // Service-Importe
-const jobManager = require('./services/jobManagerService'); // Wichtig für die Redis-Synchronisation
+const jobManager = require('./services/jobManagerService');
 
 const { createBullBoard } = require('@bull-board/api');
 const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
 const { ExpressAdapter } = require('@bull-board/express');
-const { aiContentQueue } = require('./services/queueService'); // Importiere deine Queue
+const { aiContentQueue } = require('./services/queueService');
 
 dotenv.config();
 
@@ -57,10 +58,10 @@ const PORT = process.env.PORT || 5000;
 
 // --- Bull Board Dashboard Setup ---
 const serverAdapter = new ExpressAdapter();
-serverAdapter.setBasePath('/api/admin/jobs'); // Der Pfad, unter dem das Dashboard erreichbar ist
+serverAdapter.setBasePath('/api/admin/jobs');
 
 createBullBoard({
-  queues: [new BullMQAdapter(aiContentQueue)], // Füge hier deine Queues hinzu
+  queues: [new BullMQAdapter(aiContentQueue)],
   serverAdapter: serverAdapter,
 });
 
@@ -92,7 +93,7 @@ app.use((req, res, next) => {
     next();
 });
 
-// DB-Verbindung und anschließende Synchronisation der Redis-Jobs
+// DB-Verbindung
 db.query('SELECT 1')
     .then(() => {
         console.log('PostgreSQL connected successfully!');
@@ -133,29 +134,34 @@ app.use('/api/admin/actions', adminBpActionsRoutes);
 app.use('/api/admin/cronjobs', adminCronjobsRoutes);
 app.use('/api/admin/jobs', serverAdapter.getRouter());
 app.use('/api/admin/sources', adminSourcesRoutes);
+app.use('/api/files', fileRoutes);
 
-// =================================================================
-// SERVE FRONTEND STATIC FILES
-// =================================================================
+// === FINALE KORREKTUR: API 404-HANDLER START ===
+// Diese Middleware fängt alle Anfragen ab, die mit /api/ beginnen, aber von keinem
+// der obigen Router verarbeitet wurden. Dies verhindert, dass API-Anfragen
+// fälschlicherweise von der Frontend-Route unten bedient werden.
+app.use('/api/*', (req, res) => {
+    res.status(404).json({
+        error: 'API Endpoint Not Found',
+        message: `The endpoint ${req.method} ${req.originalUrl} does not exist on this server.`
+    });
+});
+// === FINALE KORREKTUR: API 404-HANDLER ENDE ===
+
+
+// --- SERVE FRONTEND STATIC FILES ---
 const frontendDistPath = path.resolve(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(frontendDistPath));
 
-app.get('*', (req, res, next) => {
-  // If the request is for an API route, pass it to the next middleware (the error handler)
-  if (req.originalUrl.startsWith('/api/')) {
-    return next();
-  }
-  // Otherwise, send the frontend's index.html file
+// --- CATCH-ALL ROUTE FÜR FRONTEND ---
+// Diese Route fängt jetzt nur noch Anfragen ab, die nicht mit /api/ beginnen.
+app.get('*', (req, res) => {
   res.sendFile(path.join(frontendDistPath, 'index.html'));
 });
-// =================================================================
 
 // --- Globale Fehlerbehandlungs-Middleware ---
 app.use((err, req, res, next) => {
     console.error('UNHANDLED ERROR:', err);
-    
-    // Temporarily for debugging: Send the detailed error to the client
-    // WARNING: Do not use this in a live production environment for long.
     res.status(500).json({
         message: err.message,
         stack: err.stack,
@@ -172,3 +178,58 @@ app.listen(PORT, () => {
         details: { message: `Server started on port ${PORT}` }
     });
 });
+
+// ======================================================
+// TEMPORÄRE DATENBANK-INSPEKTOR-ROUTE
+// ======================================================
+app.get('/api/debug/db-inspector', async (req, res) => {
+    try {
+        console.log("--- Datenbank-Inspektor wird ausgeführt ---");
+        const dbConfig = db.options;
+        console.log("Verbinde mit folgender Konfiguration:", dbConfig);
+        const dbNameResult = await db.query('SELECT current_database();');
+        const currentDb = dbNameResult.rows[0].current_database;
+        console.log("Erfolgreich verbunden mit Datenbank:", currentDb);
+        const tablesResult = await db.query(`
+            SELECT tablename
+            FROM pg_catalog.pg_tables
+            WHERE schemaname = 'public'
+            ORDER BY tablename;
+        `);
+        const tables = tablesResult.rows.map(row => row.tablename);
+        console.log("Gefundene Tabellen:", tables);
+        res.status(200).json({
+            message: "Datenbank-Inspektor-Bericht",
+            verbindung_hergestellt_zu_db: currentDb,
+            benutzter_user: dbConfig.user,
+            benutzter_host: dbConfig.host,
+            gefundene_tabellen: tables
+        });
+    } catch (err) {
+        console.error("Fehler im DB-Inspektor:", err);
+        res.status(500).json({
+            error: "Fehler im DB-Inspektor",
+            message: err.message,
+            stack: err.stack,
+            verbindungs_konfiguration: db.options
+        });
+    }
+});
+// ======================================================
+
+// ======================================================
+// TEMPORÄRE DEBUG-ROUTE
+// ======================================================
+app.get('/api/debug/users', async (req, res) => {
+    try {
+        console.log("--- Abrufen aller Benutzer für das Debugging ---");
+        const { rows } = await db.query('SELECT * FROM users');
+        console.log("Gefundene Benutzer:", rows);
+        console.log(`--- Insgesamt ${rows.length} Benutzer gefunden ---`);
+        res.status(200).json(rows);
+    } catch (err) {
+        console.error("Fehler bei der Debug-Abfrage:", err);
+        res.status(500).json({ error: "Fehler beim Abrufen der Daten" });
+    }
+});
+// ======================================================
