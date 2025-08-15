@@ -5,10 +5,14 @@ const adminAuth = require('../middleware/adminAuth');
 const authorize = require('../middleware/authorize'); 
 const adminBpController = require('../controllers/adminBusinessPartnerController');
 
-// KORREKTUR: Die pauschale Middleware wurde entfernt. Berechtigungen werden jetzt pro Route gesetzt.
-
-// Diese Route ist für Admins UND Assistenten zugänglich, damit das Level-Dropdown funktioniert.
+// Diese Route ist für Admins UND Assistenten zugänglich.
 router.get('/:id/levels', authorize(['admin', 'assistenz']), adminBpController.getMembershipLevels);
+
+// === KORREKTUR START ===
+// Middleware und Controller-Variable korrigiert.
+// Diese Route ist ebenfalls für Admins UND Assistenten zugänglich.
+router.put('/:id/tier', authorize(['admin', 'assistenz']), adminBpController.updateBusinessPartnerTier);
+// === KORREKTUR ENDE ===
 
 // Die folgenden Routen sind weiterhin NUR für Admins zugänglich.
 router.get('/regions', adminAuth, adminBpController.getAllRegions);

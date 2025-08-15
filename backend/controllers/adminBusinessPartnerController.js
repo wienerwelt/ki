@@ -5,17 +5,17 @@ const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F
 // GET all business partners
 exports.getAllBusinessPartners = async (req, res) => {
     try {
-        // KORREKTUR: Die Abfrage wurde um die Zählung der abonnierten Widgets erweitert.
         const result = await db.query(
             `SELECT
                 bp.id, bp.name, bp.dashboard_title, bp.address, bp.logo_url, bp.email,
                 bp.subscription_start_date, bp.subscription_end_date, bp.color_scheme_id,
                 bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
+                bp.storage_tier, bp.storage_usage_bytes, bp.storage_limit_bytes,
                 cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
                 (SELECT COUNT(*) FROM users u WHERE u.business_partner_id = bp.id) AS user_count,
-                -- NEU: Zählt die Anzahl der zugewiesenen Widgets pro Partner
                 (SELECT COUNT(*) FROM business_partner_widget_access wa WHERE wa.business_partner_id = bp.id) AS widget_count,
+                (SELECT COUNT(*) FROM business_partner_files bpf WHERE bpf.business_partner_id = bp.id) AS file_count,
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
                     ORDER BY bpr.is_default DESC, r.name ASC
@@ -144,8 +144,19 @@ exports.updateBusinessPartner = async (req, res) => {
         name, address, logo_url, subscription_start_date, subscription_end_date,
         color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
-        default_region_id, email
+        default_region_id, email, storage_tier // Tier is now part of the main update
     } = req.body;
+
+    const validTiers = {
+        'free': 0,
+        'standard': 104857600,    // 100 MB
+        'premium': 1048576000     // 1 GB
+    };
+
+    if (!validTiers.hasOwnProperty(storage_tier)) {
+        return res.status(400).json({ message: 'Ungültiger Tier-Name.' });
+    }
+    const newLimit = validTiers[storage_tier];
 
     const client = await db.connect();
     try {
@@ -156,12 +167,14 @@ exports.updateBusinessPartner = async (req, res) => {
                 name = $1, address = $2, logo_url = $3, subscription_start_date = $4,
                 subscription_end_date = $5, color_scheme_id = $6, is_active = $7,
                 url_businesspartner = $8, dashboard_title = $9, level_1_name = $10,
-                level_2_name = $11, level_3_name = $12, email = $13, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $14 RETURNING *`,
+                level_2_name = $11, level_3_name = $12, email = $13, 
+                storage_tier = $14, storage_limit_bytes = $15, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $16 RETURNING *`,
             [
                 name, address || null, logo_url || null, subscription_start_date || null, subscription_end_date || null,
                 color_scheme_id || null, is_active, url_businesspartner || null, dashboard_title || null,
-                level_1_name || null, level_2_name || null, level_3_name || null, email || null, id
+                level_1_name || null, level_2_name || null, level_3_name || null, email || null,
+                storage_tier, newLimit, id
             ]
         );
         if (updatedBpResult.rows.length === 0) throw new Error('Business Partner not found.');
@@ -183,9 +196,6 @@ exports.updateBusinessPartner = async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error updating business partner:', err.message);
-        if (err.constraint === 'business_partners_email_key') {
-            return res.status(409).json({ message: 'Ein anderer Business Partner verwendet diese E-Mail-Adresse bereits.' });
-        }
         res.status(500).send('Server error');
     } finally {
         client.release();
@@ -277,5 +287,45 @@ exports.getMembershipLevels = async (req, res) => {
     } catch (err) {
         console.error('Error fetching membership levels:', err.message);
         res.status(500).send('Server error');
+    }
+};
+
+exports.updateBusinessPartnerTier = async (req, res) => {
+    const { id } = req.params;
+    const { tier } = req.body;
+
+    const validTiers = {
+        'free': 0,
+        'standard': 104857600,    // 100 MB
+        'premium': 1048576000     // 1 GB
+    };
+
+    if (!validTiers.hasOwnProperty(tier)) {
+        return res.status(400).json({ message: 'Ungültiger Tier-Name.' });
+    }
+
+    const newLimit = validTiers[tier];
+
+    try {
+        const result = await db.query(
+            `UPDATE business_partners 
+             SET storage_tier = $1, storage_limit_bytes = $2 
+             WHERE id = $3 
+             RETURNING id, name, storage_tier, storage_limit_bytes`,
+            [tier, newLimit, id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'Business Partner nicht gefunden.' });
+        }
+
+        res.status(200).json({ 
+            message: `Tier für ${result.rows[0].name} erfolgreich auf '${tier}' aktualisiert.`,
+            businessPartner: result.rows[0]
+        });
+
+    } catch (err) {
+        console.error('Fehler beim Aktualisieren des Business Partner Tiers:', err.message);
+        res.status(500).send('Serverfehler');
     }
 };

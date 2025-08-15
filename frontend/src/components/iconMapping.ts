@@ -16,6 +16,7 @@ import StarsIcon from '@mui/icons-material/Stars';
 import FactoryIcon from '@mui/icons-material/Factory';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import FolderIcon from '@mui/icons-material/Folder';
 
 // === GEÄNDERT: Die Schlüssel sind jetzt die vollen Namen der Komponenten ===
 export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
@@ -32,6 +33,7 @@ export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     FactoryIcon: FactoryIcon,
     FactCheckIcon: FactCheckIcon,
     TrendingUpIcon: TrendingUpIcon,
+    FolderIcon: FolderIcon,
 };
 
 // === GEÄNDERT: Die Funktion ist jetzt ein einfacher, direkter Lookup ===

@@ -25,4 +25,7 @@ router.get('/:id/download', authMiddleware, fileController.getDownloadUrl);
 // Route zum Löschen einer Datei (nur für Admins/Assistenten)
 router.delete('/:id', authMiddleware, fileController.deleteFile);
 
+router.post('/files/:id/track-download', authMiddleware, fileController.trackDownload);
+
+
 module.exports = router;

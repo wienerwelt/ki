@@ -33,8 +33,10 @@ export interface BusinessPartnerData {
     background_color: string | null;
     accent_color?: string | null;
     primary_text_color: string | null;
+    storage_tier: string;
+    storage_limit_bytes: number;
+    storage_usage_bytes: number;    
 }
-// === KORREKTUR ENDE ===
 
 interface DecodedToken {
     user: UserPayload;

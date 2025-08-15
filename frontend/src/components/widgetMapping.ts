@@ -14,6 +14,7 @@ import EVStationWidget from './widgets/EVStationWidget';
 import BusinessPartnerActionsWidget from './widgets/BusinessPartnerActionsWidget';
 import TrustedSourcesWidget from './widgets/TrustedSourcesWidget';
 import CommodityPricesWidget from './widgets/CommodityPricesWidget';
+import FileDownloadWidget from './widgets/FileDownloadWidget';
 
 // Definiere die zentrale Zuordnung. Die Schlüssel hier sind die `type_key`s.
 export const WIDGET_COMPONENTS: { [key: string]: React.ElementType<any> } = {
@@ -29,4 +30,5 @@ export const WIDGET_COMPONENTS: { [key: string]: React.ElementType<any> } = {
     BusinessPartnerAktionen: BusinessPartnerActionsWidget,
     TrustedSources: TrustedSourcesWidget,
     CommodityPrices: CommodityPricesWidget,
+    FileDownload: FileDownloadWidget,
 };

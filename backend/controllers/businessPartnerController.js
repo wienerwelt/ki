@@ -3,9 +3,8 @@ const db = require('../config/db');
 
 exports.getMyBusinessPartner = async (req, res) => {
     try {
-        const userId = req.user.id; // Kommt vom Auth-Middleware
+        const userId = req.user.id;
 
-        // Zuerst die business_partner_id des Benutzers abfragen
         const userResult = await db.query(
             'SELECT business_partner_id FROM users WHERE id = $1',
             [userId]
@@ -17,27 +16,15 @@ exports.getMyBusinessPartner = async (req, res) => {
 
         const businessPartnerId = userResult.rows[0].business_partner_id;
 
-        // Dann die Details des Business Partners inklusive Farbschema und Regionen abfragen
+        // === KORREKTUR: Abfrage um Speicher-Informationen erweitert ===
         const bpResult = await db.query(
             `SELECT
-                bp.id,
-                bp.name,
-                bp.dashboard_title,
-                bp.address,
-                bp.logo_url,
-                bp.email,
-                bp.url_businesspartner,
-                bp.subscription_start_date,
-                bp.subscription_end_date,
-                bp.level_1_name,
-                bp.level_2_name,
-                bp.level_3_name,
-                cs.primary_color,
-                cs.secondary_color,
-                cs.text_color,
-                cs.background_color,
-                cs.accent_color,
-                cs.primary_text_color, -- === KORREKTUR: Dieses Feld wurde hinzugefügt ===
+                bp.id, bp.name, bp.dashboard_title, bp.address, bp.logo_url, bp.email,
+                bp.url_businesspartner, bp.subscription_start_date, bp.subscription_end_date,
+                bp.level_1_name, bp.level_2_name, bp.level_3_name,
+                bp.storage_tier, bp.storage_limit_bytes, bp.storage_usage_bytes, -- NEUE FELDER
+                cs.primary_color, cs.secondary_color, cs.text_color, cs.background_color,
+                cs.accent_color, cs.primary_text_color,
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
                     ORDER BY bpr.is_default DESC, r.name ASC
