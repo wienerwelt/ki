@@ -1,3 +1,4 @@
+DEVELOPMENT (lokaler Server = Laptop)
 1.Schritt
 1.1 Docker Desktop-Anwendung auf Ihrem Computer gestartet sein
 1.2 Redis-Server starten:
@@ -20,3 +21,14 @@ Terminal 3) npm run dev
 
 Zusammenfassung
 Frontend http://localhost:5173
+
+PRODUKTIV (Ionos)
+
+1. SFTP Updates:
+1.1. Daten (backend) in den Ordner /httpdocs/dashboard/backend/ überspielen
+1.2. Daten (frontend) in den Ordner /httpdocs/dashboard/frontend/ überspielen
+1.2.1 plesk -> node.js -> "run node.js commands" -> npm build (erstellt in /dist/ die Dateien)
+oder 
+1.2. Daten (frontend) lokal im terminal mit "npm build" die Dateien in /dist/ erstellen und dann den Ordner /httpdocs/dashboard/frontend/dist überspielen
+
+Frontend: https://dashboard.mobiliti.at
