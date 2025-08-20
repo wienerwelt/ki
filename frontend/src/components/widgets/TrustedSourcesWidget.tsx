@@ -1,17 +1,21 @@
 // frontend/src/components/widgets/TrustedSourcesWidget.tsx
 import React, { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Box, Typography, Button, Stack, Divider, Badge } from '@mui/material';
-// HIER IST DIE ÄNDERUNG: Wir importieren Link anstatt useNavigate
-import { Link } from 'react-router-dom';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import apiClient from '../../apiClient';
 
-const TrustedSourcesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRemovable }) => {
-    // useNavigate wird nicht mehr benötigt
+interface TrustedSourcesWidgetProps extends BaseWidgetProps {
+    widgetTitle: string;
+    widgetTypeKey: string;
+}
+
+const TrustedSourcesWidget: React.FC<TrustedSourcesWidgetProps> = ({ onDelete, widgetId, isRemovable, widgetTitle, widgetTypeKey }) => {
     const [pendingCount, setPendingCount] = useState(0);
     const [loading, setLoading] = useState(true);
+    const navigate = useNavigate();
 
     useEffect(() => {
         const fetchPendingCount = async () => {
@@ -30,6 +34,17 @@ const TrustedSourcesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, i
         fetchPendingCount();
     }, []);
 
+    // Diese Funktion "programmiert" den Klick auf das Feedback-Icon im WidgetPaper
+    const handleReportError = () => {
+        navigate('/feedback', {
+            state: {
+                type: 'feedback',
+                title: `Vorschlag für Widget: ${widgetTitle}`, 
+                widgetKey: widgetTypeKey
+            }
+        });
+    };
+
     return (
         <WidgetPaper
             title={
@@ -42,6 +57,11 @@ const TrustedSourcesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, i
             onDelete={onDelete}
             isRemovable={isRemovable}
             loading={loading}
+            widgetTitle={widgetTitle}
+            widgetTypeKey={widgetTypeKey}
+            // HIER IST DIE ENTSCHEIDENDE ÄNDERUNG:
+            // Wir übergeben unsere Funktion an die WidgetPaper-Komponente.
+            onReportError={handleReportError} 
         >
             <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
                 <Typography variant="body1" sx={{ textAlign: 'center' }}>
@@ -52,30 +72,29 @@ const TrustedSourcesWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, i
                 </Typography>
                 <Stack spacing={1} divider={<Divider />}>
                     <Badge badgeContent={pendingCount} color="primary" sx={{ width: '100%' }}>
-                        {/* HIER IST DIE ÄNDERUNG: Der Button ist jetzt in einem Link verpackt */}
                         <Button
                             component={Link}
                             to="/trusted-sources"
-                            state={{ tab: 1 }} // Führt direkt zum Abstimmen-Tab
+                            state={{ tab: 1 }}
                             variant="contained"
                             fullWidth
                             disabled={pendingCount === 0}
-                            sx={{ textDecoration: 'none' }} // Verhindert Unterstreichung
+                            sx={{ textDecoration: 'none' }} 
                         >
                             {pendingCount > 0 ? 'Jetzt Abstimmen' : 'Keine Abstimmungen'}
                         </Button>
                     </Badge>
-                     {/* HIER IST DIE ÄNDERUNG: Auch dieser Button ist jetzt ein Link */}
                      <Button
                         component={Link}
                         to="/trusted-sources"
-                        state={{ tab: 2 }} // Führt direkt zum Vorschlagen-Tab
+                        state={{ tab: 2 }}
                         variant="outlined"
                         sx={{ textDecoration: 'none' }}
                      >
                         Neue Quelle vorschlagen
                     </Button>
                 </Stack>
+                {/* Hier befindet sich kein extra Feedback-Link mehr */}
             </Box>
         </WidgetPaper>
     );

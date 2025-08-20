@@ -29,6 +29,6 @@ PRODUKTIV (Ionos)
 1.2. Daten (frontend) in den Ordner /httpdocs/dashboard/frontend/ überspielen
 1.2.1 plesk -> node.js -> "run node.js commands" -> npm build (erstellt in /dist/ die Dateien)
 oder 
-1.2. Daten (frontend) lokal im terminal mit "npm build" die Dateien in /dist/ erstellen und dann den Ordner /httpdocs/dashboard/frontend/dist überspielen
+1.2. Daten (frontend) lokal im terminal mit "npm run build" die Dateien in /dist/ erstellen und dann den Ordner /httpdocs/dashboard/frontend/dist überspielen
 
 Frontend: https://dashboard.mobiliti.at

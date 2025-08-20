@@ -15,10 +15,16 @@ const adminAuth = (req, res, next) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         req.user = decoded.user; // User-Daten aus dem Token extrahieren
 
-        // Prüfen, ob der Benutzer die Admin-Rolle hat
-        if (req.user.role !== 'admin') {
-            return res.status(403).json({ message: 'Access denied. Admin role required.' });
+        // ======================================================
+        // KORRIGIERTE PRÜFUNG
+        // Wir definieren alle erlaubten Admin-Rollen in einer Liste.
+        const allowedRoles = ['admin', 'assistenz'];
+        
+        // Wir prüfen, ob die Rolle des Benutzers in der Liste der erlaubten Rollen enthalten ist.
+        if (!allowedRoles.includes(req.user.role)) {
+            return res.status(403).json({ message: 'Access denied. Admin or Assistant role required.' });
         }
+        // ======================================================
 
         next(); // Nächste Middleware/Route aufrufen
     } catch (err) {

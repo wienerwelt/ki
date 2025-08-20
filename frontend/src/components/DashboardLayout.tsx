@@ -25,7 +25,6 @@ import QueryStatsIcon from '@mui/icons-material/QueryStats';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import StarsIcon from '@mui/icons-material/Stars';
 import ScheduleIcon from '@mui/icons-material/Schedule';
-import DnsIcon from '@mui/icons-material/Dns';
 import { useAuth } from '../context/AuthContext';
 import SessionTimer from './SessionTimer';
 import AdvertisementBanner from './AdvertisementBanner';
@@ -159,10 +158,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 <ScheduleIcon sx={{ mr: 2 }} />
                                 <ListItemText primary="Autom. Aufgaben" />
                             </ListItem>
-                            <ListItem button component="a" href="/api/admin/jobs/" target="_blank" onClick={toggleDrawer(false)}>
-                                <DnsIcon sx={{ mr: 2 }} />
-                                <ListItemText primary="Job-Warteschlange" />
-                            </ListItem>
                             <ListItem button component={RouterLink} to="/admin/statistics" onClick={toggleDrawer(false)}><QueryStatsIcon sx={{ mr: 2 }} /><ListItemText primary="Statistiken" /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/monitor" onClick={toggleDrawer(false)}><MonitorIcon sx={{ mr: 2 }} /><ListItemText primary="Aktivitätsmonitor" /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/advertisements" onClick={toggleDrawer(false)}><CampaignIcon sx={{ mr: 2 }} /><ListItemText primary="Werbung" /></ListItem>
@@ -211,7 +206,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
                     <RouterLink to="/dashboard" style={{ textDecoration: 'none', color: 'inherit' }}>
                         {businessPartner?.logo_url && (
-                            <Avatar alt={businessPartner.name} src={businessPartner.logo_url} sx={{ width: 40, height: 40, mr: 2 }} variant="rounded" />
+                            <Avatar alt={businessPartner.name} src={businessPartner.logo_url} sx={{ width: 60, height: 40, mr: 2 }} variant="rounded" />
                         )}
                     </RouterLink>
 

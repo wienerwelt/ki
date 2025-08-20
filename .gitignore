@@ -140,3 +140,9 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Anleitung
+/Startanleitung.txt
+
+# sql directory
+/sql/

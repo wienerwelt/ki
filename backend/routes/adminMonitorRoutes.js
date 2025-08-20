@@ -3,16 +3,15 @@ const express = require('express');
 const router = express.Router();
 const adminAuth = require('../middleware/adminAuth');
 const adminMonitorController = require('../controllers/adminMonitorController');
+const adminStatusController = require('../controllers/adminStatusController'); // NEU
 
-// Alle Routen hier sind nur für Admins, die Middleware wird auf alle angewendet.
 router.use(adminAuth);
 
-// Bestehende Route zum Abrufen der Logs
-// GET /api/admin/monitor/activity
+// Bestehende Routen für Logs
 router.get('/activity', adminMonitorController.getActivityLogs);
-
-// NEUE Route zum Löschen der Logs
-// DELETE /api/admin/monitor/logs
 router.delete('/logs', adminMonitorController.deleteLogs);
+
+// NEU: Route für den System-Gesundheitszustand
+router.get('/status', adminStatusController.getSystemHealth);
 
 module.exports = router;

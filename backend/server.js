@@ -1,7 +1,6 @@
 // backend/server.js
 require('dotenv').config();
 const express = require('express');
-const dotenv = require('dotenv');
 const cors = require('cors');
 const db = require('./config/db');
 const { logActivity } = require('./services/auditLogService');
@@ -51,8 +50,6 @@ const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
 const { ExpressAdapter } = require('@bull-board/express');
 const { aiContentQueue } = require('./services/queueService');
 
-dotenv.config();
-
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -70,7 +67,6 @@ const allowedOrigins = [
   'http://localhost:5173',
   'https://dashboard.mobiliti.at'
 ];
-
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
@@ -81,7 +77,6 @@ app.use(cors({
   },
   credentials: true,
 }));
-
 
 // --- Standard Middleware ---
 app.use(express.json());
@@ -100,6 +95,11 @@ db.query('SELECT 1')
         jobManager.synchronizeSchedulesFromDB();
     })
     .catch(err => console.error('PostgreSQL connection error:', err));
+
+// ======================================================
+// WICHTIGE ÄNDERUNG: Bull Board Route wird hier registriert
+app.use('/api/admin/jobs', serverAdapter.getRouter());
+// ======================================================
 
 // --- API-Routen ---
 app.use('/api/auth', authRoutes);
@@ -132,52 +132,8 @@ app.use('/api/admin/stats', adminStatsRoutes);
 app.use('/api/admin/advertisements', adminAdvertisementsRoutes);
 app.use('/api/admin/actions', adminBpActionsRoutes);
 app.use('/api/admin/cronjobs', adminCronjobsRoutes);
-app.use('/api/admin/jobs', serverAdapter.getRouter());
 app.use('/api/admin/sources', adminSourcesRoutes);
 app.use('/api/files', fileRoutes);
-
-// === FINALE KORREKTUR: API 404-HANDLER START ===
-// Diese Middleware fängt alle Anfragen ab, die mit /api/ beginnen, aber von keinem
-// der obigen Router verarbeitet wurden. Dies verhindert, dass API-Anfragen
-// fälschlicherweise von der Frontend-Route unten bedient werden.
-app.use('/api/*', (req, res) => {
-    res.status(404).json({
-        error: 'API Endpoint Not Found',
-        message: `The endpoint ${req.method} ${req.originalUrl} does not exist on this server.`
-    });
-});
-// === FINALE KORREKTUR: API 404-HANDLER ENDE ===
-
-
-// --- SERVE FRONTEND STATIC FILES ---
-const frontendDistPath = path.resolve(__dirname, '..', 'frontend', 'dist');
-app.use(express.static(frontendDistPath));
-
-// --- CATCH-ALL ROUTE FÜR FRONTEND ---
-// Diese Route fängt jetzt nur noch Anfragen ab, die nicht mit /api/ beginnen.
-app.get('*', (req, res) => {
-  res.sendFile(path.join(frontendDistPath, 'index.html'));
-});
-
-// --- Globale Fehlerbehandlungs-Middleware ---
-app.use((err, req, res, next) => {
-    console.error('UNHANDLED ERROR:', err);
-    res.status(500).json({
-        message: err.message,
-        stack: err.stack,
-        error: err 
-    });
-});
-
-// --- Serverstart ---
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    logActivity({
-        actionType: 'SERVER_START',
-        status: 'success',
-        details: { message: `Server started on port ${PORT}` }
-    });
-});
 
 // ======================================================
 // TEMPORÄRE DATENBANK-INSPEKTOR-ROUTE
@@ -232,4 +188,28 @@ app.get('/api/debug/users', async (req, res) => {
         res.status(500).json({ error: "Fehler beim Abrufen der Daten" });
     }
 });
-// ======================================================
+
+// --- API 404-HANDLER ---
+app.use('/api/*', (req, res) => {
+    res.status(404).json({ error: 'API Endpoint Not Found' });
+});
+
+// --- SERVE FRONTEND STATIC FILES ---
+const frontendDistPath = path.resolve(__dirname, '..', 'frontend', 'dist');
+app.use(express.static(frontendDistPath));
+
+// --- CATCH-ALL ROUTE FÜR FRONTEND ---
+app.get('*', (req, res) => {
+  res.sendFile(path.join(frontendDistPath, 'index.html'));
+});
+
+// --- Globale Fehlerbehandlungs-Middleware ---
+app.use((err, req, res, next) => {
+    console.error('UNHANDLED ERROR:', err);
+    res.status(500).json({ message: err.message, stack: err.stack, error: err });
+});
+
+// --- Serverstart ---
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
