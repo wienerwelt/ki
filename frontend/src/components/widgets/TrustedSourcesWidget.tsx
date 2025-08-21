@@ -1,31 +1,34 @@
 // frontend/src/components/widgets/TrustedSourcesWidget.tsx
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Box, Typography, Button, Stack, Divider, Badge } from '@mui/material';
+import { Box, Typography, Button, Stack, Divider, Badge, CircularProgress, Alert } from '@mui/material';
+import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
-import FactCheckIcon from '@mui/icons-material/FactCheck';
 import apiClient from '../../apiClient';
 
 interface TrustedSourcesWidgetProps extends BaseWidgetProps {
-    widgetTitle: string;
+    icon?: React.ReactNode;
+    title: string;
     widgetTypeKey: string;
 }
 
-const TrustedSourcesWidget: React.FC<TrustedSourcesWidgetProps> = ({ onDelete, widgetId, isRemovable, widgetTitle, widgetTypeKey }) => {
+const TrustedSourcesWidget: React.FC<TrustedSourcesWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, widgetTypeKey }) => {
     const [pendingCount, setPendingCount] = useState(0);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const navigate = useNavigate();
 
     useEffect(() => {
         const fetchPendingCount = async () => {
             setLoading(true);
+            setError(null);
             try {
                 const token = localStorage.getItem('jwt_token');
                 const response = await apiClient.get('/api/sources/pending', { headers: { 'x-auth-token': token } });
                 setPendingCount(response.data.length);
-            } catch (error) {
-                console.error("Fehler beim Laden der ausstehenden Quellen:", error);
+            } catch (err: any) {
+                setError(err.response?.data?.message || "Fehler beim Laden der ausstehenden Quellen.");
                 setPendingCount(0);
             } finally {
                 setLoading(false);
@@ -33,69 +36,77 @@ const TrustedSourcesWidget: React.FC<TrustedSourcesWidgetProps> = ({ onDelete, w
         };
         fetchPendingCount();
     }, []);
-
-    // Diese Funktion "programmiert" den Klick auf das Feedback-Icon im WidgetPaper
+    
+    // Diese Funktion wird für den "Fehler Melden"-Button bei einem API-Fehler verwendet
     const handleReportError = () => {
         navigate('/feedback', {
-            state: {
-                type: 'feedback',
-                title: `Vorschlag für Widget: ${widgetTitle}`, 
-                widgetKey: widgetTypeKey
-            }
+            state: { type: 'bug', widget: title, error: error, widgetKey: widgetTypeKey }
         });
     };
-
+    
     return (
         <WidgetPaper
             title={
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <FactCheckIcon />
-                    <Typography variant="h6">Vertrauenswürdige Quellen</Typography>
+                    {icon}
+                    <Typography variant="h6">{title}</Typography>
                 </Box>
             }
             widgetId={widgetId}
+            widgetTitle={title}
+            widgetTypeKey={widgetTypeKey}
             onDelete={onDelete}
             isRemovable={isRemovable}
-            loading={loading}
-            widgetTitle={widgetTitle}
-            widgetTypeKey={widgetTypeKey}
-            // HIER IST DIE ENTSCHEIDENDE ÄNDERUNG:
-            // Wir übergeben unsere Funktion an die WidgetPaper-Komponente.
-            onReportError={handleReportError} 
         >
-            <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
-                <Typography variant="body1" sx={{ textAlign: 'center' }}>
-                    Gestalten Sie die Datenbasis der KI aktiv mit!
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                    Schlagen Sie neue Quellen vor oder bewerten Sie die Vorschläge anderer Nutzer.
-                </Typography>
-                <Stack spacing={1} divider={<Divider />}>
-                    <Badge badgeContent={pendingCount} color="primary" sx={{ width: '100%' }}>
-                        <Button
+            {loading ? (
+                <Box sx={{ m: 'auto', textAlign: 'center' }}>
+                    <CircularProgress />
+                </Box>
+            ) : error ? (
+                <Alert
+                    severity="error"
+                    action={
+                        <Button color="inherit" size="small" onClick={handleReportError} startIcon={<ReportProblemOutlinedIcon />}>
+                            Fehler Melden
+                        </Button>
+                    }
+                >
+                    {error}
+                </Alert>
+            ) : (
+                <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
+                    <Typography variant="body1" sx={{ textAlign: 'center' }}>
+                        Gestalten Sie die Datenbasis der KI aktiv mit!
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
+                        Schlagen Sie neue Quellen vor oder bewerten Sie die Vorschläge anderer Nutzer.
+                    </Typography>
+                    <Stack spacing={1} divider={<Divider />}>
+                        <Badge badgeContent={pendingCount} color="primary" sx={{ width: '100%' }}>
+                            <Button
+                                component={Link}
+                                to="/trusted-sources"
+                                state={{ tab: 1 }}
+                                variant="contained"
+                                fullWidth
+                                disabled={pendingCount === 0}
+                                sx={{ textDecoration: 'none' }} 
+                            >
+                                {pendingCount > 0 ? 'Jetzt Abstimmen' : 'Keine Abstimmungen'}
+                            </Button>
+                        </Badge>
+                         <Button
                             component={Link}
                             to="/trusted-sources"
-                            state={{ tab: 1 }}
-                            variant="contained"
-                            fullWidth
-                            disabled={pendingCount === 0}
-                            sx={{ textDecoration: 'none' }} 
-                        >
-                            {pendingCount > 0 ? 'Jetzt Abstimmen' : 'Keine Abstimmungen'}
+                            state={{ tab: 2 }}
+                            variant="outlined"
+                            sx={{ textDecoration: 'none' }}
+                         >
+                            Neue Quelle vorschlagen
                         </Button>
-                    </Badge>
-                     <Button
-                        component={Link}
-                        to="/trusted-sources"
-                        state={{ tab: 2 }}
-                        variant="outlined"
-                        sx={{ textDecoration: 'none' }}
-                     >
-                        Neue Quelle vorschlagen
-                    </Button>
-                </Stack>
-                {/* Hier befindet sich kein extra Feedback-Link mehr */}
-            </Box>
+                    </Stack>
+                </Box>
+            )}
         </WidgetPaper>
     );
 };

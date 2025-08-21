@@ -1,15 +1,25 @@
 // backend/server.js
 require('dotenv').config();
+
+// --- 1. IMPORTE ---
 const express = require('express');
 const cors = require('cors');
-const db = require('./config/db');
-const { logActivity } = require('./services/auditLogService');
-const cookieParser = require('cookie-parser');
-const auth = require('./middleware/authMiddleware');
 const path = require('path');
+const cookieParser = require('cookie-parser');
+const db = require('./config/db');
+const auth = require('./middleware/authMiddleware');
+const jobManager = require('./services/jobManagerService');
 
-// Routen-Importe
+// Bull Board & Queue
+const { createBullBoard } = require('@bull-board/api');
+const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
+const { ExpressAdapter } = require('@bull-board/express');
+const { Queue } = require('bullmq');
+const IORedis = require('ioredis');
+
+// Routen
 const authRoutes = require('./routes/authRoutes');
+// ... (all your other routes)
 const sessionRoutes = require('./routes/sessionRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -38,70 +48,50 @@ const sourcesRoutes = require('./routes/sourcesRoutes.js');
 const adminSourcesRoutes = require('./routes/adminSourcesRoutes.js');
 const feedbackRoutes = require('./routes/feedbackRoutes');
 const fileRoutes = require('./routes/fileRoutes');
-
-// Controller-Importe
 const dataController = require('./controllers/dataController');
 
-// Service-Importe
-const jobManager = require('./services/jobManagerService');
 
-const { createBullBoard } = require('@bull-board/api');
-const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
-const { ExpressAdapter } = require('@bull-board/express');
-const { aiContentQueue } = require('./services/queueService');
-
+// --- 2. INITIALISIERUNG & KONFIGURATION ---
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// --- Bull Board Dashboard Setup ---
+// Bull Board Adapter Setup
 const serverAdapter = new ExpressAdapter();
 serverAdapter.setBasePath('/api/admin/jobs');
 
-createBullBoard({
-  queues: [new BullMQAdapter(aiContentQueue)],
-  serverAdapter: serverAdapter,
+const bullBoardRedisConnection = new IORedis({
+  host: process.env.REDIS_HOST || '127.0.0.1',
+  port: process.env.REDIS_PORT || 6379,
+  password: process.env.REDIS_PASSWORD,
+  maxRetriesPerRequest: null
 });
 
-// --- CORS Setup ---
-const allowedOrigins = [
-  'http://localhost:5173',
-  'https://dashboard.mobiliti.at'
-];
+const bullBoardQueue = new Queue('ai-content-generation', { connection: bullBoardRedisConnection });
+
+createBullBoard({
+  queues: [new BullMQAdapter(bullBoardQueue)],
+  serverAdapter: serverAdapter,
+});
+console.log('Bull Board UI wurde mit dedizierter Verbindung initialisiert.');
+
+
+// --- 3. MIDDLEWARE ---
+// KORREKTUR: Vereinfachte und robustere CORS-Konfiguration
+const allowedOrigins = ['http://localhost:5173', 'https://dashboard.mobiliti.at'];
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: allowedOrigins,
   credentials: true,
 }));
 
-// --- Standard Middleware ---
 app.use(express.json());
 app.use(cookieParser());
+app.use((req, res, next) => { console.log(`[${req.method}] ${req.originalUrl}`); next(); });
 
-// --- Logging aller Requests ---
-app.use((req, res, next) => {
-    console.log(`[${req.method}] ${req.originalUrl}`);
-    next();
-});
 
-// DB-Verbindung
-db.query('SELECT 1')
-    .then(() => {
-        console.log('PostgreSQL connected successfully!');
-        jobManager.synchronizeSchedulesFromDB();
-    })
-    .catch(err => console.error('PostgreSQL connection error:', err));
-
-// ======================================================
-// WICHTIGE ÄNDERUNG: Bull Board Route wird hier registriert
+// --- 4. ROUTEN ---
 app.use('/api/admin/jobs', serverAdapter.getRouter());
-// ======================================================
 
-// --- API-Routen ---
+// ... (alle Ihre anderen Routen bleiben hier unverändert)
 app.use('/api/auth', authRoutes);
 app.use('/api/session', sessionRoutes);
 app.use('/api/users', userRoutes);
@@ -112,8 +102,6 @@ app.use('/api/widgets', widgetRoutes);
 app.use('/api/sources', sourcesRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.get('/api/data/active-advertisement', auth, dataController.getActiveAdvertisement);
-
-// --- Admin-API-Routen ---
 app.use('/api/admin/business-partners', adminBusinessPartnerRoutes);
 app.use('/api/admin/widget-types', adminWidgetTypeRoutes);
 app.use('/api/admin/bp-widget-access', adminBpWidgetAccessRoutes);
@@ -134,82 +122,17 @@ app.use('/api/admin/actions', adminBpActionsRoutes);
 app.use('/api/admin/cronjobs', adminCronjobsRoutes);
 app.use('/api/admin/sources', adminSourcesRoutes);
 app.use('/api/files', fileRoutes);
+app.get('/api/debug/db-inspector', async (req, res) => { try { const dbConfig = db.options; const dbNameResult = await db.query('SELECT current_database();'); const currentDb = dbNameResult.rows[0].current_database; const tablesResult = await db.query("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename;"); const tables = tablesResult.rows.map(row => row.tablename); res.status(200).json({ message: "Datenbank-Inspektor-Bericht", verbindung_hergestellt_zu_db: currentDb, benutzter_user: dbConfig.user, benutzter_host: dbConfig.host, gefundene_tabellen: tables }); } catch (err) { res.status(500).json({ error: "Fehler im DB-Inspektor", message: err.message }); } });
+app.get('/api/debug/users', async (req, res) => { try { const { rows } = await db.query('SELECT * FROM users'); res.status(200).json(rows); } catch (err) { res.status(500).json({ error: "Fehler beim Abrufen der Daten" }); } });
 
-// ======================================================
-// TEMPORÄRE DATENBANK-INSPEKTOR-ROUTE
-// ======================================================
-app.get('/api/debug/db-inspector', async (req, res) => {
-    try {
-        console.log("--- Datenbank-Inspektor wird ausgeführt ---");
-        const dbConfig = db.options;
-        console.log("Verbinde mit folgender Konfiguration:", dbConfig);
-        const dbNameResult = await db.query('SELECT current_database();');
-        const currentDb = dbNameResult.rows[0].current_database;
-        console.log("Erfolgreich verbunden mit Datenbank:", currentDb);
-        const tablesResult = await db.query(`
-            SELECT tablename
-            FROM pg_catalog.pg_tables
-            WHERE schemaname = 'public'
-            ORDER BY tablename;
-        `);
-        const tables = tablesResult.rows.map(row => row.tablename);
-        console.log("Gefundene Tabellen:", tables);
-        res.status(200).json({
-            message: "Datenbank-Inspektor-Bericht",
-            verbindung_hergestellt_zu_db: currentDb,
-            benutzter_user: dbConfig.user,
-            benutzter_host: dbConfig.host,
-            gefundene_tabellen: tables
-        });
-    } catch (err) {
-        console.error("Fehler im DB-Inspektor:", err);
-        res.status(500).json({
-            error: "Fehler im DB-Inspektor",
-            message: err.message,
-            stack: err.stack,
-            verbindungs_konfiguration: db.options
-        });
-    }
-});
-// ======================================================
 
-// ======================================================
-// TEMPORÄRE DEBUG-ROUTE
-// ======================================================
-app.get('/api/debug/users', async (req, res) => {
-    try {
-        console.log("--- Abrufen aller Benutzer für das Debugging ---");
-        const { rows } = await db.query('SELECT * FROM users');
-        console.log("Gefundene Benutzer:", rows);
-        console.log(`--- Insgesamt ${rows.length} Benutzer gefunden ---`);
-        res.status(200).json(rows);
-    } catch (err) {
-        console.error("Fehler bei der Debug-Abfrage:", err);
-        res.status(500).json({ error: "Fehler beim Abrufen der Daten" });
-    }
-});
-
-// --- API 404-HANDLER ---
-app.use('/api/*', (req, res) => {
-    res.status(404).json({ error: 'API Endpoint Not Found' });
-});
-
-// --- SERVE FRONTEND STATIC FILES ---
+// --- 5. FRONTEND & FEHLERBEHANDLUNG ---
+app.use('/api/*', (req, res) => { res.status(404).json({ error: 'API Endpoint Not Found' }); });
 const frontendDistPath = path.resolve(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(frontendDistPath));
+app.get('*', (req, res) => { res.sendFile(path.join(frontendDistPath, 'index.html')); });
+app.use((err, req, res, next) => { console.error('UNHANDLED ERROR:', err); res.status(500).json({ message: err.message, stack: err.stack, error: err }); });
 
-// --- CATCH-ALL ROUTE FÜR FRONTEND ---
-app.get('*', (req, res) => {
-  res.sendFile(path.join(frontendDistPath, 'index.html'));
-});
 
-// --- Globale Fehlerbehandlungs-Middleware ---
-app.use((err, req, res, next) => {
-    console.error('UNHANDLED ERROR:', err);
-    res.status(500).json({ message: err.message, stack: err.stack, error: err });
-});
-
-// --- Serverstart ---
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+// --- 6. SERVERSTART ---
+db.query('SELECT 1').then(() => { console.log('PostgreSQL verbunden.'); jobManager.synchronizeSchedulesFromDB(); app.listen(PORT, () => { console.log(`Server läuft auf Port ${PORT}`); }); }).catch(err => console.error('Fehler bei der PostgreSQL-Verbindung:', err));

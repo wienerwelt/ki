@@ -1,41 +1,54 @@
 // backend/worker.js
-
-// Lade die Umgebungsvariablen aus der .env-Datei.
-// Diese Zeile muss ganz am Anfang stehen!
 require('dotenv').config();
 
 const { Worker } = require('bullmq');
 const { connection } = require('./services/queueService');
 const { generateAndSaveContentForManualJob } = require('./controllers/adminAIPromptRulesController');
 const { processSubscription, processSystemSubscription } = require('./services/intelligentContentService');
-// NEU: Importiere die Funktion zum Aktualisieren der Rohstoffpreise
 const { updateAllCommodityPrices } = require('./services/updateCommodityPrices');
 
 console.log('Worker-Prozess startet...');
 
-// Erstelle einen neuen Worker, der auf die Warteschlange 'ai-content-generation' hört.
 const worker = new Worker('ai-content-generation', async (job) => {
     console.log(`[Worker] Verarbeite Job ${job.id} mit Namen: ${job.name}`);
     
-    // Unterscheide zwischen verschiedenen Job-Typen
-    if (job.name === 'manual-generation') {
-        const { jobId, ruleToExecute, inputText, region, categoryName, categoryId, focus_page, userId } = job.data;
-        await generateAndSaveContentForManualJob(jobId, ruleToExecute, inputText, region, categoryName, categoryId, focus_page, userId);
-    
-    } else if (job.name === 'subscription-processing') {
-        const { subscription } = job.data;
-        await processSubscription(subscription);
+    // NEU: Ein zentraler try-catch-Block für alle Jobs
+    try {
+        switch (job.name) {
+            case 'manual-generation':
+                const { jobId, ruleToExecute, inputText, region, categoryName, categoryId, focus_page, userId } = job.data;
+                await generateAndSaveContentForManualJob(jobId, ruleToExecute, inputText, region, categoryName, categoryId, focus_page, userId);
+                break;
 
-    } else if (job.name === 'system-job-processing') {
-        const { systemSubscription } = job.data;
-        await processSystemSubscription(systemSubscription);
+            case 'subscription-processing':
+                const { subscription } = job.data;
+                await processSubscription(subscription);
+                break;
 
-    // NEU: Fügt die Logik für den neuen Job-Typ hinzu
-    } else if (job.name === 'update_commodity_prices') {
-        await updateAllCommodityPrices();
-        
-    } else {
-        throw new Error(`Unbekannter Job-Typ: ${job.name}`);
+            case 'system-job-processing':
+                const { systemSubscription } = job.data;
+                await processSystemSubscription(systemSubscription);
+                break;
+
+            case 'update_commodity_prices':
+                await updateAllCommodityPrices();
+                break;
+
+            // Fügen Sie hier weitere bekannte Job-Namen hinzu
+            // case 'scraping-rule-processing':
+            //     // Fügen Sie die Logik für diesen Job hinzu, wenn sie existiert
+            //     console.log('Job-Typ "scraping-rule-processing" wird noch nicht verarbeitet.');
+            //     break;
+                
+            default:
+                // Dieser Fall fängt alle unbekannten Job-Typen ab
+                throw new Error(`Unbekannter Job-Typ: ${job.name}`);
+        }
+    } catch (error) {
+        // Diese Zeile sorgt dafür, dass JEDER Fehler an BullMQ gemeldet wird
+        console.error(`Fehler bei der Verarbeitung von Job ${job.id} (Name: ${job.name}):`, error.message);
+        // Fehler weiterwerfen, damit der Job als "Failed" markiert wird
+        throw error;
     }
 }, { 
     connection,
@@ -51,8 +64,7 @@ worker.on('completed', (job) => {
 });
 
 worker.on('failed', (job, err) => {
-    console.error(`[Worker] Job ${job.id} (Name: ${job.name}) fehlgeschlagen:`, err.message);
-    console.error(err.stack);
+    console.error(`[Worker] Job ${job.id} (Name: ${job.name}) ist fehlgeschlagen:`, err.message);
 });
 
 console.log('Worker läuft und wartet auf Jobs...');

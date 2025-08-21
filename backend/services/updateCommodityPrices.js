@@ -1,15 +1,21 @@
+// backend/services/updateCommodityPrices.js
 const axios = require('axios');
 const db = require('../config/db'); // Passen Sie den Pfad ggf. an
 
+// Laden der API-Schlüssel aus den Umgebungsvariablen
 const METALPRICE_API_KEY = process.env.METALPRICE_API_KEY;
 const OILPRICE_API_KEY = process.env.OILPRICE_API_KEY;
-const CO2_API_KEY = process.env.CO2_API_KEY;
 
 /**
  * Robuste "Upsert"-Logik für einen Wirtschaftsindikator.
  */
 const upsertIndicator = async (indicator) => {
     const { name, value, unit, timestamp, source, countryCode = null } = indicator;
+
+    if (value === null || value === undefined || isNaN(value)) {
+        console.log(`Kein gültiger Wert für ${name} erhalten. Überspringe Datenbank-Update.`);
+        return;
+    }
 
     const existingEntry = await db.query(
         `SELECT id FROM economic_indicators WHERE indicator_name = $1 AND data_timestamp::date = $2::date`,
@@ -35,10 +41,7 @@ const upsertIndicator = async (indicator) => {
  * Ruft den EUR/USD-Wechselkurs ab.
  */
 const fetchAndStoreCurrencyRates = async () => {
-    if (!METALPRICE_API_KEY) {
-        console.error('METALPRICE_API_KEY nicht gefunden. Überspringe Währungskurse.');
-        return;
-    }
+    if (!METALPRICE_API_KEY) throw new Error('METALPRICE_API_KEY nicht gefunden.');
     try {
         const response = await axios.get(`https://api.metalpriceapi.com/v1/latest`, {
             params: { api_key: METALPRICE_API_KEY, base: 'USD', currencies: 'EUR' }
@@ -54,7 +57,8 @@ const fetchAndStoreCurrencyRates = async () => {
             source: 'metalpriceapi.com'
         });
     } catch (error) {
-        console.error('Fehler beim Abrufen der Währungskurse:', error.response?.data?.error || error.message);
+        const errorMessage = error.response?.data?.error?.info || error.message;
+        throw new Error(`Währungskurs-Update fehlgeschlagen: ${errorMessage}`);
     }
 };
 
@@ -62,10 +66,7 @@ const fetchAndStoreCurrencyRates = async () => {
  * Ruft den Preis für Brent-Rohöl ab.
  */
 const fetchAndStoreOilPrice = async () => {
-    if (!OILPRICE_API_KEY) {
-        console.error('OILPRICE_API_KEY nicht gefunden. Überspringe Ölpreis.');
-        return;
-    }
+    if (!OILPRICE_API_KEY) throw new Error('OILPRICE_API_KEY nicht gefunden.');
     try {
         const response = await axios.get('https://api.oilpriceapi.com/v1/prices/latest', {
             headers: { 'Authorization': `Token ${OILPRICE_API_KEY}` },
@@ -73,9 +74,7 @@ const fetchAndStoreOilPrice = async () => {
         });
         if (!response.data?.data?.price) throw new Error("Brent-Preis konnte nicht gefunden werden.");
         
-        let timestamp = response.data.data.updated_at ? new Date(response.data.data.updated_at) : new Date();
-        if (isNaN(timestamp.getTime())) timestamp = new Date();
-
+        const timestamp = response.data.data.updated_at ? new Date(response.data.data.updated_at) : new Date();
         await upsertIndicator({
             name: 'BRENT_OIL',
             value: response.data.data.price,
@@ -84,66 +83,57 @@ const fetchAndStoreOilPrice = async () => {
             source: 'oilpriceapi.com'
         });
     } catch (error) {
-        console.error('Fehler beim Abrufen des Ölpreises:', error.response?.data?.error?.message || error.message);
+        const errorMessage = error.response?.data?.error?.message || error.message;
+        throw new Error(`Ölpreis-Update fehlgeschlagen: ${errorMessage}`);
     }
 };
 
 /**
- * --- NEUE FUNKTION: Ruft den 3-Monats-Euribor von der EZB ab. ---
+ * FINALE VERSION V2: Nutzt den stabilen Endpunkt und greift dynamisch auf die Daten zu.
  */
 const fetchAndStoreEuriborRate = async () => {
     try {
-        // API-Endpunkt der EZB für den 3-Monats-Euribor (Serie: FM.D.U2.EUR.4F.KR.EURIBOR3MD.AVG)
-        const url = 'https://data-api.ecb.europa.eu/service/data/FM/D.U2.EUR.4F.KR.EURIBOR3MD.AVG?lastNObservations=1';
-        const response = await axios.get(url, {
-            headers: { 'Accept': 'application/json' }
-        });
+        const url = `https://data-api.ecb.europa.eu/service/data/FM/M.U2.EUR.RT.MM.EURIBOR3MD_.HSTA?lastNObservations=1&detail=dataonly&format=jsondata`;
+        const response = await axios.get(url, { headers: { 'Accept': 'application/json' } });
 
-        const series = response.data.dataSets[0].series['0:0:0:0:0:0:0'];
-        const lastObservation = series.observations[Object.keys(series.observations).length - 1];
-        const date = response.data.structure.dimensions.observation[0].values[Object.keys(series.observations).length - 1].id;
+        const dataSet = response.data?.dataSets?.[0];
+        if (!dataSet || !dataSet.series) {
+            console.log('Keine Euribor-Datensätze in der Antwort gefunden. Überspringe Update.');
+            return;
+        }
+
+        // KORREKTUR: Greife dynamisch auf den ersten verfügbaren Serien-Schlüssel zu.
+        const seriesKey = Object.keys(dataSet.series)[0];
+        const series = dataSet.series[seriesKey];
+
+        if (!series || !series.observations) {
+            console.log('Keine Euribor-Beobachtungen in der Antwort gefunden. Überspringe Update.');
+            return;
+        }
+
+        const observationKeys = Object.keys(series.observations);
+        if (observationKeys.length === 0) {
+            console.log('Keine neuen Euribor-Beobachtungen gefunden. Überspringe Update.');
+            return;
+        }
         
+        const lastObservationIndex = observationKeys[0];
+        const lastObservationValue = series.observations[lastObservationIndex][0];
+
+        const dateDimension = response.data.structure.dimensions.observation.find(dim => dim.id === 'TIME_PERIOD');
+        const lastDate = dateDimension.values[lastObservationIndex].name;
+
         await upsertIndicator({
             name: 'EURIBOR_3M',
-            value: lastObservation[0],
+            value: lastObservationValue,
             unit: '%',
-            timestamp: new Date(date),
+            timestamp: new Date(`${lastDate}-01`),
             source: 'ecb.europa.eu'
         });
-    } catch (error) {
-        console.error('Fehler beim Abrufen des Euribor-Zinssatzes:', error.response?.data || error.message);
-    }
-};
 
-/**
- * --- NEUE FUNKTION: Ruft den CO2-Emissionspreis (EUA Futures) ab. ---
- */
-const fetchAndStoreCO2Price = async () => {
-    if (!CO2_API_KEY) {
-        console.error('CO2_API_KEY nicht gefunden. Überspringe CO2-Preis.');
-        return;
-    }
-    try {
-        const response = await axios.get('https://commodities-api.com/api/latest', {
-            params: {
-                access_key: CO2_API_KEY,
-                base: 'EUR',
-                symbols: 'CARBON' // Symbol für EU Carbon Emissions Allowances (EUA)
-            }
-        });
-        if (!response.data.success) throw new Error(response.data.error.info);
-        
-        const co2Price = response.data.data.rates.CARBON;
-
-        await upsertIndicator({
-            name: 'CO2_PRICE',
-            value: co2Price,
-            unit: 'EUR/Tonne',
-            timestamp: new Date(response.data.data.date),
-            source: 'commodities-api.com'
-        });
     } catch (error) {
-        console.error('Fehler beim Abrufen des CO2-Preises:', error.response?.data?.error || error.message);
+        const errorMessage = error.response ? `Status ${error.response.status}` : error.message;
+        throw new Error(`Euribor-Update fehlgeschlagen: ${errorMessage}`);
     }
 };
 
@@ -152,11 +142,21 @@ const fetchAndStoreCO2Price = async () => {
  */
 const updateAllCommodityPrices = async () => {
     console.log('Starte die Aktualisierung der Wirtschaftsdaten...');
-    await fetchAndStoreCurrencyRates();
-    await fetchAndStoreOilPrice();
-    await fetchAndStoreEuriborRate(); // NEU
-    await fetchAndStoreCO2Price();   // NEU
-    console.log('Aktualisierung der Wirtschaftsdaten abgeschlossen.');
+    const results = await Promise.allSettled([
+        fetchAndStoreCurrencyRates(),
+        fetchAndStoreOilPrice(),
+        fetchAndStoreEuriborRate(),
+    ]);
+
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length > 0) {
+        failures.forEach(failure => {
+            console.error('Ein Sub-Job ist fehlgeschlagen:', failure.reason.message);
+        });
+        throw new Error('Mindestens ein Update-Job für Rohstoffdaten ist fehlgeschlagen.');
+    }
+
+    console.log('Aktualisierung der Wirtschaftsdaten erfolgreich abgeschlossen.');
 };
 
 module.exports = { updateAllCommodityPrices };

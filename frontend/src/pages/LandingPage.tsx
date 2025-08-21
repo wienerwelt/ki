@@ -10,12 +10,29 @@ const Icon = ({ path, className = "w-6 h-6" }: { path: string; className?: strin
     </svg>
 );
 
-const GlobeIcon = () => <Icon path="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z M2 12h20" className="w-4 h-4" />;
+// Original Icons
 const ArrowRightIcon = () => <Icon path="M5 12h14 M12 5l7 7-7 7" className="w-5 h-5" />;
-const ExternalLinkIcon = () => <Icon path="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6 M15 3h6v6 M10 14 21 3" className="w-4 h-4" />;
 const LayoutDashboardIcon = () => <Icon path="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7m9-11V5a2 2 0 0 0-2-2h-3m-1 8h-2m5 0h.01M16 16h.01" />;
 const DatabaseIcon = () => <Icon path="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3 M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />;
 const FileCheckIcon = () => <Icon path="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z M14 2v4a2 2 0 0 0 2 2h4 M9 12l2 2 4-4" />;
+
+// --- NEUE ICONS ---
+// Orbit-Icon für das Logo, inspiriert von mobiliti.at
+const OrbitIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" 
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <circle cx="12" cy="12" r="2"></circle>
+        <path d="M12 2a10 10 0 1 0 10 10"></path>
+        <path d="M12 22a10 10 0 0 0 10-10"></path>
+        <path d="M2 12a10 10 0 0 1 10-10"></path>
+    </svg>
+);
+
+// Icons für die Platzhalter, inspiriert von den Branchenlösungen auf mobiliti.at
+const BuildingsIcon = () => <Icon path="M2 22h20 M6 10h4v12H6z M14 10h4v12h-4z M10 6l-4-4-4 4" className="w-16 h-16 text-slate-300" />;
+const EnergyIcon = () => <Icon path="M13 2 3 14h9l-1 8 10-12h-9l1-8z" className="w-16 h-16 text-slate-300" />;
+const TourismIcon = () => <Icon path="M12 2l2.3 7.1H22l-6 4.4 2.3 7.1L12 16.3 5.7 20.6l2.3-7.1L2 9.1h7.7z" className="w-16 h-16 text-slate-300" />;
+const BriefcaseIcon = () => <Icon path="M12 12H8m4-4V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4Z" className="w-16 h-16 text-slate-300" />;
 
 // --- Hauptkomponente: LandingPage ---
 const LandingPage: React.FC = () => {
@@ -30,23 +47,18 @@ const LandingPage: React.FC = () => {
             {/* Header, passend zu mobiliti.at */}
             <header style={headerStyle} className="sticky top-0 z-40 w-full border-b border-slate-200/60 bg-white/80">
                 <div className="mx-auto flex max-w-7xl items-center justify-between p-4">
+                    {/* === GEÄNDERT: Logo Icon ausgetauscht === */}
                     <a href="https://mobiliti.at/" className="flex items-center gap-2 font-semibold">
                         <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-emerald-500 text-white shadow">
-                            <GlobeIcon />
+                            <OrbitIcon className="w-5 h-5" />
                         </div>
-                        <span className="text-lg">mobiliti</span>
-                    </a>
-                    {/* === GEÄNDERT: Button "Zur Homepage" mit Logo und Icon === */}
-                    <a href="https://mobiliti.at/" className="hidden sm:inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-4 py-2 text-sm font-semibold shadow transition-colors hover:bg-white">
-                        <span>Zur Homepage</span>
-                        <ExternalLinkIcon />
+                        <span className="text-lg">mobiliti</span><ArrowRightIcon />
                     </a>
                 </div>
             </header>
 
             {/* Hero-Sektion */}
             <main className="flex-grow flex items-center justify-center">
-                {/* === GEÄNDERT: Vertikaler Abstand (py) reduziert === */}
                 <section className="relative mx-auto max-w-5xl px-6 py-12 text-center">
                     {/* Hintergrund-Gradient */}
                     <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
@@ -65,16 +77,24 @@ const LandingPage: React.FC = () => {
                         to="/login"
                         className="mt-8 inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-blue-600 to-emerald-500 px-8 py-4 font-semibold text-white shadow-lg transition-transform hover:scale-105"
                     >
-                        <span>Anmelden</span>
+                        <span>Login</span>
                         <ArrowRightIcon />
                     </Link>
 
-                    {/* === GEÄNDERT: Abstand nach oben (mt) reduziert === */}
+                    {/* === GEÄNDERT: Platzhalter durch Icons ersetzt === */}
                     <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-3xl mx-auto">
-                        <div className="h-32 rounded-2xl bg-white/60 shadow-soft animate-[fadeIn_0.5s_ease-out_0.1s_both]"></div>
-                        <div className="h-32 rounded-2xl bg-white/60 shadow-soft animate-[fadeIn_0.5s_ease-out_0.2s_both]"></div>
-                        <div className="h-32 rounded-2xl bg-white/60 shadow-soft animate-[fadeIn_0.5s_ease-out_0.3s_both]"></div>
-                        <div className="h-32 rounded-2xl bg-white/60 shadow-soft animate-[fadeIn_0.5s_ease-out_0.4s_both]"></div>
+                        <div className="h-32 rounded-2xl bg-white/60 shadow-soft animate-[fadeIn_0.5s_ease-out_0.1s_both] flex items-center justify-center">
+                            <BuildingsIcon />
+                        </div>
+                        <div className="h-32 rounded-2xl bg-white/60 shadow-soft animate-[fadeIn_0.5s_ease-out_0.2s_both] flex items-center justify-center">
+                            <EnergyIcon />
+                        </div>
+                        <div className="h-32 rounded-2xl bg-white/60 shadow-soft animate-[fadeIn_0.5s_ease-out_0.3s_both] flex items-center justify-center">
+                            <TourismIcon />
+                        </div>
+                        <div className="h-32 rounded-2xl bg-white/60 shadow-soft animate-[fadeIn_0.5s_ease-out_0.4s_both] flex items-center justify-center">
+                            <BriefcaseIcon />
+                        </div>
                     </div>
                 </section>
             </main>

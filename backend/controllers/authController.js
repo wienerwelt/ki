@@ -42,7 +42,7 @@ exports.register = async (req, res) => {
         
         const newUserQuery = `
             INSERT INTO users (username, email, first_name, password_hash, role, business_partner_id, consent_timestamp, email_verification_token)
-            VALUES ($1, $2, $3, $4, 'fleet_manager', $5, NOW(), $6) RETURNING id, email
+            VALUES ($1, $2, $3, $4, 'user', $5, NOW(), $6) RETURNING id, email
         `;
         await db.query(newUserQuery, [username, email, name, password_hash, businessPartnerId, emailToken]);
 
@@ -90,7 +90,7 @@ exports.googleLogin = async (req, res) => {
 
             const insertQuery = `
                 INSERT INTO users (username, email, first_name, password_hash, role, business_partner_id, is_email_verified, consent_timestamp)
-                VALUES ($1, $2, $3, NULL, 'fleet_manager', $4, TRUE, NOW())
+                VALUES ($1, $2, $3, NULL, 'user', $4, TRUE, NOW())
                 RETURNING *;
             `;
             const newUser = await db.query(insertQuery, [username, email, name, defaultBusinessPartnerId]);

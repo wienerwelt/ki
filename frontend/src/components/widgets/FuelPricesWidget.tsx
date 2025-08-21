@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Box, Typography, CircularProgress, Alert, List, ListItem, ListItemText, Divider,
     TextField, MenuItem, Tooltip, Link as MuiLink, IconButton,
@@ -13,6 +13,8 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteIcon from '@mui/icons-material/Delete';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import ClearIcon from '@mui/icons-material/Clear';
+import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
+import { useNavigate } from 'react-router-dom';
 
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
@@ -24,89 +26,31 @@ type ViewMode = 'favorites' | 'search';
 type SortByType = 'price' | 'dist';
 
 interface FuelPricesWidgetProps extends BaseWidgetProps {
+    icon?: React.ReactNode;
     title: string;
     widgetTypeKey: string;
 }
 
-const fuelTypeColors: { [key in FuelType]: 'primary' | 'success' | 'warning' } = {
-    diesel: 'primary',
-    e5: 'success',
-    e10: 'warning',
-};
-
-const providerInfo: { [key: string]: { name: string; url: string } } = {
-    DE: { name: 'Tankerkönig', url: 'https://www.tankerkoenig.de' },
-    AT: { name: 'E-Control', url: 'https://www.e-control.at/spritpreisrechner' },
-};
-
-interface FavoriteStation {
-    id: string;
-    name: string;
-    brand: string;
-    street: string;
-    houseNumber?: string;
-    postCode: string;
-    city: string;
-    lat: number;
-    lng: number;
-    countryCode: string;
-}
-
-interface StationPrice extends FavoriteStation {
-    price?: number;
-    distance?: number;
-    isOpen?: boolean;
-}
-
+interface FavoriteStation { id: string; name: string; brand: string; street: string; houseNumber?: string; postCode: string; city: string; lat: number; lng: number; countryCode: string; }
+interface StationPrice extends FavoriteStation { price?: number; distance?: number; isOpen?: boolean; }
+const fuelTypeColors: { [key in FuelType]: 'primary' | 'success' | 'warning' } = { diesel: 'primary', e5: 'success', e10: 'warning', };
+const providerInfo: { [key: string]: { name: string; url: string } } = { DE: { name: 'Tankerkönig', url: 'https://www.tankerkoenig.de' }, AT: { name: 'E-Control', url: 'https://www.e-control.at/spritpreisrechner' }, };
 const useLocalStorage = <T,>(key: string, initialValue: T): [T, (value: T) => void] => {
-    const [storedValue, setStoredValue] = useState<T>(() => {
-        try {
-            const item = window.localStorage.getItem(key);
-            return item ? JSON.parse(item) : initialValue;
-        } catch (error) {
-            console.error(error);
-            return initialValue;
-        }
-    });
-
-    const setValue = (value: T) => {
-        try {
-            const valueToStore = value instanceof Function ? value(storedValue) : value;
-            setStoredValue(valueToStore);
-            window.localStorage.setItem(key, JSON.stringify(valueToStore));
-        } catch (error) {
-            console.error(error);
-        }
-    };
+    const [storedValue, setStoredValue] = useState<T>(() => { try { const item = window.localStorage.getItem(key); return item ? JSON.parse(item) : initialValue; } catch (error) { console.error(error); return initialValue; } });
+    const setValue = (value: T) => { try { const valueToStore = value instanceof Function ? value(storedValue) : value; setStoredValue(valueToStore); window.localStorage.setItem(key, JSON.stringify(valueToStore)); } catch (error) { console.error(error); } };
     return [storedValue, setValue];
 };
-
 const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
+    const R = 6371; const dLat = (lat2 - lat1) * Math.PI / 180; const dLon = (lon2 - lon1) * Math.PI / 180; const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2); const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); return R * c;
 };
-
 const formatTimeAgo = (date: Date | null): string => {
-    if (!date) return '';
-    const now = new Date();
-    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-    const minutes = Math.floor(seconds / 60);
-
-    if (minutes < 1) return '(gerade eben)';
-    if (minutes === 1) return '(vor 1 Min.)';
-    return `(vor ${minutes} Min.)`;
+    if (!date) return ''; const now = new Date(); const seconds = Math.floor((now.getTime() - date.getTime()) / 1000); const minutes = Math.floor(seconds / 60); if (minutes < 1) return '(gerade eben)'; if (minutes === 1) return '(vor 1 Min.)'; return `(vor ${minutes} Min.)`;
 };
 
 
-const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId, isRemovable, title, widgetTypeKey }) => {
+const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, widgetTypeKey }) => {
     const { user } = useAuth();
+    const navigate = useNavigate();
     const [favorites, setFavorites] = useLocalStorage<FavoriteStation[]>('fuelFavorites', []);
     const [pricedFavorites, setPricedFavorites] = useState<StationPrice[]>([]);
     
@@ -123,6 +67,7 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId,
     const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
     const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
     const [sortBy, setSortBy] = useState<SortByType>('price');
+    const isInitialSortRender = useRef(true);
 
     useEffect(() => {
         if (user?.regions && user.regions.length > 0) {
@@ -141,6 +86,7 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId,
     const fetchFavoritePrices = useCallback(async () => {
         if (favorites.length === 0) {
             setPricedFavorites([]);
+            setIsLoading(false);
             return;
         }
         
@@ -174,7 +120,6 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId,
                 } else {
                     const providerName = providerInfo[countryCode]?.name || countryCode;
                     failedProviders.push(providerName);
-                    console.error(`Fehler bei Preisabfrage für ${providerName}:`, result.status === 'rejected' ? result.reason : 'API-Fehler');
                 }
             });
 
@@ -199,13 +144,14 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId,
         }
     }, [favorites, userLocation, fuelType]);
 
-    useEffect(() => {
-        fetchFavoritePrices();
-    }, [favorites, fetchFavoritePrices]);
+    useEffect(() => { fetchFavoritePrices(); }, [favorites, fetchFavoritePrices]);
 
     const handleSearch = useCallback(async (useCurrentLocation = false) => {
         if (!selectedRegion) return;
-        if (!searchTerm && !useCurrentLocation) return;
+        if (!searchTerm && !useCurrentLocation) {
+            setSearchResults([]);
+            return;
+        };
         
         setIsLoading(true);
         setError(null);
@@ -230,33 +176,35 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId,
         }
     }, [selectedRegion, searchTerm, userLocation, fuelType, sortBy]);
     
+    // KORREKTUR: Dieser Hook wird nur ausgelöst, wenn sich die Sortierung ändert, und nicht beim ersten Rendern.
     useEffect(() => {
-        if (viewMode === 'search' && searchResults.length > 0) {
+        if (isInitialSortRender.current) {
+            isInitialSortRender.current = false;
+            return;
+        }
+        if (viewMode === 'search' && (searchTerm || (searchResults.length > 0 && userLocation))) {
             const isLocationSearch = !!userLocation && !searchTerm;
             handleSearch(isLocationSearch);
         }
-    }, [sortBy, viewMode, handleSearch, searchResults.length, searchTerm, userLocation]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sortBy]);
 
-    const clearSearch = () => {
-        setSearchTerm('');
-        setSearchResults([]);
-        setError(null);
+    const handleReportError = () => {
+        navigate('/feedback', {
+            state: { type: 'bug', widget: title, error: error, widgetKey: widgetTypeKey }
+        });
     };
 
+    const clearSearch = () => { setSearchTerm(''); setSearchResults([]); setError(null); };
     const isFavorite = (stationId: string) => favorites.some(f => f.id === stationId);
-
     const toggleFavorite = (station: FavoriteStation) => {
-        if (isFavorite(station.id)) {
-            setFavorites(favorites.filter(f => f.id !== station.id));
-        } else {
-            if (favorites.length < 10) setFavorites([...favorites, station]);
-            else alert("Sie können maximal 10 Favoriten speichern.");
-        }
+        if (isFavorite(station.id)) { setFavorites(favorites.filter(f => f.id !== station.id)); }
+        else { if (favorites.length < 10) setFavorites([...favorites, station]); else alert("Sie können maximal 10 Favoriten speichern."); }
     };
 
     const renderHeader = () => (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', width: '100%', p: 1 }}>
-            <LocalGasStationIcon />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', width: '100%' }}>
+            {icon}
             <Typography variant="h6">{title}</Typography>
             <Box sx={{ flexGrow: 1, minWidth: '150px' }} onMouseDown={(e) => e.stopPropagation()}>
                 <ToggleButtonGroup value={fuelType} exclusive size="small" onChange={(_e, newType) => newType && setFuelType(newType)} color={fuelTypeColors[fuelType]} fullWidth>
@@ -265,11 +213,8 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId,
                     <ToggleButton value="e10" sx={{ flex: 1 }}>E10</ToggleButton>
                 </ToggleButtonGroup>
             </Box>
-             <Tooltip title={viewMode === 'favorites' ? "Favoriten suchen" : "Zurück zur Favoriten-Ansicht"}>
-                <IconButton onMouseDown={(e) => e.stopPropagation()} onClick={() => {
-                    setError(null);
-                    setViewMode(viewMode === 'favorites' ? 'search' : 'favorites')
-                }}>
+             <Tooltip title={viewMode === 'favorites' ? "Tankstelle suchen" : "Zurück zur Favoriten-Ansicht"}>
+                <IconButton onMouseDown={(e) => e.stopPropagation()} onClick={() => { setError(null); setViewMode(viewMode === 'favorites' ? 'search' : 'favorites') }}>
                     {viewMode === 'favorites' ? <AddIcon /> : <ArrowBackIcon />}
                 </IconButton>
             </Tooltip>
@@ -304,17 +249,16 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId,
                 </Stack>
             </ListItem>
         );
-    }
+    };
 
     const renderFavoritesView = () => (
         <>
-            {isLoading && <Box sx={{display: 'flex', justifyContent: 'center', p: 2}}><CircularProgress size={24}/></Box>}
-            {error && <Alert severity="error" sx={{m: 1}}>{error}</Alert>}
-            {partialErrors.map(err => <Alert key={err} severity="warning" sx={{m: 1, mt: 0}}>{err}</Alert>)}
+            {isLoading && favorites.length > 0 && <Box sx={{display: 'flex', justifyContent: 'center', p: 2}}><CircularProgress size={24}/></Box>}
+            {partialErrors.map(err => <Alert key={err} severity="warning" sx={{m: 1, mt: 0, mb: 1}}>{err}</Alert>)}
             {!isLoading && pricedFavorites.length > 0 && (
                 <List dense sx={{ p: 0 }}>{pricedFavorites.map(station => renderStationListItem(station, false))}</List>
             )}
-            {!isLoading && !error && favorites.length === 0 && (
+            {!isLoading && favorites.length === 0 && (
                 <Box sx={{textAlign: 'center', p: 3}}>
                     <Typography color="text.secondary">Sie haben noch keine Favoriten.</Typography>
                     <Button startIcon={<AddIcon/>} sx={{mt: 1}} onClick={() => setViewMode('search')}>Jetzt Tankstellen suchen</Button>
@@ -322,7 +266,6 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId,
             )}
         </>
     );
-
     const renderSearchView = () => (
          <Box>
             <Stack direction="row" spacing={1} sx={{ p: 1, alignItems: 'center' }}>
@@ -340,7 +283,13 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId,
                 <TextField fullWidth size="small" variant="outlined" placeholder="PLZ oder Stadt suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
                     InputProps={{ endAdornment: searchTerm && (<InputAdornment position="end"><IconButton onClick={clearSearch} edge="end" size="small"><ClearIcon /></IconButton></InputAdornment>)}}
                 />
-                 <Tooltip title="In meiner Nähe suchen"><IconButton onClick={() => handleSearch(true)} disabled={!userLocation}><MyLocationIcon /></IconButton></Tooltip>
+                 <Tooltip title="In meiner Nähe suchen">
+                    <span onMouseDown={(e) => e.stopPropagation()}>
+                        <IconButton onClick={() => handleSearch(true)} disabled={!userLocation}>
+                            <MyLocationIcon />
+                        </IconButton>
+                    </span>
+                </Tooltip>
             </Stack>
             <Box sx={{ px: 1, pb: 1, display: 'flex', justifyContent: 'flex-end' }}>
                 <ToggleButtonGroup value={sortBy} exclusive size="small" onChange={(_e, newSort) => newSort && setSortBy(newSort)}>
@@ -349,19 +298,20 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId,
                 </ToggleButtonGroup>
             </Box>
             <Divider />
-            {isLoading && <Box sx={{display: 'flex', justifyContent: 'center', p: 2}}><CircularProgress size={24}/></Box>}
-            {error && <Alert severity="error" sx={{m: 1}}>{error}</Alert>}
-            {!isLoading && !error && searchResults.length > 0 && (
+            {!isLoading && searchResults.length > 0 && (
                  <List dense sx={{maxHeight: 300, overflowY: 'auto', p: 0 }}>{searchResults.map(station => renderStationListItem(station, true))}</List>
             )}
-            {!isLoading && !error && searchResults.length === 0 && <Typography sx={{p: 2, textAlign: 'center'}} color="text.secondary">Keine Ergebnisse oder Suche starten.</Typography>}
+            {!isLoading && searchResults.length === 0 && (searchTerm || (!searchTerm && viewMode === 'search')) && <Typography sx={{p: 2, textAlign: 'center'}} color="text.secondary">Keine Ergebnisse oder Suche starten.</Typography>}
         </Box>
     );
 
     const getProviderAttribution = () => {
-        const activeProviders = [...new Set(favorites.map(f => f.countryCode).map(code => providerInfo[code]).filter(Boolean))];
-        if (activeProviders.length === 0) return <MuiLink href="https://tankerkoenig.de" target="_blank" rel="noopener">Daten von Tankerkönig</MuiLink>;
-        
+        const activeProviders = [...new Set(favorites.map(f => f.countryCode).concat(searchResults.map(s => s.countryCode)).map(code => providerInfo[code]).filter(Boolean))];
+        if (activeProviders.length === 0 && selectedRegion?.code) {
+             const provider = providerInfo[selectedRegion.code];
+             if (provider) return <MuiLink href={provider.url} target="_blank" rel="noopener">{`Daten von ${provider.name}`}</MuiLink>;
+        }
+        if (activeProviders.length === 0) return null;
         return (
             <Box component="span">
                 Daten von:{' '}
@@ -385,7 +335,25 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({ onDelete, widgetId,
             isRemovable={isRemovable} 
             noPadding
         >
-            <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>{viewMode === 'favorites' ? renderFavoritesView() : renderSearchView()}</Box>
+            {error ? (
+                <Alert
+                    severity="error"
+                    sx={{ m: 1 }}
+                    action={
+                        <Button color="inherit" size="small" onClick={handleReportError} startIcon={<ReportProblemOutlinedIcon />}>
+                            Fehler Melden
+                        </Button>
+                    }
+                >
+                    {error}
+                </Alert>
+            ) : (viewMode === 'search' && isLoading) || (viewMode === 'favorites' && isLoading && favorites.length === 0) ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box>
+            ) : (
+                <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
+                    {viewMode === 'favorites' ? renderFavoritesView() : renderSearchView()}
+                </Box>
+            )}
             <Box sx={{ p: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: 1, borderColor: 'divider' }}>
                 <Typography variant="caption" color="text.secondary">{lastFetchTime ? `${lastFetchTime.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr ${formatTimeAgo(lastFetchTime)}` : ''}</Typography>
                 <Typography variant="caption" color="text.secondary">{getProviderAttribution()}</Typography>

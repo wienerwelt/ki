@@ -94,7 +94,7 @@ exports.getUserById = async (req, res) => {
 exports.createUser = async (req, res) => {
     const { 
         username, email, password, first_name, last_name, organization_name, 
-        linkedin_url, membership_level, role = 'fleet_manager', 
+        linkedin_url, membership_level, role = 'user', 
         business_partner_id, is_active = true 
     } = req.body;
     const { user: requester } = req;

@@ -20,7 +20,9 @@ import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt';
 import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
+import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined'; // NEU
 import { Autocomplete } from '@mui/material';
+import { useNavigate } from 'react-router-dom'; // NEU
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
@@ -40,82 +42,47 @@ interface ContentItem {
     user_vote: number;
 }
 interface AIPromptRule { id: string; name: string; default_category_id?: string; }
-interface GenericAIWidgetProps extends BaseWidgetProps { title: string; category: string; icon?: React.ReactNode; }
+// NEU: Props erweitert
+interface GenericAIWidgetProps extends BaseWidgetProps {
+    title: string;
+    category: string;
+    icon?: React.ReactNode;
+    widgetTypeKey: string;
+}
 interface EmailState { open: boolean; loading: boolean; error: string | null; subject: string; body: string; }
 
-// --- Hilfskomponenten (aus GenericScrapeWidget übernommen) ---
+// --- Hilfskomponenten (unverändert) ---
 const ArticleBodyRenderer: React.FC<{ summary: string | null | undefined }> = ({ summary }) => {
     if (!summary) return <Typography>Kein Inhalt verfügbar.</Typography>;
     return <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{summary}</Typography>;
 };
-
 const VoteComponent: React.FC<{ item: ContentItem; onVote: (vote: 1 | -1) => void; size?: 'small' | 'medium' }> = ({ item, onVote, size = 'small' }) => {
     const getScoreColor = (score: number) => score > 0 ? 'success.main' : score < 0 ? 'error.main' : 'text.secondary';
-    const handleVote = (e: React.MouseEvent, vote: 1 | -1) => {
-        e.stopPropagation();
-        onVote(vote);
-    };
-    return (
-        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-            <Tooltip title="Hilfreich">
-                <IconButton size={size} onClick={(e) => handleVote(e, 1)} sx={{ p: 0.5 }}>
-                    {item.user_vote === 1 ? <ThumbUpIcon color="success" fontSize={size} /> : <ThumbUpOffAltIcon color="action" fontSize={size} />}
-                </IconButton>
-            </Tooltip>
-            <Typography variant="caption" sx={{ fontWeight: 'bold', color: getScoreColor(item.relevance_score), minWidth: 20, textAlign: 'center' }}>{item.relevance_score}</Typography>
-            <Tooltip title="Nicht hilfreich">
-                <IconButton size={size} onClick={(e) => handleVote(e, -1)} sx={{ p: 0.5 }}>
-                    {item.user_vote === -1 ? <ThumbDownIcon color="error" fontSize={size} /> : <ThumbDownOffAltIcon color="action" fontSize={size} />}
-                </IconButton>
-            </Tooltip>
-        </Box>
-    );
+    const handleVote = (e: React.MouseEvent, vote: 1 | -1) => { e.stopPropagation(); onVote(vote); };
+    return (<Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}><Tooltip title="Hilfreich"><IconButton size={size} onClick={(e) => handleVote(e, 1)} sx={{ p: 0.5 }}>{item.user_vote === 1 ? <ThumbUpIcon color="success" fontSize={size} /> : <ThumbUpOffAltIcon color="action" fontSize={size} />}</IconButton></Tooltip><Typography variant="caption" sx={{ fontWeight: 'bold', color: getScoreColor(item.relevance_score), minWidth: 20, textAlign: 'center' }}>{item.relevance_score}</Typography><Tooltip title="Nicht hilfreich"><IconButton size={size} onClick={(e) => handleVote(e, -1)} sx={{ p: 0.5 }}>{item.user_vote === -1 ? <ThumbDownIcon color="error" fontSize={size} /> : <ThumbDownOffAltIcon color="action" fontSize={size} />}</IconButton></Tooltip></Box>);
 };
-
 const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onSearch }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
-
     useEffect(() => { if (isExpanded) { setTimeout(() => inputRef.current?.focus(), 50); } }, [isExpanded]);
-
-    const handleToggle = () => {
-        if (isExpanded) { setSearchTerm(''); onSearch(''); }
-        setIsExpanded((prev) => !prev);
-    };
-
+    const handleToggle = () => { if (isExpanded) { setSearchTerm(''); onSearch(''); } setIsExpanded((prev) => !prev); };
     const handleClickAway = () => { if (isExpanded && !searchTerm) setIsExpanded(false); };
-    const handleClear = (event: React.MouseEvent) => {
-        event.stopPropagation();
-        setSearchTerm('');
-        onSearch('');
-        inputRef.current?.focus();
-    };
-
-    return (
-        <ClickAwayListener onClickAway={handleClickAway}>
-            <Box sx={{ display: 'flex', alignItems: 'center', height: '40px' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', bgcolor: isExpanded ? 'action.hover' : 'transparent', borderRadius: 40, width: isExpanded ? 180 : 32, transition: 'width 0.3s' }}>
-                    <Tooltip title={isExpanded ? "Suche schließen" : "Suchen"}><IconButton onClick={handleToggle} size="small" sx={{ ml: '4px' }}>{isExpanded ? <CloseIcon fontSize="small" /> : <SearchIcon />}</IconButton></Tooltip>
-                    <Box sx={{ width: '100%', overflow: 'hidden' }}>
-                        <TextField variant="standard" fullWidth value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); onSearch(e.target.value); }} placeholder="Suchen..." inputRef={inputRef} sx={{ opacity: isExpanded ? 1 : 0, transition: 'opacity 0.2s', pl: 1, pr: 1 }}
-                            InputProps={{ disableUnderline: true, endAdornment: (searchTerm && isExpanded ? (<InputAdornment position="end"><IconButton size="small" onClick={handleClear} edge="end"><ClearIcon fontSize="small" /></IconButton></InputAdornment>) : null) }}
-                        />
-                    </Box>
-                </Box>
-            </Box>
-        </ClickAwayListener>
-    );
+    const handleClear = (event: React.MouseEvent) => { event.stopPropagation(); setSearchTerm(''); onSearch(''); inputRef.current?.focus(); };
+    return (<ClickAwayListener onClickAway={handleClickAway}><Box sx={{ display: 'flex', alignItems: 'center', height: '40px' }}><Box sx={{ display: 'flex', alignItems: 'center', bgcolor: isExpanded ? 'action.hover' : 'transparent', borderRadius: 40, width: isExpanded ? 180 : 32, transition: 'width 0.3s' }}><Tooltip title={isExpanded ? "Suche schließen" : "Suchen"}><IconButton onClick={handleToggle} size="small" sx={{ ml: '4px' }}>{isExpanded ? <CloseIcon fontSize="small" /> : <SearchIcon />}</IconButton></Tooltip><Box sx={{ width: '100%', overflow: 'hidden' }}><TextField variant="standard" fullWidth value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); onSearch(e.target.value); }} placeholder="Suchen..." inputRef={inputRef} sx={{ opacity: isExpanded ? 1 : 0, transition: 'opacity 0.2s', pl: 1, pr: 1 }} InputProps={{ disableUnderline: true, endAdornment: (searchTerm && isExpanded ? (<InputAdornment position="end"><IconButton size="small" onClick={handleClear} edge="end"><ClearIcon fontSize="small" /></IconButton></InputAdornment>) : null) }} /></Box></Box></Box></ClickAwayListener>);
 };
 
+
 // --- Haupt-Widget-Komponente ---
-const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, isRemovable, title, category, icon }) => {
+const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, isRemovable, title, category, icon, widgetTypeKey }) => {
     const { user } = useAuth();
+    const navigate = useNavigate(); // NEU
     const [items, setItems] = useState<ContentItem[]>([]);
     const [counts, setCounts] = useState({ unread: 0, new: 0 });
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [selectedArticle, setSelectedArticle] = useState<ContentItem | null>(null);
+    // ... (alle anderen States bleiben unverändert)
     const [relevantRules, setRelevantRules] = useState<AIPromptRule[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
@@ -129,25 +96,16 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
 
+    // ... (alle Hooks und Funktionen bleiben größtenteils unverändert)
     useEffect(() => { const handler = setTimeout(() => { setDebouncedSearchTerm(searchTerm); }, 500); return () => { clearTimeout(handler); }; }, [searchTerm]);
-
-    useEffect(() => {
-        if (user?.regions && user.regions.length > 0) {
-            const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0];
-            setSelectedRegion(defaultRegion);
-        }
-    }, [user?.regions]);
-
+    useEffect(() => { if (user?.regions && user.regions.length > 0) { const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0]; setSelectedRegion(defaultRegion); } }, [user?.regions]);
     useEffect(() => { if (relevantRules.length === 1) setSelectedRuleId(relevantRules[0].id); else setSelectedRuleId(''); }, [relevantRules]);
 
     const fetchData = useCallback(async (currentPage: number, search: string) => {
         if (!category || !selectedRegion) {
-            setItems([]);
-            setTotalPages(0);
-            return;
+            setItems([]); setTotalPages(0); return;
         }
-        setIsLoading(true);
-        setError(null);
+        setIsLoading(true); setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
             const params = new URLSearchParams({ category, region: selectedRegion.name, page: String(currentPage), limit: '5' });
@@ -171,10 +129,18 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
             setIsLoading(false);
         }
     }, [category, selectedRegion]);
-
+    
     useEffect(() => { setPage(1); }, [selectedRegion, debouncedSearchTerm]);
     useEffect(() => { fetchData(page, debouncedSearchTerm); }, [fetchData, page, debouncedSearchTerm]);
+
+    // NEU: Funktion zum Melden von Fehlern
+    const handleReportError = () => {
+        navigate('/feedback', {
+            state: { type: 'bug', widget: title, error: error, widgetKey: widgetTypeKey }
+        });
+    };
     
+    // ... (restliche Handler-Funktionen wie handleOpenArticle, handleVote etc. bleiben unverändert)
     const handleOpenArticle = async (article: ContentItem) => {
         setSelectedArticle(article);
         if (!article.is_read) {
@@ -186,7 +152,6 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
             } catch (err) { console.error("Fehler beim Markieren als gelesen:", err); }
         }
     };
-
     const handleVote = async (contentId: string, vote: 1 | -1) => {
         const token = localStorage.getItem('jwt_token');
         const currentItem = items.find(item => item.id === contentId) || selectedArticle;
@@ -199,7 +164,6 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
             if (selectedArticle?.id === contentId) setSelectedArticle(prev => prev ? { ...prev, relevance_score: newScore, user_vote: newVote } : null);
         } catch (err) { console.error("Fehler bei der Abstimmung:", err); }
     };
-
     const handleSubmitSubscription = async () => {
         if (!selectedRuleId || !selectedRegion || keywords.length === 0) {
             setSubmitError("Analyse-Typ, eine spezifische Region und Keywords sind für ein Abo erforderlich.");
@@ -220,7 +184,6 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
             setIsSubmitting(false);
         }
     };
-
     const handleGenerateEmail = async () => {
         if (!selectedArticle) return;
         setEmailState({ ...emailState, loading: true, open: true, error: null });
@@ -232,7 +195,6 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
             setEmailState({ ...emailState, open: true, loading: false, error: err.response?.data?.message || 'E-Mail konnte nicht generiert werden.' });
         }
     };
-
     const getOriginProps = (origin: ContentItem['origin']) => {
         switch (origin) {
             case 'personal_subscription': return { text: 'Persönlich für Sie', icon: <PersonIcon fontSize="inherit" color="primary" />, tooltip: 'Dieser Inhalt wurde aufgrund Ihrer abonnierten "Hot Topics" generiert.' };
@@ -241,7 +203,6 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
             default: return { text: null, icon: null, tooltip: null };
         }
     };
-
     const handleCloseDialog = () => setSelectedArticle(null);
     const handleCloseEmailDialog = () => setEmailState({ ...emailState, open: false });
     const handleCopyToClipboard = (text: string) => navigator.clipboard.writeText(text);
@@ -270,51 +231,74 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
                     )}
                 </Box>
             }
-            widgetId={widgetId || ''} onDelete={onDelete} isRemovable={isRemovable} loading={isLoading} error={error}
+            widgetTitle={title}
+            widgetTypeKey={widgetTypeKey}
+            widgetId={widgetId || ''} 
+            onDelete={onDelete} 
+            isRemovable={isRemovable}
         >
-            <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
-                    {items.length > 0 ? (
-                        <List dense>
-                            {items.map((item, index) => {
-                                const originProps = getOriginProps(item.origin);
-                                return (
-                                    <React.Fragment key={item.id}>
-                                        <ListItem button onClick={() => handleOpenArticle(item)}>
-                                            <ListItemText 
-                                                primary={<Typography variant="body2" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>{item.title}</Typography>}
-                                                secondaryTypographyProps={{ component: 'div' }}
-                                                secondary={
-                                                    <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
-                                                        <Tooltip title={originProps.tooltip || ''}><Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.75rem', color: 'text.secondary' }}>{originProps.icon}<span style={{ marginLeft: '4px' }}>{originProps.text}</span></Box></Tooltip>
-                                                        <Box sx={{ flexGrow: 1 }} />
-                                                        <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
-                                                    </Box>
-                                                }
-                                            />
-                                        </ListItem>
-                                        {index < items.length - 1 && <Divider component="li" />}
-                                    </React.Fragment>
-                                );
-                            })}
-                        </List>
-                    ) : ( <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>Keine Artikel für Ihre Auswahl gefunden.</Typography> )}
+            {/* KORREKTUR: Die Logik für Laden/Fehler/Inhalt wird jetzt hier direkt gehandhabt */}
+            {isLoading ? (
+                <Box sx={{ m: 'auto', textAlign: 'center' }}>
+                    <CircularProgress />
                 </Box>
-                {totalPages > 1 && <Box sx={{ display: 'flex', justifyContent: 'center', pt: 1, borderTop: 1, borderColor: 'divider' }}><Pagination count={totalPages} page={page} onChange={(e, value) => setPage(value)} size="small" /></Box>}
-                
-                <Accordion disableGutters elevation={0} sx={{ p: 0, '&.Mui-expanded': { margin: 0 }, '&:before': { display: 'none' } }}>
-                    <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ p: 0, minHeight: '36px', '& .MuiAccordionSummary-content': { margin: '8px 0' } }}><Typography variant="body2">Persönliches Thema abonnieren</Typography></AccordionSummary>
-                    <AccordionDetails sx={{ p: 1, pt: 0 }}>
-                        <Grid container spacing={2}>
-                            {relevantRules.length > 1 && <Grid item xs={12}><TextField select fullWidth label="Analyse-Typ für Ihr Abo" value={selectedRuleId} onChange={(e) => setSelectedRuleId(e.target.value)} size="small"><MenuItem value=""><em>Bitte Analyse wählen</em></MenuItem>{relevantRules.map(rule => (<MenuItem key={rule.id} value={rule.id}>{rule.name}</MenuItem>))}</TextField></Grid>}
-                            <Grid item xs={12}><Autocomplete multiple freeSolo options={[]} value={keywords} onChange={(e, val) => setKeywords(val)} renderTags={(val, props) => val.map((opt, i) => <Chip label={opt} {...props({ index: i })} />)} renderInput={(params) => <TextField {...params} label={`Meine Hot Topics in ${selectedRegion?.name || ''}`} size="small" />}/></Grid>
-                        </Grid>
-                        <Button variant="contained" size="small" sx={{ mt: 2 }} startIcon={isSubmitting ? <CircularProgress size={20} color="inherit" /> : <SendIcon />} onClick={handleSubmitSubscription} disabled={isSubmitting || !selectedRuleId || !selectedRegion || keywords.length === 0}>Thema abonnieren</Button>
-                        {submitSuccess && <Alert severity="success" sx={{ mt: 1, p: '0 16px' }}>{submitSuccess}</Alert>}
-                        {submitError && <Alert severity="error" sx={{ mt: 1, p: '0 16px' }}>{submitError}</Alert>}
-                    </AccordionDetails>
-                </Accordion>
-            </Box>
+            ) : error ? (
+                <Alert
+                    severity="error"
+                    action={
+                        <Button color="inherit" size="small" onClick={handleReportError} startIcon={<ReportProblemOutlinedIcon />}>
+                            Fehler Melden
+                        </Button>
+                    }
+                >
+                    {error}
+                </Alert>
+            ) : (
+                // Der ursprüngliche Inhalt des Widgets
+                <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
+                        {items.length > 0 ? (
+                            <List dense>
+                                {items.map((item, index) => {
+                                    const originProps = getOriginProps(item.origin);
+                                    return (
+                                        <React.Fragment key={item.id}>
+                                            <ListItem button onClick={() => handleOpenArticle(item)}>
+                                                <ListItemText 
+                                                    primary={<Typography variant="body2" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>{item.title}</Typography>}
+                                                    secondaryTypographyProps={{ component: 'div' }}
+                                                    secondary={
+                                                        <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
+                                                            <Tooltip title={originProps.tooltip || ''}><Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.75rem', color: 'text.secondary' }}>{originProps.icon}<span style={{ marginLeft: '4px' }}>{originProps.text}</span></Box></Tooltip>
+                                                            <Box sx={{ flexGrow: 1 }} />
+                                                            <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
+                                                        </Box>
+                                                    }
+                                                />
+                                            </ListItem>
+                                            {index < items.length - 1 && <Divider component="li" />}
+                                        </React.Fragment>
+                                    );
+                                })}
+                            </List>
+                        ) : ( <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>Keine Artikel für Ihre Auswahl gefunden.</Typography> )}
+                    </Box>
+                    {totalPages > 1 && <Box sx={{ display: 'flex', justifyContent: 'center', pt: 1, borderTop: 1, borderColor: 'divider' }}><Pagination count={totalPages} page={page} onChange={(e, value) => setPage(value)} size="small" /></Box>}
+                    
+                    <Accordion disableGutters elevation={0} sx={{ p: 0, '&.Mui-expanded': { margin: 0 }, '&:before': { display: 'none' } }}>
+                        <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ p: 0, minHeight: '36px', '& .MuiAccordionSummary-content': { margin: '8px 0' } }}><Typography variant="body2">Persönliches Thema abonnieren</Typography></AccordionSummary>
+                        <AccordionDetails sx={{ p: 1, pt: 0 }}>
+                            <Grid container spacing={2}>
+                                {relevantRules.length > 1 && <Grid item xs={12}><TextField select fullWidth label="Analyse-Typ für Ihr Abo" value={selectedRuleId} onChange={(e) => setSelectedRuleId(e.target.value)} size="small"><MenuItem value=""><em>Bitte Analyse wählen</em></MenuItem>{relevantRules.map(rule => (<MenuItem key={rule.id} value={rule.id}>{rule.name}</MenuItem>))}</TextField></Grid>}
+                                <Grid item xs={12}><Autocomplete multiple freeSolo options={[]} value={keywords} onChange={(e, val) => setKeywords(val)} renderTags={(val, props) => val.map((opt, i) => <Chip label={opt} {...props({ index: i })} />)} renderInput={(params) => <TextField {...params} label={`Meine Hot Topics in ${selectedRegion?.name || ''}`} size="small" />}/></Grid>
+                            </Grid>
+                            <Button variant="contained" size="small" sx={{ mt: 2 }} startIcon={isSubmitting ? <CircularProgress size={20} color="inherit" /> : <SendIcon />} onClick={handleSubmitSubscription} disabled={isSubmitting || !selectedRuleId || !selectedRegion || keywords.length === 0}>Thema abonnieren</Button>
+                            {submitSuccess && <Alert severity="success" sx={{ mt: 1, p: '0 16px' }}>{submitSuccess}</Alert>}
+                            {submitError && <Alert severity="error" sx={{ mt: 1, p: '0 16px' }}>{submitError}</Alert>}
+                        </AccordionDetails>
+                    </Accordion>
+                </Box>
+            )}
 
             <Dialog open={!!selectedArticle} onClose={handleCloseDialog} fullWidth maxWidth="md" PaperProps={{ sx: { height: '90vh' } }}>
                 <DialogTitle sx={{ m: 0, p: 2 }}><Box display="flex" justifyContent="space-between" alignItems="center"><Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>{selectedArticle?.title}</Typography><IconButton aria-label="close" onClick={handleCloseDialog} sx={{ ml: 2 }}><CloseIcon /></IconButton></Box></DialogTitle>

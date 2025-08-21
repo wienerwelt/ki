@@ -2,17 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Box, Typography, CircularProgress, Alert, Divider, Link as MuiLink,
-    Stack, Tooltip, Paper, Button
+    Stack, Tooltip, Paper, Button, ToggleButton, ToggleButtonGroup
 } from '@mui/material';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import TrendingFlatIcon from '@mui/icons-material/TrendingFlat';
-import PublicIcon from '@mui/icons-material/Public';
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
+import ShowChartIcon from '@mui/icons-material/ShowChart';
+import ViewModuleIcon from '@mui/icons-material/ViewModule';
 
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
+import CommodityChart from '../CommodityChart';
+// ANGEPASST: Korrekter Import-Pfad und Name für die Konfigurationsdatei
+import { commoditiesConfig } from '../CommoditiesConfig';
 
 // --- Interfaces & Mappings ---
 
@@ -41,15 +45,6 @@ interface ApiData {
     [key: string]: CommodityData;
 }
 
-const indicatorDisplayInfo: { [key: string]: { name: string; formatOptions: Intl.NumberFormatOptions } } = {
-    'BRENT_OIL': { name: 'Brent Rohöl', formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 2 } },
-    'EUR_USD': { name: 'Wechselkurs EUR/USD', formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 4 } },
-    'EURIBOR_3M': { name: 'Euribor 3M', formatOptions: { style: 'decimal', minimumFractionDigits: 3, maximumFractionDigits: 3 } },
-    'CO2_PRICE': { name: 'CO2-Emissionspreis', formatOptions: { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 } },
-    'NICKEL': { name: 'Nickel', formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 0 } },
-    'COBALT': { name: 'Kobalt', formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 0 } },
-};
-
 const sourceUrls: { [key: string]: string } = {
     'oilpriceapi.com': 'https://oilpriceapi.com/',
     'metalpriceapi.com': 'https://metalpriceapi.com/',
@@ -65,7 +60,8 @@ const TrendIndicator: React.FC<{ trend: 'up' | 'down' | 'stable' }> = ({ trend }
 };
 
 const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = ({ indicatorKey, data }) => {
-    const displayInfo = indicatorDisplayInfo[indicatorKey] || { name: indicatorKey, formatOptions: { style: 'decimal' } };
+    // Konfiguration aus der zentralen Datei verwenden
+    const displayInfo = commoditiesConfig[indicatorKey] || { name: indicatorKey, formatOptions: { style: 'decimal' } };
     const sourceUrl = sourceUrls[data.source] || '#';
 
     const formatPrice = (price: number | null | undefined) => {
@@ -102,7 +98,6 @@ const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = (
                     <Typography variant="body2" color="text.secondary">-1 Monat:</Typography>
                     <Typography variant="body2">{formatPrice(data.historical.monthAgo)}</Typography>
                 </Box>
-                {/* === NEU: Zeigt den Jahreswert nur an, wenn er existiert === */}
                 {data.historical.yearAgo != null && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                         <Typography variant="body2" color="text.secondary">-1 Jahr:</Typography>
@@ -127,6 +122,12 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
     const [error, setError] = useState<string | null>(null);
     const navigate = useNavigate();
 
+    const [viewMode, setViewMode] = useState<'cards' | 'chart'>('cards');
+    const [chartData, setChartData] = useState(null);
+    const [chartTimeframe, setChartTimeframe] = useState('6M');
+    const [isChartLoading, setIsChartLoading] = useState(false);
+
+    // useEffect zum Laden der Kartendaten
     useEffect(() => {
         const fetchData = async () => {
             setIsLoading(true);
@@ -148,15 +149,42 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
         fetchData();
     }, []);
 
+    // useEffect zum Laden der Chart-Daten
+    useEffect(() => {
+        const fetchChartData = async () => {
+            if (viewMode === 'chart') {
+                setIsChartLoading(true);
+                setError(null);
+                try {
+                    const token = localStorage.getItem('jwt_token');
+                    const response = await apiClient.get(`/api/data/commodities/history?timeframe=${chartTimeframe}`, {
+                        headers: { 'x-auth-token': token },
+                    });
+                    if (response.data.ok) {
+                        setChartData(response.data.data);
+                    } else {
+                       throw new Error(response.data.message || 'Historische Daten konnten nicht geladen werden.');
+                    }
+                } catch (err: any) {
+                    setError(err?.response?.data?.message || 'Historische Daten konnten nicht geladen werden.');
+                } finally {
+                    setIsChartLoading(false);
+                }
+            }
+        };
+        fetchChartData();
+    }, [viewMode, chartTimeframe]);
+
     const handleReportError = () => {
         navigate('/feedback', {
-            state: {
-                type: 'bug',
-                widget: title,
-                error: error,
-                widgetKey: widgetTypeKey
-            }
+            state: { type: 'bug', widget: title, error: error, widgetKey: widgetTypeKey }
         });
+    };
+    
+    const handleViewChange = (event: React.MouseEvent<HTMLElement>, newView: 'cards' | 'chart') => {
+        if (newView !== null) {
+            setViewMode(newView);
+        }
     };
 
     const sortedDataEntries = data ? Object.entries(data).sort(([keyA], [keyB]) => {
@@ -178,18 +206,32 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
             onDelete={onDelete}
             isRemovable={isRemovable}
         >
-            {isLoading && <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box>}
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1, mt: -1 }}>
+                 <ToggleButtonGroup
+                    value={viewMode}
+                    exclusive
+                    onChange={handleViewChange}
+                    aria-label="Ansicht wechseln"
+                    size="small"
+                >
+                    <ToggleButton value="cards" aria-label="Kartenansicht">
+                        <Tooltip title="Kartenansicht">
+                            <ViewModuleIcon />
+                        </Tooltip>
+                    </ToggleButton>
+                    <ToggleButton value="chart" aria-label="Grafikansicht">
+                        <Tooltip title="Grafikansicht">
+                            <ShowChartIcon />
+                        </Tooltip>
+                    </ToggleButton>
+                </ToggleButtonGroup>
+            </Box>
 
             {error && (
                  <Alert
                     severity="error"
                     action={
-                        <Button 
-                            color="inherit" 
-                            size="small" 
-                            onClick={handleReportError}
-                            startIcon={<ReportProblemOutlinedIcon />}
-                        >
+                        <Button color="inherit" size="small" onClick={handleReportError} startIcon={<ReportProblemOutlinedIcon />}>
                             Fehler Melden
                         </Button>
                     }
@@ -198,15 +240,34 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
                 </Alert>
             )}
 
-            {!isLoading && !error && sortedDataEntries.length > 0 ? (
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 2, height: '100%' }}>
-                    {sortedDataEntries.map(([key, value]) => (
-                       <CommodityItem key={key} indicatorKey={key} data={value} />
-                    ))}
-                </Box>
-            ) : (
-                !isLoading && !error && <Typography sx={{ p: 2, textAlign: 'center', color: 'text.secondary' }}>Keine Daten verfügbar.</Typography>
+            {viewMode === 'cards' && (
+                <>
+                    {isLoading && <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box>}
+                    {!isLoading && !error && sortedDataEntries.length > 0 ? (
+                        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 2 }}>
+                            {sortedDataEntries.map(([key, value]) => (
+                               <CommodityItem key={key} indicatorKey={key} data={value} />
+                            ))}
+                        </Box>
+                    ) : (
+                        !isLoading && !error && <Typography sx={{ p: 2, textAlign: 'center', color: 'text.secondary' }}>Keine Daten verfügbar.</Typography>
+                    )}
+                </>
             )}
+            
+            {viewMode === 'chart' && (
+                <>
+                    {isChartLoading && <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box>}
+                    {!isChartLoading && !error && (
+                        <CommodityChart 
+                            data={chartData} 
+                            timeframe={chartTimeframe}
+                            setTimeframe={setChartTimeframe}
+                        />
+                    )}
+                </>
+            )}
+            
         </WidgetPaper>
     );
 };

@@ -420,6 +420,55 @@ exports.getCommodityPrices = async (req, res) => {
     }
 };
 
+
+exports.getCommodityHistory = async (req, res) => {
+    // Zeitrahmen vom Frontend erhalten (z.B. '1M', '6M', '1Y')
+    const { timeframe = '1Y' } = req.query; 
+
+    let startDate;
+    const now = new Date();
+    if (timeframe === '1M') startDate = new Date(now.setMonth(now.getMonth() - 1));
+    else if (timeframe === '6M') startDate = new Date(now.setMonth(now.getMonth() - 6));
+    else startDate = new Date(now.setFullYear(now.getFullYear() - 1));
+
+    try {
+        // Die Abfrage holt für jeden Tag den letzten verfügbaren Eintrag pro Indikator.
+        // Das ist effizienter, als alle Datenpunkte zu senden.
+        const query = `
+            SELECT
+                DISTINCT ON (indicator_name, CAST(data_timestamp AS DATE))
+                indicator_name,
+                value,
+                CAST(data_timestamp AS DATE) as date
+            FROM
+                economic_indicators
+            WHERE
+                data_timestamp >= $1
+            ORDER BY
+                indicator_name, CAST(data_timestamp AS DATE), data_timestamp DESC;
+        `;
+
+        const { rows } = await db.query(query, [startDate]);
+
+        // Daten für das Frontend formatieren
+        const formattedData = rows.reduce((acc, row) => {
+            const { indicator_name, date, value } = row;
+            if (!acc[indicator_name]) {
+                acc[indicator_name] = [];
+            }
+            acc[indicator_name].push({ date: new Date(date).toISOString().split('T')[0], value: parseFloat(value) });
+            return acc;
+        }, {});
+
+        res.json({ ok: true, data: formattedData });
+
+    } catch (error) {
+        console.error('Fehler beim Abrufen der Rohstoff-Historie:', error);
+        res.status(500).json({ ok: false, message: 'Serverfehler' });
+    }
+};
+
+
 exports.getTrafficInfo = async (req, res) => {
     const { regions, limit = 50, offset = 0 } = req.query;
 
