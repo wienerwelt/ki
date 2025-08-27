@@ -1,11 +1,25 @@
 // frontend/src/context/AuthContext.tsx
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { jwtDecode } from 'jwt-decode';
-import axios from 'axios';
 import apiClient from '../apiClient';
-import { Region } from '../types/dashboard.types'; // Region wird weiterhin importiert
+import { Region } from '../types/dashboard.types';
+import i18n from 'i18next';
+import posthog from 'posthog-js';
 
-// === KORREKTUR: Fehlende Interfaces direkt hier definieren ===
+// === NEU: Interface für das Farbschema ===
+interface ColorScheme {
+    id: string;
+    name: string;
+    primary_color: string;
+    secondary_color: string;
+    text_color_light: string;
+    background_color_light: string;
+    paper_color_light: string;
+    text_color_dark: string;
+    background_color_dark: string;
+    paper_color_dark: string;
+}
+
 export interface UserPayload {
     id: string;
     username: string;
@@ -18,8 +32,17 @@ export interface UserPayload {
     contribution_score: number;
     membership_level: string | null;
     has_seen_welcome_widget: boolean;
+    first_name: string | null;
+    last_name: string | null;
+    organization_name: string | null;
+    linkedin_url: string | null;
+    article_score_min: number | null;
+    article_score_max: number | null;
+    preferred_theme?: 'light' | 'dark';
+    preferred_language?: 'de' | 'en';
 }
 
+// === KORREKTUR: BusinessPartnerData verwendet jetzt das ColorScheme-Interface ===
 export interface BusinessPartnerData {
     id: string;
     name: string;
@@ -27,15 +50,11 @@ export interface BusinessPartnerData {
     logo_url: string | null;
     subscription_start_date: string | null;
     subscription_end_date: string | null;
-    primary_color: string | null;
-    secondary_color: string | null;
-    text_color: string | null;
-    background_color: string | null;
-    accent_color?: string | null;
-    primary_text_color: string | null;
     storage_tier: string;
     storage_limit_bytes: number;
-    storage_usage_bytes: number;    
+    storage_usage_bytes: number;
+    // Die alten Farb-Eigenschaften werden durch das neue Schema-Objekt ersetzt
+    color_scheme: ColorScheme | null;
 }
 
 interface DecodedToken {
@@ -55,6 +74,10 @@ interface AuthContextType {
     renewSession: () => Promise<void>;
     fetchBusinessPartnerData: () => Promise<void>;
     updateUser: (newUserData: Partial<UserPayload>) => void;
+    themeMode: 'light' | 'dark';
+    setThemeMode: (mode: 'light' | 'dark') => void;
+    language: 'de' | 'en';
+    setLanguage: (lang: 'de' | 'en') => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -64,6 +87,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [businessPartner, setBusinessPartner] = useState<BusinessPartnerData | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [tokenExp, setTokenExp] = useState<number | null>(null);
+    const [themeMode, setThemeModeState] = useState<'light' | 'dark'>('light');
+    const [language, setLanguageState] = useState<'de' | 'en'>('de');
 
     const setDecodedTokenInfo = (token: string) => {
         try {
@@ -71,6 +96,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setUser(decoded.user);
             setTokenExp(decoded.exp);
             localStorage.setItem('jwt_token', token);
+            
+            setThemeModeState(decoded.user.preferred_theme || 'light');
+            const userLang = decoded.user.preferred_language || 'de';
+            setLanguageState(userLang);
+            i18n.changeLanguage(userLang);
         } catch (e) {
             console.error("Failed to decode token", e);
             logout();
@@ -96,50 +126,48 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, []);
     
     const fetchBusinessPartnerData = useCallback(async () => {
-        console.log('[AuthContext] Führe fetchBusinessPartnerData aus...');
         const token = localStorage.getItem('jwt_token');
-        
         if (!token || !user?.business_partner_id) {
-            console.error('[AuthContext] fetchBusinessPartnerData ABGEBROCHEN. Grund:', {
-                hasToken: !!token,
-                userObject: user,
-                hasUserBpId: !!user?.business_partner_id
-            });
             setBusinessPartner(null);
             return;
         }
-
-        console.log(`[AuthContext] Sende Anfrage an /api/business-partner/me für BP ID: ${user.business_partner_id}`);
         try {
             const response = await apiClient.get('/api/business-partner/me', {
                 headers: { 'x-auth-token': token },
             });
-            console.log('%c[AuthContext] ERFOLG! Antwort von /api/business-partner/me:', 'color: green; font-weight: bold;', response.data);
             setBusinessPartner(response.data);
         } catch (error) {
-            console.error('%c[AuthContext] FEHLER beim Laden der Business Partner Daten:', 'color: red; font-weight: bold;', error);
+            console.error('FEHLER beim Laden der Business Partner Daten:', error);
             setBusinessPartner(null);
         }
     }, [user]);
 
     useEffect(() => {
-        console.log('[AuthContext] useEffect für User-Änderung getriggert. Aktueller User-State:', user);
         if (user && user.business_partner_id) {
-            console.log('[AuthContext] User hat eine business_partner_id. Rufe fetchBusinessPartnerData auf.');
             fetchBusinessPartnerData();
         } else {
-            console.log('[AuthContext] User hat KEINE business_partner_id oder ist null. Setze businessPartner auf null.');
             setBusinessPartner(null);
         }
     }, [user, fetchBusinessPartnerData]);
 
     const login = (token: string, userData: UserPayload) => {
-        console.log('[AuthContext] login-Funktion aufgerufen. Setze User-State:', userData);
         localStorage.setItem('jwt_token', token);
         setUser(userData);
         try {
             const decoded: DecodedToken = jwtDecode(token);
             setTokenExp(decoded.exp);
+            setThemeModeState(userData.preferred_theme || 'light');
+            const userLang = userData.preferred_language || 'de';
+            setLanguageState(userLang);
+            i18n.changeLanguage(userLang);
+            posthog.identify(
+                userData.id,
+                {
+                    email: userData.email,
+                    name: userData.username,
+                    business_partner: userData.business_partner_name
+                }
+            );
         } catch (e) {
             console.error("Failed to decode token on login", e);
             logout();
@@ -150,11 +178,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         localStorage.removeItem('jwt_token');
         localStorage.removeItem('closedAds');
         setUser(null);
-        setBusinessPartner(null);
+        setBusinessPartner(null);        
         setTokenExp(null);
+        posthog.reset();
     };
 
     const renewSession = async () => {
+        // NEU: Aktuelle Einstellungen vor der Aktualisierung speichern
+        const currentTheme = themeMode;
+        const currentLang = language;
+
         try {
             const oldToken = localStorage.getItem('jwt_token');
             const response = await apiClient.post('/api/session/renew', {}, {
@@ -163,6 +196,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const { token: newToken } = response.data;
             if (newToken) {
                 setDecodedTokenInfo(newToken);
+                setThemeModeState(currentTheme);
+                setLanguageState(currentLang);
+                i18n.changeLanguage(currentLang);
             }
         } catch (error) {
             console.error("Sitzungserneuerung fehlgeschlagen:", error);
@@ -173,14 +209,28 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateUser = (newUserData: Partial<UserPayload>) => {
         setUser(prevUser => {
             if (!prevUser) return null;
-            return { ...prevUser, ...newUserData };
+            const updatedUser = { ...prevUser, ...newUserData };
+            if (newUserData.preferred_theme) setThemeModeState(newUserData.preferred_theme);
+            if (newUserData.preferred_language) {
+                setLanguageState(newUserData.preferred_language);
+                i18n.changeLanguage(newUserData.preferred_language);
+            }
+            return updatedUser;
         });
+    };
+    
+    const setThemeMode = (mode: 'light' | 'dark') => {
+        updateUser({ preferred_theme: mode });
+    };
+    const setLanguage = (lang: 'de' | 'en') => {
+        updateUser({ preferred_language: lang });
     };
 
     const value = {
         isAuthenticated: !!user, user, businessPartner, isLoading, tokenExp,
         login, logout, renewSession, fetchBusinessPartnerData,
-        updateUser
+        updateUser,
+        themeMode, setThemeMode, language, setLanguage
     };
 
     return (

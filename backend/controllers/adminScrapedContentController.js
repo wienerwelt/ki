@@ -104,6 +104,34 @@ exports.createScrapedContent = async (req, res) => {
     }
 };
 
+exports.updateScrapedEvent = async (req, res) => {
+    const { id } = req.params;
+    // Admins können Titel und event_date anpassen.
+    const { title, event_date } = req.body;
+
+    // Nur prüfen, ob ein Titel vorhanden ist. Das Datum kann auch auf NULL gesetzt werden.
+    if (!title) {
+        return res.status(400).json({ message: 'Ein Titel ist erforderlich.' });
+    }
+
+    try {
+        const { rows } = await db.query(
+            `UPDATE scraped_content
+             SET title = $1, event_date = $2, updated_at = NOW()
+             WHERE id = $3
+             RETURNING *`,
+            [title, event_date || null, id] // Erlaube, dass das Datum auf NULL gesetzt wird
+        );
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Eintrag nicht gefunden.' });
+        }
+        res.json(rows[0]);
+    } catch (err) {
+        console.error('Fehler beim Aktualisieren des Scraped Events:', err.message);
+        res.status(500).send('Serverfehler');
+    }
+};
+
 // Aktualisiert einen Inhalt und seine Tag-Verknüpfungen in einer Transaktion
 exports.updateScrapedContent = async (req, res) => {
     const { id } = req.params;
@@ -160,5 +188,43 @@ exports.deleteScrapedContent = async (req, res) => {
     } catch (err) {
         console.error('Error deleting content:', err.message);
         res.status(500).send('Server error');
+    }
+};
+
+exports.getAllScrapedEventsForAdmin = async (req, res) => {
+    try {
+        const { rows } = await db.query(
+            `SELECT sc.id, sc.title, sc.event_date, sc.original_url, sc.source_identifier, sc.category_id, c.name as category_name
+            FROM scraped_content sc
+            LEFT JOIN categories c ON sc.category_id = c.id
+            WHERE sc.category LIKE '%_events'
+            ORDER BY sc.created_at DESC`
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error('Fehler beim Laden der Scraped Events für Admin:', err.message);
+        res.status(500).send('Serverfehler');
+    }
+};
+
+// NEU: Erstellt einen manuellen Event-Eintrag in der scraped_content Tabelle
+exports.createManualEvent = async (req, res) => {
+    const { title, event_date, region, summary, original_url } = req.body;
+
+    if (!title || !event_date) {
+        return res.status(400).json({ message: 'Titel und Event-Datum sind erforderlich.' });
+    }
+
+    try {
+        const { rows } = await db.query(
+            `INSERT INTO scraped_content (title, event_date, region, summary, original_url, category, source_identifier)
+             VALUES ($1, $2, $3, $4, $5, 'industry_events', 'manual_entry')
+             RETURNING *`,
+            [title, event_date, region || null, summary || null, original_url || null]
+        );
+        res.status(201).json(rows[0]);
+    } catch (err) {
+        console.error('Fehler beim Erstellen des manuellen Events:', err.message);
+        res.status(500).send('Serverfehler');
     }
 };

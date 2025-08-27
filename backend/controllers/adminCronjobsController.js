@@ -3,6 +3,7 @@ const db = require('../config/db');
 const cronParser = require('cron-parser');
 const { aiContentQueue } = require('../services/queueService');
 const jobManager = require('../services/jobManagerService');
+const { generateAndSendDailyReport } = require('../services/reportingService');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
@@ -264,7 +265,7 @@ exports.createEmailJob = async (req, res) => {
     try {
         const { rows } = await db.query(
             'INSERT INTO email_cronjobs (name, recipient_group, schedule, is_active) VALUES ($1, $2, $3, $4) RETURNING *',
-            [name, recipient_group, schedule, is_active]
+            [name, recipient_group, schedule, is_active === undefined ? true : is_active]
         );
         res.status(201).json(rows[0]);
     } catch (err) {
@@ -305,8 +306,34 @@ exports.deleteEmailJob = async (req, res) => {
 
 exports.triggerEmailJob = async (req, res) => {
     const { id } = req.params;
-    console.log(`Manually triggering email job with ID: ${id}`);
-    res.status(202).json({ message: `E-Mail-Job ${id} manuell gestartet (Placeholder).` });
+    try {
+        const jobRes = await db.query('SELECT * FROM email_cronjobs WHERE id = $1', [id]);
+        if (jobRes.rows.length === 0) {
+            const message = `E-Mail-Job ${id} nicht gefunden.`;
+            if (res) return res.status(404).json({ message });
+            return;
+        }
+
+        const job = jobRes.rows[0];
+        console.log(`[CRON] Triggering email job: ${job.name}`);
+
+        // This switch statement decides which action to run based on the job name
+        switch (job.name) {
+            case 'Daily Admin Report':
+                await generateAndSendDailyReport();
+                break;
+            // You can add more 'case' statements for other email jobs here
+            default:
+                console.warn(`Keine Aktion für E-Mail-Job "${job.name}" definiert.`);
+        }
+
+        if (res) {
+            res.status(202).json({ message: `E-Mail-Job "${job.name}" manuell gestartet.` });
+        }
+    } catch (err) {
+        console.error(`Fehler beim Triggern des E-Mail-Jobs ${id}:`, err.message);
+        if (res) res.status(500).send('Server error');
+    }
 };
 
 // NEU: Funktion, um nur geplante Scraping-Regeln abzurufen

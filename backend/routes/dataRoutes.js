@@ -28,6 +28,10 @@ router.post('/scraped-content/:contentId/mark-as-read', dataController.markScrap
 router.post('/share-content-by-email', authMiddleware, dataController.shareContentByEmail);
 router.get('/vignette-countries', dataController.getVignetteCountries);
 router.get('/commodities/history', dataController.getCommodityHistory);
+router.get('/calendar-events', authMiddleware, dataController.getCalendarEvents);
+router.get('/enhanced-calendar-events', authMiddleware, dataController.getEnhancedCalendarEvents);
+router.post('/events/:eventId/vote', authMiddleware, dataController.voteOnEventAttendance);
+router.post('/events/share', authMiddleware, dataController.shareEventByEmail);
 
 // Diese Route sollte jetzt funktionieren, da die Funktion im dataController existiert
 router.get('/actions', authMiddleware, dataController.getActiveActionsForWidget);

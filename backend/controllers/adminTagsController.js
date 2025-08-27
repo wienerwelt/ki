@@ -1,18 +1,19 @@
 // backend/controllers/adminTagsController.js
-
 const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
-// Holt alle Tags und zählt deren Verwendung über alle Inhaltstypen hinweg
 exports.getAllTags = async (req, res) => {
     try {
+        // KORREKTUR: JOIN mit der categories-Tabelle, um den Namen der Kategorie abzurufen
         const query = `
             SELECT 
                 t.id, 
                 t.name, 
                 t.description,
+                t.category_id,
+                c.name AS category_name, -- Name der verknüpften Kategorie
                 (
                     COALESCE((SELECT COUNT(*) FROM scraped_content_tags sct WHERE sct.tag_id = t.id), 0) +
                     COALESCE((SELECT COUNT(*) FROM ai_generated_content_tags aict WHERE aict.tag_id = t.id), 0) +
@@ -20,8 +21,10 @@ exports.getAllTags = async (req, res) => {
                 )::INTEGER AS usage_count
             FROM 
                 tags t
+            LEFT JOIN 
+                categories c ON t.category_id = c.id -- LEFT JOIN, damit auch Tags ohne Kategorie angezeigt werden
             GROUP BY 
-                t.id, t.name, t.description
+                t.id, t.name, t.description, c.name
             ORDER BY 
                 t.name ASC;
         `;
@@ -33,14 +36,14 @@ exports.getAllTags = async (req, res) => {
     }
 };
 
-// Erstellt einen neuen Tag
 exports.createTag = async (req, res) => {
-    const { name, description } = req.body;
+    // KORREKTUR: category_id wird jetzt akzeptiert
+    const { name, description, category_id } = req.body;
     if (!name) return res.status(400).json({ message: 'Name is required.' });
     try {
         const newTag = await db.query(
-            'INSERT INTO tags (id, name, description) VALUES ($1, $2, $3) RETURNING *',
-            [uuidv4(), name, description || null]
+            'INSERT INTO tags (id, name, description, category_id) VALUES ($1, $2, $3, $4) RETURNING *',
+            [uuidv4(), name, description || null, category_id || null]
         );
         res.status(201).json(newTag.rows[0]);
     } catch (err) {
@@ -50,16 +53,16 @@ exports.createTag = async (req, res) => {
     }
 };
 
-// Aktualisiert einen bestehenden Tag
 exports.updateTag = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
-    const { name, description } = req.body;
+    // KORREKTUR: category_id wird jetzt akzeptiert
+    const { name, description, category_id } = req.body;
     if (!name) return res.status(400).json({ message: 'Name is required.' });
     try {
         const updatedTag = await db.query(
-            'UPDATE tags SET name = $1, description = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING *',
-            [name, description || null, id]
+            'UPDATE tags SET name = $1, description = $2, category_id = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *',
+            [name, description || null, category_id || null, id]
         );
         if (updatedTag.rows.length === 0) return res.status(404).json({ message: 'Tag not found.' });
         res.json(updatedTag.rows[0]);
@@ -70,15 +73,17 @@ exports.updateTag = async (req, res) => {
     }
 };
 
-// Löscht einen Tag
+// deleteTag bleibt unverändert
 exports.deleteTag = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
     try {
-        // Die ON DELETE CASCADE Regel in der DB löscht automatisch die Einträge in den Verbindungstabellen
-        const result = await db.query('DELETE FROM tags WHERE id = $1 RETURNING id', [id]);
-        if (result.rows.length === 0) return res.status(404).json({ message: 'Tag not found.' });
-        res.status(200).json({ message: 'Tag deleted successfully' });
+        const deletedTag = await db.query(
+            'DELETE FROM tags WHERE id = $1 RETURNING *',
+            [id]
+        );
+        if (deletedTag.rows.length === 0) return res.status(404).json({ message: 'Tag not found.' });
+        res.json(deletedTag.rows[0]);
     } catch (err) {
         console.error('Error deleting tag:', err.message);
         res.status(500).send('Server error');

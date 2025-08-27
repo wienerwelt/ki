@@ -9,7 +9,7 @@
     "start:worker": "node worker.js",
     "dev:worker": "nodemon worker.js",
     "deploy": "npm --prefix ../frontend ci && npm --prefix ../frontend run build:dashboard",
-    "whereami": "node -e \"console.log('cwd=',process.cwd());console.log(require('fs').readdirSync('.'))\""    
+    "whereami": "node -e \"console.log('cwd=',process.cwd());console.log(require('fs').readdirSync('.'))\""
   },
   "keywords": [],
   "author": "",
@@ -36,7 +36,7 @@
     "jsdom": "^26.1.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
-    "node-cron": "^4.1.1",
+    "node-cron": "^4.2.1",
     "nodemailer": "^7.0.5",
     "openai": "^5.7.0",
     "papaparse": "^5.5.3",
@@ -47,6 +47,8 @@
   },
   "devDependencies": {
     "@types/cheerio": "^0.22.35",
+    "@types/node-cron": "^3.0.11",
+    "@types/nodemailer": "^7.0.1",
     "@types/uuid": "^10.0.0",
     "@types/xml2js": "^0.4.14",
     "express-session": "^1.17.0",

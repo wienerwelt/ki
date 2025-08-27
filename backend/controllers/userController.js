@@ -1,8 +1,7 @@
 // backend/controllers/userController.js
-const db = require('../config/db'); // KORREKTUR: Der Pfad zur Datenbank-Datei wurde korrigiert.
+const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 
-// Holt die Profildaten des aktuell eingeloggten Benutzers
 exports.getProfile = async (req, res) => {
     try {
         const userId = req.user.id;
@@ -26,29 +25,30 @@ exports.getProfile = async (req, res) => {
     }
 };
 
-// Aktualisiert das Profil des aktuell eingeloggten Benutzers
+// KORRIGIERTE updateProfile Funktion
 exports.updateProfile = async (req, res) => {
     try {
         const userId = req.user.id;
 
-        // Erlaubte Felder, die der Benutzer ändern darf
-        const { first_name, last_name, organization_name, linkedin_url, password, article_score_min, article_score_max } = req.body;
+        const { 
+            first_name, last_name, organization_name, linkedin_url, password, 
+            article_score_min, article_score_max, preferred_theme, preferred_language 
+        } = req.body;
 
-        const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+        const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
         if (rows.length === 0) {
             return res.status(404).json({ message: 'Benutzer nicht gefunden.' });
         }
         const user = rows[0];
 
-        // Passwort nur aktualisieren, wenn ein neues angegeben wurde
         let password_hash = user.password_hash;
         if (password && password.trim() !== '') {
             const salt = await bcrypt.genSalt(10);
             password_hash = await bcrypt.hash(password, salt);
         }
 
-        // Führt das Update nur mit den erlaubten Feldern durch
-        await db.query(
+        // NEU: Das UPDATE-Statement wurde um die neuen Felder erweitert
+        const updatedUserResult = await db.query(
             `UPDATE users SET
                 first_name = $1,
                 last_name = $2,
@@ -57,12 +57,21 @@ exports.updateProfile = async (req, res) => {
                 password_hash = $5,
                 article_score_min = $6,
                 article_score_max = $7,
+                preferred_theme = $8,
+                preferred_language = $9,
                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = $8`,
-            [first_name, last_name, organization_name, linkedin_url, password_hash, article_score_min, article_score_max, userId]
+             WHERE id = $10
+             RETURNING *`, // Wichtig: Gib den aktualisierten Benutzer zurück
+            [
+                first_name, last_name, organization_name, linkedin_url, password_hash, 
+                article_score_min, article_score_max, preferred_theme, preferred_language, 
+                userId
+            ]
         );
+        
+        // Sende die vollständigen, aktualisierten Benutzerdaten zurück an das Frontend
+        res.json(updatedUserResult.rows[0]);
 
-        res.json({ message: 'Profil erfolgreich aktualisiert.' });
     } catch (err) {
         console.error('Fehler beim Aktualisieren des Profils:', err.message);
         res.status(500).send('Serverfehler');

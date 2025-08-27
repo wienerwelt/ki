@@ -40,9 +40,9 @@ import AdminCronjobsPage from './pages/AdminCronjobsPage';
 import AdminSourcesPage from './pages/AdminSourcesPage';
 import TrustedSourcesPage from './pages/TrustedSourcesPage';
 import FeedbackCenterPage from './pages/FeedbackCenterPage';
-// === NEUER IMPORT START ===
 import FileManagementPage from './pages/FileManagementPage';
-// === NEUER IMPORT ENDE ===
+import AdminEventsPage from './pages/AdminEventsPage';
+
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
@@ -75,22 +75,44 @@ const BpStaffAllowedRoutes: React.FC = () => {
 };
 
 function App() {
-  const { businessPartner, isLoading } = useAuth();
+  // themeMode wird jetzt aus dem AuthContext geholt
+  const { businessPartner, isLoading, themeMode } = useAuth();
   const [currentTheme, setCurrentTheme] = useState<Theme | null>(null);
 
   useEffect(() => {
     if (!isLoading) {
+      // Annahme: Ihr 'businessPartner' Objekt enthält jetzt ein 'color_scheme' Unterobjekt
+      const scheme = businessPartner?.color_scheme; 
+
       const newTheme = createTheme({
         palette: {
-          primary: { main: businessPartner?.primary_color || '#2196f3' },
-          secondary: { main: businessPartner?.secondary_color || '#ff9800' },
-          text: { primary: businessPartner?.text_color || '#333333' },
-          background: { default: businessPartner?.background_color || '#f4f6f8', paper: '#ffffff' },
+          mode: themeMode, // 'light' or 'dark'
+          
+          primary: { 
+            main: scheme?.primary_color || '#2196f3' 
+          },
+          secondary: { 
+            main: scheme?.secondary_color || '#ff9800' 
+          },
+          text: {
+            primary: themeMode === 'light'
+              ? scheme?.text_color_light || '#333333'
+              : scheme?.text_color_dark || '#ffffff',
+          },
+          background: {
+            default: themeMode === 'light'
+              ? scheme?.background_color_light || '#f4f6f8'
+              : scheme?.background_color_dark || '#121212',
+            paper: themeMode === 'light'
+              // Für paper_color_light nehmen wir oft den normalen Hintergrund, falls nicht anders definiert
+              ? scheme?.paper_color_light || '#ffffff' 
+              : scheme?.paper_color_dark || '#1e1e1e',
+          },
         },
       });
       setCurrentTheme(newTheme);
     }
-  }, [businessPartner, isLoading]);
+  }, [businessPartner, isLoading, themeMode]);
 
   if (!currentTheme) {
     return (
@@ -100,7 +122,7 @@ function App() {
     );
   }
 
-  const AnyThemeProvider = ThemeProvider as unknown as React.ComponentType<{ theme: Theme; children?: React.ReactNode }>;
+  const AnyThemeProvider = ThemeProvider as any;
 
   return (
     <AnyThemeProvider theme={currentTheme}>
@@ -123,9 +145,7 @@ function App() {
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/trusted-sources" element={<TrustedSourcesPage />} />
             <Route path="/feedback" element={<FeedbackCenterPage />} />
-            {/* === NEUE ROUTE START === */}
             <Route path="/files" element={<FileManagementPage />} />
-            {/* === NEUE ROUTE ENDE === */}
 
             {/* Routen für Admins und Assistenten */}
             <Route element={<BpStaffAllowedRoutes />}>
@@ -152,6 +172,7 @@ function App() {
               <Route path="advertisements" element={<AdminAdvertisementsPage />} />
               <Route path="cronjobs" element={<AdminCronjobsPage />} />
               <Route path="sources" element={<AdminSourcesPage />} />
+              <Route path="events" element={<AdminEventsPage />} />
             </Route>
           </Route>
 

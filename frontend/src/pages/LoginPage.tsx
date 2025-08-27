@@ -1,7 +1,8 @@
 // frontend/src/pages/LoginPage.tsx
 import React, { useState, Suspense } from 'react';
-import { useNavigate, Link as RouterLink } from 'react-router-dom';
-import { useAuth, UserPayload } from '../context/AuthContext'; // UserPayload importieren
+// NEU: useSearchParams importieren
+import { useNavigate, Link as RouterLink, useSearchParams } from 'react-router-dom'; 
+import { useAuth, UserPayload } from '../context/AuthContext';
 import {
   TextField, Button, Typography, Container, Box, CircularProgress, Alert,
   InputAdornment, IconButton, Divider, Checkbox, FormControlLabel, Link,
@@ -11,7 +12,6 @@ import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import CloseIcon from '@mui/icons-material/Close';
 
-// Dynamischer Import der Seiten-Komponenten für die Anzeige im Dialog
 const TermsPage = React.lazy(() => import('./TermsPage'));
 const PrivacyPage = React.lazy(() => import('./PrivacyPage'));
 
@@ -20,8 +20,13 @@ interface LoginPageProps {
 }
 
 const LoginPage: React.FC<LoginPageProps> = ({ isRegister = false }) => {
-  const [identifier, setIdentifier] = useState('');
-  const [password, setPassword] = useState('');
+  // NEU: URL-Parameter auslesen
+  const [searchParams] = useSearchParams();
+
+  // KORREKTUR: Initialwerte für die State-Variablen aus den URL-Parametern setzen
+  const [identifier, setIdentifier] = useState(searchParams.get('username') || '');
+  const [password, setPassword] = useState(searchParams.get('password') || '');
+  
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,11 +124,9 @@ const LoginPage: React.FC<LoginPageProps> = ({ isRegister = false }) => {
         alert('Registrierung erfolgreich! Bitte prüfen Sie Ihr Postfach, um Ihre E-Mail zu bestätigen.');
         navigate('/login');
       } else {
-        // === KORREKTUR: Wir prüfen auf Token UND User-Objekt ===
         if (!data?.token || !data?.user) {
           return setError('Antwort ohne Token oder Benutzerdaten erhalten. Bitte später erneut versuchen.');
         }
-        // === KORREKTUR: Wir übergeben Token UND User-Objekt an die login-Funktion ===
         login(data.token, data.user as UserPayload);
         navigate('/dashboard');
       }

@@ -1,9 +1,9 @@
 // src/components/widgets/GenericAIWidget.tsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-    Box, Typography, TextField, CircularProgress, MenuItem, Alert, List, ListItem, ListItemText, Divider,
+    Accordion, AccordionDetails, AccordionSummary, Box, Typography, TextField, CircularProgress, MenuItem, Alert, List, ListItem, ListItemText, Divider,
     Dialog, DialogTitle, DialogContent, Chip, Badge, Button, Grid, Stack, IconButton, Tooltip, Link as MuiLink,
-    Accordion, AccordionSummary, AccordionDetails, DialogActions, Pagination, Paper, InputAdornment
+    DialogActions, Pagination, Paper, InputAdornment
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SendIcon from '@mui/icons-material/Send';
@@ -20,9 +20,9 @@ import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt';
 import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
-import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined'; // NEU
+import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
 import { Autocomplete } from '@mui/material';
-import { useNavigate } from 'react-router-dom'; // NEU
+import { useNavigate } from 'react-router-dom';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
@@ -42,7 +42,6 @@ interface ContentItem {
     user_vote: number;
 }
 interface AIPromptRule { id: string; name: string; default_category_id?: string; }
-// NEU: Props erweitert
 interface GenericAIWidgetProps extends BaseWidgetProps {
     title: string;
     category: string;
@@ -51,7 +50,7 @@ interface GenericAIWidgetProps extends BaseWidgetProps {
 }
 interface EmailState { open: boolean; loading: boolean; error: string | null; subject: string; body: string; }
 
-// --- Hilfskomponenten (unverändert) ---
+// --- Hilfskomponenten ---
 const ArticleBodyRenderer: React.FC<{ summary: string | null | undefined }> = ({ summary }) => {
     if (!summary) return <Typography>Kein Inhalt verfügbar.</Typography>;
     return <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{summary}</Typography>;
@@ -76,13 +75,12 @@ const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onS
 // --- Haupt-Widget-Komponente ---
 const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, isRemovable, title, category, icon, widgetTypeKey }) => {
     const { user } = useAuth();
-    const navigate = useNavigate(); // NEU
+    const navigate = useNavigate();
     const [items, setItems] = useState<ContentItem[]>([]);
     const [counts, setCounts] = useState({ unread: 0, new: 0 });
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [selectedArticle, setSelectedArticle] = useState<ContentItem | null>(null);
-    // ... (alle anderen States bleiben unverändert)
     const [relevantRules, setRelevantRules] = useState<AIPromptRule[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
@@ -96,16 +94,18 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
 
-    // ... (alle Hooks und Funktionen bleiben größtenteils unverändert)
     useEffect(() => { const handler = setTimeout(() => { setDebouncedSearchTerm(searchTerm); }, 500); return () => { clearTimeout(handler); }; }, [searchTerm]);
     useEffect(() => { if (user?.regions && user.regions.length > 0) { const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0]; setSelectedRegion(defaultRegion); } }, [user?.regions]);
     useEffect(() => { if (relevantRules.length === 1) setSelectedRuleId(relevantRules[0].id); else setSelectedRuleId(''); }, [relevantRules]);
 
     const fetchData = useCallback(async (currentPage: number, search: string) => {
         if (!category || !selectedRegion) {
-            setItems([]); setTotalPages(0); return;
+            setItems([]);
+            setTotalPages(0);
+            return;
         }
-        setIsLoading(true); setError(null);
+        setIsLoading(true);
+        setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
             const params = new URLSearchParams({ category, region: selectedRegion.name, page: String(currentPage), limit: '5' });
@@ -133,14 +133,12 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
     useEffect(() => { setPage(1); }, [selectedRegion, debouncedSearchTerm]);
     useEffect(() => { fetchData(page, debouncedSearchTerm); }, [fetchData, page, debouncedSearchTerm]);
 
-    // NEU: Funktion zum Melden von Fehlern
     const handleReportError = () => {
         navigate('/feedback', {
             state: { type: 'bug', widget: title, error: error, widgetKey: widgetTypeKey }
         });
     };
     
-    // ... (restliche Handler-Funktionen wie handleOpenArticle, handleVote etc. bleiben unverändert)
     const handleOpenArticle = async (article: ContentItem) => {
         setSelectedArticle(article);
         if (!article.is_read) {
@@ -237,7 +235,6 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
             onDelete={onDelete} 
             isRemovable={isRemovable}
         >
-            {/* KORREKTUR: Die Logik für Laden/Fehler/Inhalt wird jetzt hier direkt gehandhabt */}
             {isLoading ? (
                 <Box sx={{ m: 'auto', textAlign: 'center' }}>
                     <CircularProgress />
@@ -254,7 +251,6 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
                     {error}
                 </Alert>
             ) : (
-                // Der ursprüngliche Inhalt des Widgets
                 <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                     <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
                         {items.length > 0 ? (

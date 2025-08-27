@@ -1,34 +1,21 @@
 // frontend/src/components/widgetMapping.ts
 import React from 'react';
 
-// Importiere hier ALLE deine Widget-Komponenten
-import GenericAIWidget from './widgets/GenericAIWidget';
-import GenericScrapeWidget from './widgets/GenericScrapeWidget';
-import BusinessPartnerInfoWidget from './widgets/BusinessPartnerInfoWidget';
-import TrafficInfoWidget from './widgets/TrafficInfoWidget';
-import FuelPricesWidget from './widgets/FuelPricesWidget';
-import TaxChangesWidget from './widgets/TaxChangesWidget';
-import FleetNewsWidget from './widgets/FleetNewsWidget';
-import VignetteWidget from './widgets/VignetteWidget';
-import EVStationWidget from './widgets/EVStationWidget';
-import BusinessPartnerActionsWidget from './widgets/BusinessPartnerActionsWidget';
-import TrustedSourcesWidget from './widgets/TrustedSourcesWidget';
-import CommodityPricesWidget from './widgets/CommodityPricesWidget';
-import FileDownloadWidget from './widgets/FileDownloadWidget';
+// This object maps the 'component_key' or 'type_key' from your database 
+// to the actual React component file.
+export const WIDGET_COMPONENTS: { [key: string]: React.LazyExoticComponent<React.ComponentType<any>> } = {
 
-// Definiere die zentrale Zuordnung. Die Schlüssel hier sind die `type_key`s.
-export const WIDGET_COMPONENTS: { [key: string]: React.ElementType<any> } = {
-    BusinessPartnerInfo: BusinessPartnerInfoWidget,
-    TrafficInfo: TrafficInfoWidget,
-    FuelPrices: FuelPricesWidget,
-    TaxChanges: TaxChangesWidget,
-    FleetNews: FleetNewsWidget,
-    VignettePreise: VignetteWidget,
-    GenericAI: GenericAIWidget,
-    EVStation: EVStationWidget,
-    GenericScrape: GenericScrapeWidget,
-    BusinessPartnerAktionen: BusinessPartnerActionsWidget,
-    TrustedSources: TrustedSourcesWidget,
-    CommodityPrices: CommodityPricesWidget,
-    FileDownload: FileDownloadWidget,
+    GenericAI: React.lazy(() => import('./widgets/GenericAIWidget')),
+    GenericScrape: React.lazy(() => import('./widgets/GenericScrapeWidget')),
+
+    BusinessPartnerInfo: React.lazy(() => import('./widgets/BusinessPartnerInfoWidget')),
+    TrafficInfo: React.lazy(() => import('./widgets/TrafficInfoWidget')),
+    FuelPrices: React.lazy(() => import('./widgets/FuelPricesWidget')),
+    VignettePreise: React.lazy(() => import('./widgets/VignetteWidget')),
+    EVStation: React.lazy(() => import('./widgets/EVStationWidget')),
+    BusinessPartnerAktionen: React.lazy(() => import('./widgets/BusinessPartnerActionsWidget')),
+    TrustedSources: React.lazy(() => import('./widgets/TrustedSourcesWidget')),
+    CommodityPrices: React.lazy(() => import('./widgets/CommodityPricesWidget')),
+    FileDownload: React.lazy(() => import('./widgets/FileDownloadWidget')),
+    EventCalendar: React.lazy(() => import('./widgets/EventCalendarWidget')),
 };

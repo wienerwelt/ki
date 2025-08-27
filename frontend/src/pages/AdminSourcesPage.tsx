@@ -1,8 +1,9 @@
 // frontend/src/pages/AdminSourcesPage.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-    Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
+    Box, Typography, Container, Paper, CircularProgress, Alert, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Chip, Tooltip, Tabs, Tab, Rating, Link as MuiLink
+    // KORREKTUR: Unbenutzter 'Button'-Import wurde entfernt
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -72,7 +73,7 @@ const AdminSourcesPage: React.FC = () => {
             await apiClient.put(`/api/admin/sources/${id}/status`, { status: newStatus }, {
                 headers: { 'x-auth-token': token }
             });
-            fetchSources(); // Daten neu laden, um die Änderungen anzuzeigen
+            fetchSources();
         } catch (err: any) {
             alert(err.response?.data?.message || 'Fehler beim Ändern des Status.');
         }
@@ -99,7 +100,8 @@ const AdminSourcesPage: React.FC = () => {
                 
                 <Paper>
                     <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-                        <Tabs value={filterStatus} onChange={(e, newValue) => setFilterStatus(newValue)}>
+                        {/* KORREKTUR: 'e' in '_e' umbenannt, um die Warnung zu beheben */}
+                        <Tabs value={filterStatus} onChange={(_e, newValue) => setFilterStatus(newValue)}>
                             <Tab label="Alle" value="all" />
                             <Tab label="Ausstehend" value="pending_review" />
                             <Tab label="Genehmigt" value="approved" />
@@ -142,7 +144,7 @@ const AdminSourcesPage: React.FC = () => {
                                             </TableCell>
                                             <TableCell>
                                                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                                    <Rating value={source.average_rating} precision={0.1} readOnly size="small" />
+                                                    <Rating value={parseFloat(source.average_rating as any)} precision={0.1} readOnly size="small" />
                                                     <Typography variant="body2" sx={{ ml: 1 }}>({source.vote_count})</Typography>
                                                 </Box>
                                             </TableCell>

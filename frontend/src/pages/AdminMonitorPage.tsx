@@ -4,14 +4,15 @@ import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, TextField, Button, Grid, Pagination, Chip,
     Dialog, DialogTitle, DialogContent, DialogActions, IconButton, TableSortLabel,
-    Snackbar
+    Snackbar, Tooltip
 } from '@mui/material';
 import { AlertProps } from '@mui/material/Alert';
 import CloseIcon from '@mui/icons-material/Close';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DnsIcon from '@mui/icons-material/Dns';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ErrorIcon from '@mui/icons-material/Error';
 import apiClient from '../apiClient';
-import SystemHealthWidget from '../components/SystemHealthWidget';
 
 // --- Interfaces & Helper Functions ---
 interface Log {
@@ -20,6 +21,13 @@ interface Log {
 }
 interface SnackbarState { open: boolean; message: string; severity: AlertProps['severity']; }
 type Order = 'asc' | 'desc';
+
+interface HealthStatus {
+    postgres: { status: 'online' | 'offline'; version?: string; error?: string; };
+    redis: { status: 'online' | 'offline'; error?: string; };
+    server: { uptime: string; memoryUsage: { rss: number } };
+}
+
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
     const valA = a[orderBy] ?? '';
     const valB = b[orderBy] ?? '';
@@ -33,6 +41,7 @@ function getComparator<Key extends keyof any>(order: Order, orderBy: Key,): (a: 
 // --- Ende ---
 
 const AdminMonitorPage: React.FC = () => {
+    // Zustand für die Logs
     const [logs, setLogs] = useState<Log[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -49,6 +58,52 @@ const AdminMonitorPage: React.FC = () => {
     const [deleteUntilDate, setDeleteUntilDate] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
     const [snackbar, setSnackbar] = useState<SnackbarState>({ open: false, message: '', severity: 'success' });
+
+    // --- HEALTH WIDGET LOGIK START ---
+    const [healthData, setHealthData] = useState<HealthStatus | null>(null);
+    const [isHealthLoading, setIsHealthLoading] = useState(true);
+    const [healthError, setHealthError] = useState<string | null>(null);
+
+    useEffect(() => {
+        const fetchHealth = async () => {
+            // KORREKTUR: AbortController für Timeout implementieren
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => {
+                controller.abort();
+            }, 10000); // 10 Sekunden Timeout
+
+            if (!healthData && !healthError) {
+                setIsHealthLoading(true);
+            }
+
+            try {
+                const token = localStorage.getItem('jwt_token');
+                const response = await apiClient.get('/api/admin/monitor/status', {
+                    headers: { 'x-auth-token': token },
+                    signal: controller.signal // Signal an die Anfrage übergeben
+                });
+                
+                clearTimeout(timeoutId); // Timeout löschen, wenn die Anfrage erfolgreich war
+
+                setHealthData(response.data);
+                setHealthError(null);
+            } catch (err: any) {
+                clearTimeout(timeoutId); // Timeout auch im Fehlerfall löschen
+                if (err.name === 'AbortError' || err.code === 'ECONNABORTED') {
+                    setHealthError('Timeout: Der Server antwortet nicht rechtzeitig.');
+                } else {
+                    setHealthError(err.response?.data?.message || 'Systemstatus konnte nicht geladen werden.');
+                }
+            } finally {
+                setIsHealthLoading(false);
+            }
+        };
+
+        fetchHealth();
+        const interval = setInterval(fetchHealth, 30000);
+        return () => clearInterval(interval);
+    }, []); // Leeres Array ist korrekt, damit der Effekt nur einmal startet
+    // --- HEALTH WIDGET LOGIK ENDE ---
 
     const fetchLogs = useCallback(async (currentPage = 1) => {
         setLoading(true);
@@ -82,7 +137,9 @@ const AdminMonitorPage: React.FC = () => {
     const handleClearFilters = () => {
         setFilterUsername(''); setFilterActionType(''); setFilterStartDate(''); setFilterEndDate(''); setPage(1); fetchLogs(1);
     };
-    const handlePageChange = (event: React.ChangeEvent<unknown>, value: number) => { fetchLogs(value); };
+    const handlePageChange = (_event: React.ChangeEvent<unknown>, value: number) => { 
+        fetchLogs(value); 
+    };
     const handleSortRequest = (property: keyof Log) => {
         const isAsc = orderBy === property && order === 'asc';
         setOrder(isAsc ? 'desc' : 'asc');
@@ -118,13 +175,57 @@ const AdminMonitorPage: React.FC = () => {
         window.open(`${apiUrl}/api/admin/jobs`, '_blank');
     };
 
+    // --- HEALTH WIDGET RENDER-FUNKTION START ---
+    const renderHealthWidget = () => {
+        if (isHealthLoading) {
+            return <Paper sx={{p: 2, mb: 3}}><CircularProgress size={20} /></Paper>;
+        }
+
+        const StatusChip: React.FC<{ service: HealthStatus['postgres'] | HealthStatus['redis'] }> = ({ service }) => (
+            <Tooltip title={service?.error || service?.status || 'unbekannt'}>
+                <Chip
+                    icon={service?.status === 'online' ? <CheckCircleIcon /> : <ErrorIcon />}
+                    label={service?.status === 'online' ? 'Online' : 'Offline'}
+                    color={service?.status === 'online' ? 'success' : 'error'}
+                    size="small"
+                    variant="outlined"
+                />
+            </Tooltip>
+        );
+
+        return (
+            <Paper sx={{ p: 2, mb: 3 }}>
+                <Typography variant="h6" gutterBottom>Systemzustand</Typography>
+                {healthError && <Alert severity="error">{healthError}</Alert>}
+                {healthData && !healthError && (
+                    <Grid container spacing={2} alignItems="center">
+                        {/* KORREKTUR: 'component="span"' hinzugefügt, um ungültiges HTML zu verhindern */}
+                        <Grid item xs={12} sm={6} md={3}>
+                            <Typography component="span">PostgreSQL: <StatusChip service={healthData.postgres} /></Typography>
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={3}>
+                            <Typography component="span">Redis: <StatusChip service={healthData.redis} /></Typography>
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={3}>
+                            <Typography>Server Uptime: {healthData.server.uptime}</Typography>
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={3}>
+                            <Typography>Memory: {(healthData.server.memoryUsage.rss / 1024 / 1024).toFixed(2)} MB</Typography>
+                        </Grid>
+                    </Grid>
+                )}
+            </Paper>
+        );
+    };
+    // --- HEALTH WIDGET RENDER-FUNKTION ENDE ---
+
     return (
         <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
             <Typography variant="h4" component="h1" gutterBottom>
                 Admin Aktivitätsmonitor
             </Typography>
 
-            <SystemHealthWidget />
+            {renderHealthWidget()}
 
             <Paper sx={{ p: 2, mb: 2 }}>
                 <Grid container spacing={2} alignItems="center">

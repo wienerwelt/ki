@@ -109,7 +109,15 @@ exports.googleLogin = async (req, res) => {
                 has_seen_welcome_widget: user.has_seen_welcome_widget,
                 regions: user.regions,
                 contribution_score: user.contribution_score,
-                membership_level: user.membership_level
+                membership_level: user.membership_level,
+                first_name: user.first_name,
+                last_name: user.last_name,
+                organization_name: user.organization_name,
+                linkedin_url: user.linkedin_url,
+                article_score_min: user.article_score_min,
+                article_score_max: user.article_score_max,
+                preferred_theme: user.preferred_theme,
+                preferred_language: user.preferred_language,
             }
         };
         
@@ -280,7 +288,15 @@ exports.login = async (req, res) => {
                 regions: user.regions,
                 contribution_score: user.contribution_score,
                 membership_level: user.membership_level,
-                has_seen_welcome_widget: user.has_seen_welcome_widget
+                has_seen_welcome_widget: user.has_seen_welcome_widget,
+                first_name: user.first_name,
+                last_name: user.last_name,
+                organization_name: user.organization_name,
+                linkedin_url: user.linkedin_url,
+                article_score_min: user.article_score_min,
+                article_score_max: user.article_score_max,
+                preferred_theme: user.preferred_theme,
+                preferred_language: user.preferred_language,
             }
         };
 

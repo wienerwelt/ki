@@ -1,9 +1,9 @@
-// src/components/AdminEmailTab.tsx
+// frontend/src/components/AdminEmailTab.tsx
 import React, { useState, useEffect } from 'react';
 import {
     Box, Paper, Typography, Button, IconButton, Tooltip, Table, TableBody,
     TableCell, TableContainer, TableHead, TableRow, Dialog, DialogTitle,
-    DialogContent, DialogActions, TextField, Switch
+    DialogContent, DialogActions, TextField, Switch, FormControlLabel, Snackbar, Alert
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import EditIcon from '@mui/icons-material/Edit';
@@ -28,20 +28,20 @@ const AdminEmailTab: React.FC = () => {
     const [jobs, setJobs] = useState<EmailJob[]>([]);
     const [openDialog, setOpenDialog] = useState(false);
     const [editingJob, setEditingJob] = useState<Partial<EmailJob> | null>(null);
+    const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
 
     const fetchJobs = async () => {
-        // Annahme: /api/admin/cronjobs/emails existiert und liefert die Daten
         try {
             const token = localStorage.getItem('jwt_token');
             const res = await apiClient.get('/api/admin/cronjobs/emails', { headers: { 'x-auth-token': token } });
             setJobs(res.data);
-        } catch (err) { console.error(err); }
+        } catch (err) { console.error("Could not fetch email jobs:", err); }
     };
     
     useEffect(() => { fetchJobs(); }, []);
 
-    const handleOpenDialog = (job: Partial<EmailJob> | null = null) => {
-        setEditingJob(job || { name: '', recipient_group: '', schedule: null, is_active: true });
+    const handleOpenDialog = (job: EmailJob | null = null) => {
+        setEditingJob(job ? {...job} : { name: 'Daily Admin Report', recipient_group: 'Admins', schedule: '0 7 * * *', is_active: true });
         setOpenDialog(true);
     };
     
@@ -52,19 +52,45 @@ const AdminEmailTab: React.FC = () => {
 
     const handleSave = async () => {
         if (!editingJob) return;
-        // Logik zum Speichern oder Erstellen des E-Mail-Jobs
-        console.log("Speichere E-Mail-Job:", editingJob);
-        // ... await apiClient.post(...) oder apiClient.put(...)
-        handleCloseDialog();
-        fetchJobs();
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const headers = { 'x-auth-token': token };
+            
+            if (editingJob.id) {
+                await apiClient.put(`/api/admin/cronjobs/emails/${editingJob.id}`, editingJob, { headers });
+                setSnackbar({ open: true, message: 'Job erfolgreich aktualisiert!', severity: 'success' });
+            } else {
+                await apiClient.post('/api/admin/cronjobs/emails', editingJob, { headers });
+                setSnackbar({ open: true, message: 'Neuer Job erfolgreich erstellt!', severity: 'success' });
+            }
+            handleCloseDialog();
+            fetchJobs();
+        } catch (err) {
+            console.error("Failed to save email job:", err);
+            setSnackbar({ open: true, message: 'Fehler beim Speichern des Jobs.', severity: 'error' });
+        }
+    };
+    
+    const handleTrigger = async (id: string) => {
+        if (window.confirm('Möchten Sie diesen Job jetzt manuell ausführen?')) {
+            try {
+                const token = localStorage.getItem('jwt_token');
+                // KORREKTUR: Deine Routenstruktur wird hier verwendet
+                await apiClient.post(`/api/admin/cronjobs/emails/${id}/trigger`, {}, { headers: { 'x-auth-token': token } });
+                setSnackbar({ open: true, message: 'Job wurde zur Ausführung in die Warteschlange gestellt.', severity: 'success' });
+            } catch (err) {
+                console.error("Failed to trigger job:", err);
+                setSnackbar({ open: true, message: 'Job konnte nicht gestartet werden.', severity: 'error' });
+            }
+        }
     };
 
     return (
         <>
             <Paper>
-                 <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between' }}>
+                 <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Typography variant="h6">Geplante E-Mail-Versände</Typography>
-                    <Button startIcon={<AddIcon />} onClick={() => handleOpenDialog()}>Neuer E-Mail-Job</Button>
+                    <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpenDialog()}>Neuer E-Mail-Job</Button>
                 </Box>
                 <TableContainer>
                     <Table>
@@ -72,9 +98,9 @@ const AdminEmailTab: React.FC = () => {
                             <TableRow>
                                 <TableCell>Job-Name</TableCell>
                                 <TableCell>Empfängergruppe</TableCell>
-                                <TableCell>Zeitplan</TableCell>
+                                <TableCell>Zeitplan (Cron)</TableCell>
                                 <TableCell>Aktiv</TableCell>
-                                <TableCell>Aktionen</TableCell>
+                                <TableCell align="right">Aktionen</TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
@@ -83,10 +109,10 @@ const AdminEmailTab: React.FC = () => {
                                     <TableCell>{job.name}</TableCell>
                                     <TableCell>{job.recipient_group}</TableCell>
                                     <TableCell>{formatCron(job.schedule)}</TableCell>
-                                    <TableCell><Switch checked={job.is_active} /></TableCell>
-                                    <TableCell>
+                                    <TableCell><Switch checked={job.is_active} disabled /></TableCell>
+                                    <TableCell align="right">
                                         <Tooltip title="Job bearbeiten"><IconButton onClick={() => handleOpenDialog(job)}><EditIcon /></IconButton></Tooltip>
-                                        <Tooltip title="Jetzt senden"><IconButton><PlayArrowIcon /></IconButton></Tooltip>
+                                        <Tooltip title="Jetzt senden"><IconButton onClick={() => handleTrigger(job.id)}><PlayArrowIcon /></IconButton></Tooltip>
                                     </TableCell>
                                 </TableRow>
                             ))}
@@ -106,12 +132,19 @@ const AdminEmailTab: React.FC = () => {
                             onChange={(cronString) => setEditingJob(prev => prev ? { ...prev, schedule: cronString } : null)}
                         />
                     </Box>
+                    <FormControlLabel
+                        control={<Switch checked={editingJob?.is_active ?? true} onChange={(e) => setEditingJob(prev => prev ? { ...prev, is_active: e.target.checked } : null)} />}
+                        label="Job ist aktiv" sx={{mt: 2, display: 'block'}}
+                    />
                 </DialogContent>
                  <DialogActions>
                     <Button onClick={handleCloseDialog}>Abbrechen</Button>
                     <Button onClick={handleSave} variant="contained">Speichern</Button>
                 </DialogActions>
             </Dialog>
+            <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={() => setSnackbar(prev => ({...prev, open: false}))}>
+                <Alert severity={snackbar.severity} sx={{ width: '100%' }}>{snackbar.message}</Alert>
+            </Snackbar>
         </>
     );
 };

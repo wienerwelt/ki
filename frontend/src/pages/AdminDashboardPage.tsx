@@ -1,7 +1,7 @@
 // frontend/src/pages/AdminDashboardPage.tsx
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Box, Typography, Container, Button, Grid, Paper } from '@mui/material';
+import { Typography, Container, Button, Grid, Paper } from '@mui/material';
 import DashboardLayout from '../components/DashboardLayout';
 
 // Icons
@@ -21,12 +21,13 @@ import CampaignIcon from '@mui/icons-material/Campaign';
 import StarsIcon from '@mui/icons-material/Stars';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'; // NEUER IMPORT
 
 
 const AdminDashboardPage: React.FC = () => {
     return (
         <DashboardLayout>
-            <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+            <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
                 <Typography variant="h4" component="h1" gutterBottom>
                     Admin-Dashboard
                 </Typography>
@@ -35,7 +36,7 @@ const AdminDashboardPage: React.FC = () => {
                 </Typography>
 
                 <Grid container spacing={3}>
-                    {/* NEUE KACHEL FÜR CRONJOBS */}
+                    {/* --- Bestehende Kacheln --- */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <ScheduleIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
@@ -44,8 +45,6 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/cronjobs" variant="contained" color="primary">Verwalten</Button>
                         </Paper>
                     </Grid>
-
-                    {/* --- Stammdaten & Benutzer --- */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <BusinessIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
@@ -70,39 +69,23 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/widget-types" variant="contained" color="secondary">Verwalten</Button>
                         </Paper>
                     </Grid>
-
-                    {/* --- Marketing & Angebote --- */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <StarsIcon sx={{ fontSize: 60, mb: 2 }} color="warning" />
-                            <Typography variant="h6" component="h2" gutterBottom>
-                                Aktionen verwalten
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                                Spezielle Aktionen und Angebote für Partner erstellen.
-                            </Typography>
-                            <Button component={Link} to="/admin/actions" variant="contained" color="warning">
-                                Verwalten
-                            </Button>
+                            <Typography variant="h6" component="h2" gutterBottom>Aktionen verwalten</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Spezielle Aktionen und Angebote für Partner erstellen.</Typography>
+                            <Button component={Link} to="/admin/actions" variant="contained" color="warning">Verwalten</Button>
                         </Paper>
                     </Grid>
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <CampaignIcon sx={{ fontSize: 60, mb: 2 }} color="secondary" />
-                            <Typography variant="h6" component="h2" gutterBottom>
-                                Werbung
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                                Werbebanner für das Dashboard verwalten.
-                            </Typography>
-                            <Button component={Link} to="/admin/advertisements" variant="contained" color="secondary">
-                                Verwalten
-                            </Button>
+                            <Typography variant="h6" component="h2" gutterBottom>Werbung</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Werbebanner für das Dashboard verwalten.</Typography>
+                            <Button component={Link} to="/admin/advertisements" variant="contained" color="secondary">Verwalten</Button>
                         </Paper>
                     </Grid>
-
-                    {/* --- Content & Regeln --- */}
-                     <Grid item xs={12} sm={6} md={4}>
+                    <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <PolicyIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
                             <Typography variant="h6" component="h2" gutterBottom>Scraping-Regeln</Typography>
@@ -122,116 +105,75 @@ const AdminDashboardPage: React.FC = () => {
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <FactCheckIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
                             <Typography variant="h6" component="h2" gutterBottom>Vertrauensw. Quellen</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                                Von Nutzern eingereichte Quellen prüfen und verwalten.
-                            </Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Von Nutzern eingereichte Quellen prüfen und verwalten.</Typography>
                             <Button component={Link} to="/admin/sources" variant="contained" color="success">Verwalten</Button>
                         </Paper>
-                    </Grid>                                        
+                    </Grid>
+                    {/* --- NEUE KACHEL FÜR EVENT-KURATIERUNG --- */}
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <CalendarMonthIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
+                            <Typography variant="h6" component="h2" gutterBottom>Event-Kuratierung</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Gescrapte Events prüfen und für den Kalender freigeben.</Typography>
+                            <Button component={Link} to="/admin/events" variant="contained" color="primary">Verwalten</Button>
+                        </Paper>
+                    </Grid>
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <DataObjectIcon sx={{ fontSize: 60, mb: 2 }} color="warning" />
-                            <Typography variant="h6" component="h2" gutterBottom>
-                                Gescrapte Inhalte
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                                Alle gesammelten Inhalte (inkl. Verkehr) anzeigen.
-                            </Typography>
-                            <Button component={Link} to="/admin/scraped-content" variant="contained" color="warning">
-                                Verwalten
-                            </Button>
+                            <Typography variant="h6" component="h2" gutterBottom>Gescrapte Inhalte</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Alle gesammelten Inhalte (inkl. Verkehr) anzeigen.</Typography>
+                            <Button component={Link} to="/admin/scraped-content" variant="contained" color="warning">Verwalten</Button>
                         </Paper>
                     </Grid>
-
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <ArticleIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
-                            <Typography variant="h6" component="h2" gutterBottom>
-                                KI-Inhalte
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                                Alle von der KI erstellten Inhalte verwalten.
-                            </Typography>
-                            <Button component={Link} to="/admin/ai-content" variant="contained" color="success">
-                                Verwalten
-                            </Button>
+                            <Typography variant="h6" component="h2" gutterBottom>KI-Inhalte</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Alle von der KI erstellten Inhalte verwalten.</Typography>
+                            <Button component={Link} to="/admin/ai-content" variant="contained" color="success">Verwalten</Button>
                         </Paper>
                     </Grid>
-                    
-                    {/* --- System-Verwaltung --- */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <CategoryIcon sx={{ fontSize: 60, mb: 2 }} color="secondary" />
-                            <Typography variant="h6" component="h2" gutterBottom>
-                                Kategorien
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                                Zentrale Verwaltung der Inhalts-Kategorien.
-                            </Typography>
-                            <Button component={Link} to="/admin/categories" variant="contained" color="secondary">
-                                Verwalten
-                            </Button>
+                            <Typography variant="h6" component="h2" gutterBottom>Kategorien</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Zentrale Verwaltung der Inhalts-Kategorien.</Typography>
+                            <Button component={Link} to="/admin/categories" variant="contained" color="secondary">Verwalten</Button>
                         </Paper>
                     </Grid>
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <TagIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
-                            <Typography variant="h6" component="h2" gutterBottom>
-                                Tags
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                                Zentrale Verwaltung der Schlagwörter (Tags).
-                            </Typography>
-                            <Button component={Link} to="/admin/tags" variant="contained" color="success">
-                                Verwalten
-                            </Button>
+                            <Typography variant="h6" component="h2" gutterBottom>Tags</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Zentrale Verwaltung der Schlagwörter (Tags).</Typography>
+                            <Button component={Link} to="/admin/tags" variant="contained" color="success">Verwalten</Button>
                         </Paper>
                     </Grid>
                      <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <SubscriptionsIcon sx={{ fontSize: 60, mb: 2 }} color="error" />
-                            <Typography variant="h6" component="h2" gutterBottom>
-                                Abonnements
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                                Widget-Zugriff für Business Partner steuern.
-                            </Typography>
-                            <Button component={Link} to="/admin/bp-widget-access" variant="contained" color="error">
-                                Verwalten
-                            </Button>
+                            <Typography variant="h6" component="h2" gutterBottom>Abonnements</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Widget-Zugriff für Business Partner steuern.</Typography>
+                            <Button component={Link} to="/admin/bp-widget-access" variant="contained" color="error">Verwalten</Button>
                         </Paper>
                     </Grid>
-
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <MonitorIcon sx={{ fontSize: 60, mb: 2 }} color="action" />
-                            <Typography variant="h6" component="h2" gutterBottom>
-                                Aktivitätsmonitor
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                                System- und Benutzeraktivitäten überwachen.
-                            </Typography>
-                            <Button component={Link} to="/admin/monitor" variant="contained" color="secondary">
-                                Anzeigen
-                            </Button>
+                            <Typography variant="h6" component="h2" gutterBottom>Aktivitätsmonitor</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>System- und Benutzeraktivitäten überwachen.</Typography>
+                            <Button component={Link} to="/admin/monitor" variant="contained" color="secondary">Anzeigen</Button>
                         </Paper>
                     </Grid>
-
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <QueryStatsIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>
-                                Statistiken
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                                Nutzungs- und Systemstatistiken anzeigen.
-                            </Typography>
-                            <Button component={Link} to="/admin/statistics" variant="contained" color="primary">
-                                Anzeigen
-                            </Button>
+                            <Typography variant="h6" component="h2" gutterBottom>Statistiken</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Nutzungs- und Systemstatistiken anzeigen.</Typography>
+                            <Button component={Link} to="/admin/statistics" variant="contained" color="primary">Anzeigen</Button>
                         </Paper>
                     </Grid>
-                    
                 </Grid>
             </Container>
         </DashboardLayout>

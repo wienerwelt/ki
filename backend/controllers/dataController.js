@@ -1272,6 +1272,7 @@ exports.getActiveAdvertisement = async (req, res) => {
     }
 };
 
+
 exports.getActiveActionsForWidget = async (req, res) => {
     const { business_partner_id } = req.user;
 
@@ -1328,3 +1329,138 @@ exports.getActiveActionsForWidget = async (req, res) => {
         res.status(500).send('Serverfehler beim Abrufen der Aktionen.');
     }
 }
+
+
+exports.getCalendarEvents = async (req, res) => {
+    try {
+        const { rows } = await db.query(
+            `SELECT id, title, event_date, summary, original_url
+             FROM scraped_content
+             WHERE category LIKE '%_events' AND event_date IS NOT NULL
+             ORDER BY event_date ASC`
+        );
+        
+        // Daten für die Kalender-Bibliothek formatieren
+        const events = rows.map(row => ({
+            id: row.id,
+            title: row.title,
+            start: row.event_date,
+            end: row.event_date, // Für ganztägige Events
+            allDay: true,
+            resource: { // Zusatzinfos
+                summary: row.summary,
+                url: row.original_url
+            }
+        }));
+        
+        res.json(events);
+    } catch (err) {
+        console.error('Fehler beim Laden der Kalender-Events:', err.message);
+        res.status(500).send('Serverfehler');
+    }
+};
+
+
+exports.getEnhancedCalendarEvents = async (req, res) => {
+    const { id: userId } = req.user;
+    try {
+        const query = `
+            SELECT 
+                sc.id, sc.title, sc.event_date, sc.summary, sc.original_url, sc.region,
+                -- Zähle alle positiven Stimmen (Teilnehmer)
+                (SELECT COUNT(*) FROM content_relevance_votes WHERE content_id = sc.id AND vote = 1)::INTEGER AS participants,
+                -- Hole die spezifische Stimme des aktuellen Nutzers
+                COALESCE((SELECT vote FROM content_relevance_votes WHERE content_id = sc.id AND user_id = $1), NULL) AS user_vote
+            FROM scraped_content sc
+            WHERE sc.category LIKE '%_events' AND sc.event_date IS NOT NULL
+            ORDER BY sc.event_date ASC
+        `;
+        const { rows: events } = await db.query(query, [userId]);
+
+        const availableRegions = [...new Set(events.map(e => e.region).filter(Boolean))];
+        let regionsData = [];
+        if (availableRegions.length > 0) {
+            const regionQuery = 'SELECT name, code FROM regions WHERE name = ANY($1::text[])';
+            const regionsResult = await db.query(regionQuery, [availableRegions]);
+            regionsData = regionsResult.rows;
+        }
+
+        const formattedEvents = events.map(row => ({
+            id: row.id,
+            title: row.title,
+            date: row.event_date,
+            region: row.region,
+            summary: row.summary,
+            url: row.original_url,
+            participants: row.participants,
+            userVote: row.user_vote
+        }));
+
+        res.json({
+            events: formattedEvents,
+            availableRegions: regionsData
+        });
+    } catch (err) {
+        console.error('Fehler beim Laden der Kalender-Events:', err.message);
+        res.status(500).send('Serverfehler');
+    }
+};
+
+
+// NEU: Speichert die Teilnahme-Antwort eines Nutzers für ein Event
+exports.voteOnEventAttendance = async (req, res) => {
+    const { eventId } = req.params;
+    const { vote } = req.body; // Erwartet 1 für Ja, 0 für Vielleicht, -1 für Nein
+    const { id: userId } = req.user;
+
+    if (![1, 0, -1].includes(vote)) {
+        return res.status(400).json({ message: 'Ungültiger Abstimmungswert.' });
+    }
+    try {
+        const voteQuery = `
+            INSERT INTO content_relevance_votes (user_id, content_id, vote)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id, content_id) DO UPDATE SET vote = $3
+            RETURNING vote;
+        `;
+        const result = await db.query(voteQuery, [userId, eventId, vote]);
+        res.status(200).json({ userVote: result.rows[0].vote });
+    } catch (err) {
+        console.error('Fehler beim Speichern der Event-Teilnahme:', err.message);
+        res.status(500).send('Serverfehler');
+    }
+};
+
+// NEU: Teilt ein Event per E-Mail
+exports.shareEventByEmail = async (req, res) => {
+    const { title, date, url, summary, recipientEmail } = req.body;
+    const { name: senderName } = req.user;
+
+    if (!title || !recipientEmail) {
+        return res.status(400).json({ message: 'Titel und Empfänger sind erforderlich.' });
+    }
+    try {
+        const subject = `Interessante Veranstaltung: ${title}`;
+        const htmlBody = `
+            <p>Hallo,</p>
+            <p><strong>${senderName}</strong> hat folgende Veranstaltung mit Ihnen geteilt:</p>
+            <hr>
+            <h3>${title}</h3>
+            <p><strong>Datum:</strong> ${new Date(date).toLocaleDateString('de-DE')}</p>
+            <p>${summary || ''}</p>
+            <p>Weitere Informationen finden Sie hier: <a href="${url}">${url}</a></p>
+            <hr>
+            <p style="font-size: 0.8em; color: #777;"><em>Diese E-Mail wurde über das KI-Dashboard versendet.</em></p>
+        `;
+        await sendEmail({
+            to: recipientEmail,
+            subject: subject,
+            html: htmlBody,
+            fromName: "KI-Dashboard"
+        });
+        res.status(200).json({ message: `Event erfolgreich an ${recipientEmail} gesendet.` });
+    } catch (error) {
+        console.error('Fehler beim Teilen des Events:', error);
+        res.status(500).json({ message: error.message || 'Event konnte nicht geteilt werden.' });
+    }
+};

@@ -3,7 +3,9 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Box, Typography, Button, CircularProgress, Alert,
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
-    IconButton, Tooltip, TextField, InputAdornment, LinearProgress, TableSortLabel, Chip
+    IconButton, Tooltip, TextField, InputAdornment, LinearProgress, TableSortLabel, Chip,
+    Dialog, DialogActions, DialogContent, DialogTitle, Stack,
+    Select, MenuItem, FormControl, InputLabel
 } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../apiClient';
@@ -22,7 +24,14 @@ interface PartnerFile {
     file_type: string;
     file_size: number;
     created_at: string;
-    business_partner_name?: string; // Optional, nur für Admins
+    business_partner_name?: string;
+    description?: string | null;
+    tags?: string[] | null;
+}
+
+interface BusinessPartner {
+    id: string;
+    name: string;
 }
 
 type Order = 'asc' | 'desc';
@@ -37,7 +46,6 @@ const formatFileSize = (bytes: number | null | undefined, decimals = 2) => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 };
 
-// === KORREKTUR START: Typsicherheit der Sortierfunktionen verbessert ===
 function descendingComparator(a: PartnerFile, b: PartnerFile, orderBy: keyof PartnerFile) {
     const valA = a[orderBy] ?? '';
     const valB = b[orderBy] ?? '';
@@ -54,7 +62,6 @@ function getComparator(
         ? (a, b) => descendingComparator(a, b, orderBy)
         : (a, b) => -descendingComparator(a, b, orderBy);
 }
-// === KORREKTUR ENDE ===
 
 
 const FileManagementPage: React.FC = () => {
@@ -67,8 +74,19 @@ const FileManagementPage: React.FC = () => {
     const [order, setOrder] = useState<Order>('desc');
     const [orderBy, setOrderBy] = useState<keyof PartnerFile>('created_at');
 
+    const [openUploadDialog, setOpenUploadDialog] = useState(false);
+    const [fileToUpload, setFileToUpload] = useState<File | null>(null);
+    const [fileDescription, setFileDescription] = useState('');
+    const [fileTags, setFileTags] = useState('');
+
+    // Zustand für Admin-Funktionen
+    const [partners, setPartners] = useState<BusinessPartner[]>([]);
+    const [selectedPartnerId, setSelectedPartnerId] = useState<string>('');
+    const [isPartnerListLoading, setIsPartnerListLoading] = useState(false);
+
     const isAdmin = user?.role === 'admin';
-    const isUploader = user?.role === 'admin' || user?.role === 'assistenz';
+    const isAssistent = user?.role === 'assistenz';
+    const isUploader = isAdmin || isAssistent; // Demo-Nutzer sind hier explizit ausgeschlossen
 
     const fetchFiles = useCallback(async () => {
         setLoading(true);
@@ -86,29 +104,80 @@ const FileManagementPage: React.FC = () => {
         }
     }, []);
 
+    // Funktion zum Laden der Partnerliste für Admins
+    const fetchPartners = useCallback(async () => {
+        if (isAdmin) {
+            setIsPartnerListLoading(true);
+            try {
+                const token = localStorage.getItem('jwt_token');
+                // === KORREKTUR START ===
+                // Der Endpunkt wurde an deine existierende Route angepasst.
+                const response = await apiClient.get('/api/admin/business-partners', {
+                    headers: { 'x-auth-token': token }
+                });
+                // === KORREKTUR ENDE ===
+                setPartners(response.data);
+            } catch (err) {
+                setError('Fehler beim Laden der Partnerliste.');
+            } finally {
+                setIsPartnerListLoading(false);
+            }
+        }
+    }, [isAdmin]);
+
     useEffect(() => {
         fetchFiles();
-    }, [fetchFiles]);
+        fetchPartners(); // Partnerliste beim Laden der Seite abrufen
+    }, [fetchFiles, fetchPartners]);
     
-    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleOpenUploadDialog = () => {
+        setError(null);
+        setOpenUploadDialog(true);
+    };
+
+    const handleCloseUploadDialog = () => {
+        setOpenUploadDialog(false);
+        setFileToUpload(null);
+        setFileDescription('');
+        setFileTags('');
+        setSelectedPartnerId('');
+    };
+
+    const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
-        if (!file) return;
+        if (file) {
+            setFileToUpload(file);
+        }
+    };
+
+    const handleFileUpload = async () => {
+        if (!fileToUpload) return;
+        if (isAdmin && !selectedPartnerId) {
+            setError("Bitte wählen Sie einen Business Partner aus.");
+            return;
+        }
 
         setUploading(true);
         setError(null);
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('file', fileToUpload);
+        formData.append('description', fileDescription);
+        formData.append('tags', fileTags);
+        
+        if (isAdmin) {
+            formData.append('businessPartnerId', selectedPartnerId);
+        }
 
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.post('/api/files/upload', formData, {
-                headers: {
-                    'Content-Type': 'multipart/form-data',
-                    'x-auth-token': token
-                }
+                headers: { 'Content-Type': 'multipart/form-data', 'x-auth-token': token }
             });
+            handleCloseUploadDialog();
             await fetchFiles();
-            await fetchBusinessPartnerData();
+            if (!businessPartner || (isAdmin && selectedPartnerId === businessPartner.id)) {
+                await fetchBusinessPartnerData();
+            }
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Hochladen der Datei.');
         } finally {
@@ -159,7 +228,9 @@ const FileManagementPage: React.FC = () => {
         const lowercasedFilter = searchTerm.toLowerCase();
         let filtered = files.filter(file =>
             file.filename.toLowerCase().includes(lowercasedFilter) ||
-            (isAdmin && file.business_partner_name?.toLowerCase().includes(lowercasedFilter))
+            (isAdmin && file.business_partner_name?.toLowerCase().includes(lowercasedFilter)) ||
+            (file.description && file.description.toLowerCase().includes(lowercasedFilter)) ||
+            (file.tags && file.tags.some(tag => tag.toLowerCase().includes(lowercasedFilter)))
         );
         return filtered.sort(getComparator(order, orderBy));
     }, [files, searchTerm, order, orderBy, isAdmin]);
@@ -194,20 +265,20 @@ const FileManagementPage: React.FC = () => {
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
                     <TextField
                         variant="outlined" size="small" 
-                        placeholder={isAdmin ? "Dateien oder Partner suchen..." : "Dateien durchsuchen..."}
+                        placeholder={isAdmin ? "Dateien, Partner, Beschreibung suchen..." : "Dateien durchsuchen..."}
                         value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
                         InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), }}
                         sx={{ minWidth: '300px' }}
                     />
                     {isUploader && (
-                        <Tooltip title={!canUpload ? "Speicherlimit erreicht oder Ihr Paket erlaubt keine Uploads." : ""}>
+                        <Tooltip title={!canUpload ? "Speicherlimit erreicht, Paket erlaubt keine Uploads oder Demo-Modus." : ""}>
                            <span>
                                 <Button
-                                    variant="contained" component="label" startIcon={<UploadFileIcon />}
-                                    disabled={!canUpload || uploading}
+                                    variant="contained" startIcon={<UploadFileIcon />}
+                                    disabled={!canUpload}
+                                    onClick={handleOpenUploadDialog}
                                 >
-                                    {uploading ? 'Lädt hoch...' : 'Datei hochladen'}
-                                    <input type="file" hidden onChange={handleFileUpload} />
+                                    Datei hochladen
                                 </Button>
                             </span>
                         </Tooltip>
@@ -216,7 +287,58 @@ const FileManagementPage: React.FC = () => {
             </Paper>
 
             {loading && <Box sx={{ display: 'flex', justifyContent: 'center', my: 5 }}><CircularProgress /></Box>}
-            {error && <Alert severity="error" sx={{ my: 2 }}>{error}</Alert>}
+            
+            <Dialog open={openUploadDialog} onClose={handleCloseUploadDialog} fullWidth maxWidth="sm">
+                <DialogTitle>Neue Datei hochladen</DialogTitle>
+                <DialogContent>
+                    <Stack spacing={3} sx={{ mt: 1 }}>
+                        {isAdmin && (
+                            <FormControl fullWidth required>
+                                <InputLabel id="partner-select-label">Business Partner</InputLabel>
+                                <Select
+                                    labelId="partner-select-label"
+                                    value={selectedPartnerId}
+                                    label="Business Partner"
+                                    onChange={(e) => setSelectedPartnerId(e.target.value as string)}
+                                    disabled={isPartnerListLoading}
+                                >
+                                    {isPartnerListLoading && <MenuItem disabled>Lade Partner...</MenuItem>}
+                                    {partners.map((p) => (
+                                        <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                        )}
+
+                        <Button variant="outlined" component="label">
+                            {fileToUpload ? fileToUpload.name : 'Datei auswählen'}
+                            <input type="file" hidden onChange={handleFileSelect} />
+                        </Button>
+                        <TextField
+                            label="Beschreibung"
+                            fullWidth
+                            variant="outlined"
+                            value={fileDescription}
+                            onChange={(e) => setFileDescription(e.target.value)}
+                        />
+                        <TextField
+                            label="Tags (durch Komma getrennt)"
+                            fullWidth
+                            variant="outlined"
+                            value={fileTags}
+                            onChange={(e) => setFileTags(e.target.value)}
+                            helperText="z.B. Rechnung, Quartal_1, wichtig"
+                        />
+                         {error && <Alert severity="error">{error}</Alert>}
+                    </Stack>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleCloseUploadDialog}>Abbrechen</Button>
+                    <Button onClick={handleFileUpload} variant="contained" disabled={!fileToUpload || uploading}>
+                        {uploading ? <CircularProgress size={24} /> : 'Hochladen'}
+                    </Button>
+                </DialogActions>
+            </Dialog>
 
             {!loading && (
                 <TableContainer component={Paper}>
@@ -235,11 +357,8 @@ const FileManagementPage: React.FC = () => {
                                         </TableSortLabel>
                                     </TableCell>
                                 )}
-                                <TableCell sortDirection={orderBy === 'file_type' ? order : false}>
-                                    <TableSortLabel active={orderBy === 'file_type'} direction={order} onClick={() => handleSortRequest('file_type')}>
-                                        Typ
-                                    </TableSortLabel>
-                                </TableCell>
+                                <TableCell>Beschreibung</TableCell>
+                                <TableCell>Tags</TableCell>
                                 <TableCell align="right" sortDirection={orderBy === 'file_size' ? order : false}>
                                     <TableSortLabel active={orderBy === 'file_size'} direction={order} onClick={() => handleSortRequest('file_size')}>
                                         Größe
@@ -262,7 +381,18 @@ const FileManagementPage: React.FC = () => {
                                             <Chip label={file.business_partner_name} size="small" />
                                         </TableCell>
                                     )}
-                                    <TableCell>{file.file_type}</TableCell>
+                                    <TableCell sx={{ maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        <Tooltip title={file.description || ''}>
+                                            <span>{file.description || '-'}</span>
+                                        </Tooltip>
+                                    </TableCell>
+                                    <TableCell sx={{ maxWidth: 250 }}>
+                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                                            {file.tags?.map((tag) => (
+                                                <Chip key={tag} label={tag} size="small" variant="outlined" />
+                                            ))}
+                                        </Box>
+                                    </TableCell>
                                     <TableCell align="right">{formatFileSize(file.file_size, 2)}</TableCell>
                                     <TableCell align="right">{new Date(file.created_at).toLocaleDateString('de-DE')}</TableCell>
                                     <TableCell align="center">
@@ -282,7 +412,7 @@ const FileManagementPage: React.FC = () => {
                                 </TableRow>
                             )) : (
                                 <TableRow>
-                                    <TableCell colSpan={isAdmin ? 6 : 5} align="center">
+                                    <TableCell colSpan={isAdmin ? 7 : 6} align="center">
                                         <Typography color="text.secondary" sx={{ p: 3 }}>
                                             {searchTerm ? 'Keine Dateien für Ihre Suche gefunden.' : 'Es wurden noch keine Dateien hochgeladen.'}
                                         </Typography>

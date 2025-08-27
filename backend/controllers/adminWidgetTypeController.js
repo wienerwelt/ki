@@ -3,16 +3,12 @@ const db = require('../config/db');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
-// GET all widget types with detailed installation counts
+// GET all widget types - This function is fine
 exports.getAllWidgetTypes = async (req, res) => {
     try {
-        // KORREKTUR: Die Abfrage verwendet jetzt den korrekten Tabellennamen 'dashboard_configurations'
-        // und eine vereinfachte Zähl-Logik.
         const query = `
             SELECT
                 wt.*,
-
-                -- Zählt Business Partner Installationen (angenommen über die User, die zu einem BP gehören)
                 (
                     SELECT COUNT(DISTINCT u.business_partner_id)
                     FROM dashboard_configurations dc
@@ -20,15 +16,12 @@ exports.getAllWidgetTypes = async (req, res) => {
                          jsonb_array_elements(dc.config -> 'widgets') widget
                     WHERE widget ->> 'type' = wt.type_key AND u.business_partner_id IS NOT NULL
                 ) AS business_partner_install_count,
-
-                -- Zählt Nutzer Installationen
                 (
                     SELECT COUNT(DISTINCT dc.user_id)
                     FROM dashboard_configurations dc,
                          jsonb_array_elements(dc.config -> 'widgets') widget
                     WHERE widget ->> 'type' = wt.type_key
                 ) AS user_install_count
-
             FROM
                 widget_types wt
             ORDER BY
@@ -42,7 +35,6 @@ exports.getAllWidgetTypes = async (req, res) => {
     }
 };
 
-// GET a single widget type by ID
 exports.getWidgetTypeById = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Widget Type ID format.' });
@@ -59,9 +51,14 @@ exports.getWidgetTypeById = async (req, res) => {
     }
 };
 
-// CREATE new widget type
+// CREATE new widget type - CORRECTED
 exports.createWidgetType = async (req, res) => {
-    const { name, type_key, description, icon_name, is_removable = true, is_resizable = true, is_draggable = true, default_width = 4, default_height = 6, default_min_width = 3, default_min_height = 4, allowed_roles = [], config = null, component_key = null } = req.body;
+    // KORREKTUR: Wir holen die Rohdaten und wenden Standardwerte manuell an.
+    const { 
+        name, type_key, description, icon_name, is_removable, is_resizable, is_draggable, 
+        default_width, default_height, default_min_width, default_min_height, 
+        allowed_roles, config, component_key 
+    } = req.body;
 
     if (!name || !type_key) {
         return res.status(400).json({ message: 'Name and type_key are required.' });
@@ -71,7 +68,22 @@ exports.createWidgetType = async (req, res) => {
         const newWt = await db.query(
             `INSERT INTO widget_types (name, type_key, description, icon_name, is_removable, is_resizable, is_draggable, default_width, default_height, default_min_width, default_min_height, allowed_roles, config, component_key)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
-            [name, type_key, description, icon_name, is_removable, is_resizable, is_draggable, default_width, default_height, default_min_width, default_min_height, allowed_roles, config, component_key]
+            [
+                name,
+                type_key,
+                description || null,
+                icon_name || null,
+                is_removable ?? true,
+                is_resizable ?? true,
+                is_draggable ?? true,
+                parseInt(default_width, 10) || 4,
+                parseInt(default_height, 10) || 6,
+                parseInt(default_min_width, 10) || 3,
+                parseInt(default_min_height, 10) || 4,
+                allowed_roles || [], // Stellt sicher, dass immer ein Array an die DB geht
+                config || null,
+                component_key || null
+            ]
         );
         res.status(201).json(newWt.rows[0]);
     } catch (err) {
@@ -83,7 +95,7 @@ exports.createWidgetType = async (req, res) => {
     }
 };
 
-// Diese Funktion baut die UPDATE-Anweisung dynamisch auf.
+// UPDATE an existing widget type - CORRECTED
 exports.updateWidgetType = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) {
@@ -91,19 +103,29 @@ exports.updateWidgetType = async (req, res) => {
     }
 
     try {
-        const currentWtResult = await db.query('SELECT * FROM widget_types WHERE id = $1', [id]);
-        if (currentWtResult.rows.length === 0) {
-            return res.status(404).json({ message: 'Widget Type not found.' });
+        // KORREKTUR: Wir bauen die Query dynamisch, aber mit Typsicherheit.
+        const fieldsToUpdate = req.body;
+        
+        // Konvertiere numerische Felder, falls sie als String kommen
+        const numericFields = ['default_width', 'default_height', 'default_min_width', 'default_min_height'];
+        numericFields.forEach(field => {
+            if (fieldsToUpdate[field] !== undefined) {
+                fieldsToUpdate[field] = parseInt(fieldsToUpdate[field], 10);
+            }
+        });
+        
+        // Stelle sicher, dass 'allowed_roles' ein Array ist, falls es 'null' ist
+        if (fieldsToUpdate.allowed_roles === null) {
+            fieldsToUpdate.allowed_roles = [];
         }
 
-        const fieldsToUpdate = req.body;
         const updateEntries = Object.entries(fieldsToUpdate).filter(([, value]) => value !== undefined);
 
         if (updateEntries.length === 0) {
             return res.status(400).json({ message: 'No fields to update provided.' });
         }
 
-        const setClauses = updateEntries.map(([key], index) => `${key} = $${index + 1}`);
+        const setClauses = updateEntries.map(([key], index) => `"${key}" = $${index + 1}`);
         const values = updateEntries.map(([, value]) => value);
         
         const query = `
@@ -115,6 +137,10 @@ exports.updateWidgetType = async (req, res) => {
         values.push(id);
 
         const updatedWt = await db.query(query, values);
+        
+        if (updatedWt.rows.length === 0) {
+            return res.status(404).json({ message: 'Widget Type not found.' });
+        }
         res.json(updatedWt.rows[0]);
 
     } catch (err) {
@@ -125,7 +151,6 @@ exports.updateWidgetType = async (req, res) => {
         res.status(500).send('Server error');
     }
 };
-
 
 // DELETE a widget type
 exports.deleteWidgetType = async (req, res) => {

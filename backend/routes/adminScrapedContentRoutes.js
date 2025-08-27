@@ -4,12 +4,19 @@ const router = express.Router();
 const adminAuth = require('../middleware/adminAuth');
 const adminScController = require('../controllers/adminScrapedContentController');
 
-// All routes below require admin authentication
 router.use(adminAuth);
 
+// KORREKTUR: Statische Routen wie '/events' müssen VOR dynamischen Routen wie '/:id' stehen.
+router.post('/events', adminScController.createManualEvent);
+router.get('/events', adminScController.getAllScrapedEventsForAdmin);
+router.put('/events/:id', adminScController.updateScrapedEvent);
+
+// Allgemeine Routen
 router.get('/', adminScController.getAllScrapedContent);
-router.get('/:id', adminScController.getScrapedContentById);
 router.post('/', adminScController.createScrapedContent);
+
+// Die dynamische Route mit :id kommt jetzt ZULETZT.
+router.get('/:id', adminScController.getScrapedContentById);
 router.put('/:id', adminScController.updateScrapedContent);
 router.delete('/:id', adminScController.deleteScrapedContent);
 

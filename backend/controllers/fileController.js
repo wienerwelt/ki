@@ -7,22 +7,40 @@ const { v4: uuidv4 } = require('uuid');
 
 // uploadFile-Funktion bleibt unverändert
 exports.uploadFile = async (req, res) => {
-    const { id: userId, business_partner_id: businessPartnerId } = req.user;
+    const { id: userId, role, business_partner_id: userBusinessPartnerId } = req.user;
     const file = req.file;
-    // NEU: Zusätzliche Daten aus dem Formular-Body auslesen
     const { description, tags } = req.body; 
 
+    // --- NEUE ROLLENPRÜFUNG ---
+    if (role === 'demo') {
+        return res.status(403).json({ message: "Demo-Benutzer dürfen keine Dateien hochladen." });
+    }
+
+    let targetBusinessPartnerId;
+
+    if (role === 'admin') {
+        // Für Admins holen wir die ID aus dem Request-Body (vom Frontend-Dropdown)
+        targetBusinessPartnerId = req.body.businessPartnerId;
+        if (!targetBusinessPartnerId) {
+            return res.status(400).json({ message: "Für den Admin-Upload muss ein Business Partner ausgewählt werden." });
+        }
+    } else { // Gilt für 'assistenz' und andere berechtigte Rollen
+        targetBusinessPartnerId = userBusinessPartnerId;
+    }
+
     if (!file) return res.status(400).json({ message: "Keine Datei hochgeladen." });
-    if (!businessPartnerId) return res.status(403).json({ message: "Benutzer ist keinem Business Partner zugewiesen." });
+    if (!targetBusinessPartnerId) return res.status(403).json({ message: "Der Zieldatenpartner konnte nicht bestimmt werden." });
 
     const client = await db.connect();
     try {
         await client.query('BEGIN');
 
-        // ... (Quota-Prüfung bleibt unverändert) ...
+        // Die Quota-Prüfung verwendet jetzt die `targetBusinessPartnerId`
         const quotaQuery = 'SELECT storage_limit_bytes, storage_usage_bytes FROM business_partners WHERE id = $1 FOR UPDATE;';
-        const quotaResult = await client.query(quotaQuery, [businessPartnerId]);
+        const quotaResult = await client.query(quotaQuery, [targetBusinessPartnerId]);
+
         if (quotaResult.rows.length === 0) throw new Error("Business Partner nicht gefunden.");
+        
         const { storage_limit_bytes, storage_usage_bytes } = quotaResult.rows[0];
         if (storage_limit_bytes === 0) return res.status(403).json({ message: "Ihr aktuelles Paket erlaubt keine Datei-Uploads." });
         if (parseInt(storage_usage_bytes, 10) + file.size > parseInt(storage_limit_bytes, 10)) {
@@ -31,27 +49,27 @@ exports.uploadFile = async (req, res) => {
         
         const fileExtension = file.originalname.split('.').pop();
         const uniqueFileName = `${uuidv4()}.${fileExtension}`;
-        const storagePath = `files/${businessPartnerId}/${uniqueFileName}`;
+        // Der S3-Pfad verwendet jetzt ebenfalls die `targetBusinessPartnerId`
+        const storagePath = `files/${targetBusinessPartnerId}/${uniqueFileName}`;
 
-        const params = { Bucket: process.env.AWS_S_BUCKET_NAME, Key: storagePath, Body: file.buffer, ContentType: file.mimetype };
+        const params = { Bucket: process.env.AWS_S3_BUCKET_NAME, Key: storagePath, Body: file.buffer, ContentType: file.mimetype };
 
         await s3Client.send(new PutObjectCommand(params));
         
-        // NEU: Query um description und tags erweitert
         const dbQuery = `
             INSERT INTO business_partner_files 
             (filename, storage_path, file_type, file_size, uploader_id, business_partner_id, description, tags)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING *;
         `;
-        // Tags als Array formatieren, falls sie als String kommen
         const tagsArray = typeof tags === 'string' ? tags.split(',').map(t => t.trim()) : (tags || []);
         
-        const dbValues = [file.originalname, storagePath, file.mimetype, file.size, userId, businessPartnerId, description || null, tagsArray];
+        // Die DB-Werte verwenden ebenfalls `targetBusinessPartnerId`
+        const dbValues = [file.originalname, storagePath, file.mimetype, file.size, userId, targetBusinessPartnerId, description || null, tagsArray];
         const result = await client.query(dbQuery, dbValues);
         
         const updateUsageQuery = 'UPDATE business_partners SET storage_usage_bytes = storage_usage_bytes + $1 WHERE id = $2;';
-        await client.query(updateUsageQuery, [file.size, businessPartnerId]);
+        await client.query(updateUsageQuery, [file.size, targetBusinessPartnerId]);
 
         await client.query('COMMIT');
         res.status(201).json({ message: "Datei erfolgreich hochgeladen.", file: result.rows[0] });
