@@ -6,16 +6,17 @@ const adminScController = require('../controllers/adminScrapedContentController'
 
 router.use(adminAuth);
 
-// KORREKTUR: Statische Routen wie '/events' müssen VOR dynamischen Routen wie '/:id' stehen.
-router.post('/events', adminScController.createManualEvent);
+// Spezifischere Routen zuerst
 router.get('/events', adminScController.getAllScrapedEventsForAdmin);
+router.post('/events', adminScController.createManualEvent);
 router.put('/events/:id', adminScController.updateScrapedEvent);
+router.get('/regions', adminScController.getAllRegions); // NEUE ROUTE
 
 // Allgemeine Routen
 router.get('/', adminScController.getAllScrapedContent);
 router.post('/', adminScController.createScrapedContent);
 
-// Die dynamische Route mit :id kommt jetzt ZULETZT.
+// Dynamische Routen mit :id am Ende
 router.get('/:id', adminScController.getScrapedContentById);
 router.put('/:id', adminScController.updateScrapedContent);
 router.delete('/:id', adminScController.deleteScrapedContent);

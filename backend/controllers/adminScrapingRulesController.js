@@ -1,11 +1,13 @@
 // backend/controllers/adminScrapingRulesController.js
 const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
-const { triggerSingleRuleScrape, getScrapingRuleSuggestion } = require('../services/scraperService');
+const { getScrapingRuleSuggestion } = require('../services/scraperService');
+const { scrapeQueue } = require('../services/queueService');
 const jobManager = require('../services/jobManagerService');
 const { parse } = require('date-fns');
 
-const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
+const isValidUUID = (uuid) =>
+    uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
 exports.getAllScrapingRules = async (req, res) => {
     try {
@@ -33,7 +35,7 @@ exports.createScrapingRule = async (req, res) => {
     const {
         name, source_identifier, url_pattern, content_container_selector, title_selector,
         date_selector, description_selector, link_selector, date_format,
-        category_default, is_active, region, schedule, scrape_after_date // Hinzugefügt
+        category_default, is_active, region, schedule, scrape_after_date
     } = req.body;
 
     if (!source_identifier || !url_pattern || !category_default) {
@@ -47,7 +49,7 @@ exports.createScrapingRule = async (req, res) => {
             [
                 uuidv4(), name, source_identifier, url_pattern, content_container_selector, title_selector,
                 date_selector, description_selector, link_selector, date_format, category_default,
-                is_active, region, schedule, scrape_after_date // Hinzugefügt
+                is_active, region, schedule, scrape_after_date
             ]
         );
         const newRule = newRuleRes.rows[0];
@@ -70,7 +72,7 @@ exports.updateScrapingRule = async (req, res) => {
     const {
         name, source_identifier, url_pattern, content_container_selector, title_selector,
         date_selector, description_selector, link_selector, date_format,
-        category_default, is_active, region, schedule, scrape_after_date // Hinzugefügt
+        category_default, is_active, region, schedule, scrape_after_date
     } = req.body;
 
     try {
@@ -84,14 +86,13 @@ exports.updateScrapingRule = async (req, res) => {
             [
                 name, source_identifier, url_pattern, content_container_selector, title_selector,
                 date_selector, description_selector, link_selector, date_format, category_default,
-                is_active, region, schedule, scrape_after_date, id // Hinzugefügt
+                is_active, region, schedule, scrape_after_date, id
             ]
         );
 
         if (result.rows.length === 0) return res.status(404).json({ message: 'Regel nicht gefunden.' });
-        
+
         const updatedRule = result.rows[0];
-        
         await jobManager.setScrapingSchedule(updatedRule.id, updatedRule.schedule);
 
         res.json(updatedRule);
@@ -106,10 +107,10 @@ exports.deleteScrapingRule = async (req, res) => {
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
     try {
         await jobManager.removeScrapingSchedule(id);
-        
+
         const result = await db.query('DELETE FROM scraping_rules WHERE id = $1 RETURNING id', [id]);
         if (result.rows.length === 0) return res.status(404).json({ message: 'Regel nicht gefunden.' });
-        
+
         res.json({ message: 'Scraping rule deleted successfully.' });
     } catch (err) {
         console.error('Error deleting scraping rule:', err.message);
@@ -139,20 +140,32 @@ exports.updateScrapingRuleSchedule = async (req, res) => {
     }
 };
 
+// Manuelles Triggern: DB-Job anlegen + ENQUEUE in Queue 'scrape-content-generation'
 exports.triggerScrapeJob = async (req, res) => {
     const { id: ruleId } = req.params;
     try {
+        // --- NEU: Regeldetails abrufen, um einen Namen zu haben ---
+        const ruleRes = await db.query('SELECT name, source_identifier FROM scraping_rules WHERE id = $1', [ruleId]);
+        if (ruleRes.rows.length === 0) {
+            return res.status(404).json({ message: 'Scraping-Regel nicht gefunden.' });
+        }
+        const rule = ruleRes.rows[0];
+        const jobName = rule.name || rule.source_identifier; // Fallback auf source_identifier
+        // --- ENDE NEU ---
+
         const jobResult = await db.query(
             `INSERT INTO scraping_jobs (scraping_rule_id, status) VALUES ($1, 'pending') RETURNING id`,
             [ruleId]
         );
         const jobId = jobResult.rows[0].id;
-        
-        triggerSingleRuleScrape(ruleId, jobId).catch(err => {
-            console.error(`[FATAL] Unhandled error from background scrape job ${jobId}:`, err.message);
-        });
 
-        res.status(202).json({ message: 'Scraping-Job gestartet.', jobId });
+        await scrapeQueue.add(
+            jobName, // ⬅️ GEÄNDERT: von 'run-rule' zum dynamischen Namen
+            { ruleId, jobId },
+            { jobId: `scrape:${ruleId}:${Date.now()}` } // Die ID kann so bleiben
+        );
+
+        return res.status(202).json({ message: 'Scrape enqueued', jobId });
     } catch (err) {
         console.error('Error initiating scrape job:', err.message);
         res.status(500).json({ message: 'Job konnte nicht initialisiert werden.' });
@@ -167,9 +180,12 @@ exports.getScrapeLogs = async (req, res) => {
         if (jobStatusRes.rows.length === 0) {
             return res.status(404).json({ message: 'Job nicht gefunden.' });
         }
-        
-        const logsRes = await db.query('SELECT log_level, message, created_at FROM scraping_logs WHERE job_id = $1 ORDER BY created_at ASC', [jobId]);
-        
+
+        const logsRes = await db.query(
+            'SELECT log_level, message, created_at FROM scraping_logs WHERE job_id = $1 ORDER BY created_at ASC',
+            [jobId]
+        );
+
         res.json({
             status: jobStatusRes.rows[0].status,
             logs: logsRes.rows,
@@ -198,7 +214,7 @@ exports.testDateFormat = async (req, res) => {
         return res.status(400).json({ message: 'dateString und formatString sind erforderlich.' });
     }
     try {
-        const referenceDate = new Date(); 
+        const referenceDate = new Date();
         const parsedDate = parse(dateString, formatString, referenceDate);
         if (!isNaN(parsedDate.getTime())) {
             res.json({
@@ -237,7 +253,7 @@ exports.inferDateFormat = async (req, res) => {
             if (!isNaN(parsedDate.getTime())) {
                 return res.json({ success: true, format: format, message: `Format gefunden: ${format}` });
             }
-        } catch (e) { /* Geplant, weiter machen */ }
+        } catch (e) { /* weiterprobieren */ }
     }
     res.status(400).json({ success: false, message: 'Konnte kein passendes Datumsformat für den angegebenen Text finden.' });
 };

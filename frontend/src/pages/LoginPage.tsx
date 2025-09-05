@@ -5,7 +5,7 @@ import { useNavigate, Link as RouterLink, useSearchParams } from 'react-router-d
 import { useAuth, UserPayload } from '../context/AuthContext';
 import {
   TextField, Button, Typography, Container, Box, CircularProgress, Alert,
-  InputAdornment, IconButton, Divider, Checkbox, FormControlLabel, Link,
+  InputAdornment, IconButton, Checkbox, FormControlLabel, Link,
   Collapse, Dialog, DialogTitle, DialogContent, DialogActions
 } from '@mui/material';
 import Visibility from '@mui/icons-material/Visibility';
@@ -73,7 +73,11 @@ const LoginPage: React.FC<LoginPageProps> = ({ isRegister = false }) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
     try {
-      const res = await fetch(url, { signal: controller.signal, ...init });
+      const res = await fetch(url, { 
+        signal: controller.signal,
+        credentials: 'include',   // 🔑 Cookie wird erlaubt!
+        ...init 
+      });
       const contentType = res.headers.get('content-type') || '';
       let data: any = null;
 

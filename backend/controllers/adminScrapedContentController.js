@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
-// Holt alle Inhalte und fügt die zugehörigen Tag-Namen als Array hinzu
+// ... (getAllScrapedContent, getScrapedContentById, createScrapedContent sind unverändert) ...
 exports.getAllScrapedContent = async (req, res) => {
     const { source_identifier } = req.query;
     try {
@@ -44,7 +44,6 @@ exports.getAllScrapedContent = async (req, res) => {
     }
 };
 
-// GET a single scraped content entry by ID
 exports.getScrapedContentById = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Scraped Content ID format.' });
@@ -66,7 +65,6 @@ exports.getScrapedContentById = async (req, res) => {
     }
 };
 
-// CREATE new scraped content entry
 exports.createScrapedContent = async (req, res) => {
     const { source_identifier, original_url, title, summary, full_text, published_date, event_date, category_id, tags: tagIds, relevance_score, region } = req.body;
     if (!source_identifier || !original_url || !title) {
@@ -106,10 +104,8 @@ exports.createScrapedContent = async (req, res) => {
 
 exports.updateScrapedEvent = async (req, res) => {
     const { id } = req.params;
-    // Admins können Titel und event_date anpassen.
-    const { title, event_date } = req.body;
+    const { title, event_date, original_url, region, summary } = req.body;
 
-    // Nur prüfen, ob ein Titel vorhanden ist. Das Datum kann auch auf NULL gesetzt werden.
     if (!title) {
         return res.status(400).json({ message: 'Ein Titel ist erforderlich.' });
     }
@@ -117,10 +113,16 @@ exports.updateScrapedEvent = async (req, res) => {
     try {
         const { rows } = await db.query(
             `UPDATE scraped_content
-             SET title = $1, event_date = $2, updated_at = NOW()
-             WHERE id = $3
+             SET 
+                title = $1, 
+                event_date = $2, 
+                original_url = $3,
+                region = $4,
+                summary = $5,
+                updated_at = NOW()
+             WHERE id = $6
              RETURNING *`,
-            [title, event_date || null, id] // Erlaube, dass das Datum auf NULL gesetzt wird
+            [title, event_date || null, original_url || null, region || null, summary || null, id]
         );
         if (rows.length === 0) {
             return res.status(404).json({ message: 'Eintrag nicht gefunden.' });
@@ -132,7 +134,6 @@ exports.updateScrapedEvent = async (req, res) => {
     }
 };
 
-// Aktualisiert einen Inhalt und seine Tag-Verknüpfungen in einer Transaktion
 exports.updateScrapedContent = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
@@ -172,7 +173,6 @@ exports.updateScrapedContent = async (req, res) => {
     }
 };
 
-// Löscht einen Eintrag aus der korrekten Tabelle basierend auf dem Typ
 exports.deleteScrapedContent = async (req, res) => {
     const { id } = req.params;
     const { dataType } = req.query;
@@ -194,7 +194,16 @@ exports.deleteScrapedContent = async (req, res) => {
 exports.getAllScrapedEventsForAdmin = async (req, res) => {
     try {
         const { rows } = await db.query(
-            `SELECT sc.id, sc.title, sc.event_date, sc.original_url, sc.source_identifier, sc.category_id, c.name as category_name
+            `SELECT 
+                sc.id, 
+                sc.title, 
+                sc.event_date, 
+                sc.original_url, 
+                sc.source_identifier, 
+                sc.category_id, 
+                c.name as category_name,
+                sc.region,
+                sc.summary
             FROM scraped_content sc
             LEFT JOIN categories c ON sc.category_id = c.id
             WHERE sc.category LIKE '%_events'
@@ -207,7 +216,6 @@ exports.getAllScrapedEventsForAdmin = async (req, res) => {
     }
 };
 
-// NEU: Erstellt einen manuellen Event-Eintrag in der scraped_content Tabelle
 exports.createManualEvent = async (req, res) => {
     const { title, event_date, region, summary, original_url } = req.body;
 
@@ -217,14 +225,25 @@ exports.createManualEvent = async (req, res) => {
 
     try {
         const { rows } = await db.query(
-            `INSERT INTO scraped_content (title, event_date, region, summary, original_url, category, source_identifier)
-             VALUES ($1, $2, $3, $4, $5, 'industry_events', 'manual_entry')
+            `INSERT INTO scraped_content (id, title, event_date, region, summary, original_url, category, source_identifier)
+             VALUES ($1, $2, $3, $4, $5, $6, 'industry_events', 'manual_entry')
              RETURNING *`,
-            [title, event_date, region || null, summary || null, original_url || null]
+            [uuidv4(), title, event_date, region || null, summary || null, original_url || null]
         );
         res.status(201).json(rows[0]);
     } catch (err) {
         console.error('Fehler beim Erstellen des manuellen Events:', err.message);
+        res.status(500).send('Serverfehler');
+    }
+};
+
+// NEU: Holt alle Regionen für Dropdowns
+exports.getAllRegions = async (req, res) => {
+    try {
+        const { rows } = await db.query('SELECT name, code FROM regions ORDER BY name ASC');
+        res.json(rows);
+    } catch (err) {
+        console.error('Fehler beim Laden der Regionen:', err.message);
         res.status(500).send('Serverfehler');
     }
 };

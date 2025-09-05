@@ -114,8 +114,6 @@ exports.deleteAction = async (req, res) => {
     }
 };
 
-// --- NEU: Funktionen für Upload, Bild-Liste und Kopieren ---
-
 exports.uploadActionImage = (req, res) => {
     if (!req.file) {
         return res.status(400).send({ message: 'Bitte wählen Sie eine Datei aus.' });
@@ -124,7 +122,6 @@ exports.uploadActionImage = (req, res) => {
     try {
         const tempPath = req.file.path;
 
-        // Eindeutigen Dateinamen aus den Body-Daten erstellen, die hier zuverlässig verfügbar sind.
         const bpName = (req.body.businessPartnerName || 'global').replace(/\s+/g, '-').toLowerCase();
         const startDate = req.body.startDate ? new Date(req.body.startDate).toISOString().split('T')[0] : 'anytime';
         const originalName = path.parse(req.file.originalname).name.replace(/\s+/g, '-');
@@ -133,16 +130,14 @@ exports.uploadActionImage = (req, res) => {
         
         const newPath = path.join(path.dirname(tempPath), newFilename);
 
-        // Datei umbenennen
         fs.renameSync(tempPath, newPath);
 
-        const publicFilePath = `/public/actions/${newFilename}`;
+        const publicFilePath = `/actions/${newFilename}`;
 
         res.status(200).json({ message: 'Datei erfolgreich hochgeladen', filePath: publicFilePath });
 
     } catch (err) {
         console.error("Fehler bei der Dateiverarbeitung:", err);
-        // Aufräumen: Wenn die Umbenennung fehlschlägt, die temporäre Datei löschen
         if (req.file && req.file.path) {
             fs.unlink(req.file.path, (unlinkErr) => {
                 if(unlinkErr) console.error("Fehler beim Löschen der temporären Datei:", unlinkErr);
@@ -152,12 +147,10 @@ exports.uploadActionImage = (req, res) => {
     }
 };
 
-// KORRIGIERT: Die Funktion zum Auflisten der Bilder verwendet jetzt den korrekten Pfad.
 exports.getUploadedImages = (req, res) => {
     const directoryPath = path.join(__dirname, '..', '..', 'frontend', 'public', 'actions');
     fs.readdir(directoryPath, function (err, files) {
         if (err) {
-            // Wenn das Verzeichnis nicht existiert, eine leere Liste zurückgeben, anstatt einen Fehler zu werfen.
             if (err.code === 'ENOENT') {
                 return res.json([]);
             }
@@ -166,7 +159,7 @@ exports.getUploadedImages = (req, res) => {
         }
         const imageFiles = files
             .filter(file => /\.(jpg|jpeg|png|gif|webp)$/i.test(file))
-            .map(file => `/public/actions/${file}`)
+            .map(file => `/actions/${file}`)
             .reverse();
         res.json(imageFiles);
     });

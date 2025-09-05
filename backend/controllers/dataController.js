@@ -134,46 +134,64 @@ exports.getPricesByIds = async (req, res) => {
         switch (country.toUpperCase()) {
             case 'DE':
                 if (!TANKERKOENIG_API_KEY) throw new Error('Tankerkönig API-Schlüssel ist nicht konfiguriert.');
-                const deParams = { ids, apikey: TANKERKOENIG_API_KEY };
+                
+                const idListDE = String(ids).split(',').map(s => s.trim()).filter(isValidUUID);
+                if (idListDE.length === 0) return res.json({ ok: true, prices: {} });
+
+                const deParams = { ids: idListDE.join(','), apikey: TANKERKOENIG_API_KEY };
                 const deResponse = await axios.get('https://creativecommons.tankerkoenig.de/json/prices.php', { params: deParams });
                 if (!deResponse.data.ok) throw new Error(deResponse.data.message);
-                prices = deResponse.data.prices;
+                
+                prices = deResponse.data.prices || {};
+
+                const detailRes = await axios.get('https://creativecommons.tankerkoenig.de/json/detail.php', { params: { id: idListDE.join(','), apikey: TANKERKOENIG_API_KEY } });
+                
+                if (detailRes.data.ok) {
+                    const stationsToProcess = Array.isArray(detailRes.data.stations) 
+                        ? detailRes.data.stations 
+                        : (detailRes.data.station ? [detailRes.data.station] : []);
+                    
+                    stationsToProcess.forEach(detail => {
+                        if (prices[detail.id]) {
+                            prices[detail.id] = { ...prices[detail.id], name: detail.name, brand: detail.brand, street: detail.street, houseNumber: detail.houseNumber, postCode: detail.postCode, place: detail.place, lat: detail.lat, lng: detail.lng };
+                        }
+                    });
+                }
                 break;
             
-            // === KORRIGIERTER BLOCK FÜR ÖSTERREICH ===
             case 'AT':
-                const atApiUrl = 'https://api.e-control.at/sprit/1.0/get-prices/by-ids';
-                const idArray = ids.split(',');
+                const apiKey = process.env.ECONTROL_API_KEY;
+                if (!apiKey) throw new Error('E-Control API Key ist nicht konfiguriert.');
+                
+                const idListAT = String(ids).split(',').map(s => s.trim()).map(Number).filter(id => Number.isFinite(id) && id > 0);
+                if (idListAT.length === 0) return res.json({ ok: true, prices: {} });
 
-                // Die E-Control API kann mehrere IDs in einem einzigen Aufruf verarbeiten.
-                const atResponse = await axios.post(atApiUrl, idArray, {
-                    headers: { 'Content-Type': 'application/json' }
+                const atResponse = await axios.post('https://api.e-control.at/sprit/1.0/get-prices/by-ids', idListAT, {
+                    headers: { 'Content-Type': 'application/json' },
+                    auth: { username: apiKey, password: '' }
                 });
 
                 if (atResponse.data && atResponse.data.length > 0) {
                     atResponse.data.forEach(station => {
                         prices[station.id] = {
-                            status: 'open', // Annahme, da die neue API keinen Status pro ID liefert
+                            status: 'open', id: station.id, name: station.name, brand: station.name.split(' ')[0],
+                            street: station.location.address.split(',')[0].trim(), houseNumber: '',
+                            postCode: station.location.postalCode, place: station.location.city,
+                            lat: station.location.latitude, lng: station.location.longitude,
                             diesel: station.prices.find(p => p.fuelType === 'DIE')?.amount || null,
                             e5: station.prices.find(p => p.fuelType === 'SUP')?.amount || null,
-                            e10: null, // E-Control liefert kein separates E10
+                            e10: null,
                         };
                     });
                 }
                 break;
-
-            case 'FR':
-            case 'ES':
-            case 'IT':
-            case 'GR':
-                return res.status(400).json({ ok: false, message: `Preise für ${country.toUpperCase()} sind noch nicht implementiert.` });
 
             default:
                 return res.status(400).json({ ok: false, message: `Land '${country}' wird aktuell nicht unterstützt.` });
         }
         return res.json({ ok: true, prices });
     } catch (error) {
-        console.error(`Fehler beim Abrufen der Preise für ${country}:`, error.message);
+        console.error(`Fehler beim Abrufen der Preise für ${country}:`, error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
         return res.status(500).json({ ok: false, message: `Fehler bei der Kommunikation mit dem Provider für ${country.toUpperCase()}.` });
     }
 };
@@ -1091,7 +1109,8 @@ exports.getScrapedContent = async (req, res) => {
     const {
         page = 1, limit = 10, sortBy = 'date', category, region, search,
         tag, // Das ist der "Sub-Tag" aus dem Dropdown
-        mainFilter // NEU: Der Hauptfilter aus der Widget-Config
+        mainFilter, // NEU: Der Hauptfilter aus der Widget-Config
+        filter // NEU: Filter für "neu" oder "nicht gehört"
     } = req.query;
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
@@ -1159,23 +1178,37 @@ exports.getScrapedContent = async (req, res) => {
             whereClauses.push(`sc.relevance_score <= $${paramIndex++}`);
             queryParams.push(article_score_max);
         }
+        
+        // ===== HIER WIRD DER NEUE FILTER VERARBEITET =====
+        if (filter === 'unread') {
+             whereClauses.push(`NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex})`);
+             queryParams.push(userId);
+             paramIndex++;
+        } else if (filter === 'new') {
+            whereClauses.push(`sc.created_at > $${paramIndex}`);
+            queryParams.push(lastLogin || new Date(0));
+            paramIndex++;
+        }
+        // ===== ENDE DER ÄNDERUNG =====
+
 
         const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-        const baseQuery = `FROM scraped_content sc ${whereString}`;
+        // ===== HIER WURDE DER JOIN HINZUGEFÜGT =====
+        const baseQuery = `FROM scraped_content sc LEFT JOIN sources s ON sc.original_url = s.url ${whereString}`;
 
-        const countQuery = `SELECT COUNT(*) as total_items ${baseQuery}`;
+        const countQuery = `SELECT COUNT(sc.id) as total_items ${baseQuery}`;
         const totalResult = await db.query(countQuery, queryParams);
         const totalItems = parseInt(totalResult.rows[0].total_items, 10);
         const totalPages = Math.ceil(totalItems / limit);
 
         const countsQuery = `
             WITH filtered_content AS (
-                SELECT id, scraped_at
+                SELECT sc.id, sc.created_at
                 ${baseQuery}
             )
             SELECT
                 (SELECT COUNT(*) FROM filtered_content fc WHERE NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = fc.id AND ursc.user_id = $${paramIndex})) as unread_count,
-                (SELECT COUNT(*) FROM filtered_content WHERE scraped_at > $${paramIndex + 1}) as new_count
+                (SELECT COUNT(*) FROM filtered_content WHERE created_at > $${paramIndex + 1}) as new_count
         `;
         const countsParams = [...queryParams, userId, lastLogin || new Date(0)];
         const countsResult = await db.query(countsQuery, countsParams);
@@ -1193,12 +1226,14 @@ exports.getScrapedContent = async (req, res) => {
             SELECT
                 sc.id, sc.title, sc.summary, sc.original_url, sc.published_date,
                 sc.event_date, sc.category, sc.scraped_at, sc.relevance_score, sc.region,
+                s.status = 'approved' AS is_trusted_source, -- <-- NEUES FELD
                 EXISTS (
                     SELECT 1 FROM user_read_scraped_content ursc
                     WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex}
                 ) as is_read,
                 COALESCE(crv.vote, 0) as user_vote
             FROM scraped_content sc
+            LEFT JOIN sources s ON sc.original_url = s.url -- <-- NEUER JOIN
             LEFT JOIN content_relevance_votes crv ON crv.content_id = sc.id AND crv.user_id = $${paramIndex}
             ${whereString}
             ${orderByClause}
@@ -1363,19 +1398,35 @@ exports.getCalendarEvents = async (req, res) => {
 
 exports.getEnhancedCalendarEvents = async (req, res) => {
     const { id: userId } = req.user;
+    const { page = 1, limit = 5 } = req.query; // NEU: Paginierungs-Parameter
+    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
     try {
-        const query = `
-            SELECT 
-                sc.id, sc.title, sc.event_date, sc.summary, sc.original_url, sc.region,
-                -- Zähle alle positiven Stimmen (Teilnehmer)
-                (SELECT COUNT(*) FROM content_relevance_votes WHERE content_id = sc.id AND vote = 1)::INTEGER AS participants,
-                -- Hole die spezifische Stimme des aktuellen Nutzers
-                COALESCE((SELECT vote FROM content_relevance_votes WHERE content_id = sc.id AND user_id = $1), NULL) AS user_vote
+        const baseQuery = `
             FROM scraped_content sc
+            LEFT JOIN sources s ON sc.original_url LIKE s.url || '%'
             WHERE sc.category LIKE '%_events' AND sc.event_date IS NOT NULL
-            ORDER BY sc.event_date ASC
         `;
-        const { rows: events } = await db.query(query, [userId]);
+
+        // Gesamtzahl für Paginierung ermitteln
+        const countQuery = `SELECT COUNT(sc.id) as total_items ${baseQuery}`;
+        const totalResult = await db.query(countQuery);
+        const totalItems = parseInt(totalResult.rows[0].total_items, 10);
+        const totalPages = Math.ceil(totalItems / limit);
+
+        const dataQuery = `
+            SELECT 
+                sc.id, sc.title, sc.event_date AS date, sc.summary, 
+                sc.original_url AS url, sc.region, sc.full_text,
+                s.status = 'approved' AS is_trusted_source,
+                (SELECT COUNT(*) FROM content_relevance_votes WHERE content_id = sc.id AND vote = 1)::INTEGER AS participants,
+                (SELECT COUNT(*) FROM content_relevance_votes WHERE content_id = sc.id AND vote = 0)::INTEGER AS "maybeParticipants",
+                COALESCE((SELECT vote FROM content_relevance_votes WHERE content_id = sc.id AND user_id = $1), NULL) AS "userVote"
+            ${baseQuery}
+            ORDER BY sc.event_date ASC
+            LIMIT $2 OFFSET $3
+        `;
+        const { rows: events } = await db.query(dataQuery, [userId, limit, offset]);
 
         const availableRegions = [...new Set(events.map(e => e.region).filter(Boolean))];
         let regionsData = [];
@@ -1385,19 +1436,10 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
             regionsData = regionsResult.rows;
         }
 
-        const formattedEvents = events.map(row => ({
-            id: row.id,
-            title: row.title,
-            date: row.event_date,
-            region: row.region,
-            summary: row.summary,
-            url: row.original_url,
-            participants: row.participants,
-            userVote: row.user_vote
-        }));
-
         res.json({
-            events: formattedEvents,
+            events: events,
+            totalPages: totalPages, // NEU: Info für Frontend
+            currentPage: parseInt(page, 10), // NEU: Info für Frontend
             availableRegions: regionsData
         });
     } catch (err) {

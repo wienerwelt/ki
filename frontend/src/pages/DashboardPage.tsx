@@ -27,6 +27,21 @@ interface SnackbarState {
   severity: 'success' | 'error';
 }
 
+// kleine Helfer, um robuste Defaults zu haben
+function asArray<T = any>(value: any): T[] {
+  return Array.isArray(value) ? value : [];
+}
+function asConfig(value: any): DashboardSavedConfig {
+  if (value && typeof value === 'object') {
+    return {
+      layout: Array.isArray(value.layout) ? value.layout : [],
+      widgets: Array.isArray(value.widgets) ? value.widgets : [],
+      name: typeof value.name === 'string' ? value.name : 'Default Dashboard',
+    };
+  }
+  return { layout: [], widgets: [], name: 'Default Dashboard' };
+}
+
 const DashboardPage: React.FC = () => {
   const { businessPartner } = useAuth();
   const [dashboardConfig, setDashboardConfig] = useState<DashboardSavedConfig | null>(null);
@@ -74,9 +89,9 @@ const DashboardPage: React.FC = () => {
       setRunTour(false);
       localStorage.setItem('dashboardTourSeen', 'true');
       if (status === STATUS.FINISHED) {
-          posthog.capture('tour_completed');
+        posthog.capture('tour_completed');
       } else {
-          posthog.capture('tour_skipped', { step_index: data.index });
+        posthog.capture('tour_skipped', { step_index: data.index });
       }
     }
   };
@@ -85,17 +100,25 @@ const DashboardPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem('jwt_token');
-      if (!token) throw new Error('No authentication token found.');
+      // 👉 Kein Header-Token mehr: Cookie wird automatisch mitgeschickt (apiClient setzt credentials: 'include')
       const [widgetTypesResponse, configResponse] = await Promise.all([
-        apiClient.get('/api/widgets/types', { headers: { 'x-auth-token': token } }),
-        apiClient.get('/api/dashboard/config', { headers: { 'x-auth-token': token } }),
+        apiClient.get('/api/widgets/types'),
+        apiClient.get('/api/dashboard/config'),
       ]);
-      setAvailableWidgetTypes(widgetTypesResponse.data || []);
-      const cfg = (configResponse.data?.config as DashboardSavedConfig) || { layout: [], widgets: [] };
+
+      // robust parsen
+      const types = asArray<WidgetTypeMeta>(widgetTypesResponse.data);
+      setAvailableWidgetTypes(types);
+
+      const cfg = asConfig(configResponse.data?.config ?? configResponse.data);
       setDashboardConfig(cfg);
     } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Error loading dashboard configuration.');
+      // 401er schön melden
+      if (err?.res && err.res.status === 401) {
+        setError('Nicht autorisiert. Bitte neu einloggen.');
+      } else {
+        setError(err?.response?.data?.message || err?.message || 'Error loading dashboard configuration.');
+      }
     } finally {
       setLoading(false);
     }
@@ -110,16 +133,15 @@ const DashboardPage: React.FC = () => {
   const handleSaveConfig = async () => {
     if (!dashboardConfig) return;
     try {
-      const token = localStorage.getItem('jwt_token');
-      await apiClient.post(
-        '/api/dashboard/config',
-        { name: 'Default Dashboard', config: dashboardConfig },
-        { headers: { 'x-auth-token': token } }
-      );
+await apiClient.post('/api/dashboard/config', {
+  name: dashboardConfig.name || 'Mein Dashboard',
+  config: { layout: dashboardConfig.layout, widgets: dashboardConfig.widgets },
+  isDefault: true, // optional
+});
       setSnackbar({ open: true, message: 'Layout erfolgreich gespeichert!', severity: 'success' });
       posthog.capture('layout_saved', {
-          widget_count: dashboardConfig.widgets.length,
-          layout_item_count: dashboardConfig.layout.length
+        widget_count: dashboardConfig.widgets.length,
+        layout_item_count: dashboardConfig.layout.length
       });
     } catch {
       setSnackbar({ open: true, message: 'Fehler beim Speichern des Layouts.', severity: 'error' });
@@ -135,7 +157,7 @@ const DashboardPage: React.FC = () => {
     posthog.capture('widget_deleted', { widget_type: widgetType });
     const updatedWidgets = dashboardConfig.widgets.filter((w) => w.id !== widgetId);
     const updatedLayout = dashboardConfig.layout.filter((l) => l.i !== widgetId);
-    setDashboardConfig({ layout: updatedLayout, widgets: updatedWidgets });
+    setDashboardConfig({ layout: updatedLayout, widgets: updatedWidgets, name: dashboardConfig.name });
   };
 
   const handleAddWidget = (widgetTypeKey: string) => {
@@ -144,65 +166,98 @@ const DashboardPage: React.FC = () => {
     if (!widgetTypeMeta) return;
     posthog.capture('widget_added', { widget_type: widgetTypeKey });
     const newWidgetId = `${widgetTypeMeta.type_key}-${Date.now()}`;
-    const newWidgets: WidgetConfig[] = [...dashboardConfig.widgets, { id: newWidgetId, type: widgetTypeMeta.type_key },];
+    const newWidgets: WidgetConfig[] = [
+      ...dashboardConfig.widgets,
+      { id: newWidgetId, type: widgetTypeMeta.type_key },
+    ];
     const defaultWidth = widgetTypeMeta.default_width || 4;
-    const newLayoutItem: Layout = { i: newWidgetId, x: 0, y: Infinity, w: defaultWidth, h: widgetTypeMeta.default_height || 8, minW: widgetTypeMeta.default_min_width || 1, minH: widgetTypeMeta.default_min_height || 1, };
-    setDashboardConfig((prev) => prev ? { widgets: newWidgets, layout: [...prev.layout, newLayoutItem] } : prev);
+    const newLayoutItem: Layout = {
+      i: newWidgetId,
+      x: 0,
+      y: Infinity,
+      w: defaultWidth,
+      h: widgetTypeMeta.default_height || 8,
+      minW: widgetTypeMeta.default_min_width || 1,
+      minH: widgetTypeMeta.default_min_height || 1,
+    };
+    setDashboardConfig((prev) =>
+      prev ? { name: prev.name, widgets: newWidgets, layout: [...prev.layout, newLayoutItem] } : prev
+    );
     handleCloseAddWidgetMenu();
   };
 
   const renderWidgetContent = (widget: WidgetConfig) => {
     const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widget.type);
-    if (!widgetTypeMeta) { return (<Box p={2}><Typography>Unbekannter Widget-Typ: {widget.type}</Typography></Box>); }
-    
+    if (!widgetTypeMeta) {
+      return (
+        <Box p={2}>
+          <Typography>Unbekannter Widget-Typ: {widget.type}</Typography>
+        </Box>
+      );
+    }
+
     const componentKey = widgetTypeMeta.component_key || widget.type;
     const SpecificWidgetComponent = (WIDGET_COMPONENTS as any)[componentKey];
     const IconComponent = getIcon(widgetTypeMeta.icon_name);
-    
-    if (!SpecificWidgetComponent) { return (<Box p={2}><Typography>Fehlende Komponente für: {widget.type}</Typography></Box>); }
-    
+
+    if (!SpecificWidgetComponent) {
+      return (
+        <Box p={2}>
+          <Typography>Fehlende Komponente für: {widget.type}</Typography>
+        </Box>
+      );
+    }
+
     const config = widgetTypeMeta.config || {};
-    const commonProps = { 
-        onDelete: handleDeleteWidget, 
-        widgetId: widget.id, 
-        isRemovable: widgetTypeMeta.is_removable ?? true, 
-        icon: <IconComponent />, 
-        title: config.title || widgetTypeMeta.name, 
-        widgetTypeKey: widgetTypeMeta.type_key,
+    const commonProps = {
+      onDelete: handleDeleteWidget,
+      widgetId: widget.id,
+      isRemovable: widgetTypeMeta.is_removable ?? true,
+      icon: <IconComponent />,
+      title: config.title || widgetTypeMeta.name,
+      widgetTypeKey: widgetTypeMeta.type_key,
     };
 
-    // --- KORREKTUR START ---
-    // Die spezifischen Props werden jetzt ebenfalls über den componentKey zugewiesen.
     const specificProps: Record<string, any> = {
-        GenericAI: { 
-            category: config.category, 
-            filterLabel: config.filterLabel, 
-            description: widgetTypeMeta.description, 
-        },
-        GenericScrape: { 
-            category: config.category, 
-            filterLabel: config.filterLabel, 
-            description: widgetTypeMeta.description, 
-        },
-        BusinessPartnerInfo: { 
-            businessPartner 
-        },
+      GenericAI: {
+        category: config.category,
+        filterLabel: config.filterLabel,
+        description: widgetTypeMeta.description,
+      },
+      GenericScrape: {
+        category: config.category,
+        filterLabel: config.filterLabel,
+        description: widgetTypeMeta.description,
+      },
+      // ===== HIER WURDE DER EINTRAG FÜR DAS PODCAST WIDGET HINZUGEFÜGT =====
+      PodcastWidget: {
+        category: config.category,
+      },
+      VideoWidget: {
+        category: config.category, 
+      },      
+      BusinessPartnerInfo: {
+        businessPartner,
+      },
     };
-    
+
     return (
-        <Suspense fallback={
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                <CircularProgress />
-            </Box>
-        }>
-            {/* Die Props werden jetzt korrekt über den componentKey zusammengeführt */}
-            <SpecificWidgetComponent {...commonProps} {...(specificProps[componentKey] || {})} />
-        </Suspense>
+      <Suspense
+        fallback={
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+            <CircularProgress />
+          </Box>
+        }
+      >
+        <SpecificWidgetComponent {...commonProps} {...(specificProps[componentKey] || {})} />
+      </Suspense>
     );
-    // --- KORREKTUR ENDE ---
   };
 
-  const handleCloseSnackbar = (event?: React.SyntheticEvent | Event, reason?: string) => { if (reason === 'clickaway') return; setSnackbar({ ...snackbar, open: false }); };
+  const handleCloseSnackbar = (event?: React.SyntheticEvent | Event, reason?: string) => {
+    if (reason === 'clickaway') return;
+    setSnackbar({ ...snackbar, open: false });
+  };
 
   return (
     <Container maxWidth={false} sx={{ mt: 0, px: { xs: 1, sm: 2 } }}>
@@ -214,13 +269,14 @@ const DashboardPage: React.FC = () => {
         showSkipButton
         callback={handleJoyrideCallback}
         styles={{
-            options: {
-                zIndex: 1301,
-                primaryColor: businessPartner?.color_scheme?.primary_color || '#1976d2',
-            },
+          options: {
+            zIndex: 1301,
+            primaryColor: businessPartner?.color_scheme?.primary_color || '#1976d2',
+          },
         }}
       />
       <WelcomeWidget />
+
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2, gap: 2 }}>
         <Button id="add-widget-button" variant="outlined" onClick={handleOpenAddWidgetMenu} startIcon={<AddCircleOutlineIcon />}>
           Widget hinzufügen
@@ -237,8 +293,9 @@ const DashboardPage: React.FC = () => {
           Layout speichern
         </Button>
       </Box>
+
       <Menu anchorEl={anchorEl} open={openAddWidgetMenu} onClose={handleCloseAddWidgetMenu}>
-        {availableWidgetTypes.map((widgetType) => {
+        {asArray(availableWidgetTypes).map((widgetType) => {
           const Icon = getIcon(widgetType.icon_name);
           const isAlreadyAdded = dashboardConfig?.widgets.some((w) => w.type === widgetType.type_key) ?? false;
           return (
@@ -250,9 +307,13 @@ const DashboardPage: React.FC = () => {
         })}
       </Menu>
 
-      {loading && (<Box sx={{ display: 'flex', justifyContent: 'center', p: 5 }}><CircularProgress /></Box>)}
+      {loading && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', p: 5 }}>
+          <CircularProgress />
+        </Box>
+      )}
       {error && !loading && <Alert severity="error">{error}</Alert>}
-      
+
       {!loading && dashboardConfig && (
         <ErrorBoundary>
           <ResponsiveGridLayout
@@ -263,7 +324,7 @@ const DashboardPage: React.FC = () => {
             cols={{ lg: 12, md: 10, sm: 6, xs: 4 }}
             rowHeight={30}
             isDroppable={true}
-            draggableHandle=".widget-header"
+            draggableHandle=".widget-drag-handle"
           >
             {dashboardConfig.widgets.map((widget: WidgetConfig) => (
               <div key={widget.id}>

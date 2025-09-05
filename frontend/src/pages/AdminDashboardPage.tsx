@@ -113,8 +113,8 @@ const AdminDashboardPage: React.FC = () => {
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <CalendarMonthIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Event-Kuratierung</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Gescrapte Events prüfen und für den Kalender freigeben.</Typography>
+                            <Typography variant="h6" component="h2" gutterBottom>Events</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Gescrapte Events prüfen und für den Kalender verwalten.</Typography>
                             <Button component={Link} to="/admin/events" variant="contained" color="primary">Verwalten</Button>
                         </Paper>
                     </Grid>

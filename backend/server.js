@@ -8,6 +8,7 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const db = require('./config/db');
 const auth = require('./middleware/authMiddleware');
+const adminAuth = require('./middleware/adminAuth');        // ⬅️ Variante B
 const jobManager = require('./services/jobManagerService');
 
 // Bull Board & Queue
@@ -15,11 +16,12 @@ const { createBullBoard } = require('@bull-board/api');
 const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
 const { ExpressAdapter } = require('@bull-board/express');
 const { Queue } = require('bullmq');
-const IORedis = require('ioredis');
+
+// Zentrale Redis-Connection nutzen
+const { connection } = require('./services/queueService');
 
 // Routen
 const authRoutes = require('./routes/authRoutes');
-// ... (all your other routes)
 const sessionRoutes = require('./routes/sessionRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -59,39 +61,34 @@ const PORT = process.env.PORT || 5000;
 const serverAdapter = new ExpressAdapter();
 serverAdapter.setBasePath('/api/admin/jobs');
 
-const bullBoardRedisConnection = new IORedis({
-  host: process.env.REDIS_HOST || '127.0.0.1',
-  port: process.env.REDIS_PORT || 6379,
-  password: process.env.REDIS_PASSWORD,
-  maxRetriesPerRequest: null
-});
-
-const bullBoardQueue = new Queue('ai-content-generation', { connection: bullBoardRedisConnection });
+// Queues für Bull Board mit geteilter Connection
+const qAi     = new Queue('ai-content-generation',     { connection });
+const qScrape = new Queue('scrape-content-generation', { connection });
+const qEmails = new Queue('emails',                    { connection });
 
 createBullBoard({
-  queues: [new BullMQAdapter(bullBoardQueue)],
-  serverAdapter: serverAdapter,
+  queues: [
+    new BullMQAdapter(qAi),
+    new BullMQAdapter(qScrape),
+    new BullMQAdapter(qEmails),
+  ],
+  serverAdapter,
 });
-console.log('Bull Board UI wurde mit dedizierter Verbindung initialisiert.');
 
 
 // --- 3. MIDDLEWARE ---
-// KORREKTUR: Vereinfachte und robustere CORS-Konfiguration
 const allowedOrigins = ['http://localhost:5173', 'https://dashboard.mobiliti.at'];
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true,
-}));
-
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
 app.use((req, res, next) => { console.log(`[${req.method}] ${req.originalUrl}`); next(); });
 
 
 // --- 4. ROUTEN ---
-app.use('/api/admin/jobs', serverAdapter.getRouter());
+// Bull Board: nur Admin/Assistenz per adminAuth (Variante B)
+app.use('/api/admin/jobs', adminAuth, serverAdapter.getRouter());
 
-// ... (alle Ihre anderen Routen bleiben hier unverändert)
+// REST-API
 app.use('/api/auth', authRoutes);
 app.use('/api/session', sessionRoutes);
 app.use('/api/users', userRoutes);
@@ -122,17 +119,61 @@ app.use('/api/admin/actions', adminBpActionsRoutes);
 app.use('/api/admin/cronjobs', adminCronjobsRoutes);
 app.use('/api/admin/sources', adminSourcesRoutes);
 app.use('/api/files', fileRoutes);
-app.get('/api/debug/db-inspector', async (req, res) => { try { const dbConfig = db.options; const dbNameResult = await db.query('SELECT current_database();'); const currentDb = dbNameResult.rows[0].current_database; const tablesResult = await db.query("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename;"); const tables = tablesResult.rows.map(row => row.tablename); res.status(200).json({ message: "Datenbank-Inspektor-Bericht", verbindung_hergestellt_zu_db: currentDb, benutzter_user: dbConfig.user, benutzter_host: dbConfig.host, gefundene_tabellen: tables }); } catch (err) { res.status(500).json({ error: "Fehler im DB-Inspektor", message: err.message }); } });
-app.get('/api/debug/users', async (req, res) => { try { const { rows } = await db.query('SELECT * FROM users'); res.status(200).json(rows); } catch (err) { res.status(500).json({ error: "Fehler beim Abrufen der Daten" }); } });
+
+// Debug
+app.get('/api/debug/db-inspector', async (req, res) => {
+  try {
+    const dbNameResult = await db.query('SELECT current_database();');
+    const currentDb = dbNameResult.rows[0].current_database;
+    const tablesResult = await db.query("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename;");
+    const tables = tablesResult.rows.map(row => row.tablename);
+    res.status(200).json({
+      message: "Datenbank-Inspektor-Bericht",
+      verbindung_hergestellt_zu_db: currentDb,
+      gefundene_tabellen: tables
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Fehler im DB-Inspektor", message: err.message });
+  }
+});
+
+app.get('/api/debug/users', async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM users');
+    res.status(200).json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "Fehler beim Abrufen der Daten" });
+  }
+});
 
 
 // --- 5. FRONTEND & FEHLERBEHANDLUNG ---
 app.use('/api/*', (req, res) => { res.status(404).json({ error: 'API Endpoint Not Found' }); });
+
 const frontendDistPath = path.resolve(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(frontendDistPath));
 app.get('*', (req, res) => { res.sendFile(path.join(frontendDistPath, 'index.html')); });
-app.use((err, req, res, next) => { console.error('UNHANDLED ERROR:', err); res.status(500).json({ message: err.message, stack: err.stack, error: err }); });
+
+// Fehler-Handler (letzte Middleware)
+app.use((err, req, res, next) => {
+  console.error('UNHANDLED ERROR:', err);
+  res.status(500).json({ message: err.message, stack: err.stack, error: err });
+});
 
 
 // --- 6. SERVERSTART ---
-db.query('SELECT 1').then(() => { console.log('PostgreSQL verbunden.'); jobManager.synchronizeSchedulesFromDB(); app.listen(PORT, () => { console.log(`Server läuft auf Port ${PORT}`); }); }).catch(err => console.error('Fehler bei der PostgreSQL-Verbindung:', err));
+// Nur starten, wenn direkt ausgeführt (verhindert EADDRINUSE in Workern)
+if (require.main === module) {
+  db.query('SELECT 1')
+    .then(() => {
+      console.log('PostgreSQL verbunden.');
+      // Schedules nur hier synchronisieren (nicht in Workern)
+      jobManager.synchronizeSchedulesFromDB();
+      app.listen(PORT, () => {
+        console.log(`Server läuft auf Port ${PORT}`);
+      });
+    })
+    .catch(err => console.error('Fehler bei der PostgreSQL-Verbindung:', err));
+}
+
+module.exports = app;

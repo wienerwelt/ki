@@ -27,6 +27,7 @@ import StarsIcon from '@mui/icons-material/Stars';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import FeedbackIcon from '@mui/icons-material/Feedback';
 import FolderIcon from '@mui/icons-material/Folder';
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'; 
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next'; // NEU
@@ -155,6 +156,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItem button component={RouterLink} to="/admin/ai-content" onClick={toggleDrawer(false)}><SmartToyIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.aiContent')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/categories" onClick={toggleDrawer(false)}><CategoryIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.categories')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/tags" onClick={toggleDrawer(false)}><TagIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.tags')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/events" onClick={toggleDrawer(false)}><CalendarMonthIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.events')} /></ListItem>
                         </List>
                     </>
                 )}

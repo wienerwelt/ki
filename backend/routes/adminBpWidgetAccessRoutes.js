@@ -10,6 +10,6 @@ router.use(adminAuth);
 router.get('/', adminBpWidgetAccessController.getAllBpWidgetAccess);
 router.get('/:bpId', adminBpWidgetAccessController.getBpWidgetAccessByBpId); // Get all widgets for a specific BP
 router.post('/grant', adminBpWidgetAccessController.grantWidgetAccess); // Using /grant to distinguish from general GET
-router.delete('/revoke', adminBpWidgetAccessController.revokeWidgetAccess); // Using /revoke for clarity
+router.delete('/revoke/:bpId/:widgetId', adminBpWidgetAccessController.revokeWidgetAccess);
 
 module.exports = router;

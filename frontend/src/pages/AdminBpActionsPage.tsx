@@ -182,42 +182,46 @@ const AdminBpActionsPage: React.FC = () => {
         setOpenDialog(true);
     };
 
-    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
+const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
 
-        const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-        if (!allowedTypes.includes(file.type)) {
-            setUploadError('Ungültiges Dateiformat. Bitte nur JPG, PNG, GIF oder WEBP hochladen.');
-            return;
-        }
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+        setUploadError('Ungültiges Dateiformat. Bitte nur JPG, PNG, GIF oder WEBP hochladen.');
+        return;
+    }
 
-        const maxSizeInBytes = 2 * 1024 * 1024; 
-        if (file.size > maxSizeInBytes) {
-            setUploadError('Datei ist zu groß. Maximum ist 2MB.');
-            return;
-        }
-        
-        setUploadError(null);
-        const formData = new FormData();
-        formData.append('actionImage', file);
-        const bpName = allBusinessPartners.find(bp => bp.id === formState.business_partner_id)?.name || 'Global';
-        formData.append('businessPartnerName', bpName);
-        formData.append('startDate', formState.start_date || '');
-        formData.append('endDate', formState.end_date || '');
+    const maxSizeInBytes = 2 * 1024 * 1024; 
+    if (file.size > maxSizeInBytes) {
+        setUploadError('Datei ist zu groß. Maximum ist 2MB.');
+        return;
+    }
+    
+    setUploadError(null);
+    const formData = new FormData();
+    formData.append('actionImage', file);
+    
+    // Annahme: formState.business_partner_id ist verfügbar.
+    const bpName = allBusinessPartners.find(bp => bp.id === formState.business_partner_id)?.name || 'Global';
+    formData.append('businessPartnerName', bpName);
+    formData.append('startDate', formState.start_date || '');
+    formData.append('endDate', formState.end_date || '');
 
-        try {
-            const token = localStorage.getItem('jwt_token');
-            const response = await apiClient.post('/api/admin/actions/upload', formData, {
-                headers: { 'Content-Type': 'multipart/form-data', 'x-auth-token': token }
-            });
-            const { filePath } = response.data;
-            setFormState(prev => ({ ...prev, image_url: filePath }));
-            setUploadedImages(prev => [filePath, ...prev]);
-        } catch (err: any) {
-            setUploadError(err.response?.data?.message || 'Upload fehlgeschlagen.');
-        }
-    };
+    try {
+        const token = localStorage.getItem('jwt_token');
+        const response = await apiClient.post('/api/admin/actions/upload', formData, {
+            headers: {
+                'x-auth-token': token
+            }
+        });
+        const { filePath } = response.data;
+        setFormState(prev => ({ ...prev, image_url: filePath }));
+        setUploadedImages(prev => [filePath, ...prev.filter(p => p !== filePath)]);
+    } catch (err: any) {
+        setUploadError(err.response?.data?.message || 'Upload fehlgeschlagen.');
+    }
+};
 
     return (
         <DashboardLayout>

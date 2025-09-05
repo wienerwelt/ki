@@ -1,8 +1,186 @@
-import axios from 'axios';
+// frontend/src/apiClient.ts
 
-const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
-  withCredentials: true,
-});
+// Basis-URL: bevorzugt VITE_API_BASE_URL, dann VITE_API_URL, sonst im Dev http://localhost:5000
+const API_BASE: string =
+  (import.meta as any).env?.VITE_API_BASE_URL ??
+  (import.meta as any).env?.VITE_API_URL ??
+  ((typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
+    ? 'http://localhost:5000'
+    : '');
+
+export interface ApiResult<T = any> {
+  res: Response;
+  data: T | null;
+}
+
+// ---------- lockere Header-/Init-Typen ----------
+export type LooseHeaders = Record<string, string | null | undefined>;
+export type QueryParams = Record<string, string | number | boolean | (string | number | boolean)[] | null | undefined>;
+export type LooseInit = Omit<RequestInit, 'headers'> & {
+  headers?: HeadersInit | LooseHeaders;
+  /** Optional: Query-Parameter, werden automatisch an die URL angehängt */
+  params?: QueryParams;
+};
+
+// ---------- Utilities ----------
+function isFormData(value: any): value is FormData {
+  return typeof FormData !== 'undefined' && value instanceof FormData;
+}
+
+function buildBase(urlPath: string): string {
+  return API_BASE ? `${API_BASE}${urlPath}` : urlPath;
+}
+
+function toQueryString(params?: QueryParams): string {
+  if (!params) return '';
+  const parts: string[] = [];
+  const push = (k: string, v: string | number | boolean) =>
+    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+
+  for (const [key, raw] of Object.entries(params)) {
+    if (raw === null || raw === undefined) continue;
+    if (Array.isArray(raw)) {
+      for (const v of raw) {
+        if (v === null || v === undefined) continue;
+        push(key, v);
+      }
+    } else {
+      push(key, raw as any);
+    }
+  }
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
+/**
+ * Normalisiert Header:
+ * - akzeptiert { key: string | null | undefined }
+ * - entfernt null/undefined
+ * - mappt x-auth-token -> Authorization: Bearer <token>
+ * - setzt optional Authorization aus localStorage, falls nichts geliefert wurde
+ * - setzt bei Nicht-FormData „Content-Type: application/json“, falls nicht überschrieben
+ */
+function normalizeHeaders(init?: LooseInit): HeadersInit {
+  const given = init?.headers;
+
+  const out: Record<string, string> = {};
+
+  if (given instanceof Headers) {
+    given.forEach((v, k) => { if (v != null) out[k] = v; });
+  } else if (Array.isArray(given)) {
+    for (const [k, v] of given) if (v != null) out[k] = v as string;
+  } else if (given && typeof given === 'object') {
+    for (const [k, v] of Object.entries(given as Record<string, any>)) {
+      if (v != null) out[k] = String(v);
+    }
+  }
+
+  // Legacy-Mapping: x-auth-token -> Authorization
+  const xAuth = out['x-auth-token'] ?? out['X-Auth-Token'] ?? out['X-auth-token'];
+  if (xAuth) {
+    out['Authorization'] = `Bearer ${xAuth}`;
+    delete out['x-auth-token'];
+    delete out['X-Auth-Token'];
+    delete out['X-auth-token'];
+  }
+
+  // Optional: aus localStorage ziehen, wenn nichts gesetzt ist
+  if (!out['Authorization'] && typeof window !== 'undefined') {
+    const lsToken = window.localStorage?.getItem('token') || window.localStorage?.getItem('jwt_token');
+    if (lsToken) out['Authorization'] = `Bearer ${lsToken}`;
+  }
+
+  // Content-Type nur setzen, wenn NICHT FormData
+  const isFD = isFormData(init?.body as any);
+  if (!isFD && !Object.keys(out).some(k => k.toLowerCase() === 'content-type')) {
+    out['Content-Type'] = 'application/json';
+  }
+
+  return out;
+}
+
+// ---------- Low-level: apiRequest ----------
+export async function apiRequest<T = any>(path: string, init: LooseInit = {}): Promise<ApiResult<T>> {
+  // Query-String aus init.params anhängen
+  const qs = toQueryString(init.params);
+  const url = buildBase(`${path}${qs}`);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      credentials: 'include', // 🔑 HttpOnly-Cookies immer mitsenden
+      ...init,
+      headers: normalizeHeaders(init),
+    });
+
+    let data: any = null;
+    const ct = (res.headers.get('content-type') ?? '').toLowerCase();
+
+    if (ct.includes('application/json')) {
+      try { data = await res.json(); } catch { /* ignore */ }
+    } else {
+      try {
+        const text = await res.text();
+        if (text) data = { message: text };
+      } catch { /* ignore */ }
+    }
+
+    return { res, data };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ---------- Axios-ähnliche Helpers ----------
+type JsonBody = Record<string, any> | any[] | string | number | boolean | null;
+type BodyLike = BodyInit | FormData | JsonBody | undefined;
+
+async function request<T = any>(path: string, init?: LooseInit) {
+  return apiRequest<T>(path, init ?? {});
+}
+
+async function get<T = any>(path: string, init?: LooseInit) {
+  return apiRequest<T>(path, { method: 'GET', ...(init ?? {}) });
+}
+
+async function del<T = any>(path: string, init?: LooseInit) {
+  return apiRequest<T>(path, { method: 'DELETE', ...(init ?? {}) });
+}
+
+async function post<T = any>(path: string, body?: BodyLike, init?: LooseInit) {
+  const prepared: LooseInit = { method: 'POST', ...(init ?? {}) };
+
+  if (body !== undefined) {
+    prepared.body = isFormData(body)
+      ? (body as BodyInit)
+      : (typeof body === 'string' ? body : JSON.stringify(body));
+  }
+
+  return apiRequest<T>(path, prepared);
+}
+
+async function put<T = any>(path: string, body?: BodyLike, init?: LooseInit) {
+  const prepared: LooseInit = { method: 'PUT', ...(init ?? {}) };
+
+  if (body !== undefined) {
+    prepared.body = isFormData(body)
+      ? (body as BodyInit)
+      : (typeof body === 'string' ? body : JSON.stringify(body));
+  }
+
+  return apiRequest<T>(path, prepared);
+}
+
+// ---------- Default-Export (axios-like) ----------
+const apiClient = {
+  request,
+  get,
+  delete: del,
+  post,
+  put,
+};
 
 export default apiClient;

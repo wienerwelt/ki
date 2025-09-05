@@ -7,25 +7,30 @@ const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F
 exports.getAllWidgetTypes = async (req, res) => {
     try {
         const query = `
+            WITH widget_counts AS (
+              SELECT
+                (widget_element ->> 'type') AS widget_type_key,
+                COUNT(DISTINCT dc.user_id) AS user_install_count,
+                COUNT(DISTINCT u.business_partner_id) AS business_partner_install_count
+              FROM
+                dashboard_configurations dc
+              JOIN
+                users u ON dc.user_id = u.id,
+              -- LATERAL JOIN ist die korrekte Methode, um JSON-Arrays zu entpacken
+              LATERAL jsonb_array_elements(dc.config -> 'widgets') AS widget_element
+              GROUP BY
+                widget_type_key
+            )
             SELECT
-                wt.*,
-                (
-                    SELECT COUNT(DISTINCT u.business_partner_id)
-                    FROM dashboard_configurations dc
-                    JOIN users u ON dc.user_id = u.id,
-                         jsonb_array_elements(dc.config -> 'widgets') widget
-                    WHERE widget ->> 'type' = wt.type_key AND u.business_partner_id IS NOT NULL
-                ) AS business_partner_install_count,
-                (
-                    SELECT COUNT(DISTINCT dc.user_id)
-                    FROM dashboard_configurations dc,
-                         jsonb_array_elements(dc.config -> 'widgets') widget
-                    WHERE widget ->> 'type' = wt.type_key
-                ) AS user_install_count
+              wt.*,
+              COALESCE(wc.user_install_count, 0)::INTEGER AS user_install_count,
+              COALESCE(wc.business_partner_install_count, 0)::INTEGER AS business_partner_install_count
             FROM
-                widget_types wt
+              widget_types wt
+            LEFT JOIN
+              widget_counts wc ON wt.type_key = wc.widget_type_key
             ORDER BY
-                wt.name ASC;
+              wt.name ASC;
         `;
         const result = await db.query(query);
         res.json(result.rows);

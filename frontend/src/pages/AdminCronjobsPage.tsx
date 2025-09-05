@@ -1,18 +1,20 @@
 // src/pages/AdminCronjobsPage.tsx
 import React, { useState } from 'react';
+import { useLocation } from 'react-router-dom'; // NEUER IMPORT
 import { Box, Typography, Container, Tabs, Tab } from '@mui/material';
 import DashboardLayout from '../components/DashboardLayout';
 import AdminAITab from '../components/AdminAITab';
 import AdminScrapingTab from '../components/AdminScrapingTab';
 import AdminEmailTab from '../components/AdminEmailTab';
-import AdminAISystemTab from '../components/AdminAISystemTab'; // NEUER IMPORT
+import AdminAISystemTab from '../components/AdminAISystemTab';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import SearchIcon from '@mui/icons-material/Search';
 import EmailIcon from '@mui/icons-material/Email';
-import VpnKeyIcon from '@mui/icons-material/VpnKey'; // NEUES ICON
+import VpnKeyIcon from '@mui/icons-material/VpnKey';
 
 const AdminCronjobsPage: React.FC = () => {
-    const [currentTab, setCurrentTab] = useState(0);
+    const location = useLocation(); // NEU
+    const [currentTab, setCurrentTab] = useState(location.state?.tab || 0); // NEU: liest den Start-Tab aus dem Link-State
 
     const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
         setCurrentTab(newValue);

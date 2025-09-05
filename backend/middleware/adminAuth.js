@@ -1,35 +1,73 @@
 // backend/middleware/adminAuth.js
 const jwt = require('jsonwebtoken');
 
+function getTokenFromRequest(req) {
+  // 1) x-auth-token
+  let token = req.header('x-auth-token');
+
+  // 2) Authorization: Bearer <jwt>
+  if (!token) {
+    const auth = req.headers.authorization || '';
+    if (auth.startsWith('Bearer ')) token = auth.slice(7);
+  }
+
+  // 3) Cookie "token"
+  if (!token && req.cookies && req.cookies.token) {
+    token = req.cookies.token;
+  }
+
+  return token;
+}
+
+function extractUserFromPayload(decoded) {
+  // häufige Varianten
+  if (decoded && typeof decoded === 'object') {
+    if (decoded.user && typeof decoded.user === 'object') return decoded.user;
+    // flache Claims
+    const maybe = {
+      id: decoded.id || decoded.userId || decoded.sub,
+      role: decoded.role || (decoded.user && decoded.user.role),
+      email: decoded.email || (decoded.user && decoded.user.email),
+    };
+    return maybe;
+  }
+  return null;
+}
+
 const adminAuth = (req, res, next) => {
-    // Holen des Tokens aus dem Header
-    const token = req.header('x-auth-token');
+  const token = getTokenFromRequest(req);
 
-    // Prüfen, ob Token existiert
-    if (!token) {
-        return res.status(401).json({ message: 'No token, authorization denied' });
+  if (!token) {
+    return res.status(401).json({ message: 'No token, authorization denied' });
+  }
+
+  try {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      return res.status(500).json({ message: 'Server misconfigured: JWT_SECRET missing' });
     }
 
-    try {
-        // Token verifizieren
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = decoded.user; // User-Daten aus dem Token extrahieren
+    const decoded = jwt.verify(token, secret);
+    const user = extractUserFromPayload(decoded);
 
-        // ======================================================
-        // KORRIGIERTE PRÜFUNG
-        // Wir definieren alle erlaubten Admin-Rollen in einer Liste.
-        const allowedRoles = ['admin', 'assistenz'];
-        
-        // Wir prüfen, ob die Rolle des Benutzers in der Liste der erlaubten Rollen enthalten ist.
-        if (!allowedRoles.includes(req.user.role)) {
-            return res.status(403).json({ message: 'Access denied. Admin or Assistant role required.' });
-        }
-        // ======================================================
-
-        next(); // Nächste Middleware/Route aufrufen
-    } catch (err) {
-        res.status(401).json({ message: 'Token is not valid' });
+    if (!user || !user.role) {
+      return res.status(401).json({ message: 'Token is not valid (no user/role)' });
     }
+
+    // erlaubte Rollen
+    const allowedRoles = ['admin', 'assistenz'];
+    const role = String(user.role).toLowerCase();
+
+    if (!allowedRoles.includes(role)) {
+      return res.status(403).json({ message: 'Access denied. Admin or Assistant role required.' });
+    }
+
+    // im Request verfügbar machen
+    req.user = user;
+    return next();
+  } catch (err) {
+    return res.status(401).json({ message: 'Token is not valid' });
+  }
 };
 
 module.exports = adminAuth;

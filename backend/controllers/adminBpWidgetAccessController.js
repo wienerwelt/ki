@@ -75,7 +75,8 @@ exports.grantWidgetAccess = async (req, res) => {
 
 // REVOKE widget access (DELETE entry)
 exports.revokeWidgetAccess = async (req, res) => {
-    const { business_partner_id, widget_type_id } = req.body; // Use body for DELETE as params can be tricky with composite keys
+    // KORREKTUR: IDs aus den URL-Parametern (req.params) lesen
+    const { bpId: business_partner_id, widgetId: widget_type_id } = req.params;
 
     if (!business_partner_id || !widget_type_id) {
         return res.status(400).json({ message: 'Business Partner ID and Widget Type ID are required.' });

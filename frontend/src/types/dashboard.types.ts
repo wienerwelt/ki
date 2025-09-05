@@ -46,6 +46,7 @@ export interface WidgetConfig {
 }
 
 export interface DashboardSavedConfig {
+  name: string; 
   layout: any[];
   widgets: WidgetConfig[];
 }

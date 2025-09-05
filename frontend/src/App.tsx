@@ -5,6 +5,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider, createTheme, Theme } from '@mui/material/styles';
 import { CssBaseline, Box, CircularProgress } from '@mui/material';
+import { SnackbarProvider } from './context/SnackbarContext';
 
 // Layout
 import DashboardLayout from './components/DashboardLayout';
@@ -43,7 +44,6 @@ import FeedbackCenterPage from './pages/FeedbackCenterPage';
 import FileManagementPage from './pages/FileManagementPage';
 import AdminEventsPage from './pages/AdminEventsPage';
 
-
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
   const { user, isLoading } = useAuth();
@@ -75,19 +75,16 @@ const BpStaffAllowedRoutes: React.FC = () => {
 };
 
 function App() {
-  // themeMode wird jetzt aus dem AuthContext geholt
   const { businessPartner, isLoading, themeMode } = useAuth();
   const [currentTheme, setCurrentTheme] = useState<Theme | null>(null);
 
   useEffect(() => {
     if (!isLoading) {
-      // Annahme: Ihr 'businessPartner' Objekt enthält jetzt ein 'color_scheme' Unterobjekt
       const scheme = businessPartner?.color_scheme; 
 
       const newTheme = createTheme({
         palette: {
-          mode: themeMode, // 'light' or 'dark'
-          
+          mode: themeMode,
           primary: { 
             main: scheme?.primary_color || '#2196f3' 
           },
@@ -104,7 +101,6 @@ function App() {
               ? scheme?.background_color_light || '#f4f6f8'
               : scheme?.background_color_dark || '#121212',
             paper: themeMode === 'light'
-              // Für paper_color_light nehmen wir oft den normalen Hintergrund, falls nicht anders definiert
               ? scheme?.paper_color_light || '#ffffff' 
               : scheme?.paper_color_dark || '#1e1e1e',
           },
@@ -147,14 +143,12 @@ function App() {
             <Route path="/feedback" element={<FeedbackCenterPage />} />
             <Route path="/files" element={<FileManagementPage />} />
 
-            {/* Routen für Admins und Assistenten */}
             <Route element={<BpStaffAllowedRoutes />}>
               <Route path="/admin/users" element={<AdminUserManagementPage />} />
               <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
               <Route path="/admin/actions" element={<AdminBpActionsPage />} />
             </Route>
 
-            {/* Routen nur für Admins */}
             <Route path="/admin" element={<AdminRoutes />}>
               <Route index element={<AdminDashboardPage />} />
               <Route path="business-partners" element={<AdminBusinessPartnersPage />} />
@@ -198,7 +192,9 @@ function AppWrapper() {
 
   return (
     <AuthProvider>
-      <App />
+      <SnackbarProvider>
+        <App />
+      </SnackbarProvider>
     </AuthProvider>
   );
 }

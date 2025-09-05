@@ -18,8 +18,10 @@ import FactCheckIcon from '@mui/icons-material/FactCheck';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import FolderIcon from '@mui/icons-material/Folder';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
+import PodcastsIcon from '@mui/icons-material/Podcasts';
+import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 
-// === GEÄNDERT: Die Schlüssel sind jetzt die vollen Namen der Komponenten ===
 export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     SpaIcon: SpaIcon,
     BusinessIcon: BusinessIcon,
@@ -36,6 +38,10 @@ export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     TrendingUpIcon: TrendingUpIcon,
     FolderIcon: FolderIcon,
     CalendarMonthIcon: CalendarMonthIcon,
+    AccountBalanceIcon: AccountBalanceIcon,
+    PodcastsIcon: PodcastsIcon,
+    VideoLibraryIcon: VideoLibraryIcon,
+
 };
 
 // === GEÄNDERT: Die Funktion ist jetzt ein einfacher, direkter Lookup ===

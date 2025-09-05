@@ -1,23 +1,19 @@
 // backend/routes/adminUserRoutes.js
 const express = require('express');
 const router = express.Router();
-const authorize = require('../middleware/authorize');
+const adminAuth = require('../middleware/adminAuth'); // KORREKTUR: Die Standard-Admin-Auth
 const adminUserController = require('../controllers/adminUserController');
-const multer = require('multer'); // NEU
+const multer = require('multer');
 
-// NEU: Multer-Konfiguration für den Speicher im Arbeitsspeicher
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-// Alle nachfolgenden Routen erfordern 'admin' oder 'assistenz'
-router.use(authorize(['admin', 'assistenz']));
+// KORREKTUR: Standard-Admin-Auth für alle Routen in dieser Datei verwenden
+router.use(adminAuth);
 
-// NEU: Routen für Import/Export
-// Wichtig: Diese müssen vor den Routen mit Parametern wie /:id stehen.
 router.get('/export/csv', adminUserController.exportUsersToCSV);
 router.post('/import/csv', upload.single('csvfile'), adminUserController.importUsersFromCSV);
 
-// Bestehende Routen
 router.get('/', adminUserController.getAllUsers);
 router.get('/:id', adminUserController.getUserById);
 router.post('/', adminUserController.createUser);

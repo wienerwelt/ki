@@ -1,11 +1,13 @@
 // backend/routes/adminRoleRoutes.js
 const express = require('express');
 const router = express.Router();
-const authorize = require('../middleware/authorize'); // NEU: Import der flexiblen Middleware
+const adminAuth = require('../middleware/adminAuth'); // KORREKT: Die Standard-Admin-Middleware
 const adminRoleController = require('../controllers/adminRoleController');
 
+// Alle Routen hier sind nun durch die Standard-Admin-Middleware geschützt
+router.use(adminAuth);
+
 // Route zum Abrufen aller Rollen
-// KORREKTUR: Erlaubt nun Admins und Assistenten den Zugriff.
-router.get('/', authorize(['admin', 'assistenz']), adminRoleController.getAllRoles);
+router.get('/', adminRoleController.getAllRoles);
 
 module.exports = router;

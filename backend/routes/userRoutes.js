@@ -16,4 +16,9 @@ router.put('/me', userController.updateProfile);
 // Fügen Sie diese Route zu Ihrer userRoutes-Datei hinzu
 router.post('/mark-welcome-seen', authMiddleware, userController.markWelcomeAsSeen);
 
+// --- NEUE ROUTEN FÜR BENUTZER-FAVORITEN ---
+router.get('/favorites', authMiddleware, userController.getFavorites);
+router.post('/favorites', authMiddleware, userController.addFavorite);
+router.delete('/favorites/:externalId', authMiddleware, userController.removeFavorite);
+
 module.exports = router;

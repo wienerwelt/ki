@@ -59,10 +59,26 @@ const AdminWidgetTypesPage: React.FC = () => {
     const [testWidget, setTestWidget] = useState<WidgetType | null>(null);
     const [testLayout, setTestLayout] = useState<Layout>({ i: 'test', w: 6, h: 8, x: 0, y: 0 });
 
-    const fetchInitialData = async () => {
-        setLoading(true); setError(null);
-        try { const token = localStorage.getItem('jwt_token'); const [widgetRes, rolesRes] = await Promise.all([ apiClient.get('/api/admin/widget-types', { headers: { 'x-auth-token': token } }), apiClient.get('/api/admin/roles', { headers: { 'x-auth-token': token } }) ]); setWidgetTypes(widgetRes.data); setRoleOptions(rolesRes.data); } catch (err: any) { setError(err.response?.data?.message || 'Fehler beim Laden der Daten.'); } finally { setLoading(false); }
-    };
+const fetchInitialData = async () => {
+    setLoading(true); 
+    setError(null);
+    try {
+        const token = localStorage.getItem('jwt_token');
+        const [widgetRes, rolesRes] = await Promise.all([
+            apiClient.get('/api/admin/widget-types', { headers: { 'x-auth-token': token } }),
+            apiClient.get('/api/admin/roles', { headers: { 'x-auth-token': token } })
+        ]);
+        setWidgetTypes(Array.isArray(widgetRes.data) ? widgetRes.data : []);
+        setRoleOptions(Array.isArray(rolesRes.data) ? rolesRes.data : []);
+        
+    } catch (err: any) {
+        setError(err.response?.data?.message || 'Fehler beim Laden der Daten.');
+        setWidgetTypes([]);
+        setRoleOptions([]);
+    } finally {
+        setLoading(false);
+    }
+};
     useEffect(() => { fetchInitialData(); }, []);
 
     const handleOpenAddDialog = () => {

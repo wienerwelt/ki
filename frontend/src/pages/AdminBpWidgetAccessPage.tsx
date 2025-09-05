@@ -134,19 +134,20 @@ const AdminBpWidgetAccessPage: React.FC = () => {
         }
     };
 
-    const handleRevokeAccess = async (business_partner_id: string, widget_type_id: string) => {
-        if (!window.confirm('Sind Sie sicher, dass Sie diesen Widget-Zugriff entziehen möchten?')) return;
-        const token = localStorage.getItem('jwt_token');
-        try {
-            await apiClient.delete('/api/admin/bp-widget-access/revoke', {
-                headers: { 'x-auth-token': token },
-                data: { business_partner_id, widget_type_id },
-            });
-            fetchAccessData();
-        } catch (err: any) {
-            alert(err.response?.data?.message || 'Fehler beim Entziehen des Zugriffs.');
-        }
-    };
+const handleRevokeAccess = async (business_partner_id: string, widget_type_id: string) => {
+    if (!window.confirm('Sind Sie sicher, dass Sie diesen Widget-Zugriff entziehen möchten?')) return;
+    const token = localStorage.getItem('jwt_token');
+    try {
+        // KORREKTUR: IDs werden jetzt direkt in die URL eingefügt
+        await apiClient.delete(`/api/admin/bp-widget-access/revoke/${business_partner_id}/${widget_type_id}`, {
+            headers: { 'x-auth-token': token },
+            // Das 'data'-Objekt wird nicht mehr benötigt
+        });
+        fetchAccessData();
+    } catch (err: any) {
+        alert(err.response?.data?.message || 'Fehler beim Entziehen des Zugriffs.');
+    }
+};
     
     const handleSortRequest = (property: keyof BpWidgetAccess) => {
         const isAsc = orderBy === property && order === 'asc';

@@ -17,6 +17,7 @@ import AddIcon from '@mui/icons-material/Add';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SearchIcon from '@mui/icons-material/Search';
 import TipsAndUpdatesIcon from '@mui/icons-material/TipsAndUpdates';
+import ScheduleIcon from '@mui/icons-material/Schedule'; // NEUER IMPORT
 import DashboardLayout from '../components/DashboardLayout';
 import AdminScheduleSelector from '../components/AdminScheduleSelector';
 import apiClient from '../apiClient';
@@ -368,9 +369,20 @@ const AdminScrapingRulesPage: React.FC = () => {
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-                    <Typography variant="h4" component="h1">Scraping-Regeln Verwaltung</Typography>
+                    {/* ===== ÄNDERUNG 1: ANZAHL HINZUGEFÜGT ===== */}
+                    <Typography variant="h4" component="h1">Scraping-Regeln Verwaltung ({sortedAndFilteredRules.length})</Typography>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                         <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), }}/>
+                        {/* ===== ÄNDERUNG 2: LINK ZU CRONJOBS HINZUGEFÜGT ===== */}
+                        <Button
+                            variant="outlined"
+                            component={RouterLink}
+                            to="/admin/cronjobs"
+                            state={{ tab: 2 }} // 2 ist der Index für "Content Scraping"
+                            startIcon={<ScheduleIcon />}
+                        >
+                            Cronjobs
+                        </Button>
                         <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenAddDialog}>Regel hinzufügen</Button>
                     </Box>
                 </Box>
