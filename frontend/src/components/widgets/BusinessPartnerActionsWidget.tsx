@@ -1,15 +1,14 @@
 // src/components/widgets/BusinessPartnerActionsWidget.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Box, Typography, Alert,
-  Card, CardMedia, CardContent, Link as MuiLink
+  Box, Typography, Alert, Card, CardMedia, CardContent, Link as MuiLink, Skeleton
 } from '@mui/material';
 import ImageIcon from '@mui/icons-material/Image';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 
-// Swiper-Komponenten und Stile importieren
+// Swiper
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { EffectCoverflow, Pagination, Navigation } from 'swiper/modules';
 import 'swiper/css';
@@ -17,23 +16,21 @@ import 'swiper/css/effect-coverflow';
 import 'swiper/css/pagination';
 import 'swiper/css/navigation';
 
-// --- Interfaces ---
 interface Action {
-  id: string;
-  layout_type: 'layout_1' | 'layout_2';
+  id: number;
+  layout_type: 'layout_1' | 'layout_2' | string;
   title: string;
-  content_text: string;
-  link_url: string;
-  image_url: string;
+  content_text: string | null;
+  link_url: string | null;
+  image_url: string | null;
   created_at: string;
 }
 
 interface BpActionsWidgetProps extends BaseWidgetProps {
   icon?: React.ReactNode;
-  title: string;
+  title?: string;
 }
 
-// --- Hauptkomponente ---
 const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
   onDelete,
   widgetId,
@@ -49,23 +46,23 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
     setIsLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem('jwt_token');
-      const response = await apiClient.get(`/api/data/actions`, {
-        headers: { 'x-auth-token': token },
+      // apiClient hängt normalerweise schon den Auth-Header an.
+      // Falls dein apiClient NICHT automatisch auth’d, kannst du hier optional den Token ergänzen.
+      const { data } = await apiClient.get(`/api/data/actions`, {
+        // headers: { 'x-auth-token': localStorage.getItem('jwt_token') || '' }
+        params: { page: 1, limit: 10 },
       });
-      setItems(response.data?.data || []);
+      const list: Action[] = data?.data || [];
+      setItems(list);
     } catch (err: any) {
-      setError(
-        err?.response?.data?.message || `Aktionen konnten nicht geladen werden.`
-      );
+      console.warn('Fehler beim Laden der Aktionen:', err);
+      setError(err?.response?.data?.message || `Aktionen konnten nicht geladen werden.`);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   const renderPlaceholder = () => (
     <Box
@@ -92,14 +89,13 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
           <Typography variant="h6">{title || 'Aktionen'}</Typography>
         </Box>
       }
-      // ✅ Fehlende Props ergänzt:
       widgetTitle={title || 'Aktionen'}
       widgetTypeKey="business-partner-actions"
       widgetId={widgetId || ''}
       onDelete={onDelete}
       isRemovable={!!isRemovable}
-      loading={isLoading}
-      error={error}
+      loading={false}           // internes Loading-UI unten
+      error={undefined}         // eigenes Error-UI unten
     >
       <Box
         sx={{
@@ -111,14 +107,19 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
           p: 1,
         }}
       >
-        {error && !isLoading ? (
+        {isLoading ? (
+          <Box sx={{ width: '100%' }}>
+            <Skeleton variant="rounded" height={180} sx={{ mb: 2 }} />
+            <Skeleton variant="rounded" height={180} />
+          </Box>
+        ) : error ? (
           <Alert severity="error">{error}</Alert>
         ) : items.length > 0 ? (
           <Swiper
-            effect={'coverflow'}
-            grabCursor={true}
-            centeredSlides={true}
-            slidesPerView={'auto'}
+            effect="coverflow"
+            grabCursor
+            centeredSlides
+            slidesPerView="auto"
             coverflowEffect={{
               rotate: 50,
               stretch: 0,
@@ -132,7 +133,7 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
             style={{ width: '100%', height: '100%', paddingBottom: '30px' }}
           >
             {items.map((action) => (
-              <SwiperSlide key={action.id} style={{ width: '80%', maxWidth: '300px' }}>
+              <SwiperSlide key={action.id} style={{ width: '80%', maxWidth: 320 }}>
                 <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                   {action.image_url ? (
                     <CardMedia
@@ -141,23 +142,30 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
                       image={action.image_url}
                       alt={action.title}
                       onError={(e: any) => {
-                        e.target.style.display = 'none';
-                        if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                        e.currentTarget.style.display = 'none';
+                        if (e.currentTarget.nextSibling) {
+                          (e.currentTarget.nextSibling as HTMLElement).style.display = 'flex';
+                        }
                       }}
                     />
                   ) : null}
-                  {/* Platzhalter, wenn kein Bild da oder Fehler */}
+
+                  {/* Platzhalter, wenn kein Bild da oder Bildfehler */}
                   <Box sx={{ display: action.image_url ? 'none' : 'flex' }}>
                     {renderPlaceholder()}
                   </Box>
+
                   <CardContent sx={{ flexGrow: 1 }}>
                     <Typography gutterBottom variant="h6" component="div">
                       {action.title}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {action.content_text}
-                    </Typography>
+                    {action.content_text && (
+                      <Typography variant="body2" color="text.secondary">
+                        {action.content_text}
+                      </Typography>
+                    )}
                   </CardContent>
+
                   {action.link_url && (
                     <Box sx={{ p: 2, pt: 0 }}>
                       <MuiLink href={action.link_url} target="_blank" rel="noopener" variant="button">
@@ -171,7 +179,7 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
           </Swiper>
         ) : (
           <Typography variant="body2" color="text.secondary">
-            {isLoading ? '' : 'Keine aktiven Aktionen verfügbar.'}
+            Keine aktiven Aktionen verfügbar.
           </Typography>
         )}
       </Box>

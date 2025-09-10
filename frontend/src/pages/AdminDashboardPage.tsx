@@ -21,7 +21,8 @@ import CampaignIcon from '@mui/icons-material/Campaign';
 import StarsIcon from '@mui/icons-material/Stars';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
-import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'; // NEUER IMPORT
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
+import PollIcon from '@mui/icons-material/Poll';
 
 
 const AdminDashboardPage: React.FC = () => {
@@ -166,6 +167,14 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/monitor" variant="contained" color="secondary">Anzeigen</Button>
                         </Paper>
                     </Grid>
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <PollIcon sx={{ fontSize: 60, mb: 2 }} color="info" />
+                            <Typography variant="h6" component="h2" gutterBottom>Umfragen</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Umfragen für Nutzer erstellen und Ergebnisse auswerten.</Typography>
+                            <Button component={Link} to="/admin/surveys" variant="contained" color="info">Verwalten</Button>
+                        </Paper>
+                    </Grid>                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <QueryStatsIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />

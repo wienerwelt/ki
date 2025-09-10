@@ -1,341 +1,604 @@
-// backend/controllers/authController.js 
+// backend/controllers/authController.js
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const db = require('../config/db');
-const { logActivity } = require('../services/auditLogService');
-const { OAuth2Client } = require('google-auth-library');
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const jwt = require('jsonwebtoken');
+const zxcvbn = require('zxcvbn');
 
-// Helper: Cookie-Optionen zentral
-function jwtCookieOptions() {
-  return {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 Tage
-    // domain: '.deinedomain.tld', // nur setzen, wenn Frontend/Backend auf Subdomains laufen
-  };
+const db = require('../config/db');
+const {
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+  sendNewsletterOptInEmail,
+  buildVerifyUrl,
+  buildResetUrl,
+  buildNewsletterConfirmUrl,
+  getBaseUrl,
+} = require('../services/emailService');
+
+// ============================
+// Utilities & Helpers
+// ============================
+
+function isValidEmail(email) {
+  // solide, pragmatische E-Mail-Prüfung
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(email || '').trim());
 }
+
+const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,30}$/;
+
+async function usernameExists(username) {
+  const r = await db.query(
+    'SELECT 1 FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1',
+    [username]
+  );
+  return r.rows.length > 0;
+}
+
+function suggestUsernames(base) {
+  // generiert 10 einfache Vorschläge
+  const clean = (base || '').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 25) || 'user';
+  const rand = () => Math.floor(100 + Math.random() * 900);
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  return [
+    `${clean}${yy}`,
+    `${clean}_${yy}`,
+    `${clean}_${rand()}`,
+    `${clean}${rand()}`,
+    `${clean}_1`,
+    `${clean}_01`,
+    `${clean}_dev`,
+    `${clean}_ai`,
+    `${clean}__${rand()}`,
+    `${clean}_${now.getMonth() + 1}`,
+  ];
+}
+
+async function resolveBusinessPartnerId(voucher) {
+  // Beispiel: Voucher-Code in business_partners.code
+  if (!voucher) return null;
+  try {
+    const r = await db.query(
+      'SELECT id FROM business_partners WHERE LOWER(code) = LOWER($1) LIMIT 1',
+      [voucher]
+    );
+    return r.rows[0]?.id || null;
+  } catch {
+    return null;
+  }
+}
+
+function issueJwt(user) {
+  const secret = process.env.JWT_SECRET || 'dev-secret';
+  const payload = {
+    sub: user.id,
+    username: user.username,
+    email: user.email,
+    role: user.role || 'user',
+  };
+  return jwt.sign(payload, secret, { expiresIn: '7d' });
+}
+
+function safeFrontendRedirect(res, path, qs = {}) {
+  const base = (getBaseUrl() || 'http://localhost:5173').replace(/\/$/, '');
+  const url = new URL(`${base}${path}`);
+  Object.entries(qs).forEach(([k, v]) => url.searchParams.set(k, String(v)));
+  return res.redirect(url.toString());
+}
+
+// ============================
+// Auth Controller
+// ============================
 
 // === Register ===
 exports.register = async (req, res) => {
-  const { email, password, name, voucher, consentGiven } = req.body;
-  const username = name || email.split('@')[0];
+  const { email, password, username, firstName, voucher, consentGiven, newsletterOptIn } = req.body || {};
 
+  // Pflichtfelder prüfen
   if (!consentGiven) {
     return res.status(400).json({ message: 'Den DSGVO-Bestimmungen muss zugestimmt werden.' });
-  }    
+  }
   if (!email || !password) {
     return res.status(400).json({ message: 'E-Mail und Passwort sind erforderlich.' });
   }
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ message: 'Bitte geben Sie eine gültige E-Mail-Adresse an.' });
+  }
+
+  const chosenUsername = (username && username.trim()) ? username.trim() : email.split('@')[0];
+  if (!USERNAME_REGEX.test(chosenUsername)) {
+    return res.status(400).json({
+      message: 'Ungültiger Benutzername. Erlaubt sind Buchstaben, Zahlen und Unterstrich, 3–30 Zeichen.',
+    });
+  }
+
+  // Passwort-Policy mit zxcvbn (Score 0–4)
+  const strength = zxcvbn(password);
+  if (strength.score < 3) {
+    return res.status(400).json({
+      message: 'Das Passwort ist zu schwach. Bitte wählen Sie ein stärkeres Passwort.',
+      suggestions: strength.feedback?.suggestions || [],
+    });
+  }
 
   try {
-    let businessPartnerId = null;
-    if (voucher) {
-      const bpResult = await db.query("SELECT id FROM business_partners WHERE id::text LIKE $1", [`${voucher}%`]);
-      if (bpResult.rows.length > 0) {
-        businessPartnerId = bpResult.rows[0].id;
-      }
-    }
-    if (!businessPartnerId) {
-      // KORREKTUR: Wählt den ersten BP aus der Tabelle, sortiert nach Erstellungsdatum.
-      const defaultBpResult = await db.query("SELECT id FROM business_partners ORDER BY created_at ASC LIMIT 1");
-      if (defaultBpResult.rows.length === 0) {
-        return res.status(500).json({ message: 'Kein Business Partner in der Datenbank gefunden, um ihn als Standard zuzuweisen.' });
-      }
-      businessPartnerId = defaultBpResult.rows[0].id;
+    // Duplikate prüfen
+    const emailCheck = await db.query(
+      'SELECT 1 FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+      [email]
+    );
+    if (emailCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'Diese E-Mail-Adresse wird bereits verwendet.' });
     }
 
+    if (await usernameExists(chosenUsername)) {
+      const initial = suggestUsernames(chosenUsername);
+      const available = [];
+      for (const candidate of initial) {
+        if (await usernameExists(candidate)) continue;
+        available.push(candidate);
+        if (available.length >= 5) break;
+      }
+      while (available.length < 3) {
+        const candidate = `${chosenUsername}${Math.floor(100 + Math.random() * 900)}`;
+        if (!(await usernameExists(candidate))) available.push(candidate);
+      }
+      return res.status(409).json({
+        message: 'Dieser Benutzername ist bereits vergeben. Bitte wählen Sie eine Alternative.',
+        suggestions: available,
+      });
+    }
+
+    const businessPartnerId = await resolveBusinessPartnerId(voucher);
+
+    // Passwort hashen
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
+
+    // E-Mail-Verifikationstoken
     const emailToken = crypto.randomBytes(32).toString('hex');
-    
-    const newUserQuery = `
-      INSERT INTO users (username, email, first_name, password_hash, role, business_partner_id, consent_timestamp, email_verification_token)
-      VALUES ($1, $2, $3, $4, 'user', $5, NOW(), $6) RETURNING id, email
-    `;
-    await db.query(newUserQuery, [username, email, name, password_hash, businessPartnerId, emailToken]);
 
-    // E-Mail-Bestätigungslink senden (auskommentiert)
-    // ...
+    // Newsletter Double-Opt-In vorbereiten (nur Token setzen, kein direktes Opt-In)
+    let optInToken = null;
+    let optInExpires = null;
+    if (newsletterOptIn) {
+      optInToken = crypto.randomBytes(32).toString('hex');
+      optInExpires = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 Tage
+    }
 
-    res.status(201).json({ message: 'Registrierung erfolgreich! Bitte prüfen Sie Ihr E-Mail-Postfach, um Ihre Adresse zu bestätigen.' });
-  } catch (err) {
-    console.error('Register error:', err.message);
-    res.status(500).send('Serverfehler');
-  }
-};
+    const columns = [
+      'username',
+      'email',
+      'first_name',
+      'password_hash',
+      'role',
+      'business_partner_id',
+      'consent_timestamp',
+      'email_verification_token',
+      'is_email_verified',
+      'newsletter_opt_in',
+      'newsletter_opt_in_token',
+      'newsletter_opt_in_expires',
+    ];
+    const values = [
+      chosenUsername,
+      email,
+      firstName || null,
+      password_hash,
+      'user',
+      businessPartnerId,
+      new Date(),
+      emailToken,
+      false,
+      false,                  // Double-Opt-In → erstmal false
+      optInToken,
+      optInExpires,
+    ];
+    const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+    const insertSql =
+      `INSERT INTO users (${columns.join(', ')})
+       VALUES (${placeholders})
+       RETURNING id, email, username`;
 
-// === Google Login ===
-exports.googleLogin = async (req, res) => {
-  const { token } = req.body;
+    const created = await db.query(insertSql, values);
+    const user = created.rows[0];
 
-  if (!token) {
-    return res.status(400).json({ message: 'Kein Google-Token erhalten.' });
-  }
+    // Verifizierungs-E-Mail
+    const verifyUrl = buildVerifyUrl(emailToken);
+    try {
+      await sendVerificationEmail({
+        to: email,
+        username: chosenUsername,
+        verifyUrl,
+      });
+    } catch (mailErr) {
+      console.error('E-Mail-Versand (Verify) fehlgeschlagen:', mailErr);
+      // Registrierung bleibt erfolgreich, aber Hinweis zurück
+      return res.status(201).json({
+        message:
+          'Registrierung erfolgreich. Der Versand der Bestätigungs-E-Mail ist fehlgeschlagen – bitte später erneut versuchen oder Support kontaktieren.',
+      });
+    }
 
-  try {
-    const ticket = await client.verifyIdToken({
-      idToken: token,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-
-    const payload = ticket.getPayload();
-    if (!payload) throw new Error('Ungültiges Google-Token: Kein Payload');
-
-    const { email, name } = payload;
-    const username = email.split('@')[0];
-
-    const query = 'SELECT * FROM users WHERE email = $1';
-    const userResult = await db.query(query, [email]);
-
-    let user;
-    if (userResult.rows.length === 0) {
-      // KORREKTUR: Wählt den ersten BP aus der Tabelle, sortiert nach Erstellungsdatum.
-      const defaultBpResult = await db.query("SELECT id FROM business_partners ORDER BY created_at ASC LIMIT 1");
-      if (defaultBpResult.rows.length === 0) {
-        return res.status(500).json({ message: 'Kein Business Partner in der Datenbank gefunden, um ihn als Standard zuzuweisen.' });
+    // Newsletter-Opt-In-E-Mail (falls gewünscht)
+    if (newsletterOptIn && optInToken) {
+      try {
+        const confirmUrl = buildNewsletterConfirmUrl(optInToken);
+        await sendNewsletterOptInEmail({
+          to: email,
+          username: chosenUsername,
+          confirmUrl,
+          // unsubscribeUrl: `${getBaseUrl()}/newsletter/unsubscribe`
+        });
+      } catch (e) {
+        console.error('Newsletter-Opt-In-Email fehlgeschlagen:', e);
+        // absichtlich kein Fehler → Registrierung bleibt OK
       }
-      const defaultBusinessPartnerId = defaultBpResult.rows[0].id;
-
-      const insertQuery = `
-        INSERT INTO users (username, email, first_name, password_hash, role, business_partner_id, is_email_verified, consent_timestamp)
-        VALUES ($1, $2, $3, NULL, 'user', $4, TRUE, NOW())
-        RETURNING *;
-      `;
-      const newUser = await db.query(insertQuery, [username, email, name, defaultBusinessPartnerId]);
-      user = newUser.rows[0];
-    } else {
-      user = userResult.rows[0];
     }
 
-    const jwtPayload = {
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        business_partner_id: user.business_partner_id,
-        has_seen_welcome_widget: user.has_seen_welcome_widget,
-        regions: user.regions,
-        contribution_score: user.contribution_score,
-        membership_level: user.membership_level,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        organization_name: user.organization_name,
-        linkedin_url: user.linkedin_url,
-        article_score_min: user.article_score_min,
-        article_score_max: user.article_score_max,
-        preferred_theme: user.preferred_theme,
-        preferred_language: user.preferred_language,
-      }
-    };
-    
-    const jwtToken = jwt.sign(jwtPayload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
-
-    await logActivity({
-      userId: user.id,
-      username: user.username,
-      actionType: 'GOOGLE_LOGIN',
-      status: 'success',
-      ipAddress: req.ip
+    return res.status(201).json({
+      message: 'Registrierung erfolgreich! Bitte prüfen Sie Ihr E-Mail-Postfach, um Ihre Adresse zu bestätigen.',
     });
-
-    // ✅ Cookie setzen
-    res.cookie('token', jwtToken, jwtCookieOptions());
-
-    res.status(200).json({ token: jwtToken, user: jwtPayload.user });
-  } catch (error) {
-    console.error('Google-Login fehlgeschlagen:', error.message);
-    res.status(500).json({ message: 'Google login error', error: error.message });
-  }
-};
-
-// === E-Mail verifizieren ===
-exports.verifyEmail = async (req, res) => {
-  const { token } = req.params;
-  try {
-    const userResult = await db.query('SELECT id FROM users WHERE email_verification_token = $1', [token]);
-    if (userResult.rows.length === 0) {
-      return res.status(400).json({ message: 'Ungültiger oder abgelaufener Bestätigungslink.' });
-    }
-    const user = userResult.rows[0];
-    await db.query(
-      'UPDATE users SET is_email_verified = TRUE, email_verification_token = NULL WHERE id = $1',
-      [user.id]
-    );
-    res.json({ message: 'E-Mail erfolgreich bestätigt. Sie können sich nun einloggen.' });
   } catch (err) {
-    console.error('Email verification error:', err.message);
-    res.status(500).send('Serverfehler');
+    console.error('Register error:', err);
+    return res.status(500).json({ message: 'Serverfehler' });
   }
 };
-
-// === Passwort vergessen ===
-exports.forgotPassword = async (req, res) => {
-  const { email } = req.body;
-  try {
-    const userResult = await db.query('SELECT id FROM users WHERE email = $1', [email]);
-    if (userResult.rows.length === 0) {
-      // Aus Sicherheitsgründen dieselbe Nachricht senden, auch wenn der User nicht existiert
-      return res.json({ message: 'Wenn ein Konto mit dieser E-Mail existiert, wurde ein Link zum Zurücksetzen gesendet.' });
-    }
-    const user = userResult.rows[0];
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    const resetExpires = new Date(Date.now() + 3600000); // 1 Stunde gültig
-
-    await db.query(
-      'UPDATE users SET password_reset_token = $1, password_reset_expires = $2 WHERE id = $3',
-      [resetToken, resetExpires, user.id]
-    );
-
-    // Link zum Zurücksetzen senden
-    // const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
-    // await sendEmail({ to: email, subject: 'Passwort zurücksetzen', text: `Sie haben eine Anfrage zum Zurücksetzen Ihres Passworts gestellt. Klicken Sie hier: ${resetUrl}` });
-    
-    res.json({ message: 'Wenn ein Konto mit dieser E-Mail existiert, wurde ein Link zum Zurücksetzen gesendet.' });
-  } catch (err) {
-    console.error('Forgot password error:', err.message);
-    res.status(500).send('Serverfehler');
-  }
-};
-
-// === Passwort zurücksetzen ===
-exports.resetPassword = async (req, res) => {
-  const { token } = req.params;
-  const { password } = req.body;
-  try {
-    const userResult = await db.query(
-      'SELECT id FROM users WHERE password_reset_token = $1 AND password_reset_expires > NOW()',
-      [token]
-    );
-    if (userResult.rows.length === 0) {
-      return res.status(400).json({ message: 'Link zum Zurücksetzen des Passworts ist ungültig oder abgelaufen.' });
-    }
-    const user = userResult.rows[0];
-    const salt = await bcrypt.genSalt(10);
-    const password_hash = await bcrypt.hash(password, salt);
-
-    await db.query(
-      'UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires = NULL WHERE id = $2',
-      [password_hash, user.id]
-    );
-    res.json({ message: 'Passwort erfolgreich zurückgesetzt.' });
-  } catch (err) {
-    console.error('Reset password error:', err.message);
-    res.status(500).send('Serverfehler');
-  }
-};
-
 
 // === Login ===
 exports.login = async (req, res) => {
-  const { identifier, password } = req.body;
+  const { identifier, password } = req.body || {};
+  if (!identifier || !password) {
+    // 400 → zählt als Fehlversuch (Rate-Limiter)
+    return res.status(400).json({ message: 'Bitte Benutzername/E-Mail und Passwort angeben.' });
+  }
+
   try {
-    const userResult = await db.query(
-      `SELECT 
-          u.*, 
-          bp.is_active AS business_partner_is_active, 
-          bp.name as business_partner_name, 
-          bp.dashboard_title,
-          (
-            SELECT COALESCE(
-              json_agg(
-                json_build_object(
-                  'id', r.id,
-                  'name', r.name,
-                  'code', r.code,
-                  'is_default', bpr.is_default
-                )
-                ORDER BY r.name
-              ), '[]'::json
-            )
-            FROM business_partner_regions bpr
-            JOIN regions r ON bpr.region_id = r.id
-            WHERE bpr.business_partner_id = u.business_partner_id
-          ) as regions
-        FROM users u 
-        LEFT JOIN business_partners bp ON u.business_partner_id = bp.id 
-        WHERE u.email = $1 OR u.username = $1`,
+    // START DER ÄNDERUNG: SQL-Abfrage erweitert
+    const r = await db.query(
+      `SELECT
+          u.id,
+          u.username,
+          u.email,
+          u.role,
+          u.password_hash,
+          u.is_email_verified,
+          bp.name as business_partner_name,
+          bp.dashboard_title
+        FROM users u
+        LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
+        WHERE LOWER(u.email) = LOWER($1) OR LOWER(u.username) = LOWER($1)
+        LIMIT 1`,
       [identifier]
     );
+    // ENDE DER ÄNDERUNG
 
-    if (userResult.rows.length === 0) return res.status(400).json({ message: 'Ungültige Anmeldedaten.' });
-    const user = userResult.rows[0];
-
-    if (!user.is_active) {
-      return res.status(403).json({ message: 'Ihr Benutzerkonto ist deaktiviert.' });
-    }
-    if (user.business_partner_id && user.business_partner_is_active === false) {
-      return res.status(403).json({ message: 'Der zugehörige Business Partner ist deaktiviert.' });
+    if (r.rows.length === 0) {
+      return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password_hash);
-    if (!isMatch) {
-      return res.status(400).json({ message: 'Ungültige Anmeldedaten.' });
+    const user = r.rows[0];
+
+    // Passwort prüfen
+    const ok = await bcrypt.compare(password, user.password_hash || '');
+    if (!ok) {
+      return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
     }
 
-    // Debug-Ausgabe (kann später entfernt werden)
-    console.log("========================================");
-    console.log("LOGIN ERFOLGREICH - GEFUNDENER BENUTZER:");
-    console.log(user);
-    console.log("========================================");
+    // Optional: E-Mail muss verifiziert sein
+    if (process.env.REQUIRE_EMAIL_VERIFIED === 'true' && !user.is_email_verified) {
+      return res.status(403).json({
+        message: 'Bitte verifizieren Sie Ihre E-Mail-Adresse, bevor Sie sich anmelden.',
+      });
+    }
 
-    await db.query(
-      'UPDATE users SET login_count = login_count + 1, last_login_at = CURRENT_TIMESTAMP WHERE id = $1',
-      [user.id]
-    );
-    
-    const payload = {
+    const token = issueJwt(user);
+
+    // START DER ÄNDERUNG: User-Objekt in der Antwort erweitert
+    return res.status(200).json({
+      token,
       user: {
         id: user.id,
         username: user.username,
         email: user.email,
-        role: user.role,
-        business_partner_id: user.business_partner_id,
-        business_partner_name: user.business_partner_name,
-        dashboard_title: user.dashboard_title,
-        regions: user.regions,
-        contribution_score: user.contribution_score,
-        membership_level: user.membership_level,
-        has_seen_welcome_widget: user.has_seen_welcome_widget,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        organization_name: user.organization_name,
-        linkedin_url: user.linkedin_url,
-        article_score_min: user.article_score_min,
-        article_score_max: user.article_score_max,
-        preferred_theme: user.preferred_theme,
-        preferred_language: user.preferred_language,
-      }
-    };
-
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
-
-    // ✅ Cookie setzen
-    res.cookie('token', token, jwtCookieOptions());
-
-    // Optional zusätzlich im Body zurückgeben
-    return res.json({ token, user: payload.user });
+        role: user.role || 'user',
+        // Die neuen Felder werden hier hinzugefügt
+        business_partner_name: user.business_partner_name || null,
+        dashboard_title: user.dashboard_title || null,
+      },
+    });
+    // ENDE DER ÄNDERUNG
 
   } catch (err) {
     console.error('Login error:', err);
-
-    return res.status(500).json({
-      message: err.message || 'Ein unbekannter Fehler ist aufgetreten.',
-      stack: err.stack || 'Kein Stack Trace verfügbar.'
-    });
+    return res.status(500).json({ message: 'Serverfehler' });
   }
 };
 
 // === Logout ===
 exports.logout = async (req, res) => {
-  res.clearCookie('token', {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    // domain: '.deinedomain.tld', // falls gesetzt, hier auch setzen
-  });
-  res.json({ message: 'logged out' });
+  // Wenn du Cookies nutzt: res.clearCookie('token', { httpOnly: true, sameSite: 'lax', secure: true });
+  return res.json({ message: 'Abgemeldet.' });
+};
+
+// === E-Mail verifizieren ===
+exports.verifyEmail = async (req, res) => {
+  const { token } = req.params || {};
+  if (!token || typeof token !== 'string' || token.length < 8) {
+    // neutraler Redirect
+    return safeFrontendRedirect(res, '/login', { verified: 0 });
+  }
+
+  try {
+    const r = await db.query(
+      `SELECT id FROM users WHERE email_verification_token = $1 LIMIT 1`,
+      [token]
+    );
+    if (r.rows.length === 0) {
+      return safeFrontendRedirect(res, '/login', { verified: 0 });
+    }
+
+    await db.query(
+      `UPDATE users
+          SET is_email_verified = TRUE,
+              email_verification_token = NULL
+        WHERE id = $1`,
+      [r.rows[0].id]
+    );
+
+    return safeFrontendRedirect(res, '/login', { verified: 1 });
+  } catch (err) {
+    console.error('Verify email error:', err);
+    return res.status(500).send('Serverfehler bei der Verifizierung.');
+  }
+};
+
+// === Resend Verification ===
+exports.resendVerification = async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) {
+    return res.status(400).json({ message: 'E-Mail-Adresse ist erforderlich.' });
+  }
+
+  try {
+    const r = await db.query(
+      'SELECT id, username, is_email_verified FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+      [email]
+    );
+    if (r.rows.length === 0) {
+      // neutrale Antwort
+      return res.json({ message: 'Wenn ein Konto mit dieser E-Mail existiert, wurde eine neue Bestätigungsmail gesendet.' });
+    }
+
+    const user = r.rows[0];
+    if (user.is_email_verified) {
+      return res.json({ message: 'Ihre E-Mail-Adresse wurde bereits bestätigt. Sie können sich anmelden.' });
+    }
+
+    const newToken = crypto.randomBytes(32).toString('hex');
+    await db.query(
+      'UPDATE users SET email_verification_token = $1 WHERE id = $2',
+      [newToken, user.id]
+    );
+
+    const verifyUrl = buildVerifyUrl(newToken);
+    await sendVerificationEmail({
+      to: email,
+      username: user.username,
+      verifyUrl,
+    });
+
+    return res.json({
+      message: 'Wenn ein Konto mit dieser E-Mail existiert, wurde eine neue Bestätigungsmail gesendet.',
+    });
+  } catch (err) {
+    console.error('Resend verification error:', err);
+    return res.status(500).json({ message: 'Serverfehler beim erneuten Versand der Bestätigungsmail.' });
+  }
+};
+
+// === Passwort vergessen ===
+exports.forgotPassword = async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || !isValidEmail(email)) {
+    return res.status(400).json({ message: 'Bitte eine gültige E-Mail-Adresse angeben.' });
+  }
+
+  try {
+    const r = await db.query(
+      'SELECT id, username FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+      [email]
+    );
+    // immer neutrale Antwort zurückgeben
+    if (r.rows.length === 0) {
+      return res.json({ message: 'Wenn ein Konto existiert, wurde eine E-Mail gesendet.' });
+    }
+
+    const user = r.rows[0];
+    const token = crypto.randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1h
+
+    await db.query(
+      `UPDATE users
+          SET password_reset_token = $1,
+              password_reset_expires = $2
+        WHERE id = $3`,
+      [token, expires, user.id]
+    );
+
+    const resetUrl = buildResetUrl(token);
+    try {
+      await sendPasswordResetEmail({
+        to: email,
+        username: user.username,
+        resetUrl,
+      });
+    } catch (e) {
+      console.error('Passwort-Reset-Mail Fehler:', e);
+      // neutrale Antwort
+    }
+
+    return res.json({ message: 'Wenn ein Konto existiert, wurde eine E-Mail gesendet.' });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    return res.status(500).json({ message: 'Serverfehler beim Passwort-Reset.' });
+  }
+};
+
+// === Passwort zurücksetzen ===
+exports.resetPassword = async (req, res) => {
+  const { token } = req.params || {};
+  const { password } = req.body || {};
+
+  if (!token || typeof token !== 'string' || token.length < 8) {
+    return res.status(400).json({ message: 'Ungültiger oder fehlender Token.' });
+  }
+  if (!password) {
+    return res.status(400).json({ message: 'Neues Passwort ist erforderlich.' });
+  }
+
+  // zxcvbn-Check auch hier
+  const strength = zxcvbn(password);
+  if (strength.score < 3) {
+    return res.status(400).json({
+      message: 'Das neue Passwort ist zu schwach. Bitte wählen Sie ein stärkeres Passwort.',
+      suggestions: strength.feedback?.suggestions || [],
+    });
+  }
+
+  try {
+    const now = new Date();
+    const r = await db.query(
+      `SELECT id FROM users
+        WHERE password_reset_token = $1 AND (password_reset_expires IS NULL OR password_reset_expires > $2)
+        LIMIT 1`,
+      [token, now]
+    );
+    if (r.rows.length === 0) {
+      return res.status(400).json({ message: 'Ungültiger oder abgelaufener Token.' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const password_hash = await bcrypt.hash(password, salt);
+
+    await db.query(
+      `UPDATE users
+          SET password_hash = $1,
+              password_reset_token = NULL,
+              password_reset_expires = NULL
+        WHERE id = $2`,
+      [password_hash, r.rows[0].id]
+    );
+
+    return res.json({ message: 'Passwort erfolgreich gesetzt.' });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    return res.status(500).json({ message: 'Serverfehler beim Setzen des Passworts.' });
+  }
+};
+
+// === Newsletter: Confirm Double-Opt-In ===
+exports.confirmNewsletterOptIn = async (req, res) => {
+  const { token } = req.params || {};
+  if (!token || typeof token !== 'string' || token.length < 8) {
+    return safeFrontendRedirect(res, '/newsletter/confirmed', { ok: 0, reason: 'invalid' });
+  }
+
+  try {
+    const now = new Date();
+    const result = await db.query(
+      `SELECT id, newsletter_opt_in_expires
+         FROM users
+        WHERE newsletter_opt_in_token = $1
+        LIMIT 1`,
+      [token]
+    );
+
+    if (result.rows.length === 0) {
+      return safeFrontendRedirect(res, '/newsletter/confirmed', { ok: 0, reason: 'invalid' });
+    }
+
+    const user = result.rows[0];
+    if (user.newsletter_opt_in_expires && new Date(user.newsletter_opt_in_expires) < now) {
+      await db.query(
+        `UPDATE users
+            SET newsletter_opt_in_token = NULL,
+                newsletter_opt_in_expires = NULL
+          WHERE id = $1`,
+        [user.id]
+      );
+      return safeFrontendRedirect(res, '/newsletter/confirmed', { ok: 0, reason: 'expired' });
+    }
+
+    await db.query(
+      `UPDATE users
+          SET newsletter_opt_in = TRUE,
+              newsletter_opt_in_token = NULL,
+              newsletter_opt_in_expires = NULL
+        WHERE id = $1`,
+      [user.id]
+    );
+
+    return safeFrontendRedirect(res, '/newsletter/confirmed', { ok: 1 });
+  } catch (err) {
+    console.error('Confirm newsletter opt-in error:', err);
+    return res.status(500).send('Serverfehler beim Bestätigen der Newsletter-Anmeldung.');
+  }
+};
+
+// === Newsletter: Start Double-Opt-In (optional API) ===
+exports.startNewsletterOptIn = async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || !isValidEmail(email)) {
+    return res.status(400).json({ message: 'Bitte eine gültige E-Mail-Adresse angeben.' });
+  }
+
+  try {
+    const r = await db.query(
+      'SELECT id, username, newsletter_opt_in FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+      [email]
+    );
+    if (r.rows.length === 0) {
+      return res.json({ message: 'Wenn ein Konto existiert, wurde eine E-Mail gesendet.' });
+    }
+
+    const user = r.rows[0];
+    if (user.newsletter_opt_in) {
+      return res.json({ message: 'Sie sind bereits für den Newsletter angemeldet.' });
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+
+    await db.query(
+      `UPDATE users
+          SET newsletter_opt_in_token = $1,
+              newsletter_opt_in_expires = $2
+        WHERE id = $3`,
+      [token, expires, user.id]
+    );
+
+    const confirmUrl = buildNewsletterConfirmUrl(token);
+    try {
+      await sendNewsletterOptInEmail({
+        to: email,
+        username: user.username,
+        confirmUrl,
+      });
+    } catch (e) {
+      console.error('Opt-In E-Mail Fehler:', e);
+      // neutrale Antwort
+    }
+
+    return res.json({ message: 'Wenn ein Konto existiert, wurde eine E-Mail gesendet.' });
+  } catch (err) {
+    console.error('Start newsletter opt-in error:', err);
+    return res.status(500).json({ message: 'Serverfehler beim Start des Newsletter-Opt-In.' });
+  }
+};
+
+// === Google Login (Platzhalter, falls Route aktiv ist) ===
+exports.googleLogin = async (req, res) => {
+  // Implementiere hier deinen Google OAuth Flow oder entferne die Route, wenn nicht genutzt.
+  return res.status(501).json({ message: 'Google Login ist (noch) nicht implementiert.' });
 };

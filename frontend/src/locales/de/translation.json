@@ -1,5 +1,17 @@
 {
   "saveChanges": "Änderungen speichern",
+  "dashboard": {
+    "title": "Dashboard",
+    "addWidget": "Widget hinzufügen",
+    "saveLayout": "Layout speichern"
+  },
+  "search": {
+    "placeholder": "Global Suchen...",
+    "resultsTitle": "Suchergebnisse für:"
+  },
+  "contactUs": {
+    "title": "Kontakt"
+  },
   "profile": {
     "title": "Mein Profil",
     "demoUserNotice": "Als Demo-Benutzer können Sie Ihr Profil nicht bearbeiten.",
@@ -18,6 +30,17 @@
     "appearanceSettings": "Darstellung",
     "darkTheme": "Dunkles Design",
     "language": "Sprache",
+    "myTopicsTitle": "Meine Themen / Tags",
+    "myTopicsDescription": "Fügen Sie Themen hinzu, um Ihre Inhalte zu personalisieren. Die Widgets zeigen dann bevorzugt Artikel an, die mindestens eines Ihrer Themen enthalten.",
+    "addTopicPlaceholder": "Neues Thema hinzufügen",
+    "noTopics": "Noch keine Themen hinzugefügt.",
+    "newsletterTitle": "Newsletter",
+    "newsletterDescription": "Ich möchte Produkt-News, Tipps und gelegentliche Updates per E-Mail erhalten (Double-Opt-In).",
+    "newsletterOn": "Newsletter aktiviert",
+    "newsletterOff": "Newsletter deaktiviert",
+    "newsletterSubscribeSuccess": "Newsletter-Bestätigung wurde gesendet. Bitte prüfen Sie Ihr Postfach.",
+    "newsletterUnsubscribeSuccess": "Newsletter wurde abbestellt.",
+    "newsletterActionError": "Aktion fehlgeschlagen. Bitte später erneut versuchen.",
     "accountInfo": "Kontoinformationen",
     "email": "E-Mail",
     "role": "Rolle",
@@ -55,7 +78,31 @@
     "events": "Veranstaltungen",
     "categories": "Kategorien",
     "tags": "Tags",
+    "surveys": "Umfragen",
+    "tagsTooltip": "Ihre persönlichen Themen-Filter. Zum Bearbeiten auf Ihr Profil klicken.",
     "myProfile": "Mein Profil",
     "logout": "Logout"
-  }  
+  },
+  "adminSurveys": {
+    "title": "Umfragen verwalten",
+    "newSurvey": "Neue Umfrage",
+    "editSurvey": "Umfrage bearbeiten",
+    "tableTitle": "Titel",
+    "tableStatus": "Status",
+    "tableValidity": "Gültigkeit",
+    "actions": "Aktionen",
+    "editTooltip": "Bearbeiten",
+    "deleteTooltip": "Löschen",
+    "resultsTooltip": "Ergebnisse anzeigen",
+    "copyResults": "Ergebnisse kopieren",
+    "resultsFor": "Ergebnisse für"
+  },
+  "surveyWidget": {
+    "title": "Aktive Umfragen",
+    "noSurveys": "Aktuell gibt es keine neuen Umfragen.",
+    "allCompleted": "Sie haben an allen verfügbaren Umfragen teilgenommen. Vielen Dank!",
+    "submitButton": "Antworten Senden",
+    "next": "Weiter",
+    "back": "Zurück"
+  }
 }

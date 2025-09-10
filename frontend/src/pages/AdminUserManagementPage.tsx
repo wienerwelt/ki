@@ -13,7 +13,6 @@ import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import SearchIcon from '@mui/icons-material/Search';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import DownloadIcon from '@mui/icons-material/Download';
-import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 
@@ -71,7 +70,6 @@ function getComparator<Key extends keyof any>(
     : (a, b) => -descendingComparator(a, b, orderBy);
 }
 
-// Defensive helper
 const asArray = <T,>(v: any): T[] => (Array.isArray(v) ? v : []);
 
 const AdminUserManagementPage: React.FC = () => {
@@ -90,13 +88,11 @@ const AdminUserManagementPage: React.FC = () => {
   const [membershipLevels, setMembershipLevels] = useState<MembershipLevels | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Dialog States
+  
   const [openDialog, setOpenDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
 
-  // Form States
   const [formUsername, setFormUsername] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formPassword, setFormPassword] = useState('');
@@ -109,68 +105,66 @@ const AdminUserManagementPage: React.FC = () => {
   const [formBusinessPartnerId, setFormBusinessPartnerId] = useState('');
   const [formIsActive, setFormIsActive] = useState(true);
 
-  // Filter & Sort States
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [order, setOrder] = useState<Order>('asc');
   const [orderBy, setOrderBy] = useState<keyof User>('last_name');
 
-  // States für Import/Export
   const [openImportDialog, setOpenImportDialog] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [importReport, setImportReport] = useState<any>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean, message: string, severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
 
+  // KORREKTUR: Die Logik zum Abrufen der Benutzer wurde in eine separate useCallback-Funktion
+  // ausgelagert, um sie nach Änderungen wieder aufrufen zu können.
   const fetchUsers = useCallback(async () => {
+    setLoading(true);
     try {
-      const userUrl = isAdmin && adminFilterBpId 
-        ? `/api/admin/users?business_partner_id=${adminFilterBpId}`
-        : '/api/admin/users';
-      const userRes = await apiClient.get(userUrl); // Cookie-Auth
+      let userUrl = '/api/admin/users';
+      // Fall 1: Admin filtert nach einem bestimmten Partner
+      if (isAdmin && adminFilterBpId) {
+        userUrl = `/api/admin/users?business_partner_id=${adminFilterBpId}`;
+      } 
+      // Fall 2: Assistent ist eingeloggt (sieht nur eigene Partner-Benutzer)
+      else if (isAssistant && loggedInUser?.business_partner_id) {
+        userUrl = `/api/admin/users?business_partner_id=${loggedInUser.business_partner_id}`;
+      }
+      
+      const userRes = await apiClient.get(userUrl);
       setUsers(asArray<User>(userRes.data));
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Fehler beim Laden der Benutzer.');
-      setUsers([]); // defensiv
+      setUsers([]);
+    } finally {
+        setLoading(false);
     }
-  }, [isAdmin, adminFilterBpId]);
+  }, [isAdmin, isAssistant, adminFilterBpId, loggedInUser?.business_partner_id]);
 
   useEffect(() => {
-    const fetchInitialData = async () => {
-      if (!loggedInUser) return;
-      setLoading(true);
-      setError(null);
+    const fetchDropdownData = async () => {
+      if (!loggedInUser || !isAdmin) return; // Dropdowns nur für Admins relevant
       try {
-        const [userRes, bpRes, roleRes] = await Promise.all([
-          apiClient.get(isAdmin && adminFilterBpId ? `/api/admin/users?business_partner_id=${adminFilterBpId}` : '/api/admin/users'),
-          isAdmin ? apiClient.get('/api/admin/business-partners') : Promise.resolve({ data: [] }),
+        const [bpRes, roleRes] = await Promise.all([
+          apiClient.get('/api/admin/business-partners'),
           apiClient.get('/api/admin/roles'),
         ]);
-
-        setUsers(asArray<User>(userRes.data));
-        if (isAdmin) {
-          setBusinessPartnerOptions(asArray<any>(bpRes.data).map((bp: any) => ({ id: bp.id, name: bp.name })));
-        }
+        setBusinessPartnerOptions(asArray<any>(bpRes.data).map((bp: any) => ({ id: bp.id, name: bp.name })));
         setRoleOptions(asArray<RoleOption>(roleRes.data));
-      } catch (err: any) {
-        if (err?.response?.status === 401) {
-          setError('Nicht autorisiert. Bitte erneut einloggen (Admin-Rechte erforderlich).');
-        } else {
-          setError(err?.response?.data?.message || 'Fehler beim Laden der Daten.');
-        }
-        setUsers([]); setBusinessPartnerOptions([]); setRoleOptions([]);
-      } finally {
-        setLoading(false);
+      } catch(err) {
+        setError('Fehler beim Laden der Auswahloptionen.');
       }
     };
-    fetchInitialData();
-  }, [adminFilterBpId, isAdmin, loggedInUser]);
+    
+    fetchUsers();
+    fetchDropdownData();
+  }, [fetchUsers, isAdmin, loggedInUser]);
 
   useEffect(() => {
     const fetchLevels = async (bpId: string) => {
       if (!bpId) {
         setMembershipLevels(null);
-        setFormMembershipLevel(''); // Reset level when BP changes
+        setFormMembershipLevel('');
         return;
       }
       try {
@@ -184,7 +178,6 @@ const AdminUserManagementPage: React.FC = () => {
     fetchLevels(formBusinessPartnerId);
   }, [formBusinessPartnerId]);
 
-  // Rolle-Liste für Assistenten ohne "admin"
   const filteredRoleOptions = useMemo(() => {
     return isAssistant ? roleOptions.filter((role) => role.name !== 'admin') : roleOptions;
   }, [roleOptions, isAssistant]);
@@ -321,14 +314,13 @@ const AdminUserManagementPage: React.FC = () => {
   };
 
   const sortedAndFilteredUsers: User[] = useMemo(() => {
-    const base: User[] = asArray<User>(users);
-    let filtered: User[] = [...base];
+    let filtered: User[] = [...users];
     if (statusFilter !== 'all') {
-      filtered = filtered.filter((user: User) => user.is_active === (statusFilter === 'active'));
+      filtered = filtered.filter((user) => user.is_active === (statusFilter === 'active'));
     }
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
-      filtered = filtered.filter((user: User) =>
+      filtered = filtered.filter((user) =>
         (user.username || '').toLowerCase().includes(q) ||
         (user.first_name || '').toLowerCase().includes(q) ||
         (user.last_name || '').toLowerCase().includes(q) ||
@@ -340,7 +332,6 @@ const AdminUserManagementPage: React.FC = () => {
   }, [users, searchTerm, order, orderBy, statusFilter]);
 
   return (
-    <DashboardLayout>
       <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
           <Box>
@@ -375,9 +366,9 @@ const AdminUserManagementPage: React.FC = () => {
 
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
           <Tabs value={statusFilter} onChange={(_e, v) => setStatusFilter(v)}>
-            <Tab label={`Alle (${asArray<User>(users).length})`} value="all" />
-            <Tab label={`Aktiv (${asArray<User>(users).filter((u: User) => u.is_active).length})`} value="active" />
-            <Tab label={`Inaktiv (${asArray<User>(users).filter((u: User) => !u.is_active).length})`} value="inactive" />
+            <Tab label={`Alle (${users.length})`} value="all" />
+            <Tab label={`Aktiv (${users.filter((u) => u.is_active).length})`} value="active" />
+            <Tab label={`Inaktiv (${users.filter((u) => !u.is_active).length})`} value="inactive" />
           </Tabs>
         </Box>
 
@@ -419,7 +410,7 @@ const AdminUserManagementPage: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {sortedAndFilteredUsers.map((user: User) => (
+                  {sortedAndFilteredUsers.map((user) => (
                     <TableRow key={user.id} hover sx={{ backgroundColor: user.is_active ? 'inherit' : '#fafafa' }}>
                       <TableCell>{user.first_name} {user.last_name}</TableCell>
                       <TableCell>{user.organization_name || '-'}</TableCell>
@@ -452,7 +443,6 @@ const AdminUserManagementPage: React.FC = () => {
           </Paper>
         )}
 
-        {/* Add/Edit Dialog */}
         <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="sm">
           <DialogTitle>{editingUser ? 'Benutzer bearbeiten' : 'Neuen Benutzer hinzufügen'}</DialogTitle>
           <DialogContent>
@@ -497,7 +487,7 @@ const AdminUserManagementPage: React.FC = () => {
               sx={{ mt: 2 }}
               disabled={isAssistant}
             >
-              {filteredRoleOptions.map((role: RoleOption) => (
+              {filteredRoleOptions.map((role) => (
                 <MenuItem key={role.name} value={role.name} title={role.description}>
                   {role.name}
                 </MenuItem>
@@ -513,12 +503,12 @@ const AdminUserManagementPage: React.FC = () => {
                 value={formBusinessPartnerId}
                 onChange={(e) => setFormBusinessPartnerId(e.target.value)}
                 sx={{ mt: 2 }}
-                disabled={isAssistant} // Nur für Assistenten sperren
+                disabled={isAssistant}
               >
                 <MenuItem value="">
                   <em>Kein Business Partner</em>
                 </MenuItem>
-                {businessPartnerOptions.map((bp: BusinessPartnerOption) => (
+                {businessPartnerOptions.map((bp) => (
                   <MenuItem key={bp.id} value={bp.id}>
                     {bp.name}
                   </MenuItem>
@@ -560,8 +550,7 @@ const AdminUserManagementPage: React.FC = () => {
             <Button onClick={handleSubmit}>{editingUser ? 'Speichern' : 'Hinzufügen'}</Button>
           </DialogActions>
         </Dialog>
-
-        {/* Import Dialog */}
+        
         <Dialog open={openImportDialog} onClose={() => setOpenImportDialog(false)} fullWidth maxWidth="sm">
           <DialogTitle>Benutzer importieren</DialogTitle>
           <DialogContent>
@@ -620,7 +609,6 @@ const AdminUserManagementPage: React.FC = () => {
           </Alert>
         </Snackbar>
       </Container>
-    </DashboardLayout>
   );
 };
 

@@ -1,9 +1,8 @@
-// src/components/widgets/GenericAIWidget.tsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Accordion, AccordionDetails, AccordionSummary, Box, Typography, TextField, CircularProgress, MenuItem, Alert, List, ListItem, ListItemText, Divider,
-    Dialog, DialogTitle, DialogContent, Chip, Badge, Button, Grid, Stack, IconButton, Tooltip, Link as MuiLink,
-    DialogActions, Pagination, Paper, InputAdornment
+    Dialog, DialogTitle, DialogContent, Chip, Button, Grid, Stack, IconButton, Tooltip, Link as MuiLink,
+    DialogActions, Paper, InputAdornment, Avatar
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SendIcon from '@mui/icons-material/Send';
@@ -23,13 +22,13 @@ import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
 import { Autocomplete } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import posthog from 'posthog-js';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
 import ClickAwayListener from '@mui/material/ClickAwayListener';
 
-// --- Interfaces ---
 interface ContentItem {
     id: string;
     title: string;
@@ -42,6 +41,15 @@ interface ContentItem {
     user_vote: number;
 }
 interface AIPromptRule { id: string; name: string; default_category_id?: string; }
+interface RelevantAction {
+    id: string;
+    title: string;
+    content_text: string;
+    link_url: string;
+    image_url: string;
+    is_click_tracking_enabled: boolean;
+    business_partner_id: string;
+}
 interface GenericAIWidgetProps extends BaseWidgetProps {
     title: string;
     category: string;
@@ -50,7 +58,6 @@ interface GenericAIWidgetProps extends BaseWidgetProps {
 }
 interface EmailState { open: boolean; loading: boolean; error: string | null; subject: string; body: string; }
 
-// --- Hilfskomponenten ---
 const ArticleBodyRenderer: React.FC<{ summary: string | null | undefined }> = ({ summary }) => {
     if (!summary) return <Typography>Kein Inhalt verfügbar.</Typography>;
     return <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{summary}</Typography>;
@@ -71,14 +78,13 @@ const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onS
     return (<ClickAwayListener onClickAway={handleClickAway}><Box sx={{ display: 'flex', alignItems: 'center', height: '40px' }}><Box sx={{ display: 'flex', alignItems: 'center', bgcolor: isExpanded ? 'action.hover' : 'transparent', borderRadius: 40, width: isExpanded ? 180 : 32, transition: 'width 0.3s' }}><Tooltip title={isExpanded ? "Suche schließen" : "Suchen"}><IconButton onClick={handleToggle} size="small" sx={{ ml: '4px' }}>{isExpanded ? <CloseIcon fontSize="small" /> : <SearchIcon />}</IconButton></Tooltip><Box sx={{ width: '100%', overflow: 'hidden' }}><TextField variant="standard" fullWidth value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); onSearch(e.target.value); }} placeholder="Suchen..." inputRef={inputRef} sx={{ opacity: isExpanded ? 1 : 0, transition: 'opacity 0.2s', pl: 1, pr: 1 }} InputProps={{ disableUnderline: true, endAdornment: (searchTerm && isExpanded ? (<InputAdornment position="end"><IconButton size="small" onClick={handleClear} edge="end"><ClearIcon fontSize="small" /></IconButton></InputAdornment>) : null) }} /></Box></Box></Box></ClickAwayListener>);
 };
 
-
-// --- Haupt-Widget-Komponente ---
 const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, isRemovable, title, category, icon, widgetTypeKey }) => {
     const { user } = useAuth();
     const navigate = useNavigate();
     const [items, setItems] = useState<ContentItem[]>([]);
     const [counts, setCounts] = useState({ unread: 0, new: 0 });
     const [isLoading, setIsLoading] = useState(true);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [selectedArticle, setSelectedArticle] = useState<ContentItem | null>(null);
     const [relevantRules, setRelevantRules] = useState<AIPromptRule[]>([]);
@@ -93,45 +99,80 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
     const [totalPages, setTotalPages] = useState(0);
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+    const [filterMode, setFilterMode] = useState<'all' | 'new' | 'unread'>('all');
+    const [relevantAction, setRelevantAction] = useState<RelevantAction | null>(null);
 
     useEffect(() => { const handler = setTimeout(() => { setDebouncedSearchTerm(searchTerm); }, 500); return () => { clearTimeout(handler); }; }, [searchTerm]);
     useEffect(() => { if (user?.regions && user.regions.length > 0) { const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0]; setSelectedRegion(defaultRegion); } }, [user?.regions]);
     useEffect(() => { if (relevantRules.length === 1) setSelectedRuleId(relevantRules[0].id); else setSelectedRuleId(''); }, [relevantRules]);
 
-    const fetchData = useCallback(async (currentPage: number, search: string) => {
+    const fetchData = useCallback(async (currentPage: number, search: string, filter: 'all' | 'new' | 'unread', loadMore = false) => {
         if (!category || !selectedRegion) {
             setItems([]);
             setTotalPages(0);
+            setIsLoading(false);
             return;
         }
-        setIsLoading(true);
+        
+        if (loadMore) setIsLoadingMore(true);
+        else setIsLoading(true);
         setError(null);
+
         try {
             const token = localStorage.getItem('jwt_token');
             const params = new URLSearchParams({ category, region: selectedRegion.name, page: String(currentPage), limit: '5' });
             if (search) params.append('search', search);
+            if (filter !== 'all') params.append('filter', filter);
             
-            const [rulesRes, contentRes, categoriesRes] = await Promise.all([
+            const [rulesRes, contentRes, categoriesRes, actionRes] = await Promise.all([
                 apiClient.get('/api/data/ai-prompt-rules', { headers: { 'x-auth-token': token } }),
                 apiClient.get(`/api/data/ai-content?${params.toString()}`, { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/data/categories', { headers: { 'x-auth-token': token } }),
+                currentPage === 1 ? apiClient.get(`/api/data/relevant-action?category=${category}&region=${selectedRegion.name}`, { headers: { 'x-auth-token': token } }) : Promise.resolve({ data: relevantAction })
             ]);
 
             const currentCategory = categoriesRes.data.find((c: any) => c.name === category);
             if (currentCategory) setRelevantRules(rulesRes.data.filter((r: any) => r.default_category_id === currentCategory.id));
             
-            setItems(contentRes.data?.data || []);
+            const newItems = contentRes.data?.data || [];
+            setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
             setCounts(contentRes.data?.counts || { unread: 0, new: 0 });
             setTotalPages(contentRes.data?.totalPages || 0);
+            setRelevantAction(actionRes.data);
+
         } catch (err: any) {
             setError(err.response?.data?.message || `Inhalte für "${category}" konnten nicht geladen werden.`);
         } finally {
             setIsLoading(false);
+            setIsLoadingMore(false);
         }
-    }, [category, selectedRegion]);
+    }, [category, selectedRegion, relevantAction]);
     
-    useEffect(() => { setPage(1); }, [selectedRegion, debouncedSearchTerm]);
-    useEffect(() => { fetchData(page, debouncedSearchTerm); }, [fetchData, page, debouncedSearchTerm]);
+    useEffect(() => {
+        setPage(1);
+        if (selectedRegion) {
+            fetchData(1, debouncedSearchTerm, filterMode);
+        }
+    }, [selectedRegion, debouncedSearchTerm, filterMode, fetchData]);
+
+    const handleLoadMore = () => {
+        const nextPage = page + 1;
+        setPage(nextPage);
+        fetchData(nextPage, debouncedSearchTerm, filterMode, true);
+    };
+
+    const handleActionClick = () => {
+        if (!relevantAction) return;
+        if (relevantAction.is_click_tracking_enabled) {
+            posthog.capture('partner_action_clicked', {
+                action_id: relevantAction.id,
+                action_title: relevantAction.title,
+                business_partner_id: relevantAction.business_partner_id,
+                widget_category: category,
+            });
+        }
+        window.open(relevantAction.link_url, '_blank', 'noopener,noreferrer');
+    };
 
     const handleReportError = () => {
         navigate('/feedback', {
@@ -175,7 +216,7 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
             await apiClient.post('/api/admin/subscriptions', { ruleId: selectedRuleId, region: selectedRegion.name, keywords }, { headers: { 'x-auth-token': token } });
             setSubmitSuccess(`Ihr Abonnement wurde gespeichert.`);
             setKeywords([]);
-            setTimeout(() => fetchData(1, debouncedSearchTerm), 5000);
+            setTimeout(() => fetchData(1, debouncedSearchTerm, filterMode), 5000);
         } catch (err: any) {
             setSubmitError(err.response?.data?.message || 'Fehler beim Speichern.');
         } finally {
@@ -211,8 +252,24 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', width: '100%' }}>
                     {icon}
                     <Typography variant="h6">{title}</Typography>
-                    <Badge badgeContent={counts.new} color="primary"><Chip label="Neu" size="small" variant="outlined" /></Badge>
-                    <Badge badgeContent={counts.unread} color="secondary"><Chip label="Ungelesen" size="small" variant="outlined" /></Badge>
+                    <Chip
+                        label="Neu"
+                        size="small"
+                        variant={filterMode === 'new' ? 'filled' : 'outlined'}
+                        color="primary"
+                        clickable
+                        onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')}
+                        avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'primary.main', color: 'primary.contrastText' }}>{counts.new}</Avatar>}
+                    />
+                    <Chip
+                        label="Ungelesen"
+                        size="small"
+                        variant={filterMode === 'unread' ? 'filled' : 'outlined'}
+                        color="secondary"
+                        clickable
+                        onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')}
+                        avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{counts.unread}</Avatar>}
+                    />
                     <Box sx={{ flexGrow: 1 }} />
                     <AnimatedSearchBar onSearch={setSearchTerm} />
                     {user?.regions && user.regions.length > 0 && (
@@ -235,7 +292,7 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
             onDelete={onDelete} 
             isRemovable={isRemovable}
         >
-            {isLoading ? (
+            {isLoading && page === 1 ? (
                 <Box sx={{ m: 'auto', textAlign: 'center' }}>
                     <CircularProgress />
                 </Box>
@@ -278,8 +335,31 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
                                 })}
                             </List>
                         ) : ( <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>Keine Artikel für Ihre Auswahl gefunden.</Typography> )}
+                        
+                        {page < totalPages && (
+                            <Box sx={{ textAlign: 'center', p: 1 }}>
+                                <Button onClick={handleLoadMore} disabled={isLoadingMore}>
+                                    {isLoadingMore ? <CircularProgress size={24} /> : 'Mehr laden'}
+                                </Button>
+                            </Box>
+                        )}
+
+                        {relevantAction && (
+                            <Paper variant="outlined" sx={{ mt: 2, p: 1.5, borderColor: 'primary.main' }}>
+                                <Stack direction="row" spacing={2} alignItems="center">
+                                    {relevantAction.image_url && <Avatar src={relevantAction.image_url} sx={{ width: 56, height: 56 }} variant="rounded" />}
+                                    <Box flexGrow={1}>
+                                        <Typography variant="caption" color="primary.main">Lösungspartner</Typography>
+                                        <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>{relevantAction.title}</Typography>
+                                        <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>{relevantAction.content_text}</Typography>
+                                    </Box>
+                                    <Button variant="contained" size="small" onClick={handleActionClick}>
+                                        Mehr erfahren
+                                    </Button>
+                                </Stack>
+                            </Paper>
+                        )}
                     </Box>
-                    {totalPages > 1 && <Box sx={{ display: 'flex', justifyContent: 'center', pt: 1, borderTop: 1, borderColor: 'divider' }}><Pagination count={totalPages} page={page} onChange={(e, value) => setPage(value)} size="small" /></Box>}
                     
                     <Accordion disableGutters elevation={0} sx={{ p: 0, '&.Mui-expanded': { margin: 0 }, '&:before': { display: 'none' } }}>
                         <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ p: 0, minHeight: '36px', '& .MuiAccordionSummary-content': { margin: '8px 0' } }}><Typography variant="body2">Persönliches Thema abonnieren</Typography></AccordionSummary>

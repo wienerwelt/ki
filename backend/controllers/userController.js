@@ -70,7 +70,7 @@ exports.markWelcomeAsSeen = async (req, res) => {
     }
 };
 
-// --- FAVORITEN-FUNKTIONEN (ANGEPASST AN IHR SCHEMA) ---
+// --- FAVORITEN-FUNKTIONEN ---
 exports.getFavorites = async (req, res) => {
     const { id: userId } = req.user;
     const { widgetType } = req.query;
@@ -124,6 +124,69 @@ exports.removeFavorite = async (req, res) => {
         res.status(200).json({ message: 'Favorit entfernt.' });
     } catch (err) {
         console.error('Fehler beim Entfernen des Favoriten:', err.message);
+        res.status(500).json({ message: 'Serverfehler.' });
+    }
+};
+
+
+// --- NEU: FUNKTIONEN FÜR BENUTZERDEFINIERTE TAGS ---
+
+/**
+ * Holt alle gespeicherten Tags für den aktuellen Benutzer.
+ */
+exports.getUserTags = async (req, res) => {
+    const { id: userId } = req.user;
+    try {
+        const result = await db.query(
+            'SELECT tag_name FROM user_saved_tags WHERE user_id = $1 ORDER BY tag_name ASC',
+            [userId]
+        );
+        res.json(result.rows.map(row => row.tag_name));
+    } catch (err) {
+        console.error('Fehler beim Abrufen der Benutzer-Tags:', err.message);
+        res.status(500).json({ message: 'Serverfehler.' });
+    }
+};
+
+/**
+ * Fügt einen neuen Tag für den aktuellen Benutzer hinzu.
+ */
+exports.addUserTag = async (req, res) => {
+    const { id: userId } = req.user;
+    const { tagName } = req.body;
+    if (!tagName || typeof tagName !== 'string' || tagName.trim() === '') {
+        return res.status(400).json({ message: 'Ein gültiger Tag-Name ist erforderlich.' });
+    }
+    const sanitizedTag = tagName.trim();
+    try {
+        await db.query(
+            'INSERT INTO user_saved_tags (user_id, tag_name) VALUES ($1, $2) ON CONFLICT (user_id, tag_name) DO NOTHING',
+            [userId, sanitizedTag]
+        );
+        res.status(201).json({ message: `Tag "${sanitizedTag}" hinzugefügt.` });
+    } catch (err) {
+        console.error('Fehler beim Hinzufügen des Tags:', err.message);
+        res.status(500).json({ message: 'Serverfehler.' });
+    }
+};
+
+/**
+ * Entfernt einen Tag für den aktuellen Benutzer.
+ */
+exports.removeUserTag = async (req, res) => {
+    const { id: userId } = req.user;
+    const { tagName } = req.params; // GEÄNDERT: von req.body zu req.params
+    if (!tagName || typeof tagName !== 'string' || tagName.trim() === '') {
+        return res.status(400).json({ message: 'Ein gültiger Tag-Name ist erforderlich.' });
+    }
+    try {
+        await db.query(
+            'DELETE FROM user_saved_tags WHERE user_id = $1 AND tag_name = $2',
+            [userId, tagName] // .trim() ist nicht mehr nötig, da URLs automatisch getrimmt werden
+        );
+        res.status(200).json({ message: `Tag "${tagName}" entfernt.` });
+    } catch (err) {
+        console.error('Fehler beim Entfernen des Tags:', err.message);
         res.status(500).json({ message: 'Serverfehler.' });
     }
 };

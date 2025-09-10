@@ -18,10 +18,13 @@ import ResetPasswordPage from './pages/ResetPasswordPage';
 import VerifyEmailPage from './pages/VerifyEmailPage';
 import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
+import DisclaimerPage from './pages/DisclaimerPage';
+import NewsletterConfirmed from './pages/NewsletterConfirmed';
 
 // Geschützte Seiten
 import DashboardPage from './pages/DashboardPage';
 import ProfilePage from './pages/ProfilePage';
+import SearchResultsPage from './pages/SearchResultsPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import AdminBusinessPartnersPage from './pages/AdminBusinessPartnersPage';
 import AdminUserManagementPage from './pages/AdminUserManagementPage';
@@ -43,6 +46,7 @@ import TrustedSourcesPage from './pages/TrustedSourcesPage';
 import FeedbackCenterPage from './pages/FeedbackCenterPage';
 import FileManagementPage from './pages/FileManagementPage';
 import AdminEventsPage from './pages/AdminEventsPage';
+import AdminSurveysPage from './pages/AdminSurveysPage';
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
@@ -134,11 +138,14 @@ function App() {
           <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
           <Route path="/terms" element={<TermsPage />} />
           <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/disclaimer" element={<DisclaimerPage />} />
+          <Route path="/newsletter/confirmed" element={<NewsletterConfirmed />} />
 
           {/* Geschützte Routen */}
           <Route element={<ProtectedRoutes />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/search" element={<SearchResultsPage />} />
             <Route path="/trusted-sources" element={<TrustedSourcesPage />} />
             <Route path="/feedback" element={<FeedbackCenterPage />} />
             <Route path="/files" element={<FileManagementPage />} />
@@ -167,6 +174,7 @@ function App() {
               <Route path="cronjobs" element={<AdminCronjobsPage />} />
               <Route path="sources" element={<AdminSourcesPage />} />
               <Route path="events" element={<AdminEventsPage />} />
+              <Route path="surveys" element={<AdminSurveysPage />} />
             </Route>
           </Route>
 

@@ -21,6 +21,7 @@ import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
+import { useSnackbar } from '../../context/SnackbarContext'; // NEU: Snackbar-Hook importieren
 
 const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, alt, size = 20 }) => {
   if (!code) return null;
@@ -29,33 +30,54 @@ const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, 
   return <img loading="lazy" width={size} src={`https://flagcdn.com/w20/${c.toLowerCase()}.png`} alt={alt || c} />;
 };
 
+const getDomainSafely = (url: string | null | undefined): string | null => {
+    if (!url) return null;
+    try {
+        return new URL(url).hostname.replace(/^www\./, '');
+    } catch (e) {
+        return url.split('/')[0];
+    }
+};
+
+const isValidUrl = (urlString: string): boolean => {
+    if (!urlString || urlString === 'https://') return true;
+    try {
+        const url = new URL(urlString);
+        return url.protocol === "http:" || url.protocol === "https:";
+    } catch (_) {
+        return false;
+    }
+};
+
 interface EventData {
     id: string; title: string; date: string; region: string | null; summary: string | null; url: string;
     participants: number; maybeParticipants?: number; userVote: 1 | 0 | -1 | null;
     full_text: string | null;
     is_trusted_source: boolean;
+    is_read: boolean;
 }
 interface ShareState { expanded: boolean; loading: boolean; error: string | null; success: string | null; recipientEmail: string; }
 interface EventCalendarWidgetProps extends BaseWidgetProps { title: string; widgetTypeKey: string; }
 
 const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, widgetId, isRemovable, title, widgetTypeKey }) => {
   const { user } = useAuth();
+  const { showSnackbar } = useSnackbar(); // NEU: Snackbar-Hook initialisieren
   const [allEvents, setAllEvents] = React.useState<EventData[]>([]);
   const [availableRegions, setAvailableRegions] = React.useState<Region[]>([]);
+  const [allPossibleRegions, setAllPossibleRegions] = React.useState<Region[]>([]);
   const [searchTerm, setSearchTerm] = React.useState('');
   const [selectedRegionCode, setSelectedRegionCode] = React.useState<string>('all');
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = React.useState<EventData | null>(null);
   const [showAddForm, setShowAddForm] = React.useState(false);
-  const [newEvent, setNewEvent] = React.useState({ title: '', event_date: '', region: '', summary: '', original_url: '' });
+  // --- GEÄNDERT: URL mit 'https://' vorbelegen ---
+  const [newEvent, setNewEvent] = React.useState({ title: '', event_date: '', region: '', summary: '', original_url: 'https://' });
   const [shareState, setShareState] = React.useState<ShareState>({ expanded: false, loading: false, error: null, success: null, recipientEmail: '' });
-  const [snackbar, setSnackbar] = React.useState({ open: false, message: '' });
   const [showPastEvents, setShowPastEvents] = React.useState(false);
 
   const [page, setPage] = React.useState(1);
   const [totalPages, setTotalPages] = React.useState(0);
-  const [isLoadingMore, setIsLoadingMore] = React.useState(false);
 
   const fetchEvents = React.useCallback(async () => {
     setLoading(true);
@@ -70,23 +92,61 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
       setLoading(false);
     }
   }, []);
+  
+  const fetchAllRegions = React.useCallback(async () => {
+    try {
+      const token = localStorage.getItem('jwt_token');
+      const res = await apiClient.get('/api/data/regions', { headers: { 'x-auth-token': token } });
+      setAllPossibleRegions(res.data);
+    } catch (err) {
+      console.error("Fehler beim Laden aller Regionen:", err);
+    }
+  }, []);
 
-  React.useEffect(() => { fetchEvents(); }, [fetchEvents]);
+  React.useEffect(() => { 
+    fetchEvents();
+    fetchAllRegions();
+  }, [fetchEvents, fetchAllRegions]);
+
+  const markAsRead = async (eventId: string) => {
+    setAllEvents(prev => prev.map(e => e.id === eventId ? { ...e, is_read: true } : e));
+    try {
+        const token = localStorage.getItem('jwt_token');
+        await apiClient.post(`/api/data/scraped-content/${eventId}/mark-as-read`, {}, { headers: { 'x-auth-token': token } });
+    } catch (err) {
+        console.error("Fehler beim Markieren als gelesen:", err);
+        fetchEvents();
+    }
+  };
+  
+  const handleSelectEvent = (event: EventData) => {
+      setSelectedEvent(event);
+      if (!event.is_read) {
+          markAsRead(event.id);
+      }
+  };
 
   const handleAddEvent = async () => {
+    // --- GEÄNDERT: alert() durch showSnackbar ersetzt ---
     if (!newEvent.title || !newEvent.event_date) {
-      alert('Titel und Datum sind erforderlich.');
+      showSnackbar('Titel und Datum sind erforderlich.', 'warning');
       return;
     }
+    if (!isValidUrl(newEvent.original_url)) {
+      showSnackbar('Die eingegebene URL ist ungültig. Bitte verwenden Sie http:// oder https://.', 'warning');
+      return;
+    }
+
     try {
       const token = localStorage.getItem('jwt_token');
       await apiClient.post('/api/admin/scraped-content/events', newEvent, { headers: { 'x-auth-token': token } });
       setShowAddForm(false);
-      setNewEvent({ title: '', event_date: '', region: '', summary: '', original_url: '' });
+      setNewEvent({ title: '', event_date: '', region: '', summary: '', original_url: 'https://' });
+      showSnackbar('Event erfolgreich hinzugefügt.', 'success');
       fetchEvents();
     } catch (err) {
       console.error('Fehler beim Hinzufügen des Events:', err);
-      alert('Event konnte nicht hinzugefügt werden.');
+      showSnackbar('Event konnte nicht hinzugefügt werden.', 'error');
     }
   };
 
@@ -109,7 +169,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
         await apiClient.post(`/api/data/events/${selectedEvent.id}/vote`, { vote }, { headers: { 'x-auth-token': token } });
     } catch (err) {
         console.error('Fehler bei der Abstimmung:', err);
-        setSnackbar({ open: true, message: 'Fehler: Ihre Auswahl konnte nicht gespeichert werden.' });
+        showSnackbar('Fehler: Ihre Auswahl konnte nicht gespeichert werden.', 'error');
         fetchEvents();
     }
   };
@@ -186,14 +246,14 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
     <WidgetPaper title={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}><EventIcon /><Typography variant="h6">{title}</Typography><Box sx={{ flexGrow: 1 }} /><FormControl size="small" sx={{ minWidth: 150, '.MuiOutlinedInput-notchedOutline': { border: 'none' } }} onMouseDown={(e) => e.stopPropagation()}><Select value={selectedRegionCode} onChange={(e: SelectChangeEvent) => setSelectedRegionCode(e.target.value)} renderValue={(value) => { const region = availableRegions.find(r => r.code === value); return (<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><Flag code={value === 'all' ? 'EU' : (value as string)} alt={region?.name || 'Alle'} /> {value === 'all' ? 'Alle' : region?.name}</Box>); }}><MenuItem value="all"><span style={{ marginRight: 8 }}><Flag code="EU" alt="EU" /></span>Alle Regionen</MenuItem>{availableRegions.map((region) => (<MenuItem key={region.code} value={region.code}><span style={{ marginRight: 8 }}><Flag code={region.code} alt={region.name} /></span>{region.name}</MenuItem>))}</Select></FormControl></Box>} widgetId={widgetId} onDelete={onDelete} isRemovable={isRemovable} widgetTitle={title} widgetTypeKey={widgetTypeKey}>
       <Stack spacing={2} sx={{ p: 2 }}>
         <Stack direction="row" spacing={1} onMouseDown={(e) => e.stopPropagation()} alignItems="center"><TextField fullWidth size="small" placeholder="Events durchsuchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }}/><Tooltip title={showPastEvents ? "Vergangene Events ausblenden" : "Vergangene Events anzeigen"}><Button size="small" variant={showPastEvents ? 'contained' : 'outlined'} onClick={() => setShowPastEvents(!showPastEvents)} sx={{ flexShrink: 0 }}>Vergangene</Button></Tooltip><Tooltip title="Neuen Termin hinzufügen"><IconButton onClick={() => setShowAddForm(!showAddForm)}><AddCircleOutlineIcon color={showAddForm ? 'primary' : 'action'} /></IconButton></Tooltip></Stack>
-        <Collapse in={showAddForm}><Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}><Typography variant="h6" gutterBottom>Neuen Termin hinzufügen</Typography><Grid container spacing={2}><Grid item xs={12} sm={8}><TextField fullWidth size="small" label="Event-Titel" value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })} /></Grid><Grid item xs={12} sm={4}><TextField fullWidth size="small" type="date" label="Datum" value={newEvent.event_date} onChange={e => setNewEvent({ ...newEvent, event_date: e.target.value })} InputLabelProps={{ shrink: true }} /></Grid><Grid item xs={12}><TextField fullWidth size="small" label="URL (Optional)" value={newEvent.original_url} onChange={e => setNewEvent({ ...newEvent, original_url: e.target.value })} /></Grid><Grid item xs={12}><TextField select fullWidth size="small" label="Region (Optional)" value={newEvent.region} onChange={e => setNewEvent({ ...newEvent, region: e.target.value })}><MenuItem value=""><em>Keine Region</em></MenuItem>{user?.regions?.map((r: Region) => (<MenuItem key={r.code} value={r.name}>{r.name}</MenuItem>))}</TextField></Grid><Grid item xs={12}><TextField fullWidth size="small" multiline rows={2} label="Kurzbeschreibung (Optional)" value={newEvent.summary} onChange={e => setNewEvent({ ...newEvent, summary: e.target.value })} /></Grid></Grid><Box sx={{ mt: 2, textAlign: 'right' }}><Button size="small" onClick={() => setShowAddForm(false)}>Abbrechen</Button><Button size="small" variant="contained" onClick={handleAddEvent} sx={{ ml: 1 }}>Speichern</Button></Box></Paper></Collapse>
+        <Collapse in={showAddForm}><Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}><Typography variant="h6" gutterBottom>Neuen Termin hinzufügen</Typography><Grid container spacing={2}><Grid item xs={12} sm={8}><TextField fullWidth size="small" label="Event-Titel" value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })} /></Grid><Grid item xs={12} sm={4}><TextField fullWidth size="small" type="date" label="Datum" value={newEvent.event_date} onChange={e => setNewEvent({ ...newEvent, event_date: e.target.value })} InputLabelProps={{ shrink: true }} /></Grid><Grid item xs={12}><TextField fullWidth size="small" label="URL (Optional)" value={newEvent.original_url} onChange={e => setNewEvent({ ...newEvent, original_url: e.target.value })} /></Grid><Grid item xs={12}><TextField select fullWidth size="small" label="Region (Optional)" value={newEvent.region} onChange={e => setNewEvent({ ...newEvent, region: e.target.value })}><MenuItem value=""><em>Keine Region</em></MenuItem>{allPossibleRegions.map((r: Region) => (<MenuItem key={r.id} value={r.name}>{r.name}</MenuItem>))}</TextField></Grid><Grid item xs={12}><TextField fullWidth size="small" multiline rows={2} label="Kurzbeschreibung (Optional)" value={newEvent.summary} onChange={e => setNewEvent({ ...newEvent, summary: e.target.value })} /></Grid></Grid><Box sx={{ mt: 2, textAlign: 'right' }}><Button size="small" onClick={() => setShowAddForm(false)}>Abbrechen</Button><Button size="small" variant="contained" onClick={handleAddEvent} sx={{ ml: 1 }}>Speichern</Button></Box></Paper></Collapse>
         
         {loading ? ( <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box>
         ) : error ? ( <Alert severity="error">{error}</Alert>
         ) : Object.keys(filteredAndGrouped).length === 0 ? ( <Typography sx={{ textAlign: 'center', p: 3, color: 'text.secondary' }}>Keine Events für Ihre Auswahl gefunden.</Typography>
-        ) : ( <Box sx={{ maxHeight: { xs: 'none', sm: 420 }, overflowY: { xs: 'visible', sm: 'auto' } }}><List sx={{ p: 0 }}>{Object.entries(filteredAndGrouped).map(([dateKey, events]) => (<Box key={dateKey} sx={{ mb: 2 }}>{events.map(e => { const d = new Date(e.date); const days = daysUntil(e.date); const dayString = d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: 'short' }); return ( <ListItem key={e.id} sx={{ display: 'block', p: 1.5, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }} onClick={() => setSelectedEvent(e)}><Stack spacing={1}><Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><Box sx={{ bgcolor: 'primary.main', color: 'primary.contrastText', px: 1, py: 0.5, borderRadius: 1 }}><Typography variant="body2" sx={{ fontWeight: 'bold' }}>{dayString}</Typography></Box><Typography variant="caption" color="text.secondary">{days > 0 ? `in ${days} Tagen` : days === 0 ? 'Heute' : `vor ${Math.abs(days)} Tagen`}</Typography></Box>
-                                <ListItemText primary={<Typography variant="body1">{e.title}</Typography>} secondaryTypographyProps={{ component: 'div' }} secondary={<Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 0.5 }}><ParticipantsBadges yes={e.participants} maybe={e.maybeParticipants} />{(e.url || e.full_text) && (<><Divider orientation="vertical" flexItem /><MuiLink href={e.url} target="_blank" rel="noopener" variant="caption" onClick={(ev) => ev.stopPropagation()} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary' }}>
-    {e.full_text || new URL(e.url).hostname.replace(/^www\./, '')}
+        ) : ( <Box sx={{ maxHeight: { xs: 'none', sm: 420 }, overflowY: { xs: 'visible', sm: 'auto' } }}><List sx={{ p: 0 }}>{Object.entries(filteredAndGrouped).map(([dateKey, events]) => (<Box key={dateKey} sx={{ mb: 2 }}>{events.map(e => { const d = new Date(e.date); const days = daysUntil(e.date); const dayString = d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: 'short' }); return ( <ListItem key={e.id} sx={{ display: 'block', p: 1.5, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }} onClick={() => handleSelectEvent(e)}><Stack spacing={1}><Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><Box sx={{ bgcolor: 'primary.main', color: 'primary.contrastText', px: 1, py: 0.5, borderRadius: 1 }}><Typography variant="body2" sx={{ fontWeight: 'bold' }}>{dayString}</Typography></Box><Typography variant="caption" color="text.secondary">{days > 0 ? `in ${days} Tagen` : days === 0 ? 'Heute' : `vor ${Math.abs(days)} Tagen`}</Typography></Box>
+                                <ListItemText primary={<Typography variant="body1" sx={{ fontWeight: e.is_read ? 'normal' : 'bold' }}>{e.title}</Typography>} secondaryTypographyProps={{ component: 'div' }} secondary={<Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 0.5 }}><ParticipantsBadges yes={e.participants} maybe={e.maybeParticipants} />{(e.url || e.full_text) && (<><Divider orientation="vertical" flexItem /><MuiLink href={e.url} target="_blank" rel="noopener" variant="caption" onClick={(ev) => ev.stopPropagation()} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary' }}>
+    {e.full_text || getDomainSafely(e.url)}
     {e.is_trusted_source && (
         <Tooltip title="Geprüfte Quelle">
             <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
@@ -207,7 +267,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
             <Stack direction="row" spacing={2} alignItems="center" mb={2}><Box sx={{ textAlign: 'center', p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}><Typography variant="h4" component="div" sx={{ fontWeight: 'bold' }}>{selectedEvent && new Date(selectedEvent.date).toLocaleDateString('de-DE', { day: '2-digit' })}</Typography><Typography variant="body1" component="div">{selectedEvent && new Date(selectedEvent.date).toLocaleDateString('de-DE', { month: 'short' }).toUpperCase()}</Typography></Box><Box><Typography variant="h6" component="h2">{selectedEvent?.title}</Typography>{selectedEvent && (<Typography variant="body2" color="text.secondary">{(() => { const d = daysUntil(selectedEvent.date); return d > 0 ? `in ${d} Tagen` : d === 0 ? 'Heute' : 'Vergangen'; })()}</Typography>)}</Box></Stack>
             <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2, color: 'text.secondary' }}>{selectedEvent?.region && (<Tooltip title={selectedEvent.region}><span><Flag code={(availableRegions.find(r => r.name === selectedEvent.region)?.code) || 'EU'} alt={selectedEvent.region} size={24}/></span></Tooltip>)}<ParticipantsBadges yes={selectedEvent?.participants ?? 0} maybe={selectedEvent?.maybeParticipants} /></Stack>
             {(selectedEvent?.full_text || selectedEvent?.url) && (<Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 2 }}>
-    Quelle: {selectedEvent.full_text || new URL(selectedEvent.url).hostname.replace(/^www\./, '')}
+    Quelle: {selectedEvent.full_text || getDomainSafely(selectedEvent.url)}
     {selectedEvent?.is_trusted_source && (
         <Tooltip title="Geprüfte Quelle">
             <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main', ml: 0.5 }} />
@@ -218,7 +278,6 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
             {selectedEvent?.url && (<Button fullWidth size="small" startIcon={<OpenInNewIcon />} href={selectedEvent.url} target="_blank" rel="noopener" variant="outlined">Anmeldung & Infos</Button>)}
           </Box>
           <Divider /><Stack spacing={1} sx={{ p: 1, bgcolor: 'background.default' }}><Stack direction="row" justifyContent="space-around" alignItems="center"><ToggleButtonGroup size="small" exclusive value={selectedEvent?.userVote} onChange={(_, v) => handleVote(v as 1 | 0 | -1 | null)} disabled={!selectedEvent || daysUntil(selectedEvent.date) < 0}><Tooltip title="Ich nehme teil"><ToggleButton value={1}><EventAvailableIcon color="success" /></ToggleButton></Tooltip><Tooltip title="Vielleicht"><ToggleButton value={0}><HelpOutlineIcon color="warning" /></ToggleButton></Tooltip><Tooltip title="Ich nehme nicht teil"><ToggleButton value={-1}><EventBusyIcon color="error" /></ToggleButton></Tooltip></ToggleButtonGroup><Tooltip title="Termin exportieren (.ics)"><IconButton onClick={handleICalExport}><DownloadIcon /></IconButton></Tooltip><Tooltip title="Per E-Mail teilen"><IconButton onClick={() => setShareState(p => ({ ...p, expanded: !p.expanded }))}><ShareIcon /></IconButton></Tooltip></Stack><Collapse in={shareState.expanded}>{/* ... (Share-Formular unverändert) ... */}</Collapse></Stack></Paper></Modal>
-      <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={() => setSnackbar({ open: false, message: '' })} message={snackbar.message} />
     </WidgetPaper>
   );
 };

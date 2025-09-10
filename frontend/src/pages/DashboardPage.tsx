@@ -27,24 +27,26 @@ interface SnackbarState {
   severity: 'success' | 'error';
 }
 
-// kleine Helfer, um robuste Defaults zu haben
 function asArray<T = any>(value: any): T[] {
   return Array.isArray(value) ? value : [];
 }
-function asConfig(value: any): DashboardSavedConfig {
-  if (value && typeof value === 'object') {
-    return {
-      layout: Array.isArray(value.layout) ? value.layout : [],
-      widgets: Array.isArray(value.widgets) ? value.widgets : [],
-      name: typeof value.name === 'string' ? value.name : 'Default Dashboard',
-    };
-  }
-  return { layout: [], widgets: [], name: 'Default Dashboard' };
+function emptyConfig(): DashboardSavedConfig {
+  return { layout: [], widgets: [], name: 'Mein Dashboard' };
+}
+function coerceConfig(raw: any): DashboardSavedConfig {
+  if (!raw) return emptyConfig();
+
+  // akzeptiere entweder { layout, widgets } oder { config: { layout, widgets } }
+  const cfg = raw.config && typeof raw.config === 'object' ? raw.config : raw;
+  const layout = Array.isArray(cfg.layout) ? cfg.layout : [];
+  const widgets = Array.isArray(cfg.widgets) ? cfg.widgets : [];
+  const name = typeof cfg.name === 'string' ? cfg.name : 'Mein Dashboard';
+  return { layout, widgets, name };
 }
 
 const DashboardPage: React.FC = () => {
-  const { businessPartner } = useAuth();
-  const [dashboardConfig, setDashboardConfig] = useState<DashboardSavedConfig | null>(null);
+  const { user, businessPartner } = useAuth();
+  const [dashboardConfig, setDashboardConfig] = useState<DashboardSavedConfig>(emptyConfig());
   const [availableWidgetTypes, setAvailableWidgetTypes] = useState<WidgetTypeMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,10 +77,11 @@ const DashboardPage: React.FC = () => {
   useEffect(() => {
     const tourHasBeenSeen = localStorage.getItem('dashboardTourSeen');
     if (!tourHasBeenSeen) {
-      setTimeout(() => {
+      const t = setTimeout(() => {
         setRunTour(true);
         posthog.capture('tour_started', { type: 'automatic' });
-      }, 1500);
+      }, 1200);
+      return () => clearTimeout(t);
     }
   }, []);
 
@@ -88,104 +91,123 @@ const DashboardPage: React.FC = () => {
     if (finishedStatuses.includes(status)) {
       setRunTour(false);
       localStorage.setItem('dashboardTourSeen', 'true');
-      if (status === STATUS.FINISHED) {
-        posthog.capture('tour_completed');
-      } else {
-        posthog.capture('tour_skipped', { step_index: data.index });
-      }
+      if (status === STATUS.FINISHED) posthog.capture('tour_completed');
+      else posthog.capture('tour_skipped', { step_index: data.index });
     }
   };
 
-  const fetchDashboardConfig = useCallback(async () => {
+  // ---- Daten laden: Widget-Typen + Dashboard-Config (mit Fallback-Endpunkten) ----
+  const fetchAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      // 👉 Kein Header-Token mehr: Cookie wird automatisch mitgeschickt (apiClient setzt credentials: 'include')
-      const [widgetTypesResponse, configResponse] = await Promise.all([
-        apiClient.get('/api/widgets/types'),
-        apiClient.get('/api/dashboard/config'),
-      ]);
+      // 1) Widget-Typen
+      const typesRes = await apiClient.get('/api/widgets/types');
+      setAvailableWidgetTypes(asArray<WidgetTypeMeta>(typesRes.data));
 
-      // robust parsen
-      const types = asArray<WidgetTypeMeta>(widgetTypesResponse.data);
-      setAvailableWidgetTypes(types);
+      // 2) Dashboard-Config
+      // Primär: /api/dashboard/config (GET)
+      // Fallbacks versuchen, falls deine API anders zurückgibt
+      const tryEndpoints = [
+        { path: '/api/dashboard/config', unwrap: (d: any) => d }, // {layout, widgets} oder {config:{...}}
+        { path: '/api/dashboard', unwrap: (d: any) => d },
+        { path: '/api/dashboard/me', unwrap: (d: any) => d },
+      ];
 
-      const cfg = asConfig(configResponse.data?.config ?? configResponse.data);
-      setDashboardConfig(cfg);
-    } catch (err: any) {
-      // 401er schön melden
-      if (err?.res && err.res.status === 401) {
-        setError('Nicht autorisiert. Bitte neu einloggen.');
-      } else {
-        setError(err?.response?.data?.message || err?.message || 'Error loading dashboard configuration.');
+      let loaded = false;
+      for (const ep of tryEndpoints) {
+        if (loaded) break;
+        try {
+          const res = await apiClient.get(ep.path);
+          const cfg = coerceConfig(ep.unwrap(res.data));
+          setDashboardConfig(cfg);
+          loaded = true;
+        } catch (e: any) {
+          // 404 oder 401 → ignorieren, versuche nächsten Endpoint
+          if (e?.response?.status === 401) throw e; // bei 401 sofort abbrechen
+        }
       }
+      if (!loaded) {
+        // Als letzte Option: leer starten, aber UI anzeigen
+        setDashboardConfig(emptyConfig());
+      }
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 401) setError('Nicht autorisiert. Bitte neu einloggen.');
+      else setError(err?.response?.data?.message || err?.message || 'Fehler beim Laden des Dashboards.');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { fetchDashboardConfig(); }, [fetchDashboardConfig]);
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  // ---- Layoutänderung im State mitschreiben ----
   const onLayoutChange = (newLayout: Layout[]) => {
-    setDashboardConfig((prev) => (prev ? { ...prev, layout: newLayout } : prev));
+    setDashboardConfig((prev) => ({ ...prev, layout: newLayout }));
   };
 
+  // ---- Speichern ----
   const handleSaveConfig = async () => {
-    if (!dashboardConfig) return;
     try {
-await apiClient.post('/api/dashboard/config', {
-  name: dashboardConfig.name || 'Mein Dashboard',
-  config: { layout: dashboardConfig.layout, widgets: dashboardConfig.widgets },
-  isDefault: true, // optional
-});
+      await apiClient.post('/api/dashboard/config', {
+        name: dashboardConfig.name || 'Mein Dashboard',
+        config: { layout: dashboardConfig.layout, widgets: dashboardConfig.widgets },
+        isDefault: true,
+      });
       setSnackbar({ open: true, message: 'Layout erfolgreich gespeichert!', severity: 'success' });
       posthog.capture('layout_saved', {
         widget_count: dashboardConfig.widgets.length,
         layout_item_count: dashboardConfig.layout.length
       });
-    } catch {
-      setSnackbar({ open: true, message: 'Fehler beim Speichern des Layouts.', severity: 'error' });
+    } catch (e: any) {
+      setSnackbar({ open: true, message: e?.response?.data?.message || 'Fehler beim Speichern des Layouts.', severity: 'error' });
     }
   };
 
+  // ---- Widget-Menü ----
   const handleOpenAddWidgetMenu = (event: React.MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget);
   const handleCloseAddWidgetMenu = () => setAnchorEl(null);
 
   const handleDeleteWidget = (widgetId: string) => {
-    if (!dashboardConfig) return;
     const widgetType = dashboardConfig.widgets.find(w => w.id === widgetId)?.type;
     posthog.capture('widget_deleted', { widget_type: widgetType });
-    const updatedWidgets = dashboardConfig.widgets.filter((w) => w.id !== widgetId);
-    const updatedLayout = dashboardConfig.layout.filter((l) => l.i !== widgetId);
-    setDashboardConfig({ layout: updatedLayout, widgets: updatedWidgets, name: dashboardConfig.name });
+    setDashboardConfig((prev) => ({
+      ...prev,
+      widgets: prev.widgets.filter((w) => w.id !== widgetId),
+      layout: prev.layout.filter((l) => l.i !== widgetId),
+    }));
   };
 
   const handleAddWidget = (widgetTypeKey: string) => {
-    if (!dashboardConfig) return;
     const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widgetTypeKey);
     if (!widgetTypeMeta) return;
     posthog.capture('widget_added', { widget_type: widgetTypeKey });
+
     const newWidgetId = `${widgetTypeMeta.type_key}-${Date.now()}`;
-    const newWidgets: WidgetConfig[] = [
-      ...dashboardConfig.widgets,
-      { id: newWidgetId, type: widgetTypeMeta.type_key },
-    ];
     const defaultWidth = widgetTypeMeta.default_width || 4;
+
+    const newWidget: WidgetConfig = { id: newWidgetId, type: widgetTypeMeta.type_key };
     const newLayoutItem: Layout = {
       i: newWidgetId,
       x: 0,
       y: Infinity,
       w: defaultWidth,
       h: widgetTypeMeta.default_height || 8,
-      minW: widgetTypeMeta.default_min_width || 1,
+      minW: Math.min(widgetTypeMeta.default_min_width || 1, defaultWidth),
       minH: widgetTypeMeta.default_min_height || 1,
     };
-    setDashboardConfig((prev) =>
-      prev ? { name: prev.name, widgets: newWidgets, layout: [...prev.layout, newLayoutItem] } : prev
-    );
+
+    setDashboardConfig((prev) => ({
+      ...prev,
+      widgets: [...prev.widgets, newWidget],
+      layout: [...prev.layout, newLayoutItem],
+    }));
+
     handleCloseAddWidgetMenu();
   };
 
+  // ---- Widgets rendern (defensiv) ----
   const renderWidgetContent = (widget: WidgetConfig) => {
     const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widget.type);
     if (!widgetTypeMeta) {
@@ -229,16 +251,9 @@ await apiClient.post('/api/dashboard/config', {
         filterLabel: config.filterLabel,
         description: widgetTypeMeta.description,
       },
-      // ===== HIER WURDE DER EINTRAG FÜR DAS PODCAST WIDGET HINZUGEFÜGT =====
-      PodcastWidget: {
-        category: config.category,
-      },
-      VideoWidget: {
-        category: config.category, 
-      },      
-      BusinessPartnerInfo: {
-        businessPartner,
-      },
+      PodcastWidget: { category: config.category },
+      VideoWidget: { category: config.category },
+      BusinessPartnerInfo: { businessPartner },
     };
 
     return (
@@ -254,7 +269,7 @@ await apiClient.post('/api/dashboard/config', {
     );
   };
 
-  const handleCloseSnackbar = (event?: React.SyntheticEvent | Event, reason?: string) => {
+  const handleCloseSnackbar = (_?: React.SyntheticEvent | Event, reason?: string) => {
     if (reason === 'clickaway') return;
     setSnackbar({ ...snackbar, open: false });
   };
@@ -275,7 +290,9 @@ await apiClient.post('/api/dashboard/config', {
           },
         }}
       />
-      <WelcomeWidget />
+
+      {/* Willkommen-Hinweis nur zeigen, solange der Nutzer ihn nicht bestätigt hat */}
+      {!!user && user.has_seen_welcome_widget === false && <WelcomeWidget />}
 
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2, gap: 2 }}>
         <Button id="add-widget-button" variant="outlined" onClick={handleOpenAddWidgetMenu} startIcon={<AddCircleOutlineIcon />}>
@@ -297,7 +314,7 @@ await apiClient.post('/api/dashboard/config', {
       <Menu anchorEl={anchorEl} open={openAddWidgetMenu} onClose={handleCloseAddWidgetMenu}>
         {asArray(availableWidgetTypes).map((widgetType) => {
           const Icon = getIcon(widgetType.icon_name);
-          const isAlreadyAdded = dashboardConfig?.widgets.some((w) => w.type === widgetType.type_key) ?? false;
+          const isAlreadyAdded = dashboardConfig.widgets.some((w) => w.type === widgetType.type_key);
           return (
             <MenuItem key={widgetType.id} onClick={() => handleAddWidget(widgetType.type_key)} disabled={isAlreadyAdded}>
               <Icon sx={{ mr: 1.5 }} />
@@ -312,9 +329,10 @@ await apiClient.post('/api/dashboard/config', {
           <CircularProgress />
         </Box>
       )}
-      {error && !loading && <Alert severity="error">{error}</Alert>}
 
-      {!loading && dashboardConfig && (
+      {!loading && error && <Alert severity="error">{error}</Alert>}
+
+      {!loading && !error && (
         <ErrorBoundary>
           <ResponsiveGridLayout
             className="layout"
@@ -323,7 +341,7 @@ await apiClient.post('/api/dashboard/config', {
             breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
             cols={{ lg: 12, md: 10, sm: 6, xs: 4 }}
             rowHeight={30}
-            isDroppable={true}
+            isDroppable
             draggableHandle=".widget-drag-handle"
           >
             {dashboardConfig.widgets.map((widget: WidgetConfig) => (

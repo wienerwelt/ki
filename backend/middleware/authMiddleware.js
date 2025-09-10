@@ -1,31 +1,57 @@
 // backend/middleware/authMiddleware.js
 const jwt = require('jsonwebtoken');
 
-const authMiddleware = (req, res, next) => {
-  console.log(`[AuthMiddleware] für Route ${req.originalUrl} wird ausgeführt...`);
+function getTokenFromRequest(req) {
+  // 1) x-auth-token
+  let token = req.header('x-auth-token');
 
-  // 1. Token aus Header ODER Cookie holen
-  const headerToken = req.header('x-auth-token');
-  const cookieToken = req.cookies?.token; // <-- von cookie-parser bereitgestellt
-
-  const token = headerToken || cookieToken;
-
+  // 2) Authorization: Bearer <jwt>
   if (!token) {
-    console.error('[AuthMiddleware] Fehler: Kein Token im Header oder Cookie gefunden.');
+    const auth = req.headers.authorization || '';
+    if (auth.startsWith('Bearer ')) token = auth.slice(7);
+  }
+
+  // 3) Cookie "token"
+  if (!token && req.cookies && req.cookies.token) {
+    token = req.cookies.token;
+  }
+
+  return token;
+}
+
+function extractUserFromPayload(decoded) {
+  if (decoded && typeof decoded === 'object') {
+    if (decoded.user && typeof decoded.user === 'object') return decoded.user;
+    return {
+      id: decoded.id || decoded.userId || decoded.sub,
+      role: decoded.role || (decoded.user && decoded.user.role),
+      email: decoded.email || (decoded.user && decoded.user.email),
+      username: decoded.username || (decoded.user && decoded.user.username),
+    };
+  }
+  return null;
+}
+
+const authMiddleware = (req, res, next) => {
+  const token = getTokenFromRequest(req);
+  if (!token) {
     return res.status(401).json({ message: 'No token, authorization denied' });
   }
 
   try {
-    console.log('[AuthMiddleware] Token gefunden, versuche zu verifizieren:', token);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    console.log('[AuthMiddleware] Token erfolgreich verifiziert. Entschlüsselte Benutzerdaten:', decoded.user);
-
-    req.user = decoded.user;
-    next();
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      return res.status(500).json({ message: 'Server misconfigured: JWT_SECRET missing' });
+    }
+    const decoded = jwt.verify(token, secret);
+    const user = extractUserFromPayload(decoded);
+    if (!user || (!user.id && !user.email)) {
+      return res.status(401).json({ message: 'Token is not valid (no user info)' });
+    }
+    req.user = user;
+    return next();
   } catch (err) {
-    console.error('[AuthMiddleware] Fehler: Token ist ungültig.', err.message);
-    res.status(401).json({ message: 'Token is not valid' });
+    return res.status(401).json({ message: 'Token is not valid' });
   }
 };
 

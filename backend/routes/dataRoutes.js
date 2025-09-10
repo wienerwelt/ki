@@ -5,6 +5,8 @@ const dataController = require('../controllers/dataController');
 
 router.use(authMiddleware);
 
+router.get('/relevant-action', dataController.getRelevantAction)
+router.get('/search', dataController.globalSearch);
 router.get('/fuel/search', dataController.fuelSearch);
 router.get('/fuel/prices-by-ids', dataController.getPricesByIds);
 router.get('/commodities', dataController.getCommodityPrices);
@@ -32,14 +34,12 @@ router.get('/calendar-events', authMiddleware, dataController.getCalendarEvents)
 router.get('/enhanced-calendar-events', authMiddleware, dataController.getEnhancedCalendarEvents);
 router.post('/events/:eventId/vote', authMiddleware, dataController.voteOnEventAttendance);
 router.post('/events/share', authMiddleware, dataController.shareEventByEmail);
-
-// Diese Route sollte jetzt funktionieren, da die Funktion im dataController existiert
+router.get('/dashboard/config', dataController.getDashboardConfig);
 router.get('/actions', authMiddleware, dataController.getActiveActionsForWidget);
-
-// Active Advertisement Endpoint
 router.get('/active-advertisement', dataController.getActiveAdvertisement);
-
-// NEU: Fehlende Route für Tags hinzugefügt
 router.get('/tags', dataController.getTagsForCategory);
+
+// --- NEU: Route, um alle existierenden Tags für Autocomplete abzurufen ---
+router.get('/all-tags', dataController.getAllTags);
 
 module.exports = router;

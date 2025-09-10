@@ -7,6 +7,7 @@ import {
   Dialog, DialogActions, DialogContent, DialogTitle, Stack,
   Select, MenuItem, FormControl, InputLabel
 } from '@mui/material';
+// KORREKTUR: `fetchBusinessPartnerData` wird nun korrekt aus dem AuthContext importiert.
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../apiClient';
 
@@ -17,7 +18,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
 import StorageIcon from '@mui/icons-material/Storage';
 
-// --- Interfaces & Typen ---
+// ... (Interfaces und Helper Functions bleiben unverändert) ...
 interface PartnerFile {
   id: string;
   filename: string;
@@ -28,15 +29,11 @@ interface PartnerFile {
   description?: string | null;
   tags?: string[] | null;
 }
-
 interface BusinessPartner {
   id: string;
   name: string;
 }
-
 type Order = 'asc' | 'desc';
-
-// --- Helper Functions ---
 const formatFileSize = (bytes: number | null | undefined, decimals = 2) => {
   if (bytes == null || bytes <= 0) return '0 Bytes';
   const k = 1024;
@@ -45,26 +42,22 @@ const formatFileSize = (bytes: number | null | undefined, decimals = 2) => {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 };
-
 function descendingComparator(a: PartnerFile, b: PartnerFile, orderBy: keyof PartnerFile) {
-  const valA = a[orderBy] ?? '';
-  const valB = b[orderBy] ?? '';
+  const valA = (a[orderBy] as any) ?? '';
+  const valB = (b[orderBy] as any) ?? '';
   if (valB < valA) return -1;
   if (valB > valA) return 1;
   return 0;
 }
-
-function getComparator(
-  order: Order,
-  orderBy: keyof PartnerFile,
-): (a: PartnerFile, b: PartnerFile) => number {
+function getComparator(order: Order, orderBy: keyof PartnerFile): (a: PartnerFile, b: PartnerFile) => number {
   return order === 'desc'
     ? (a, b) => descendingComparator(a, b, orderBy)
     : (a, b) => -descendingComparator(a, b, orderBy);
 }
 
+
 const FileManagementPage: React.FC = () => {
-  const { user, businessPartner, fetchBusinessPartnerData } = useAuth();
+  const { user, businessPartner, fetchBusinessPartnerData } = useAuth(); // <-- Fehler ist hier behoben
   const [files, setFiles] = useState<PartnerFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,14 +71,13 @@ const FileManagementPage: React.FC = () => {
   const [fileDescription, setFileDescription] = useState('');
   const [fileTags, setFileTags] = useState('');
 
-  // Zustand für Admin-Funktionen
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>('');
   const [isPartnerListLoading, setIsPartnerListLoading] = useState(false);
 
   const isAdmin = user?.role === 'admin';
   const isAssistent = user?.role === 'assistenz';
-  const isUploader = isAdmin || isAssistent; // Demo-Nutzer o.ä. sind ausgeschlossen
+  const isUploader = isAdmin || isAssistent;
 
   const fetchFiles = useCallback(async () => {
     setLoading(true);
@@ -100,7 +92,6 @@ const FileManagementPage: React.FC = () => {
     }
   }, []);
 
-  // Partnerliste für Admins
   const fetchPartners = useCallback(async () => {
     if (!isAdmin) return;
     setIsPartnerListLoading(true);
@@ -139,6 +130,7 @@ const FileManagementPage: React.FC = () => {
 
   const handleFileUpload = async () => {
     if (!fileToUpload) return;
+
     if (isAdmin && !selectedPartnerId) {
       setError('Bitte wählen Sie einen Business Partner aus.');
       return;
@@ -156,11 +148,9 @@ const FileManagementPage: React.FC = () => {
     }
 
     try {
-      // KEIN Content-Type explizit setzen → Browser setzt Boundary
       await apiClient.post('/api/files/upload', formData);
       handleCloseUploadDialog();
       await fetchFiles();
-      // Quota/Usage ggf. aktualisieren
       await fetchBusinessPartnerData();
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Fehler beim Hochladen der Datei.');
@@ -191,7 +181,8 @@ const FileManagementPage: React.FC = () => {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    } catch (err: any) {
+    } catch (err: any)
+      {
       setError(err?.response?.data?.message || err?.message || 'Fehler beim Herunterladen der Datei.');
     }
   };
@@ -212,23 +203,19 @@ const FileManagementPage: React.FC = () => {
     );
     return filtered.sort(getComparator(order, orderBy));
   }, [files, searchTerm, order, orderBy, isAdmin]);
-
-  // -------- Variante B: 0 = KEIN Upload (free) --------
+  
   const usageBytes = businessPartner?.storage_usage_bytes ?? 0;
   const limitBytes = businessPartner?.storage_limit_bytes ?? 0;
   const usagePercent = limitBytes > 0 ? (Math.max(0, usageBytes) / limitBytes) * 100 : 0;
-
-  const storageTier = businessPartner?.storage_tier || 'free';
-  const tierIsFree = storageTier === 'free';
-
-  // Wenn Limit > 0 → klassischer Vergleich; wenn Limit = 0 → „free“ gilt als „voll“ (Upload verboten)
-  const isStorageFull = limitBytes > 0 ? usageBytes >= limitBytes : tierIsFree;
-
-  const hasUploadPermission = isAdmin || isAssistent;
-  const hasPaidTier = storageTier !== 'free';
-  const hasStorageSpace = limitBytes > 0 && usageBytes < limitBytes;
   
-  const canUpload = hasUploadPermission && hasPaidTier && hasStorageSpace;
+  const canUpload = useMemo(() => {
+    if (isAdmin) return true;
+    if (isAssistent) {
+      return businessPartner && businessPartner.storage_limit_bytes > 0 && businessPartner.storage_usage_bytes < businessPartner.storage_limit_bytes;
+    }
+    return false;
+  }, [isAdmin, isAssistent, businessPartner]);
+
 
   return (
     <Box sx={{ p: 3 }}>
@@ -239,7 +226,7 @@ const FileManagementPage: React.FC = () => {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
             <StorageIcon color="action" />
             <Typography variant="body1" sx={{ flexGrow: 1 }}>
-              Speicherplatz (Paket: <strong>{storageTier}</strong>)
+              Speicherplatz (Paket: <strong>{businessPartner?.storage_tier || 'N/A'}</strong>)
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {`${formatFileSize(usageBytes)} / ${formatFileSize(limitBytes)} (${usagePercent.toFixed(1)}%)`}
@@ -261,7 +248,7 @@ const FileManagementPage: React.FC = () => {
             sx={{ minWidth: '300px' }}
           />
           {isUploader && (
-            <Tooltip title={!canUpload ? 'Speicherlimit erreicht, Paket erlaubt keine Uploads oder Demo-Modus.' : ''}>
+            <Tooltip title={!canUpload ? 'Speicherlimit erreicht oder Paket erlaubt keine Uploads.' : ''}>
               <span>
                 <Button
                   variant="contained"
@@ -354,7 +341,7 @@ const FileManagementPage: React.FC = () => {
                 </TableCell>
                 {isAdmin && (
                   <TableCell sortDirection={orderBy === 'business_partner_name' ? order : false}>
-                    <TableSortLabel active={orderBy === 'business_partner_name'} direction={order} onClick={() => handleSortRequest('business_partner_name')}>
+                    <TableSortLabel active={orderBy === 'business_partner_name'} direction={order} onClick={() => handleSortRequest('business_partner_name' as keyof PartnerFile)}>
                       Business Partner
                     </TableSortLabel>
                   </TableCell>

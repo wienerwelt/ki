@@ -86,14 +86,14 @@ const getYouTubeVideoId = (url: string | null | undefined): string | null => {
 
 const getYouTubeThumbnail = (videoId: string | null): string => {
     if (!videoId) return defaultVideoThumbnail;
-    return `https://www.google.com/url?sa=E&source=gmail&q=youtube.com/channel/`;
+    return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 };
 
 const getDomain = (url: string | null | undefined): string | null => {
     if (!url) return null;
     try {
         const hostname = new URL(url).hostname;
-        if (hostname.includes('youtu.be') || hostname.includes('youtube.com')) {
+        if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) {
             return 'YouTube';
         }
         return hostname.replace(/^www\./, '');
@@ -255,12 +255,12 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
     key={activeVideoId}
     width="100%"
     height="100%"
-    src={`https://www.youtube-nocookie.com/embed/${activeVideoId}?autoplay=1`}
+    src={`https://www.youtube-nocookie.com/embed/${activeVideoId}`}
     title="YouTube video player"
     frameBorder="0"
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
     allowFullScreen
-    referrerPolicy="strict-origin-when-cross-origin" // <-- DIESE ZEILE IST NEU
+    referrerPolicy="strict-origin-when-cross-origin"
 ></iframe>
                             <Tooltip title="Player schließen">
                                 <IconButton onClick={handleClosePlayer} sx={{ position: 'absolute', top: 8, right: 8, bgcolor: 'rgba(0,0,0,0.5)', color: 'white', '&:hover': { bgcolor: 'rgba(0,0,0,0.7)' } }}>

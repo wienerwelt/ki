@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Box, Typography, CircularProgress, MenuItem, Alert, List, ListItem, ListItemText, Divider,
     Dialog, DialogTitle, DialogContent, Button, Stack, IconButton, Tooltip, Link as MuiLink,
-    DialogActions, Pagination, Select, FormControl, InputLabel, SelectChangeEvent, Badge, Chip,
+    DialogActions, Select, FormControl, InputLabel, SelectChangeEvent, Avatar, Chip,
     TextField, InputAdornment, Paper
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
@@ -17,14 +17,15 @@ import ShareIcon from '@mui/icons-material/Share';
 import DynamicFeedIcon from '@mui/icons-material/DynamicFeed';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import { useNavigate } from 'react-router-dom';
+import posthog from 'posthog-js';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
 import ClickAwayListener from '@mui/material/ClickAwayListener';
 
-// --- Interfaces ---
 interface ScrapedContentItem {
     id: string;
     title: string;
@@ -38,10 +39,20 @@ interface ScrapedContentItem {
     user_vote: number;
     scraped_at: string;
     region: string | null;
+    is_trusted_source: boolean;
 }
 interface Tag {
     name: string;
     count: number;
+}
+interface RelevantAction {
+    id: string;
+    title: string;
+    content_text: string;
+    link_url: string;
+    image_url: string;
+    is_click_tracking_enabled: boolean;
+    business_partner_id: string;
 }
 interface GenericScrapeWidgetProps extends BaseWidgetProps {
     icon?: React.ReactNode;
@@ -65,7 +76,6 @@ interface ShareState {
     recipientEmail: string;
 }
 
-// --- Hilfskomponenten ---
 const ArticleBodyRenderer: React.FC<{ summary: string | null | undefined }> = ({ summary }) => {
     if (!summary) return <Typography>Kein Inhalt verfügbar.</Typography>;
     return (
@@ -154,12 +164,12 @@ const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onS
     );
 };
 
-// --- Haupt-Widget-Komponente ---
 const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, description, filterLabel, widgetTypeKey }) => {
     const { user } = useAuth();
     const navigate = useNavigate();
     const [items, setItems] = useState<ScrapedContentItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [selectedArticle, setSelectedArticle] = useState<ScrapedContentItem | null>(null);
     const [templateState, setTemplateState] = useState<TemplateState>({ open: false, loading: false, error: null, content: '' });
@@ -173,18 +183,21 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
     const [availableTags, setAvailableTags] = useState<Tag[]>([]);
     const [selectedTag, setSelectedTag] = useState('all');
+    const [filterMode, setFilterMode] = useState<'all' | 'new' | 'unread'>('all');
+    const [relevantAction, setRelevantAction] = useState<RelevantAction | null>(null);
 
     useEffect(() => { const handler = setTimeout(() => { setDebouncedSearchTerm(searchTerm); }, 500); return () => { clearTimeout(handler); }; }, [searchTerm]);
     useEffect(() => { if (user?.regions && user.regions.length > 0) { const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0]; setSelectedRegion(defaultRegion); } }, [user?.regions]);
 
-    const fetchData = useCallback(async (currentPage: number, currentSortBy: string, region: Region | null, search: string, subFilter: string) => {
+    const fetchData = useCallback(async (currentPage: number, currentSortBy: string, region: Region | null, search: string, subFilter: string, currentFilterMode: string, loadMore = false) => {
         if (!category) {
             setIsLoading(false);
             setError("Keine Kategorie im Widget-Typ konfiguriert.");
             setItems([]);
             return;
         }
-        setIsLoading(true);
+        if (loadMore) setIsLoadingMore(true);
+        else setIsLoading(true);
         setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
@@ -194,27 +207,61 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                 sortBy: currentSortBy,
                 region: region ? region.name : 'all',
                 category,
-                tag: subFilter
+                tag: subFilter,
+                filter: currentFilterMode
             });
             if (search) params.append('search', search);
-            const [contentRes, tagsRes] = await Promise.all([
+
+            const [contentRes, tagsRes, actionRes] = await Promise.all([
                 apiClient.get(`/api/data/scraped-content?${params.toString()}`, { headers: { 'x-auth-token': token } }),
-                apiClient.get(`/api/data/tags?category=${category}`, { headers: { 'x-auth-token': token } })
+                apiClient.get(`/api/data/tags?category=${category}`, { headers: { 'x-auth-token': token } }),
+                apiClient.get(`/api/data/relevant-action?category=${category}&region=${region?.name || 'all'}`, { headers: { 'x-auth-token': token } })
             ]);
-            setItems(contentRes.data?.data || []);
+            
+            const newItems = contentRes.data?.data || [];
+            setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
             setTotalPages(contentRes.data?.totalPages || 0);
             setCounts(contentRes.data?.counts || { unread: 0, new: 0 });
-            setAvailableTags(tagsRes.data || []);
+            
+            if (currentPage === 1) {
+                setAvailableTags(tagsRes.data || []);
+                setRelevantAction(actionRes.data);
+            }
+
         } catch (err: any) {
             setError(err.response?.data?.message || `Inhalte konnten nicht geladen werden.`);
         } finally {
             setIsLoading(false);
+            setIsLoadingMore(false);
         }
     }, [category]);
 
-    useEffect(() => { setPage(1); }, [sortBy, selectedRegion, debouncedSearchTerm, selectedTag]);
-    useEffect(() => { fetchData(page, sortBy, selectedRegion, debouncedSearchTerm, selectedTag); }, [fetchData, page, sortBy, selectedRegion, debouncedSearchTerm, selectedTag]);
+    useEffect(() => { 
+        setPage(1);
+        if (selectedRegion || (user?.regions && user.regions.length === 0)) {
+            fetchData(1, sortBy, selectedRegion, debouncedSearchTerm, selectedTag, filterMode);
+        }
+     }, [sortBy, selectedRegion, debouncedSearchTerm, selectedTag, filterMode, fetchData, user?.regions]);
 
+    const handleLoadMore = () => {
+        const nextPage = page + 1;
+        setPage(nextPage);
+        fetchData(nextPage, sortBy, selectedRegion, debouncedSearchTerm, selectedTag, filterMode, true);
+    };
+
+    const handleActionClick = () => {
+        if (!relevantAction) return;
+        if (relevantAction.is_click_tracking_enabled) {
+            posthog.capture('partner_action_clicked', {
+                action_id: relevantAction.id,
+                action_title: relevantAction.title,
+                business_partner_id: relevantAction.business_partner_id,
+                widget_category: category,
+            });
+        }
+        window.open(relevantAction.link_url, '_blank', 'noopener,noreferrer');
+    };
+    
     const handleReportError = () => {
         navigate('/feedback', {
             state: { type: 'bug', widget: title, error: error, widgetKey: widgetTypeKey }
@@ -284,12 +331,28 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
         <WidgetPaper
             title={
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', width: '100%' }}>
-                    <Tooltip title={description || title}>
-                        <span>{icon}</span>
-                    </Tooltip>
+                    <Tooltip title={description || title}><span>{icon}</span></Tooltip>
                     <Typography variant="h6">{title}</Typography>
-                    <Badge badgeContent={counts.new} color="primary"><Chip label="Neu" size="small" variant="outlined" /></Badge>
-                    <Badge badgeContent={counts.unread} color="secondary"><Chip label="Ungelesen" size="small" variant="outlined" /></Badge>
+                    
+                    <Chip
+                        label="Neu"
+                        size="small"
+                        variant={filterMode === 'new' ? 'filled' : 'outlined'}
+                        color="primary"
+                        clickable
+                        onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')}
+                        avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'primary.main', color: 'primary.contrastText' }}>{counts.new}</Avatar>}
+                    />
+                    <Chip
+                        label="Ungelesen"
+                        size="small"
+                        variant={filterMode === 'unread' ? 'filled' : 'outlined'}
+                        color="secondary"
+                        clickable
+                        onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')}
+                        avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{counts.unread}</Avatar>}
+                    />
+                    
                     <Box sx={{ flexGrow: 1 }} />
                     <AnimatedSearchBar onSearch={setSearchTerm} />
                     {user?.regions && user.regions.length > 1 && (
@@ -325,7 +388,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
             onDelete={onDelete}
             isRemovable={isRemovable}
         >
-            {isLoading ? (
+            {isLoading && page === 1 ? (
                 <Box sx={{ m: 'auto', textAlign: 'center' }}><CircularProgress /></Box>
             ) : error ? (
                 <Alert
@@ -354,7 +417,12 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                                                     secondary={
                                                         <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
                                                             <Typography variant="caption" color="text.secondary">Gefunden am: {new Date(item.scraped_at).toLocaleDateString('de-AT')}</Typography>
-                                                            {domain && (<MuiLink href={item.original_url!} target="_blank" rel="noopener noreferrer" variant="caption" color="text.secondary" onClick={(e) => e.stopPropagation()}>({domain})</MuiLink>)}
+                                                            {domain && (
+                                                                <MuiLink href={item.original_url!} target="_blank" rel="noopener noreferrer" variant="caption" color="text.secondary" onClick={(e) => e.stopPropagation()} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                                                                    ({domain})
+                                                                    {item.is_trusted_source && (<Tooltip title="Geprüfte Quelle"><VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main', ml: 0.5 }} /></Tooltip>)}
+                                                                </MuiLink>
+                                                            )}
                                                             <Box sx={{ flexGrow: 1 }} />
                                                             <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
                                                         </Box>
@@ -367,8 +435,31 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                                 })}
                             </List>
                         ) : (<Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>Keine Inhalte für Ihre Auswahl gefunden.</Typography>)}
+
+                        {page < totalPages && (
+                            <Box sx={{ textAlign: 'center', py: 1 }}>
+                                <Button onClick={handleLoadMore} disabled={isLoadingMore}>
+                                    {isLoadingMore ? <CircularProgress size={24} /> : 'Mehr laden'}
+                                </Button>
+                            </Box>
+                        )}
+
+                        {relevantAction && (
+                            <Paper variant="outlined" sx={{ mt: 2, p: 1.5, borderColor: 'primary.main' }}>
+                                <Stack direction="row" spacing={2} alignItems="center">
+                                    {relevantAction.image_url && <Avatar src={relevantAction.image_url} sx={{ width: 56, height: 56 }} variant="rounded" />}
+                                    <Box flexGrow={1}>
+                                        <Typography variant="caption" color="primary.main">Lösungspartner</Typography>
+                                        <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>{relevantAction.title}</Typography>
+                                        <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>{relevantAction.content_text}</Typography>
+                                    </Box>
+                                    <Button variant="contained" size="small" onClick={handleActionClick}>
+                                        Mehr erfahren
+                                    </Button>
+                                </Stack>
+                            </Paper>
+                        )}
                     </Box>
-                    {totalPages > 1 && <Box sx={{ display: 'flex', justifyContent: 'center', pt: 1, borderTop: 1, borderColor: 'divider' }}><Pagination count={totalPages} page={page} onChange={(e, value) => setPage(value)} size="small" /></Box>}
                 </Box>
             )}
 

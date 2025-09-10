@@ -4,21 +4,21 @@ const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
 const userController = require('../controllers/userController');
 
-// Alle Routen hier sind für eingeloggte Benutzer
 router.use(authMiddleware);
 
-// Route zum Abrufen des eigenen Profils
+// Bestehende Routen
 router.get('/me', userController.getProfile);
-
-// Route zum Aktualisieren des eigenen Profils
 router.put('/me', userController.updateProfile);
+router.post('/mark-welcome-seen', userController.markWelcomeAsSeen);
+router.get('/favorites', userController.getFavorites);
+router.post('/favorites', userController.addFavorite);
+router.delete('/favorites/:externalId', userController.removeFavorite);
 
-// Fügen Sie diese Route zu Ihrer userRoutes-Datei hinzu
-router.post('/mark-welcome-seen', authMiddleware, userController.markWelcomeAsSeen);
+// Routen für benutzerdefinierte Tags
+router.get('/tags', userController.getUserTags);
+router.post('/tags', userController.addUserTag);
 
-// --- NEUE ROUTEN FÜR BENUTZER-FAVORITEN ---
-router.get('/favorites', authMiddleware, userController.getFavorites);
-router.post('/favorites', authMiddleware, userController.addFavorite);
-router.delete('/favorites/:externalId', authMiddleware, userController.removeFavorite);
+// GEÄNDERT: Die Route erwartet jetzt den Tag-Namen als Teil der URL.
+router.delete('/tags/:tagName', userController.removeUserTag);
 
 module.exports = router;

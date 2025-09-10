@@ -51,6 +51,8 @@ const adminSourcesRoutes = require('./routes/adminSourcesRoutes.js');
 const feedbackRoutes = require('./routes/feedbackRoutes');
 const fileRoutes = require('./routes/fileRoutes');
 const dataController = require('./controllers/dataController');
+const newsletterRoutes = require('./routes/newsletterRoutes');
+const surveyRoutes = require('./routes/surveyRoutes');
 
 
 // --- 2. INITIALISIERUNG & KONFIGURATION ---
@@ -78,7 +80,12 @@ createBullBoard({
 
 // --- 3. MIDDLEWARE ---
 const allowedOrigins = ['http://localhost:5173', 'https://dashboard.mobiliti.at'];
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(cors({
+origin: allowedOrigins,
+credentials: true,
+allowedHeaders: ['Content-Type', 'Authorization'],
+methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+}));
 app.use(express.json());
 app.use(cookieParser());
 app.use((req, res, next) => { console.log(`[${req.method}] ${req.originalUrl}`); next(); });
@@ -119,6 +126,8 @@ app.use('/api/admin/actions', adminBpActionsRoutes);
 app.use('/api/admin/cronjobs', adminCronjobsRoutes);
 app.use('/api/admin/sources', adminSourcesRoutes);
 app.use('/api/files', fileRoutes);
+app.use('/api/newsletter', newsletterRoutes);
+app.use('/api/surveys', surveyRoutes);
 
 // Debug
 app.get('/api/debug/db-inspector', async (req, res) => {

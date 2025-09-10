@@ -132,7 +132,7 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
       const res = await apiClient.get(`/api/users/favorites?widgetType=${widgetTypeKey}`);
       const raw: any[] = Array.isArray(res.data) ? res.data : [];
       const norm = raw.map((f: any) => ({
-        external_id: f.external_id ?? f.id, // Fallback, falls Backend „id“ = external_id liefert
+        external_id: f.external_id ?? f.id,
         name: f.name,
         country: (f.country_code ?? f.country ?? '').toString().toUpperCase(),
         country_code: (f.country_code ?? f.country ?? '').toString().toUpperCase(),
@@ -162,11 +162,10 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
       }
 
       if (viewMode === 'search') {
-        const activeCountry: 'DE' | 'AT' = selectedCountry; // << wird *benutzt* (fix fürs TS-„unused“-Warning)
+        const activeCountry: 'DE' | 'AT' = selectedCountry; 
 
         const isLocationSearch = !submittedSearch && !!userLocation;
         if (!submittedSearch && !isLocationSearch) {
-          // ohne Suchbegriff & ohne Standort: nichts tun
           setIsLoading(false);
           setPricedStations([]);
           return;
@@ -196,7 +195,6 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
           countryCode: activeCountry
         }));
       } else {
-        // FAVORITEN: IDs pro Land gruppieren
         const favsByCountry = favorites.reduce<Record<'DE' | 'AT', string[]>>((acc: any, f) => {
           const c = ((f.country ?? f.country_code) || '').toUpperCase();
           if (c === 'DE' || c === 'AT') {
@@ -252,7 +250,6 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
         return;
       }
 
-      // IDs erneut pro Land gruppieren für einen konsistenten Preis-Refetch (aktueller Kraftstoff & Status)
       const byCountry = stationsToFetch.reduce<Record<'DE' | 'AT', string[]>>((acc: any, s) => {
         const c = s.countryCode;
         acc[c] = acc[c] || [];
@@ -321,7 +318,6 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
     sortBy, submittedSearch, userLocation, isProviderAvailable
   ]);
 
-  // Initial: Standort + Favoriten laden
   useEffect(() => {
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
@@ -332,10 +328,8 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
     fetchFavoritesFromDB();
   }, [fetchFavoritesFromDB]);
 
-  // Reload bei Abhängigkeitsänderung
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Suche
   const handleSearchSubmit = () => {
     if (searchTerm.trim()) {
       setSubmittedSearch(searchTerm.trim());
@@ -348,13 +342,19 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
   };
   const clearSearch = () => { setSearchTerm(''); setSubmittedSearch(''); };
 
-  // Favoriten-Utilities
   const isFavorite = useCallback(
     (stationId: string) => favorites.some(f => f.external_id === stationId),
     [favorites]
   );
 
   const toggleFavorite = useCallback(async (station: StationBase) => {
+    // --- NEU: Log-Ausgabe zur Überprüfung der gesendeten Daten ---
+    console.log("--- Speichere Favorit ---", {
+        id: station.id,
+        name: station.name,
+        countryCode: station.countryCode
+    });
+
     const isFav = isFavorite(station.id);
     try {
       if (isFav) {

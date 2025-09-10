@@ -2,11 +2,12 @@
 const axios = require('axios');
 const db = require('../config/db');
 const { sendEmail } = require('../services/emailService');
+const { renderLayout } = require('../services/emailTemplates');
 const FUEL_PRICE_API_KEY = process.env.FUEL_PRICE_API_KEY;
 const FUEL_PRICE_API_URL = process.env.FUEL_PRICE_API_URL;
 const TANKERKOENIG_API_KEY = process.env.TANKERKOENIG_API_KEY;
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
-
+// const htmlBody = renderShareContentEmail({ senderName, fromName, title, summary, source });
 
 // --- HILFSFUNKTIONEN ---
 const getDistance = (lat1, lon1, lat2, lon2) => {
@@ -329,13 +330,17 @@ exports.getTaxChanges = async (req, res) => {
 
 exports.getFleetAssociationNews = async (req, res) => {
     try {
-        const result = await db.query(
-            `SELECT id, title, summary, original_url, published_date, event_date, category, scraped_at
+        const { id: userId } = req.user; // User-ID für "is_read" Status holen
+        const query = `
+            SELECT 
+                id, title, summary, original_url, published_date, event_date, category, scraped_at,
+                EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = id AND ursc.user_id = $1) as is_read
             FROM scraped_content
             WHERE source_identifier = 'fuhrpark_news' OR source_identifier = 'fuhrpark_events'
             ORDER BY published_date DESC, event_date DESC, scraped_at DESC
-            LIMIT 20`
-        );
+            LIMIT 20
+        `;
+        const result = await db.query(query, [userId]);
         res.json({
             source: 'Internal Scraped Fleet Association News (from scraped_content)',
             timestamp: new Date().toISOString(),
@@ -776,48 +781,90 @@ exports.generateEmailFromContent = async (req, res) => {
 };
 
 
+function toAbsoluteUrl(pathOrUrl) {
+  if (!pathOrUrl) return null;
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  const base = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+  return `${base}${pathOrUrl.startsWith('/') ? '' : '/'}${pathOrUrl}`;
+}
+
 exports.shareContentByEmail = async (req, res) => {
-    const { title, summary, source, recipientEmail } = req.body;
-    const { name: senderName, business_partner_id } = req.user;
-
+  try {
+    const { title, summary, source, recipientEmail } = req.body || {};
     if (!title || !summary || !recipientEmail) {
-        return res.status(400).json({ message: 'Titel, Inhalt und Empfänger-E-Mail sind erforderlich.' });
+      return res.status(400).json({ message: 'Titel, Inhalt und Empfänger-E-Mail sind erforderlich.' });
     }
 
+    // 1) Absender (User)
+    const senderName =
+      req.user?.first_name?.trim() ||
+      req.user?.username?.trim() ||
+      req.user?.email?.trim() ||
+      'Dashboard';
+
+    // 2) Business Partner Branding (Titel + Logo)
+    let fromName = 'mobiliti Dashboard';
+    let brandLogoUrl = toAbsoluteUrl('/logos/de-mobiliti.png'); // Fallback
     try {
-        let fromName = 'KI-Dashboard';
-        if (business_partner_id) {
-            const bpResult = await db.query('SELECT dashboard_title FROM business_partners WHERE id = $1', [business_partner_id]);
-            if (bpResult.rows.length > 0 && bpResult.rows[0].dashboard_title) {
-                fromName = bpResult.rows[0].dashboard_title;
-            }
+      const bpId = req.user?.business_partner_id;
+      if (bpId) {
+        const { rows } = await db.query(
+          `SELECT dashboard_title, logo_url FROM business_partners WHERE id = $1 LIMIT 1`,
+          [bpId]
+        );
+        if (rows.length) {
+          if (rows[0].dashboard_title) fromName = rows[0].dashboard_title;
+          if (rows[0].logo_url) brandLogoUrl = toAbsoluteUrl(rows[0].logo_url);
         }
-
-        const subject = `Info von ${fromName}: ${title}`;
-        const htmlBody = `
-            <p>Hallo,</p>
-            <p><strong>${senderName}</strong> hat folgende Information mit Ihnen geteilt:</p>
-            <hr>
-            <h3>${title}</h3>
-            <p>${summary}</p>
-            ${source ? `<p>Weitere Details finden Sie in der Originalquelle: <a href="${source}">${source}</a></p>` : ''}
-            <hr>
-            <p style="font-size: 0.8em; color: #777;"><em>Diese E-Mail wurde automatisch von "${fromName}" versendet.</em></p>
-        `;
-
-        await sendEmail({
-            to: recipientEmail,
-            subject: subject,
-            html: htmlBody,
-            fromName: fromName,
-        });
-
-        res.status(200).json({ message: `Information erfolgreich an ${recipientEmail} gesendet.` });
-
-    } catch (error) {
-        console.error('Fehler bei der "Teilen"-Funktion:', error);
-        res.status(500).json({ message: error.message || 'Der Inhalt konnte nicht geteilt werden.' });
+      }
+    } catch {
+      // Fallbacks bleiben bestehen
     }
+
+    // 3) Betreff & Inhalts-HTML
+    const subject = `Info von ${fromName}: ${title}`;
+    const contentHtml = `
+      <p>Hallo,</p>
+      <p><strong>${senderName}</strong> hat folgende Information mit Ihnen geteilt:</p>
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:12px 0;">
+      <h3 style="margin:0 0 8px;">${title}</h3>
+      <div style="white-space:pre-wrap;">${summary}</div>
+      ${
+        source
+          ? `<p style="margin-top:12px;">Originalquelle: <a href="${source}" target="_blank" rel="noopener">${source}</a></p>`
+          : ''
+      }
+    `;
+
+    // 4) Einheitliches Layout – Logo/Name des BPs übergeben (Fallbacks greifen automatisch)
+    const htmlBody = renderLayout({
+      preheader: title,
+      title: fromName,            // Überschrift/Brand-Name im Layout
+      contentHtml,
+      ctaLabel: source ? 'Zur Quelle' : undefined,
+      ctaUrl: source || undefined,
+      footerText: `Gesendet von ${fromName}.`,
+      // ★ optionales Feld – im Template nutzen, falls vorhanden:
+      brandLogoUrl,
+    });
+
+    // 5) Versand
+    await sendEmail({
+      to: recipientEmail,
+      subject,
+      html: htmlBody,
+      fromName, // Absendername
+      // Optional: Wenn du lieber das Logo als CID einbettest, kannst du emailService so erweitern,
+      // dass es eine brandLogoPath/brandLogoCid Option akzeptiert.
+    });
+
+    return res.status(200).json({
+      message: `Information erfolgreich an ${recipientEmail} gesendet.`,
+    });
+  } catch (error) {
+    console.error('shareContentByEmail error:', error);
+    return res.status(500).json({ message: 'Der Inhalt konnte nicht geteilt werden.' });
+  }
 };
 
 
@@ -1108,9 +1155,7 @@ exports.getScrapedContent = async (req, res) => {
     const { id: userId, last_login_at: lastLogin, business_partner_id: businessPartnerId } = req.user;
     const {
         page = 1, limit = 10, sortBy = 'date', category, region, search,
-        tag, // Das ist der "Sub-Tag" aus dem Dropdown
-        mainFilter, // NEU: Der Hauptfilter aus der Widget-Config
-        filter // NEU: Filter für "neu" oder "nicht gehört"
+        tag, mainFilter, filter
     } = req.query;
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
@@ -1121,9 +1166,24 @@ exports.getScrapedContent = async (req, res) => {
         );
         const { article_score_min, article_score_max } = userSettingsResult.rows[0] || {};
         
+        // --- NEU: Gespeicherte Tags des Nutzers abrufen ---
+        const userTagsResult = await db.query('SELECT tag_name FROM user_saved_tags WHERE user_id = $1', [userId]);
+        const userSavedTags = userTagsResult.rows.map(row => row.tag_name);
+
         const queryParams = [];
         let whereClauses = [];
         let paramIndex = 1;
+
+        // --- NEU: Filter für gespeicherte Tags anwenden ---
+        if (userSavedTags.length > 0) {
+            whereClauses.push(`EXISTS (
+                SELECT 1 FROM scraped_content_tags sct
+                JOIN tags t ON sct.tag_id = t.id
+                WHERE sct.scraped_content_id = sc.id AND t.name = ANY($${paramIndex}::text[])
+            )`);
+            queryParams.push(userSavedTags);
+            paramIndex++;
+        }
 
         if (category) {
             if (category === 'businesspartner_news' || category === 'businesspartner_events') {
@@ -1179,7 +1239,6 @@ exports.getScrapedContent = async (req, res) => {
             queryParams.push(article_score_max);
         }
         
-        // ===== HIER WIRD DER NEUE FILTER VERARBEITET =====
         if (filter === 'unread') {
              whereClauses.push(`NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex})`);
              queryParams.push(userId);
@@ -1189,11 +1248,8 @@ exports.getScrapedContent = async (req, res) => {
             queryParams.push(lastLogin || new Date(0));
             paramIndex++;
         }
-        // ===== ENDE DER ÄNDERUNG =====
-
 
         const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-        // ===== HIER WURDE DER JOIN HINZUGEFÜGT =====
         const baseQuery = `FROM scraped_content sc LEFT JOIN sources s ON sc.original_url = s.url ${whereString}`;
 
         const countQuery = `SELECT COUNT(sc.id) as total_items ${baseQuery}`;
@@ -1226,14 +1282,14 @@ exports.getScrapedContent = async (req, res) => {
             SELECT
                 sc.id, sc.title, sc.summary, sc.original_url, sc.published_date,
                 sc.event_date, sc.category, sc.scraped_at, sc.relevance_score, sc.region,
-                s.status = 'approved' AS is_trusted_source, -- <-- NEUES FELD
+                s.status = 'approved' AS is_trusted_source,
                 EXISTS (
                     SELECT 1 FROM user_read_scraped_content ursc
                     WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex}
                 ) as is_read,
                 COALESCE(crv.vote, 0) as user_vote
             FROM scraped_content sc
-            LEFT JOIN sources s ON sc.original_url = s.url -- <-- NEUER JOIN
+            LEFT JOIN sources s ON sc.original_url = s.url
             LEFT JOIN content_relevance_votes crv ON crv.content_id = sc.id AND crv.user_id = $${paramIndex}
             ${whereString}
             ${orderByClause}
@@ -1419,6 +1475,7 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
                 sc.id, sc.title, sc.event_date AS date, sc.summary, 
                 sc.original_url AS url, sc.region, sc.full_text,
                 s.status = 'approved' AS is_trusted_source,
+                EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $1) as is_read,
                 (SELECT COUNT(*) FROM content_relevance_votes WHERE content_id = sc.id AND vote = 1)::INTEGER AS participants,
                 (SELECT COUNT(*) FROM content_relevance_votes WHERE content_id = sc.id AND vote = 0)::INTEGER AS "maybeParticipants",
                 COALESCE((SELECT vote FROM content_relevance_votes WHERE content_id = sc.id AND user_id = $1), NULL) AS "userVote"
@@ -1504,5 +1561,213 @@ exports.shareEventByEmail = async (req, res) => {
     } catch (error) {
         console.error('Fehler beim Teilen des Events:', error);
         res.status(500).json({ message: error.message || 'Event konnte nicht geteilt werden.' });
+    }
+};
+
+
+// === NEU: Dashboard-Config inkl. BP + Color Scheme + preferred_theme ===
+exports.getDashboardConfig = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?.sub;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const sql = `
+      SELECT
+        u.preferred_theme,
+        u.preferred_language, -- HINZUGEFÜGT
+        bp.id, bp.name, bp.address, bp.logo_url,
+        bp.subscription_start_date, bp.subscription_end_date,
+        bp.storage_tier, bp.storage_limit_bytes, bp.storage_usage_bytes,
+        bp.dashboard_title, bp.url_businesspartner,
+        bp.level_1_name, bp.level_2_name, bp.level_3_name,
+        cs.id as cs_id, cs.name as cs_name,
+        cs.primary_color, cs.secondary_color,
+        cs.text_color_light, cs.background_color_light, cs.paper_color_light,
+        cs.text_color_dark, cs.background_color_dark, cs.paper_color_dark
+      FROM users u
+      LEFT JOIN business_partners bp ON bp.id = u.business_partner_id
+      LEFT JOIN color_schemes cs ON cs.id = bp.color_scheme_id
+      WHERE u.id = $1
+      LIMIT 1;
+    `;
+    const { rows } = await db.query(sql, [userId]);
+
+    if (!rows.length || !rows[0]?.id) {
+      return res.json({ businessPartner: null, user: { preferred_theme: 'light', preferred_language: 'de', regions: [] } });
+    }
+
+    const r = rows[0];
+    const color_scheme = r.cs_id ? {
+      id: r.cs_id,
+      name: r.cs_name,
+      primary_color: r.primary_color,
+      secondary_color: r.secondary_color,
+      text_color_light: r.text_color_light,
+      background_color_light: r.background_color_light,
+      paper_color_light: r.paper_color_light,
+      text_color_dark: r.text_color_dark,
+      background_color_dark: r.background_color_dark,
+      paper_color_dark: r.paper_color_dark,
+    } : null;
+
+    let regions = [];
+    try {
+      const rr = await db.query(
+        `SELECT r.id, r.name, r.code, COALESCE(bpr.is_default,false) AS is_default
+           FROM business_partner_regions bpr
+           JOIN regions r ON r.id = bpr.region_id
+          WHERE bpr.business_partner_id = $1
+          ORDER BY r.name ASC`,
+        [r.id]
+      );
+      regions = rr.rows;
+    } catch { /* ignore */ }
+
+    // KORRIGIERTE ANTWORT-STRUKTUR
+    return res.json({
+      user: {
+        preferred_theme: r.preferred_theme || 'light',
+        preferred_language: r.preferred_language || 'de',
+        regions: regions, // Regionen sind jetzt Teil des User-Objekts
+      },
+      businessPartner: {
+        id: r.id,
+        name: r.name,
+        address: r.address,
+        logo_url: r.logo_url,
+        subscription_start_date: r.subscription_start_date,
+        subscription_end_date: r.subscription_end_date,
+        storage_tier: r.storage_tier,
+        storage_limit_bytes: r.storage_limit_bytes,
+        storage_usage_bytes: r.storage_usage_bytes,
+        dashboard_title: r.dashboard_title,
+        url_businesspartner: r.url_businesspartner,
+        level_1_name: r.level_1_name,
+        level_2_name: r.level_2_name,
+        level_3_name: r.level_3_name,
+        color_scheme,
+        // "regions" wurde von hier entfernt
+      },
+    });
+  } catch (e) {
+    console.error('getDashboardConfig error:', e);
+    return res.status(500).json({ message: 'Serverfehler' });
+  }
+};
+
+
+exports.getAllTags = async (req, res) => {
+    try {
+        const result = await db.query('SELECT name FROM tags ORDER BY name ASC');
+        res.json(result.rows.map(row => row.name));
+    } catch (err) {
+        console.error('Fehler beim Abrufen aller Tags:', err.message);
+        res.status(500).json({ message: 'Serverfehler.' });
+    }
+};
+
+exports.globalSearch = async (req, res) => {
+    const { term } = req.query;
+
+    if (!term || typeof term !== 'string' || term.trim().length < 3) {
+        return res.status(400).json({ message: 'Ein Suchbegriff mit mindestens 3 Zeichen ist erforderlich.' });
+    }
+
+    // Bereitet den Suchbegriff für die PostgreSQL to_tsquery Funktion vor.
+    // Einzelne Wörter werden mit '&' (UND) verknüpft.
+    const formattedTerm = term.trim().split(/\s+/).join(' & ');
+
+    try {
+        const query = `
+            SELECT id, title, summary, published_date, type, relevance
+            FROM (
+                -- Scraped Content durchsuchen
+                SELECT
+                    id,
+                    title,
+                    summary,
+                    published_date,
+                    'scraped' as type,
+                    ts_rank(to_tsvector('german', title || ' ' || summary), to_tsquery('german', $1)) as relevance
+                FROM
+                    scraped_content
+                WHERE
+                    to_tsvector('german', title || ' ' || summary) @@ to_tsquery('german', $1)
+                
+                UNION ALL
+                
+                -- AI Generated Content durchsuchen
+                SELECT
+                    id,
+                    title,
+                    generated_output as summary,
+                    created_at as published_date,
+                    'ai' as type,
+                    ts_rank(to_tsvector('german', title || ' ' || generated_output), to_tsquery('german', $1)) as relevance
+                FROM
+                    ai_generated_content
+                WHERE
+                    to_tsvector('german', title || ' ' || generated_output) @@ to_tsquery('german', $1)
+            ) as search_results
+            ORDER BY
+                relevance DESC
+            LIMIT 25;
+        `;
+
+        const { rows } = await db.query(query, [formattedTerm]);
+        res.json(rows);
+
+    } catch (err) {
+        console.error('Fehler bei der globalen Suche:', err.message);
+        res.status(500).json({ message: 'Serverfehler bei der Suche.' });
+    }
+};
+
+
+exports.getRelevantAction = async (req, res) => {
+    const { category, region } = req.query;
+
+    if (!category) {
+        return res.status(400).json({ message: 'Widget-Kategorie ist erforderlich.' });
+    }
+
+    try {
+        const query = `
+            SELECT
+                id,
+                business_partner_id,
+                layout_type,
+                title,
+                content_text,
+                link_url,
+                image_url,
+                is_click_tracking_enabled
+            FROM
+                business_partner_actions
+            WHERE
+                is_active = TRUE
+                AND (start_date IS NULL OR start_date <= NOW())
+                AND (end_date IS NULL OR end_date >= NOW())
+                AND target_widget_category = $1
+                AND (target_region = $2 OR target_region IS NULL OR target_region = '')
+            ORDER BY
+                RANDOM() -- Wählt eine zufällige Aktion aus den passenden aus
+            LIMIT 1;
+        `;
+
+        // Region kann optional sein, daher Fallback auf 'all' oder einen leeren String
+        const regionParam = region || 'all';
+
+        const { rows } = await db.query(query, [category, regionParam]);
+
+        if (rows.length > 0) {
+            res.json(rows[0]);
+        } else {
+            res.json(null); // Kein passender Partner gefunden
+        }
+
+    } catch (err) {
+        console.error('Fehler beim Abrufen der relevanten Aktion:', err.message);
+        res.status(500).json({ message: 'Serverfehler.' });
     }
 };

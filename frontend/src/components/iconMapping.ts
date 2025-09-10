@@ -21,6 +21,7 @@ import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import PodcastsIcon from '@mui/icons-material/Podcasts';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
+import PollIcon from '@mui/icons-material/Poll';
 
 export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     SpaIcon: SpaIcon,
@@ -41,7 +42,7 @@ export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     AccountBalanceIcon: AccountBalanceIcon,
     PodcastsIcon: PodcastsIcon,
     VideoLibraryIcon: VideoLibraryIcon,
-
+    PollIcon: PollIcon,
 };
 
 // === GEÄNDERT: Die Funktion ist jetzt ein einfacher, direkter Lookup ===
