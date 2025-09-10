@@ -119,6 +119,7 @@ function extractUserFromDecoded(decoded: DecodedTokenAny): Partial<UserPayload> 
     regions: rawUser.regions ?? [],
     preferred_theme: rawUser.preferred_theme,
     preferred_language: rawUser.preferred_language,
+    contribution_score: rawUser.contribution_score ?? 0, // <-- DIESE ZEILE HINZUFÜGEN
   } as Partial<UserPayload>;
 }
 

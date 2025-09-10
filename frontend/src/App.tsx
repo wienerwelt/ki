@@ -67,11 +67,13 @@ const ProtectedRoutes: React.FC = () => {
   );
 };
 
+// Guard nur für Admins
 const AdminRoutes: React.FC = () => {
   const { user } = useAuth();
   return user?.role === 'admin' ? <Outlet /> : <Navigate to="/dashboard" replace />;
 };
 
+// Guard für Admins UND Assistenten
 const BpStaffAllowedRoutes: React.FC = () => {
   const { user } = useAuth();
   const isAllowed = user?.role === 'admin' || user?.role === 'assistenz';
@@ -150,12 +152,16 @@ function App() {
             <Route path="/feedback" element={<FeedbackCenterPage />} />
             <Route path="/files" element={<FileManagementPage />} />
 
+            {/* Routen für Admins und Assistenten */}
             <Route element={<BpStaffAllowedRoutes />}>
               <Route path="/admin/users" element={<AdminUserManagementPage />} />
               <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
               <Route path="/admin/actions" element={<AdminBpActionsPage />} />
+              {/* KORREKTUR: Die Surveys-Route wurde hierher verschoben, damit Assistenten Zugriff haben */}
+              <Route path="/admin/surveys" element={<AdminSurveysPage />} />
             </Route>
 
+            {/* Routen nur für Admins */}
             <Route path="/admin" element={<AdminRoutes />}>
               <Route index element={<AdminDashboardPage />} />
               <Route path="business-partners" element={<AdminBusinessPartnersPage />} />
@@ -174,7 +180,7 @@ function App() {
               <Route path="cronjobs" element={<AdminCronjobsPage />} />
               <Route path="sources" element={<AdminSourcesPage />} />
               <Route path="events" element={<AdminEventsPage />} />
-              <Route path="surveys" element={<AdminSurveysPage />} />
+              {/* Die Surveys-Route wurde von hier entfernt */}
             </Route>
           </Route>
 

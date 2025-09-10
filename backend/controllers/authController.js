@@ -70,11 +70,13 @@ async function resolveBusinessPartnerId(voucher) {
 
 function issueJwt(user) {
   const secret = process.env.JWT_SECRET || 'dev-secret';
+  // KORREKTUR: contribution_score zum Token-Payload hinzufügen
   const payload = {
     sub: user.id,
     username: user.username,
     email: user.email,
     role: user.role || 'user',
+    contribution_score: user.contribution_score ?? 0,
   };
   return jwt.sign(payload, secret, { expiresIn: '7d' });
 }
@@ -249,12 +251,11 @@ exports.register = async (req, res) => {
 exports.login = async (req, res) => {
   const { identifier, password } = req.body || {};
   if (!identifier || !password) {
-    // 400 → zählt als Fehlversuch (Rate-Limiter)
     return res.status(400).json({ message: 'Bitte Benutzername/E-Mail und Passwort angeben.' });
   }
 
   try {
-    // START DER ÄNDERUNG: SQL-Abfrage erweitert
+    // KORREKTUR: Kommentar aus der SQL-Abfrage entfernt
     const r = await db.query(
       `SELECT
           u.id,
@@ -263,6 +264,7 @@ exports.login = async (req, res) => {
           u.role,
           u.password_hash,
           u.is_email_verified,
+          u.contribution_score,
           bp.name as business_partner_name,
           bp.dashboard_title
         FROM users u
@@ -271,7 +273,6 @@ exports.login = async (req, res) => {
         LIMIT 1`,
       [identifier]
     );
-    // ENDE DER ÄNDERUNG
 
     if (r.rows.length === 0) {
       return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
@@ -279,13 +280,11 @@ exports.login = async (req, res) => {
 
     const user = r.rows[0];
 
-    // Passwort prüfen
     const ok = await bcrypt.compare(password, user.password_hash || '');
     if (!ok) {
       return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
     }
 
-    // Optional: E-Mail muss verifiziert sein
     if (process.env.REQUIRE_EMAIL_VERIFIED === 'true' && !user.is_email_verified) {
       return res.status(403).json({
         message: 'Bitte verifizieren Sie Ihre E-Mail-Adresse, bevor Sie sich anmelden.',
@@ -294,7 +293,7 @@ exports.login = async (req, res) => {
 
     const token = issueJwt(user);
 
-    // START DER ÄNDERUNG: User-Objekt in der Antwort erweitert
+    // KORREKTUR: Kommentar aus dem User-Objekt entfernt
     return res.status(200).json({
       token,
       user: {
@@ -302,12 +301,11 @@ exports.login = async (req, res) => {
         username: user.username,
         email: user.email,
         role: user.role || 'user',
-        // Die neuen Felder werden hier hinzugefügt
         business_partner_name: user.business_partner_name || null,
         dashboard_title: user.dashboard_title || null,
+        contribution_score: user.contribution_score ?? 0,
       },
     });
-    // ENDE DER ÄNDERUNG
 
   } catch (err) {
     console.error('Login error:', err);
@@ -317,15 +315,14 @@ exports.login = async (req, res) => {
 
 // === Logout ===
 exports.logout = async (req, res) => {
-  // Wenn du Cookies nutzt: res.clearCookie('token', { httpOnly: true, sameSite: 'lax', secure: true });
   return res.json({ message: 'Abgemeldet.' });
 };
 
+// ... (Rest der Datei bleibt unverändert) ...
 // === E-Mail verifizieren ===
 exports.verifyEmail = async (req, res) => {
   const { token } = req.params || {};
   if (!token || typeof token !== 'string' || token.length < 8) {
-    // neutraler Redirect
     return safeFrontendRedirect(res, '/login', { verified: 0 });
   }
 
@@ -366,7 +363,6 @@ exports.resendVerification = async (req, res) => {
       [email]
     );
     if (r.rows.length === 0) {
-      // neutrale Antwort
       return res.json({ message: 'Wenn ein Konto mit dieser E-Mail existiert, wurde eine neue Bestätigungsmail gesendet.' });
     }
 
@@ -409,7 +405,6 @@ exports.forgotPassword = async (req, res) => {
       'SELECT id, username FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
       [email]
     );
-    // immer neutrale Antwort zurückgeben
     if (r.rows.length === 0) {
       return res.json({ message: 'Wenn ein Konto existiert, wurde eine E-Mail gesendet.' });
     }
@@ -435,7 +430,6 @@ exports.forgotPassword = async (req, res) => {
       });
     } catch (e) {
       console.error('Passwort-Reset-Mail Fehler:', e);
-      // neutrale Antwort
     }
 
     return res.json({ message: 'Wenn ein Konto existiert, wurde eine E-Mail gesendet.' });
@@ -457,7 +451,6 @@ exports.resetPassword = async (req, res) => {
     return res.status(400).json({ message: 'Neues Passwort ist erforderlich.' });
   }
 
-  // zxcvbn-Check auch hier
   const strength = zxcvbn(password);
   if (strength.score < 3) {
     return res.status(400).json({
@@ -587,7 +580,6 @@ exports.startNewsletterOptIn = async (req, res) => {
       });
     } catch (e) {
       console.error('Opt-In E-Mail Fehler:', e);
-      // neutrale Antwort
     }
 
     return res.json({ message: 'Wenn ein Konto existiert, wurde eine E-Mail gesendet.' });
@@ -599,6 +591,5 @@ exports.startNewsletterOptIn = async (req, res) => {
 
 // === Google Login (Platzhalter, falls Route aktiv ist) ===
 exports.googleLogin = async (req, res) => {
-  // Implementiere hier deinen Google OAuth Flow oder entferne die Route, wenn nicht genutzt.
   return res.status(501).json({ message: 'Google Login ist (noch) nicht implementiert.' });
 };
