@@ -116,3 +116,7 @@ vite.config.ts.timestamp-*
 
 # sql directory
 /sql/
+# env
+backend/.env*
+frontend/.env*.local
+.env
