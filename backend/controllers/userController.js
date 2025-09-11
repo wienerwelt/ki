@@ -76,34 +76,46 @@ exports.getFavorites = async (req, res) => {
     const { widgetType } = req.query;
     if (!widgetType) return res.status(400).json({ message: 'Widget-Typ ist erforderlich.' });
     try {
-        const result = await db.query(
-            'SELECT external_id, name, country_code FROM user_favorites WHERE user_id = $1 AND favorite_type = $2',
+        const { rows } = await db.query(
+            `SELECT * FROM user_favorites WHERE user_id = $1 AND favorite_type = $2 ORDER BY created_at ASC`,
             [userId, widgetType]
         );
-        res.json(result.rows.map(row => ({ 
-            external_id: row.external_id, 
-            name: row.name,
-            country: row.country_code
-        })));
+        res.json(rows);
     } catch (err) {
         console.error('Fehler beim Abrufen der Benutzerfavoriten:', err.message);
         res.status(500).json({ message: 'Serverfehler.' });
     }
 };
 
+
 exports.addFavorite = async (req, res) => {
     const { id: userId } = req.user;
     const { widgetType, favorite } = req.body;
-    if (!widgetType || !favorite || !favorite.external_id || !favorite.name || !favorite.country) {
-        return res.status(400).json({ message: 'Widget-Typ und Favorit mit external_id, Name und Land sind erforderlich.' });
+    if (!widgetType || !favorite || !favorite.external_id) {
+        return res.status(400).json({ message: 'Widget-Typ und Favorit mit external_id sind erforderlich.' });
     }
     try {
-        await db.query(
-            `INSERT INTO user_favorites (user_id, favorite_type, external_id, name, country_code)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (user_id, favorite_type, external_id) DO NOTHING`,
-            [userId, widgetType, favorite.external_id, favorite.name, favorite.country]
-        );
+        const {
+            external_id, name, country_code, brand, street,
+            house_no, post_code, city, lat, lng,
+            last_diesel, last_e5, last_e10, last_status, provider // NEU: Provider
+        } = favorite;
+
+        const query = `
+            INSERT INTO user_favorites (
+                user_id, favorite_type, external_id, name, country_code, brand,
+                street, house_no, post_code, city, lat, lng,
+                last_diesel, last_e5, last_e10, last_status, provider, last_price_ts
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
+            ON CONFLICT (user_id, favorite_type, external_id) DO NOTHING;
+        `;
+        const params = [
+            userId, widgetType, external_id, name, country_code, brand,
+            street, house_no, post_code, city, lat, lng,
+            last_diesel, last_e5, last_e10, last_status, provider
+        ];
+
+        await db.query(query, params);
         res.status(201).json({ message: 'Favorit hinzugefügt.' });
     } catch (err) {
         console.error('Fehler beim Hinzufügen des Favoriten:', err.message);
@@ -111,11 +123,14 @@ exports.addFavorite = async (req, res) => {
     }
 };
 
+
 exports.removeFavorite = async (req, res) => {
     const { id: userId } = req.user;
-    const { externalId } = req.params;
+    const { externalId } = req.params; // Name aus userRoutes.js
     const { widgetType } = req.query;
-    if (!widgetType || !externalId) return res.status(400).json({ message: 'Widget-Typ und Favoriten-ID sind erforderlich.' });
+    if (!widgetType || !externalId) {
+        return res.status(400).json({ message: 'Widget-Typ und Favoriten-ID sind erforderlich.' });
+    }
     try {
         await db.query(
             'DELETE FROM user_favorites WHERE user_id = $1 AND favorite_type = $2 AND external_id = $3',
@@ -128,12 +143,6 @@ exports.removeFavorite = async (req, res) => {
     }
 };
 
-
-// --- NEU: FUNKTIONEN FÜR BENUTZERDEFINIERTE TAGS ---
-
-/**
- * Holt alle gespeicherten Tags für den aktuellen Benutzer.
- */
 exports.getUserTags = async (req, res) => {
     const { id: userId } = req.user;
     try {

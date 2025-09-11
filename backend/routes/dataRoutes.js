@@ -8,7 +8,7 @@ router.use(authMiddleware);
 router.get('/relevant-action', dataController.getRelevantAction)
 router.get('/search', dataController.globalSearch);
 router.get('/fuel/search', dataController.fuelSearch);
-router.get('/fuel/prices-by-ids', dataController.getPricesByIds);
+router.post('/fuel/prices-by-ids', dataController.getPricesByIds);
 router.get('/commodities', dataController.getCommodityPrices);
 router.get('/traffic-info', dataController.getTrafficInfo);
 router.get('/ai-content', dataController.getAiContent);

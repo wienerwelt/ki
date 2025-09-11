@@ -3,11 +3,11 @@ const axios = require('axios');
 const db = require('../config/db');
 const { sendEmail } = require('../services/emailService');
 const { renderLayout } = require('../services/emailTemplates');
-const FUEL_PRICE_API_KEY = process.env.FUEL_PRICE_API_KEY;
-const FUEL_PRICE_API_URL = process.env.FUEL_PRICE_API_URL;
 const TANKERKOENIG_API_KEY = process.env.TANKERKOENIG_API_KEY;
+const ECONTROL_API_KEY     = process.env.ECONTROL_API_KEY;
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
-// const htmlBody = renderShareContentEmail({ senderName, fromName, title, summary, source });
+const toStr  = (v) => (v === null || v === undefined) ? '' : String(v);
+const normNum = (v) => (v === null || v === undefined) ? null : Number(v);
 
 // --- HILFSFUNKTIONEN ---
 const getDistance = (lat1, lon1, lat2, lon2) => {
@@ -45,155 +45,237 @@ const normalizeEControlStation = (station, countryCode) => ({
     countryCode: countryCode.toUpperCase(),
 });
 
+function mapFuelKeyDE(k) {
+  // Tankerkönig liefert diesel, e5, e10
+  return k;
+}
+function mapFuelKeyAT(k) {
+  // E-Control: DIE (Diesel), SUP (Super 95), SUPPLUS (Super+), CNG, etc.
+  if (k === 'DIE') return 'diesel';
+  if (k === 'SUP') return 'e5';
+  return null; // e10 gibt es in AT i.d.R. nicht
+}
+
+async function upsertFavoritesPriceCache(userId, stationsToUpdate) {
+  if (!userId || !stationsToUpdate?.length) return;
+  const client = await db.connect();
+  try {
+    const sql = `
+      UPDATE public.user_favorites
+      SET
+        last_diesel   = $3,
+        last_e5       = $4,
+        last_e10      = $5,
+        last_status   = $6,
+        last_price_ts = NOW(),
+        updated_at    = NOW()
+      WHERE
+        user_id = $1 AND external_id = $2;
+    `;
+    for (const station of stationsToUpdate) {
+      const params = [
+        userId,
+        station.id,
+        station.diesel ?? null,
+        station.e5 ?? null,
+        station.e10 ?? null,
+        station.status ?? null
+      ];
+      await client.query(sql, params);
+    }
+  } finally {
+    client.release();
+  }
+}
+
+function normalizeDEDetail(detail, priceObj) {
+  return {
+    id: toStr(detail.id),
+    countryCode: 'DE',
+    name: detail.name || null,
+    brand: detail.brand || null,
+    street: detail.street || null,
+    houseNumber: detail.houseNumber || null,
+    postCode: detail.postCode ? String(detail.postCode) : null,
+    city: detail.place || null, // wichtig: place -> city
+    lat: normNum(detail.lat),
+    lng: normNum(detail.lng),
+    diesel: priceObj?.diesel ?? null,
+    e5:     priceObj?.e5 ?? null,
+    e10:    priceObj?.e10 ?? null,
+    status: priceObj?.status || null,
+  };
+}
+
+function normalizeATStation(station) {
+  // station: { id, name, location{address,postalCode,city,latitude,longitude}, prices:[{fuelType,amount}] }
+  const priceMap = {};
+  (station.prices || []).forEach(p => {
+    const key = mapFuelKeyAT(p.fuelType);
+    if (key) priceMap[key] = p.amount;
+  });
+  const addr = station.location?.address || '';
+  let street = addr;
+  let houseNumber = null;
+  // naive Split (Hausnummer optional am Ende)
+  const m = addr.match(/^(.+?)\s+(\d+[a-zA-Z]?)$/);
+  if (m) { street = m[1]; houseNumber = m[2]; }
+
+  return {
+    id: toStr(station.id),
+    countryCode: 'AT',
+    name: station.name || null,
+    brand: (station.name || '').split(' ')[0] || null,
+    street,
+    houseNumber,
+    postCode: station.location?.postalCode ? String(station.location.postalCode) : null,
+    city: station.location?.city || null,
+    lat: normNum(station.location?.latitude),
+    lng: normNum(station.location?.longitude),
+    diesel: priceMap.diesel ?? null,
+    e5:     priceMap.e5 ?? null,
+    e10:    null,
+    status: 'open'
+  };
+}
+
 
 // --- HAUPT-CONTROLLER-FUNKTIONEN ---
 exports.fuelSearch = async (req, res) => {
-    const { country, fuelType, lat, lng, rad, query, sortBy } = req.query;
+  const { country, lat: latStr, lng: lngStr, radius: radStr, query } = req.query;
+  const targetCountry = (country || 'DE').toString().toUpperCase();
+  let lat = Number(latStr);
+  let lng = Number(lngStr);
+  const radius = Math.min(Math.max(Number(radStr) || 25, 1), 25);
+  const searchTerm = query ? query.toString().trim() : '';
 
-    if (!country) {
-        return res.status(400).json({ ok: false, message: 'Länder-Code ist erforderlich.' });
-    }
-
-    try {
-        let location = { lat, lng };
-
-        if (query && (!lat || !lng)) {
-            const geocodeUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&countrycodes=${country.toLowerCase()}`;
-            const geoResponse = await axios.get(geocodeUrl, { headers: { 'User-Agent': 'Fleet-KI-Dashboard/1.0' } });
-            
-            if (geoResponse.data.length === 0) {
-                return res.status(404).json({ ok: false, message: `Ort '${query}' konnte nicht gefunden werden.` });
-            }
-            const geoResult = geoResponse.data[0];
-            location = { lat: parseFloat(geoResult.lat), lng: parseFloat(geoResult.lon) };
+  try {
+    if (query && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
+      console.log(`[Backend] Geocoding required for query: "${query}"`);
+      try {
+        const geocodeResp = await axios.get('https://nominatim.openstreetmap.org/search', {
+          params: { q: query, countrycodes: country.toLowerCase(), format: 'json', limit: 1 },
+          headers: { 'User-Agent': 'MobilitiDashboard/1.0 (Ihre-Echte-Email@ihredomain.de)' },
+          timeout: 7000
+        });
+        if (geocodeResp.data && geocodeResp.data.length > 0) {
+          lat = parseFloat(geocodeResp.data[0].lat);
+          lng = parseFloat(geocodeResp.data[0].lon);
+          console.log(`[Backend] Geocoding successful: lat=${lat}, lng=${lng}`);
+        } else {
+          return res.status(404).json({ ok: false, message: `Der Ort "${query}" konnte nicht gefunden werden.` });
         }
-
-        let stations = [];
-
-        // Provider-Logik basierend auf dem Land
-        switch (country.toUpperCase()) {
-            case 'DE':
-                // Code für Deutschland bleibt unverändert
-                if (!TANKERKOENIG_API_KEY) throw new Error('Tankerkönig API-Schlüssel ist nicht konfiguriert.');
-                const deParams = {
-                    lat: location.lat, lng: location.lng, rad: rad || 10,
-                    type: fuelType || 'all', sort: sortBy === 'dist' ? 'dist' : 'price',
-                    apikey: TANKERKOENIG_API_KEY,
-                };
-                const deResponse = await axios.get('https://creativecommons.tankerkoenig.de/json/list.php', { params: deParams });
-                if (!deResponse.data.ok) throw new Error(deResponse.data.message);
-                stations = deResponse.data.stations.map(s => normalizeTankerkoenigStation(s, country));
-                break;
-
-case 'AT':
-    // KORREKTE E-Control-API verwenden!
-    const atApiBaseUrl = 'https://api.e-control.at/sprit/1.0';
-    const atParams = {
-        latitude: location.lat,
-        longitude: location.lng,
-        fuelType: fuelType === 'e5' || fuelType === 'e10' ? 'SUP' : 'DIE',
-    };
-    // Optional: address, wenn du PLZ/Ort an den User sendest:
-    if (query) atParams.address = query;
-    // Jetzt richtigen Endpunkt nutzen:
-    const atResponse = await axios.get(`${atApiBaseUrl}/search/gas-stations/by-address`, {
-        params: atParams,
-        headers: { 'User-Agent': 'Fleet-KI-Dashboard/1.0' }
-    });
-    stations = atResponse.data.map(s => normalizeEControlStation(s, country));
-    if (sortBy === 'dist') {
-        stations.sort((a, b) => getDistance(location.lat, location.lng, a.lat, a.lng) - getDistance(location.lat, location.lng, b.lat, b.lng));
+      } catch (geoError) {
+        console.error('[Backend] Geocoding FAILED:', geoError.message);
+        return res.status(502).json({ ok: false, message: 'Die Adress-Suche ist fehlgeschlagen.' });
+      }
+    } else if (!query && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
+      return res.status(400).json({ ok: false, message: 'Gültige Koordinaten oder ein Suchbegriff sind erforderlich.' });
     }
-    break;
 
+    let stations = [];
+    
+    if (country === 'DE') {
+      console.log(`[Backend] Searching Tankerkönig with lat=${lat}, lng=${lng}`);
+      const apiKey = process.env.TANKERKOENIG_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ ok: false, message: 'API-Key für Tankerkönig fehlt in der Server-Konfiguration.' });
+      }
+      const tkResp = await axios.get('https://creativecommons.tankerkoenig.de/json/list.php', {
+        params: { 
+            lat, 
+            lng, 
+            rad: radius, 
+            sort: 'dist', 
+            // KORREKTUR: Der 'type'-Parameter wird jetzt fest auf 'all' gesetzt, um alle Preise zu erhalten.
+            type: 'all', 
+            apikey: apiKey 
+        },
+        timeout: 10000
+      });
 
-            case 'FR':
-            case 'ES':
-            case 'IT':
-            case 'GR':
-                 return res.status(400).json({ ok: false, message: `Spritpreis-Suche für ${country.toUpperCase()} ist noch nicht implementiert.` });
+      if (!tkResp.data.ok || tkResp.data.status !== 'ok') {
+        console.error('[Backend] Tankerkönig API returned an error:', tkResp.data.message);
+        throw new Error(`Tankerkönig API Fehler: ${tkResp.data.message}`);
+      }
 
-            default:
-                return res.status(400).json({ ok: false, message: `Land '${country}' wird aktuell nicht unterstützt.` });
-        }
-        
-        return res.json({ ok: true, stations });
-
-    } catch (error) {
-        console.error(`Fehler bei der Tankstellen-Suche für ${country}:`, error.message);
-        return res.status(500).json({ ok: false, message: `Fehler bei der Kommunikation mit dem Provider für ${country.toUpperCase()}.` });
+      stations = (tkResp.data.stations || []).map(s => ({
+        external_id: s.id, name: s.name, brand: s.brand, street: s.street,
+        house_no: s.houseNo, 
+        post_code: s.postcode, 
+        city: s.place,
+        lat: s.lat, lng: s.lng, last_diesel: s.diesel, last_e5: s.e5, last_e10: s.e10,
+        last_status: s.isOpen ? 'open' : 'closed',
+        last_price_ts: new Date().toISOString(), country_code: 'DE'
+      }));
+    } else if (country === 'AT') {
+      console.log(`[Backend] Searching E-Control with lat=${lat}, lng=${lng}`);
+      stations = [];
+    } else {
+      return res.status(400).json({ ok: false, message: 'Ungültiger Ländercode.' });
     }
+
+    console.log(`[Backend] Found ${stations.length} stations.`);
+    res.status(200).json({ ok: true, stations });
+
+  } catch (err) {
+    const errorMessage = err?.response?.data?.message || err.message || 'Unbekannter Fehler bei der Tankstellensuche.';
+    console.error(`[Backend] Fuel search final catch block error:`, errorMessage);
+    res.status(500).json({ ok: false, message: errorMessage });
+  }
 };
 
 
 exports.getPricesByIds = async (req, res) => {
-    const { ids, country } = req.query;
-    if (!ids || !country) return res.status(400).json({ ok: false, message: 'IDs und Länder-Code sind erforderlich.' });
-
+    const { country, ids, userId } = req.body || {};
     try {
-        let prices = {};
-        switch (country.toUpperCase()) {
-            case 'DE':
-                if (!TANKERKOENIG_API_KEY) throw new Error('Tankerkönig API-Schlüssel ist nicht konfiguriert.');
-                
-                const idListDE = String(ids).split(',').map(s => s.trim()).filter(isValidUUID);
-                if (idListDE.length === 0) return res.json({ ok: true, prices: {} });
-
-                const deParams = { ids: idListDE.join(','), apikey: TANKERKOENIG_API_KEY };
-                const deResponse = await axios.get('https://creativecommons.tankerkoenig.de/json/prices.php', { params: deParams });
-                if (!deResponse.data.ok) throw new Error(deResponse.data.message);
-                
-                prices = deResponse.data.prices || {};
-
-                const detailRes = await axios.get('https://creativecommons.tankerkoenig.de/json/detail.php', { params: { id: idListDE.join(','), apikey: TANKERKOENIG_API_KEY } });
-                
-                if (detailRes.data.ok) {
-                    const stationsToProcess = Array.isArray(detailRes.data.stations) 
-                        ? detailRes.data.stations 
-                        : (detailRes.data.station ? [detailRes.data.station] : []);
-                    
-                    stationsToProcess.forEach(detail => {
-                        if (prices[detail.id]) {
-                            prices[detail.id] = { ...prices[detail.id], name: detail.name, brand: detail.brand, street: detail.street, houseNumber: detail.houseNumber, postCode: detail.postCode, place: detail.place, lat: detail.lat, lng: detail.lng };
-                        }
-                    });
-                }
-                break;
-            
-            case 'AT':
-                const apiKey = process.env.ECONTROL_API_KEY;
-                if (!apiKey) throw new Error('E-Control API Key ist nicht konfiguriert.');
-                
-                const idListAT = String(ids).split(',').map(s => s.trim()).map(Number).filter(id => Number.isFinite(id) && id > 0);
-                if (idListAT.length === 0) return res.json({ ok: true, prices: {} });
-
-                const atResponse = await axios.post('https://api.e-control.at/sprit/1.0/get-prices/by-ids', idListAT, {
-                    headers: { 'Content-Type': 'application/json' },
-                    auth: { username: apiKey, password: '' }
-                });
-
-                if (atResponse.data && atResponse.data.length > 0) {
-                    atResponse.data.forEach(station => {
-                        prices[station.id] = {
-                            status: 'open', id: station.id, name: station.name, brand: station.name.split(' ')[0],
-                            street: station.location.address.split(',')[0].trim(), houseNumber: '',
-                            postCode: station.location.postalCode, place: station.location.city,
-                            lat: station.location.latitude, lng: station.location.longitude,
-                            diesel: station.prices.find(p => p.fuelType === 'DIE')?.amount || null,
-                            e5: station.prices.find(p => p.fuelType === 'SUP')?.amount || null,
-                            e10: null,
-                        };
-                    });
-                }
-                break;
-
-            default:
-                return res.status(400).json({ ok: false, message: `Land '${country}' wird aktuell nicht unterstützt.` });
+        if (!country || !Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ ok: false, message: 'Land und eine Liste von IDs sind erforderlich.' });
         }
-        return res.json({ ok: true, prices });
-    } catch (error) {
-        console.error(`Fehler beim Abrufen der Preise für ${country}:`, error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
-        return res.status(500).json({ ok: false, message: `Fehler bei der Kommunikation mit dem Provider für ${country.toUpperCase()}.` });
+        const cc = String(country).toUpperCase();
+        let stationsToUpdate = [];
+
+        if (cc === 'DE') {
+            const apiKey = TANKERKOENIG_API_KEY;
+            if (!apiKey) throw new Error('Tankerkönig API-Key fehlt');
+            
+            const idList = ids.map(String).filter(isValidUUID);
+            if (idList.length === 0) return res.json({ ok: true });
+
+            const priceResp = await axios.get('https://creativecommons.tankerkoenig.de/json/prices.php', { 
+                params: { ids: idList.join(','), apikey: apiKey }, 
+                timeout: 10000 
+            });
+
+            if (!priceResp.data?.ok) throw new Error(`Tankerkönig Preis-API Fehler: ${priceResp.data?.message}`);
+            
+            for (const id in priceResp.data.prices) {
+                const priceInfo = priceResp.data.prices[id];
+                stationsToUpdate.push({
+                    id: id,
+                    diesel: priceInfo.diesel ?? null,
+                    e5: priceInfo.e5 ?? null,
+                    e10: priceInfo.e10 ?? null,
+                    status: priceInfo.status ?? null,
+                });
+            }
+        }
+        
+        if (userId && stationsToUpdate.length > 0) {
+            await upsertFavoritesPriceCache(userId, stationsToUpdate);
+        }
+
+        return res.json({ ok: true, message: 'Preise aktualisiert.' });
+    } catch (err) {
+        console.error('--- getPricesByIds FAILED ---');
+        if (axios.isAxiosError(err)) {
+            console.error('API Request URL:', err.config.url);
+            console.error('API Response Status:', err.response?.status);
+            console.error('API Response Data:', err.response?.data);
+        } else {
+            console.error('Generic Error:', err.message);
+        }
+        return res.status(500).json({ ok: false, message: 'Interner Serverfehler beim Abrufen der Preisdetails.' });
     }
 };
 

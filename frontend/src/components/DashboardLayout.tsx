@@ -1,4 +1,5 @@
 // frontend/src/components/DashboardLayout.tsx
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
@@ -246,7 +247,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     </RouterLink>
 
                     <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', ml: { xs: 0, md: 3 }, mr: 2 }}>
-                        {/* SUCHFELD AUF 50% BREITE BEGRENZT */}
                         <Box sx={{ width: '50%' }}>
                            <GlobalSearchBar />
                         </Box>
@@ -278,7 +278,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     
                     {user && (
                         <div>
-                            {/* GAMIFICATION SCORE HINZUGEFÜGT */}
                             <Tooltip title="Community-Punkte">
                                 <Chip
                                     icon={<StarsIcon sx={{ color: 'inherit !important' }}/>}
@@ -313,7 +312,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 open={Boolean(anchorEl)}
                                 onClose={handleClose}
                             >
-                                {/* ROLLE ZUM PROFIL-MENÜ HINZUGEFÜGT */}
                                 <MenuItem onClick={handleProfile}>
                                     {t('layout.myProfile')} {user.role && `(${user.role})`}
                                 </MenuItem>
@@ -336,7 +334,11 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             >
                 {drawerContent}
             </Drawer>
-            <Box component="main" sx={{ flexGrow: 1, p: 3, width: `calc(100% - 250px)`, mt: { xs: (isAdVisible ? '120px' : '64px'), sm: (isAdVisible ? '120px' : '64px') } }}>
+            
+            {/* HIER IST DIE KORREKTUR */}
+            <Box component="main" sx={{ flexGrow: 1, p: 3, width: `calc(100% - 250px)` }}>
+                {/* Die <Toolbar/> sorgt für den korrekten Abstand unter der AppBar. 
+                    Der zusätzliche 'mt' (margin-top) wurde entfernt. */}
                 <Toolbar />
                 {children}
             </Box>

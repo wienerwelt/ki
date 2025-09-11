@@ -1,20 +1,26 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Box, Typography, CircularProgress, Alert, List, ListItem, ListItemText, Divider,
-  TextField, MenuItem, Tooltip, Link as MuiLink, IconButton,
-  ToggleButtonGroup, ToggleButton, Chip, Button, Stack, InputAdornment
+  Box, Typography, CircularProgress, Alert, List, ListItem, ListItemText,
+  IconButton, Tooltip, Chip, Button, Stack, Link as MuiLink,
+  TextField, InputAdornment, Divider, ToggleButton, ToggleButtonGroup,
+  FormControl, Select, MenuItem
 } from '@mui/material';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import axios from 'axios';
+
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
-import MyLocationIcon from '@mui/icons-material/MyLocation';
-import AddIcon from '@mui/icons-material/Add';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import DeleteIcon from '@mui/icons-material/Delete';
-import LocationOnIcon from '@mui/icons-material/LocationOn';
-import ClearIcon from '@mui/icons-material/Clear';
-import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import SearchIcon from '@mui/icons-material/Search';
-import { useNavigate } from 'react-router-dom';
+import MyLocationIcon from '@mui/icons-material/MyLocation';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
+import ScienceIcon from '@mui/icons-material/Science';
+import OpacityIcon from '@mui/icons-material/Opacity';
+import AspectRatioIcon from '@mui/icons-material/AspectRatio';
+import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
@@ -24,628 +30,437 @@ import { useSnackbar } from '../../context/SnackbarContext';
 
 type FuelType = 'diesel' | 'e5' | 'e10';
 type ViewMode = 'favorites' | 'search';
-type SortByType = 'price' | 'dist';
+type CountryCode = 'DE' | 'AT';
 
 interface FuelPricesWidgetProps extends BaseWidgetProps {
-  icon?: React.ReactNode;
   title: string;
   widgetTypeKey: string;
 }
 
-interface FavoriteInfo {
-  external_id: string;
-  name?: string;
-  country?: string;       // z.B. 'DE' | 'AT'
-  country_code?: string;  // falls das Backend dieses Feld liefert
+interface StationData {
+  id: string; external_id: string; name?: string | null;
+  country_code?: CountryCode | null; brand?: string | null; street?: string | null;
+  house_no?: string | null; post_code?: string | null; city?: string | null;
+  lat?: number | null; lng?: number | null; last_diesel?: number | string | null;
+  last_e5?: number | string | null; last_e10?: number | string | null;
+  last_status?: string | null; last_price_ts?: string | null;
+  provider?: string | null;
 }
 
-interface StationBase {
-  id: string;
-  name?: string;
-  brand?: string;
-  street?: string;
-  houseNumber?: string;
-  postCode?: string | number;
-  city?: string;
-  lat?: number;
-  lng?: number;
-  countryCode: 'DE' | 'AT';
-}
-
-interface StationPrice extends StationBase {
-  diesel?: number | null;
-  e5?: number | null;
-  e10?: number | null;
-  status?: string;
-  isOpen?: boolean;
-  price?: number | null;
-  distance?: number;
-}
-
-const fuelTypeColors: { [key in FuelType]: 'primary' | 'success' | 'warning' } = {
-  diesel: 'primary',
-  e5: 'success',
-  e10: 'warning',
+const fuelTypeConfig: { [key in FuelType]: { color: 'primary' | 'success' | 'warning', icon: React.ElementType, label: string } } = {
+  diesel: { color: 'primary', icon: LocalGasStationIcon, label: 'Diesel' },
+  e5: { color: 'success', icon: OpacityIcon, label: 'Super E5' },
+  e10: { color: 'warning', icon: ScienceIcon, label: 'Super E10' },
 };
 
-const providerInfo: { [key: string]: { name: string; url: string } } = {
-  DE: { name: 'Tankerkönig', url: 'https://www.tankerkoenig.de' },
-  AT: { name: 'E-Control', url: 'https://www.e-control.at/spritpreisrechner' },
+const getProviderByCountryCode = (code?: CountryCode | null): string => {
+    if (code === 'DE') return 'Tankerkönig';
+    if (code === 'AT') return 'E-Control Austria';
+    return 'Unbekannt';
 };
 
-const SUPPORTED_REGIONS: { code: 'DE' | 'AT'; name: string }[] = [
-  { code: 'DE', name: 'Deutschland' },
-  { code: 'AT', name: 'Österreich' },
-];
+const SUPPORTED_COUNTRIES: CountryCode[] = ['DE', 'AT'];
+const FAVORITES_LIMIT = 10;
+const PAGE_SIZE = 10;
 
-const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
-    * Math.sin(dLon / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-};
-
-const formatTimeAgo = (date: Date | null): string => {
-  if (!date) return '';
-  const now = new Date();
-  const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 1) return '(gerade eben)';
-  if (minutes === 1) return '(vor 1 Min.)';
-  return `(vor ${minutes} Min.)`;
-};
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+});
 
 const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
-  onDelete, widgetId, isRemovable, icon, title, widgetTypeKey
+  onDelete, widgetId, isRemovable, title, widgetTypeKey
 }) => {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const { showSnackbar } = useSnackbar();
 
-  const [favorites, setFavorites] = useState<FavoriteInfo[]>([]);
-  const [pricedStations, setPricedStations] = useState<StationPrice[]>([]);
-  const [viewMode, setViewMode] = useState<ViewMode>('favorites');
-  const [isLoading, setIsLoading] = useState(true);
+  const [favorites, setFavorites] = useState<StationData[]>([]);
+  const [allSearchResults, setAllSearchResults] = useState<StationData[]>([]);
+  const [displayedResults, setDisplayedResults] = useState<StationData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [partialErrors, setPartialErrors] = useState<string[]>([]);
-  const [selectedCountry, setSelectedCountry] = useState<'DE' | 'AT'>('DE');
   const [fuelType, setFuelType] = useState<FuelType>('diesel');
+  const [viewMode, setViewMode] = useState<ViewMode>('favorites');
   const [searchTerm, setSearchTerm] = useState('');
-  const [submittedSearch, setSubmittedSearch] = useState('');
+  const [selectedCountry, setSelectedCountry] = useState<CountryCode>('DE');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
-  const [sortBy, setSortBy] = useState<SortByType>('price');
+  const [isMapExpanded, setMapExpanded] = useState(false);
+  const [lastPriceUpdate, setLastPriceUpdate] = useState<string | null>(null);
 
-  const isProviderAvailable = useMemo(
-    () => SUPPORTED_REGIONS.some(r => r.code === selectedCountry),
-    [selectedCountry]
-  );
+  const mapRef = useRef<L.Map | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const markersRef = useRef<L.FeatureGroup>(new L.FeatureGroup());
+  const isZoomingToStation = useRef(false);
 
-  // Favoriten laden
   const fetchFavoritesFromDB = useCallback(async () => {
-    if (!user) { setFavorites([]); return; }
+    if (!user) {
+        setFavorites([]); setLoading(false); return;
+    }
+    setLoading(true); setError(null);
     try {
-      const res = await apiClient.get(`/api/users/favorites?widgetType=${widgetTypeKey}`);
-      const raw: any[] = Array.isArray(res.data) ? res.data : [];
-      const norm = raw.map((f: any) => ({
-        external_id: f.external_id ?? f.id,
-        name: f.name,
-        country: (f.country_code ?? f.country ?? '').toString().toUpperCase(),
-        country_code: (f.country_code ?? f.country ?? '').toString().toUpperCase(),
-      })) as FavoriteInfo[];
-      setFavorites(norm);
+      const { data } = await apiClient.get(`/api/users/favorites?widgetType=${widgetTypeKey}`);
+      setFavorites(Array.isArray(data) ? data : []);
     } catch (err) {
-      console.error('Fehler beim Laden der Favoriten:', err);
       setError('Favoriten konnten nicht geladen werden.');
-      setFavorites([]);
+    } finally {
+      setLoading(false);
     }
   }, [user, widgetTypeKey]);
 
-  // Daten holen (Suche / Favoriten)
-  const fetchData = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    setPartialErrors([]);
-
-    let stationsToFetch: StationBase[] = [];
-
-    try {
-      if (!isProviderAvailable) {
-        setIsLoading(false);
-        setPricedStations([]);
-        setError(`Für ${selectedCountry} ist kein Anbieter verfügbar.`);
-        return;
-      }
-
-      if (viewMode === 'search') {
-        const activeCountry: 'DE' | 'AT' = selectedCountry; 
-
-        const isLocationSearch = !submittedSearch && !!userLocation;
-        if (!submittedSearch && !isLocationSearch) {
-          setIsLoading(false);
-          setPricedStations([]);
-          return;
-        }
-
-        const params: any = { country: activeCountry, fuelType, sortBy };
-        if (isLocationSearch && userLocation) {
-          params.lat = userLocation.lat;
-          params.lng = userLocation.lng;
-          params.rad = 10;
-        } else {
-          params.query = submittedSearch.trim();
-        }
-
-        const response = await apiClient.get('/api/data/fuel/search', { params });
-        const stations = Array.isArray(response.data?.stations) ? response.data.stations : [];
-        stationsToFetch = (stations as any[]).map((s: any) => ({
-          id: String(s.id),
-          name: s.name,
-          brand: s.brand,
-          street: s.street,
-          houseNumber: s.houseNumber,
-          postCode: s.postCode,
-          city: s.city ?? s.place,
-          lat: s.lat,
-          lng: s.lng,
-          countryCode: activeCountry
-        }));
-      } else {
-        const favsByCountry = favorites.reduce<Record<'DE' | 'AT', string[]>>((acc: any, f) => {
-          const c = ((f.country ?? f.country_code) || '').toUpperCase();
-          if (c === 'DE' || c === 'AT') {
-            acc[c] = acc[c] || [];
-            acc[c].push(f.external_id);
-          }
-          return acc;
-        }, {} as any);
-
-        const priceCalls: Promise<{ country: 'DE' | 'AT'; data: any }>[] = Object
-          .entries(favsByCountry)
-          .filter(([, ids]) => (ids as string[]).length > 0)
-          .map(([country, ids]) =>
-            apiClient.get('/api/data/fuel/prices-by-ids', {
-              params: { ids: (ids as string[]).join(','), country }
-            }).then(r => ({ country: country as 'DE' | 'AT', data: r.data }))
-              .catch(() => ({ country: country as 'DE' | 'AT', data: { ok: false } }))
-          );
-
-        const priceResults = await Promise.all(priceCalls);
-
-        const collected: StationBase[] = [];
-        priceResults.forEach(({ country, data }) => {
-          if (data?.ok) {
-            const prices = data.prices || {};
-            Object.keys(prices).forEach((id) => {
-              const p = prices[id];
-              collected.push({
-                id,
-                name: p.name,
-                brand: p.brand,
-                street: p.street,
-                houseNumber: p.houseNumber,
-                postCode: String(p.postCode ?? ''),
-                city: p.place ?? p.city,
-                lat: p.lat,
-                lng: p.lng,
-                countryCode: country
-              });
-            });
-          } else {
-            setPartialErrors(prev => [...prev, `Preise für ${providerInfo[country]?.name || country} konnten nicht geladen werden.`]);
-          }
-        });
-
-        stationsToFetch = collected;
-      }
-
-      if (stationsToFetch.length === 0) {
-        setPricedStations([]);
-        setLastFetchTime(new Date());
-        setIsLoading(false);
-        return;
-      }
-
-      const byCountry = stationsToFetch.reduce<Record<'DE' | 'AT', string[]>>((acc: any, s) => {
-        const c = s.countryCode;
-        acc[c] = acc[c] || [];
-        acc[c].push(s.id);
-        return acc;
-      }, {} as any);
-
-      const pricePromises = Object.entries(byCountry)
-        .filter(([, ids]) => (ids as string[]).length > 0)
-        .map(([country, ids]) =>
-          apiClient.get('/api/data/fuel/prices-by-ids', {
-            params: { ids: (ids as string[]).join(','), country }
-          })
-        );
-
-      const results = await Promise.allSettled(pricePromises);
-
-      let allPriceData: Record<string, any> = {};
-      results.forEach((result, idx) => {
-        const country = Object.keys(byCountry)[idx] as 'DE' | 'AT';
-        if (result.status === 'fulfilled' && result.value.data?.ok) {
-          allPriceData = { ...allPriceData, ...(result.value.data.prices || {}) };
-        } else {
-          setPartialErrors(prev => [...prev, `Preise für ${providerInfo[country]?.name || country} konnten nicht geladen werden.`]);
-        }
-      });
-
-      const finalPriced = stationsToFetch.map((s) => {
-        const p = allPriceData[s.id];
-        if (!p) return null;
-        const distance = (userLocation && p.lat != null && p.lng != null)
-          ? getDistance(userLocation.lat, userLocation.lng, p.lat, p.lng)
-          : undefined;
-        const isOpen = p.status === 'open' || p.isOpen === true;
-        const merged: StationPrice = {
-          ...s,
-          ...p,
-          price: p?.[fuelType],
-          distance,
-          isOpen
-        };
-        return merged;
-      }).filter(Boolean) as StationPrice[];
-
-      const sorted = [...finalPriced].sort((a, b) => {
-        if (sortBy === 'dist') {
-          const da = a.distance ?? Number.POSITIVE_INFINITY;
-          const db = b.distance ?? Number.POSITIVE_INFINITY;
-          return da - db;
-        }
-        const pa = a.price ?? Number.POSITIVE_INFINITY;
-        const pb = b.price ?? Number.POSITIVE_INFINITY;
-        return pa - pb;
-      });
-
-      setPricedStations(sorted);
-      setLastFetchTime(new Date());
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.response?.data?.message || 'Fehler beim Laden der Daten.');
-    } finally {
-      setIsLoading(false);
+  useEffect(() => {
+    fetchFavoritesFromDB();
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => showSnackbar("Standort konnte nicht ermittelt werden.", "info")
+    );
+  }, [fetchFavoritesFromDB, showSnackbar]);
+  
+  useEffect(() => {
+    if (mapContainerRef.current && !mapRef.current) {
+        mapRef.current = L.map(mapContainerRef.current, { attributionControl: false }).setView([51.16, 10.45], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapRef.current);
+        markersRef.current.addTo(mapRef.current);
     }
-  }, [
-    viewMode, favorites, fuelType, selectedCountry,
-    sortBy, submittedSearch, userLocation, isProviderAvailable
-  ]);
+  }, []);
 
   useEffect(() => {
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        () => { /* still okay */ }
-      );
+    if (!mapRef.current || !mapContainerRef.current) return;
+    const map = mapRef.current;
+    const ro = new ResizeObserver(() => {
+      map.invalidateSize({ animate: true });
+    });
+    ro.observe(mapContainerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const map = mapRef.current;
+    markersRef.current.clearLayers();
+    const stationsToShow = viewMode === 'favorites' ? favorites : displayedResults;
+    
+    stationsToShow.forEach((s) => {
+        if (s.lat && s.lng) {
+            const priceRaw = s[`last_${fuelType}`];
+            const price = typeof priceRaw === 'string' ? parseFloat(priceRaw) : priceRaw;
+            const mapUrl = `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`;
+            const priceString = typeof price === 'number' ? `<b>${price.toFixed(3)} €</b>` : 'N/A';
+            const popupContent = `<b>${s.brand || s.name}</b><br/>${s.street || ''} ${s.house_no || ''}<br/>${fuelTypeConfig[fuelType].label}: ${priceString}<br/><a href="${mapUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-flex; align-items:center; text-decoration:none; margin-top: 4px;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGhlaWdodD0iMWVtIiB2aWV3Qm94PSIwIDAgMjQgMjQiPjxwYXRoIGZpbGw9ImN1cnJlbnRDb2xvciIgZD0ibTEyIDIgYzAtMy44Ny0zLjEzLTctNy03cy03IDMuMTMtNyA3YzAgNS4yNSA3IDEzIDcgMTNzNy03Ljc1IDctMTNjMC0zLjg3LTMuMTMtNy03LTd6bTAgOS41Yy0xLjkzIDAtMy41LTEuNTctMy41LTMuNXMxLjU3LTMuNSAzLjUtMy41czMuNSAxLjU3IDMuNSAzLjVzLTEuNTcgMy41LTMuNSAzLjV6Ii8+PC9zdmc+" width="16" height="16" style="margin-right:4px;"/>Auf Google Maps ansehen</a>`;
+            L.marker([s.lat, s.lng]).bindPopup(popupContent).addTo(markersRef.current);
+        }
+    });
+    
+    if (viewMode === 'favorites' && !isZoomingToStation.current && markersRef.current.getLayers().length > 0) {
+        map.fitBounds(markersRef.current.getBounds(), { padding: [40, 40], maxZoom: 14 });
     }
-    fetchFavoritesFromDB();
-  }, [fetchFavoritesFromDB]);
+    isZoomingToStation.current = false;
+  }, [favorites, displayedResults, viewMode, fuelType]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
-
-  const handleSearchSubmit = () => {
-    if (searchTerm.trim()) {
-      setSubmittedSearch(searchTerm.trim());
+  const getLatestFavoritePriceTimestamp = useCallback(() => {
+    if (favorites.length === 0) return null;
+    const timestamps = favorites.map(fav => fav.last_price_ts ? new Date(fav.last_price_ts).getTime() : 0).filter(ts => ts > 0);
+    if (timestamps.length === 0) return null;
+    const latestTimestamp = Math.max(...timestamps);
+    const latestDate = new Date(latestTimestamp);
+    const allSame = timestamps.every(ts => Math.abs(ts - latestTimestamp) < 1000);
+    if (allSame) {
+      return latestDate.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
     } else {
-      setSubmittedSearch('');
-      if (viewMode === 'search') {
-        fetchData();
-      }
+      return 'Diverse';
+    }
+  }, [favorites]);
+
+  useEffect(() => {
+    setLastPriceUpdate(getLatestFavoritePriceTimestamp());
+  }, [favorites, getLatestFavoritePriceTimestamp]);
+
+  const handleRefreshPrices = useCallback(async () => {
+    if (favorites.length === 0) return;
+    setLoading(true);
+    const favsByCountry = favorites.reduce((acc, f) => {
+        const country = f.country_code;
+        if (country) {
+          if (!acc[country]) acc[country] = [];
+          if (f.external_id) acc[country].push(f.external_id);
+        }
+        return acc;
+    }, {} as Record<string, string[]>);
+    try {
+      await Promise.all(
+        Object.entries(favsByCountry).map(([country, ids]) =>
+          apiClient.post('/api/data/fuel/prices-by-ids', { ids, country, userId: user?.id })
+        )
+      );
+      showSnackbar('Preise erfolgreich aktualisiert.', 'success');
+    } catch (err) {
+      showSnackbar('Einige Preise konnten nicht aktualisiert werden.', 'warning');
+    } finally {
+      await fetchFavoritesFromDB();
+    }
+  }, [favorites, user, fetchFavoritesFromDB, showSnackbar]);
+
+  const handleSearch = async (useLocation: boolean = false, countryOverride?: CountryCode) => {
+    if (!useLocation && !searchTerm.trim()) return showSnackbar("Bitte einen Suchbegriff eingeben.", "info");
+    if (useLocation && !userLocation) return showSnackbar("Standort nicht verfügbar.", "warning");
+    setSearchLoading(true); setAllSearchResults([]); setDisplayedResults([]);
+    try {
+        const countryToUse = countryOverride || selectedCountry;
+        const { data } = await apiClient.get('/api/data/fuel/search', {
+             params: { 
+                country: countryToUse,
+                lat: useLocation ? userLocation?.lat : undefined,
+                lng: useLocation ? userLocation?.lng : undefined,
+                query: useLocation ? undefined : searchTerm.trim()
+            }
+        });
+        setAllSearchResults(data.stations || []);
+        setDisplayedResults((data.stations || []).slice(0, PAGE_SIZE));
+    } catch (err: any) {
+        showSnackbar(err.response?.data?.message || 'Suche fehlgeschlagen', 'error');
+    } finally {
+        setSearchLoading(false);
     }
   };
-  const clearSearch = () => { setSearchTerm(''); setSubmittedSearch(''); };
-
-  const isFavorite = useCallback(
-    (stationId: string) => favorites.some(f => f.external_id === stationId),
-    [favorites]
-  );
-
-  const toggleFavorite = useCallback(async (station: StationBase) => {
-    // --- NEU: Log-Ausgabe zur Überprüfung der gesendeten Daten ---
-    console.log("--- Speichere Favorit ---", {
-        id: station.id,
-        name: station.name,
-        countryCode: station.countryCode
-    });
-
-    const isFav = isFavorite(station.id);
+  
+  const handleLoadMore = () => {
+    const currentLength = displayedResults.length;
+    const moreResults = allSearchResults.slice(currentLength, currentLength + PAGE_SIZE);
+    setDisplayedResults([...displayedResults, ...moreResults]);
+  };
+  
+  const handleNearbySearch = async () => {
+    if (!userLocation) return showSnackbar("Standort nicht verfügbar.", "warning");
+    setSearchLoading(true); setSearchTerm('');
     try {
-      if (isFav) {
-        await apiClient.delete(`/api/users/favorites/${station.id}?widgetType=${widgetTypeKey}`);
+      const geoResp = await axios.get(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${userLocation.lat}&lon=${userLocation.lng}`);
+      const detectedCountry = geoResp.data?.address?.country_code?.toUpperCase();
+      if (detectedCountry && SUPPORTED_COUNTRIES.includes(detectedCountry as CountryCode)) {
+        setSelectedCountry(detectedCountry as CountryCode);
+        handleSearch(true, detectedCountry as CountryCode);
+      } else {
+        showSnackbar(`Ihr Standort (${detectedCountry || 'Unbekannt'}) wird nicht unterstützt.`, "info");
+        setSearchLoading(false);
+      }
+    } catch (error) {
+        showSnackbar("Ländererkennung fehlgeschlagen.", "error");
+        setSearchLoading(false);
+    }
+  };
+
+  const isFavorite = useCallback((externalId: string) => favorites.some(f => f.external_id === externalId), [favorites]);
+
+  const toggleFavorite = useCallback(async (station: StationData) => {
+    const fav = isFavorite(station.external_id);
+    if (!fav && favorites.length >= FAVORITES_LIMIT) {
+      showSnackbar(`Maximale Anzahl von ${FAVORITES_LIMIT} Favoriten erreicht.`, 'warning');
+      return;
+    }
+    try {
+      if (fav) {
+        await apiClient.delete(`/api/users/favorites/${station.external_id}?widgetType=${widgetTypeKey}`);
         showSnackbar('Favorit entfernt', 'info');
       } else {
-        if (favorites.length >= 50) {
-          showSnackbar('Maximal 50 Favoriten speicherbar.', 'warning');
-          return;
-        }
-        await apiClient.post('/api/users/favorites', {
-          widgetType: widgetTypeKey,
-          favorite: {
-            external_id: station.id,
-            name: `${station.brand ?? ''} ${station.name ?? ''}`.trim(),
-            country: station.countryCode
-          }
-        });
-        showSnackbar('Favorit gespeichert!', 'success');
+        const stationWithProvider = {
+          ...station,
+          provider: getProviderByCountryCode(station.country_code)
+        };
+        await apiClient.post('/api/users/favorites', { widgetType: widgetTypeKey, favorite: stationWithProvider });
+        showSnackbar('Favorit hinzugefügt', 'success');
       }
       fetchFavoritesFromDB();
-    } catch (e: any) {
-      showSnackbar(e?.response?.data?.message || 'Favorit konnte nicht gespeichert werden.', 'error');
+    } catch (err) {
+      showSnackbar('Aktion fehlgeschlagen', 'error');
     }
-  }, [favorites, widgetTypeKey, showSnackbar, fetchFavoritesFromDB, isFavorite]);
-
-  const renderStationListItem = (station: StationPrice, isSearchResult: boolean) => {
-    const fullAddress =
-      `${station.brand ?? ''} ${station.name ?? ''}, ${station.street ?? ''} ${station.houseNumber ?? ''}, ${station.postCode ?? ''} ${station.city ?? ''}`.replace(/\s+/g, ' ').trim();
-    const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}`;
+  }, [isFavorite, widgetTypeKey, fetchFavoritesFromDB, showSnackbar, favorites.length]);
+  
+  const renderListItem = (station: StationData) => {
+    const priceRaw = station[`last_${fuelType}`];
+    const price = typeof priceRaw === 'string' ? parseFloat(priceRaw) : priceRaw;
+    const fullAddress = `${station.street || ''} ${station.house_no || ''}, ${station.post_code || ''} ${station.city || ''}`.trim().replace(/^,|,$/g, '');
+    
+    const handleItemClick = () => {
+      if (station.lat && station.lng && mapRef.current) {
+        isZoomingToStation.current = true;
+        mapRef.current.setView([station.lat, station.lng], 15);
+        if (!isMapExpanded) { 
+          setMapExpanded(true);
+        }
+      }
+    };
 
     return (
-      <ListItem
-        key={station.id}
+      <ListItem key={station.external_id} divider button onClick={handleItemClick}
         secondaryAction={
-          <IconButton edge="end" onClick={(e) => { e.stopPropagation(); toggleFavorite(station); }}>
-            <Tooltip title={isFavorite(station.id) ? 'Favorit entfernen' : 'Als Favorit speichern'}>
-              {isFavorite(station.id) ? <StarIcon color="warning" /> : <StarBorderIcon />}
+            <Tooltip title={isFavorite(station.external_id) ? "Favorit entfernen" : "Zu Favoriten hinzufügen"}>
+                <IconButton onClick={(e) => { e.stopPropagation(); toggleFavorite(station); }} edge="end">
+                {isFavorite(station.external_id) 
+                    ? <StarIcon color="warning" />
+                    : <StarBorderIcon />
+                }
+                </IconButton>
             </Tooltip>
-          </IconButton>
         }
-        sx={{ '&:hover': { bgcolor: 'action.hover' }, p: 1, pr: 6 }}
       >
-        <Stack direction="row" alignItems="center" sx={{ width: '100%' }}>
-          <ListItemText
-            primary={<Typography variant="body2" sx={{ fontWeight: 'bold' }}>{station.brand} - {station.city}</Typography>}
-            secondary={
-              <MuiLink
-                href={mapUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                variant="caption"
-                color="text.secondary"
-                sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, textDecoration: 'none' }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <LocationOnIcon sx={{ fontSize: '0.875rem' }} />
-                {`${station.street ?? ''} ${station.houseNumber ?? ''}, ${station.postCode ?? ''} ${station.city ?? ''}`}
-              </MuiLink>
-            }
-          />
-          <Stack direction="row" spacing={2} alignItems="center" sx={{ ml: 'auto', pl: 1 }}>
-            {station.price != null ? (
-              <Chip
-                label={`${Number(station.price).toFixed(3)} €`}
-                color={station.isOpen ? fuelTypeColors[fuelType] : 'default'}
-                size="small"
-                variant={station.isOpen ? 'filled' : 'outlined'}
-              />
-            ) : <Chip label="N/A" size="small" />}
-            {station.distance != null && (
-              <Typography variant="caption" sx={{ minWidth: 50, textAlign: 'right' }}>
-                {station.distance.toFixed(1)} km
+        <ListItemText
+          primary={
+            <Stack direction="row" spacing={1} alignItems="center">
+              {station.country_code && <img src={`https://flagcdn.com/w20/${station.country_code.toLowerCase()}.png`} alt={station.country_code} style={{flexShrink: 0, borderRadius: '2px'}} />}
+              <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                {station.brand || station.name}
               </Typography>
-            )}
-          </Stack>
-        </Stack>
+            </Stack>
+          }
+          secondary={fullAddress || "Keine Adressdaten"}
+        />
+        <Chip
+          label={typeof price === 'number' && !isNaN(price) ? `${price.toFixed(3)} €` : 'N/A'}
+          color={station.last_status === 'open' ? fuelTypeConfig[fuelType].color : 'default'}
+          size="small"
+        />
       </ListItem>
     );
   };
 
-  const renderHeader = () => (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', width: '100%' }}>
-      {icon} <Typography variant="h6">{title}</Typography>
-
-      <Box sx={{ flexGrow: 1, minWidth: 150 }} onMouseDown={(e) => e.stopPropagation()}>
-        <ToggleButtonGroup
-          value={fuelType}
-          exclusive
-          size="small"
-          onChange={(_e, v) => v && setFuelType(v)}
-          color={fuelTypeColors[fuelType]}
-          fullWidth
-        >
-          <ToggleButton value="diesel" sx={{ flex: 1 }}>Diesel</ToggleButton>
-          <ToggleButton value="e5" sx={{ flex: 1 }}>E5</ToggleButton>
-          <ToggleButton value="e10" sx={{ flex: 1 }}>E10</ToggleButton>
-        </ToggleButtonGroup>
-      </Box>
-
-      <TextField
-        select
-        value={selectedCountry}
-        size="small"
-        variant="outlined"
-        sx={{ minWidth: 88 }}
-        onChange={(e) => setSelectedCountry(e.target.value as 'DE' | 'AT')}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        {SUPPORTED_REGIONS.map((r) => (
-          <MenuItem key={r.code} value={r.code}>
-            <Tooltip title={r.name} placement="right">
-              <img src={`https://flagcdn.com/w20/${r.code.toLowerCase()}.png`} width="20" alt={r.name} />
-            </Tooltip>
-          </MenuItem>
-        ))}
-      </TextField>
-
-      <Tooltip title={viewMode === 'favorites' ? 'Tankstelle suchen' : 'Zurück zu Favoriten'}>
-        <IconButton
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => { setError(null); setViewMode(viewMode === 'favorites' ? 'search' : 'favorites'); }}
-          size="small"
-        >
-          {viewMode === 'favorites' ? <AddIcon /> : <ArrowBackIcon />}
-        </IconButton>
-      </Tooltip>
-    </Box>
-  );
-
-  const renderFavoritesView = () => (
-    <>
-      {partialErrors.map(err => <Alert key={err} severity="warning" sx={{ m: 1, mt: 0, mb: 1 }}>{err}</Alert>)}
-      {pricedStations.length > 0 && (
-        <List dense sx={{ p: 0 }}>
-          {pricedStations.map(station => renderStationListItem(station, false))}
-        </List>
-      )}
-      {!isLoading && favorites.length === 0 && (
-        <Box sx={{ textAlign: 'center', p: 3 }}>
-          <Typography color="text.secondary">Sie haben noch keine Favoriten.</Typography>
-          <Button startIcon={<AddIcon />} sx={{ mt: 1 }} onClick={() => setViewMode('search')}>
-            Jetzt Tankstellen suchen
-          </Button>
-        </Box>
-      )}
-    </>
-  );
-
-  const renderSearchView = () => (
-    <Box>
-      <Stack direction="row" spacing={1} sx={{ p: 1, alignItems: 'center' }} onMouseDown={(e) => e.stopPropagation()}>
-        <TextField
-          fullWidth
-          size="small"
-          variant="outlined"
-          placeholder="PLZ oder Stadt suchen..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') handleSearchSubmit(); }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <IconButton onClick={handleSearchSubmit} edge="start">
-                  <SearchIcon />
-                </IconButton>
-              </InputAdornment>
-            ),
-            endAdornment: searchTerm && (
-              <InputAdornment position="end">
-                <IconButton onClick={clearSearch} edge="end" size="small"><ClearIcon /></IconButton>
-              </InputAdornment>
-            )
-          }}
-        />
-
-        <Tooltip title="In meiner Nähe suchen">
-          <span>
-            <IconButton onClick={() => { setSubmittedSearch(''); fetchData(); }} disabled={!userLocation}>
-              <MyLocationIcon />
-            </IconButton>
-          </span>
-        </Tooltip>
-
-        <ToggleButtonGroup
-          value={sortBy}
-          exclusive
-          size="small"
-          onChange={(_e, v) => v && setSortBy(v)}
-        >
-          <ToggleButton value="price">Preis</ToggleButton>
-          <ToggleButton value="dist">Distanz</ToggleButton>
-        </ToggleButtonGroup>
-      </Stack>
-
-      <Divider />
-
-      {pricedStations.length > 0 ? (
-        <List dense sx={{ maxHeight: 300, overflowY: 'auto', p: 0 }}>
-          {pricedStations.map(station => renderStationListItem(station, true))}
-        </List>
-      ) : (
-        !isLoading && submittedSearch && (
-          <Typography sx={{ p: 2, textAlign: 'center' }} color="text.secondary">
-            Keine Ergebnisse für Ihre Suche.
-          </Typography>
-        )
-      )}
-    </Box>
-  );
-
   const getProviderAttribution = () => {
-    const codesInUse = new Set<string>();
-    if (viewMode === 'favorites') {
-      favorites.forEach(f => { const c = (f.country || f.country_code || '').toUpperCase(); if (c) codesInUse.add(c); });
-    } else {
-      const c = selectedCountry;
-      if (c) codesInUse.add(c);
+    if (viewMode === 'search') {
+      return `Quelle: ${getProviderByCountryCode(selectedCountry)}`;
     }
-    const active = [...codesInUse].map(code => providerInfo[code]).filter(Boolean) as { name: string; url: string }[];
-    if (active.length === 0) return null;
-
-    return (
-      <Typography variant="caption" color="text.secondary">
-        Quelle:{' '}
-        {active.map((provider, i) => (
-          <React.Fragment key={provider.name}>
-            <MuiLink href={provider.url} target="_blank" rel="noopener">{provider.name}</MuiLink>
-            {i < active.length - 1 ? ', ' : ''}
-          </React.Fragment>
-        ))}
-      </Typography>
-    );
+    if (favorites.length === 0) return '';
+    const uniqueProviders = [...new Set(favorites.map(f => f.provider).filter(Boolean))];
+    if (uniqueProviders.length === 0) return 'Quelle: Unbekannt';
+    return `Quellen: ${uniqueProviders.join(', ')}`;
   };
-
+  
   return (
-    <WidgetPaper
-      title={renderHeader()}
-      widgetTitle={title}
-      widgetTypeKey={widgetTypeKey}
-      widgetId={widgetId}
-      onDelete={onDelete}
-      isRemovable={isRemovable}
+    <WidgetPaper 
+      title={
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <LocalGasStationIcon />
+            <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+                {title}
+            </Typography>
+        </Box>
+      }
+      widgetId={widgetId} 
+      onDelete={onDelete} 
+      isRemovable={isRemovable} 
+      widgetTitle={title} 
+      widgetTypeKey={widgetTypeKey} 
       noPadding
     >
-      {error && (
-        <Alert
-          severity="error"
-          sx={{ m: 1 }}
-          action={
-            <Button
-              color="inherit"
-              size="small"
-              onClick={() => navigate('/feedback')}
-              startIcon={<ReportProblemOutlinedIcon />}
-            >
-              Fehler melden
-            </Button>
-          }
-        >
-          {error}
-        </Alert>
-      )}
-
-      {isLoading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-          <CircularProgress />
+      {error && <Alert severity="error" sx={{ m: 2, mb: 0 }}>{error}</Alert>}
+      
+      <Box sx={{ p: 2, pb: 1 }}>
+         <Box sx={{ position: 'relative' }}>
+            <Box 
+              sx={{ height: isMapExpanded ? 350 : 150, width: '100%', borderRadius: 1, overflow: 'hidden', transition: 'height 0.3s ease-in-out', backgroundColor: '#f0f0f0' }} 
+              ref={mapContainerRef} 
+            />
+            <Tooltip title={isMapExpanded ? "Karte verkleinern" : "Karte vergrößern"}>
+                <IconButton 
+                    onClick={() => setMapExpanded(prev => !prev)}
+                    size="small"
+                    sx={{ position: 'absolute', top: 4, right: 4, zIndex: 1000, backgroundColor: 'white', '&:hover': { backgroundColor: '#f0f0f0' } }}
+                >
+                    {isMapExpanded ? <CloseFullscreenIcon fontSize="small" /> : <AspectRatioIcon fontSize="small" />}
+                </IconButton>
+            </Tooltip>
         </Box>
-      ) : (
-        <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
-          {viewMode === 'favorites' ? renderFavoritesView() : renderSearchView()}
-        </Box>
-      )}
-
-      <Box
-        sx={{
-          p: 1,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          borderTop: 1,
-          borderColor: 'divider'
-        }}
-      >
-        <Typography variant="caption" color="text.secondary">
-          {lastFetchTime
-            ? `${lastFetchTime.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr ${formatTimeAgo(lastFetchTime)}`
-            : ''}
-        </Typography>
-        {getProviderAttribution()}
       </Box>
+
+      {viewMode === 'search' && (
+        <Box sx={{ p: 2, pt: 0 }}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <FormControl size="small">
+              <Select value={selectedCountry} onChange={(e) => setSelectedCountry(e.target.value as CountryCode)}>
+                <MenuItem value="DE"><img src={`https://flagcdn.com/w20/de.png`} alt="DE" style={{display: 'block'}}/></MenuItem>
+                <MenuItem value="AT"><img src={`https://flagcdn.com/w20/at.png`} alt="AT" style={{display: 'block'}}/></MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              fullWidth size="small" placeholder="PLZ, Stadt oder Adresse..." value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch(false)}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <Tooltip title="In meiner Nähe suchen"><IconButton onClick={handleNearbySearch} disabled={!userLocation || searchLoading} edge="end"><MyLocationIcon /></IconButton></Tooltip>
+                    <IconButton onClick={() => handleSearch(false)} disabled={searchLoading} edge="end"><SearchIcon /></IconButton>
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </Stack>
+        </Box>
+      )}
+
+      <Box sx={{ px: 2, pb: 1 }}>
+        <ToggleButtonGroup
+            value={fuelType} exclusive fullWidth size="small"
+            onChange={(_e, v) => v && setFuelType(v as FuelType)}
+            color={fuelTypeConfig[fuelType].color}
+        >
+          {Object.entries(fuelTypeConfig).map(([key, config]) => {
+            const Icon = config.icon;
+            return (
+              <ToggleButton key={key} value={key} sx={{px: 1}}>
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  <Icon sx={{ fontSize: '1rem' }} />
+                  <Typography variant="button" sx={{lineHeight: 1.2}}>{key}</Typography>
+                </Stack>
+              </ToggleButton>
+            );
+          })}
+        </ToggleButtonGroup>
+      </Box>
+      
+      <Box sx={{ maxHeight: 250, overflowY: 'auto' }}>
+        {viewMode === 'favorites' && (
+          loading ? <CircularProgress sx={{ display: 'block', mx: 'auto', my: 2 }}/> : (
+            <List dense sx={{ p: 0 }}>
+              {favorites.length > 0 ? favorites.map(fav => renderListItem(fav)) : (
+                <Typography sx={{ p: 2, textAlign: 'center' }} color="text.secondary">Keine Favoriten gespeichert.</Typography>
+              )}
+            </List>
+          )
+        )}
+        {viewMode === 'search' && (
+          searchLoading && displayedResults.length === 0 ? <CircularProgress sx={{ display: 'block', mx: 'auto', my: 2 }}/> : (
+              <List dense sx={{ p: 0 }}>
+                  {displayedResults.map(station => renderListItem(station))}
+              </List>
+          )
+        )}
+      </Box>
+      
+      {viewMode === 'search' && displayedResults.length < allSearchResults.length && (
+          <Box sx={{ textAlign: 'center', py: 1 }}>
+              <Button onClick={handleLoadMore}>
+                  Mehr laden ({displayedResults.length} / {allSearchResults.length})
+              </Button>
+          </Box>
+      )}
+      
+      <Divider />
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ p: 1 }}>
+        <Button size="small" startIcon={viewMode === 'favorites' ? <AddCircleOutlineIcon/> : <ArrowBackIcon />} onClick={() => { setAllSearchResults([]); setDisplayedResults([]); setSearchTerm(''); setViewMode(viewMode === 'favorites' ? 'search' : 'favorites'); }}>
+          {viewMode === 'favorites' ? `Hinzufügen (${favorites.length}/${FAVORITES_LIMIT})` : 'Zurück'}
+        </Button>
+        <Typography variant="caption" color="text.secondary">{getProviderAttribution()}</Typography>
+        <Stack direction="column" alignItems="flex-end" spacing={0}>
+          {lastPriceUpdate && (
+            <Typography variant="caption" color="text.secondary" sx={{fontSize: '0.65rem'}}>
+              {lastPriceUpdate}
+            </Typography>
+          )}
+          <Button size="small" startIcon={<RefreshIcon />} onClick={handleRefreshPrices} disabled={loading || viewMode === 'search' || favorites.length === 0}>
+            Preise aktualisieren
+          </Button>
+        </Stack>
+      </Stack>
     </WidgetPaper>
   );
 };
