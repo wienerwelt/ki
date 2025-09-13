@@ -26,6 +26,7 @@ router.get('/ai-prompt-rules', authMiddleware, dataController.getAIPromptRulesFo
 router.get('/categories', authMiddleware, dataController.getCategoriesForUser);
 router.get('/regions', dataController.getAllRegions);
 router.get('/ev-stations', authMiddleware, dataController.getEVStations);
+router.get('/ev/search', dataController.evStationSearch);
 router.post('/scraped-content/:contentId/mark-as-read', dataController.markScrapedContentAsRead);
 router.post('/share-content-by-email', authMiddleware, dataController.shareContentByEmail);
 router.get('/vignette-countries', dataController.getVignetteCountries);

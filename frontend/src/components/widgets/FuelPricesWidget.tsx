@@ -18,8 +18,6 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import ScienceIcon from '@mui/icons-material/Science';
 import OpacityIcon from '@mui/icons-material/Opacity';
-import AspectRatioIcon from '@mui/icons-material/AspectRatio';
-import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
 import WidgetPaper from './WidgetPaper';
@@ -87,13 +85,11 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCountry, setSelectedCountry] = useState<CountryCode>('DE');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [isMapExpanded, setMapExpanded] = useState(false);
   const [lastPriceUpdate, setLastPriceUpdate] = useState<string | null>(null);
 
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const markersRef = useRef<L.FeatureGroup>(new L.FeatureGroup());
-  const isZoomingToStation = useRef(false);
 
   const fetchFavoritesFromDB = useCallback(async () => {
     if (!user) {
@@ -127,16 +123,6 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!mapRef.current || !mapContainerRef.current) return;
-    const map = mapRef.current;
-    const ro = new ResizeObserver(() => {
-      map.invalidateSize({ animate: true });
-    });
-    ro.observe(mapContainerRef.current);
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
     if (!mapRef.current) return;
     const map = mapRef.current;
     markersRef.current.clearLayers();
@@ -153,10 +139,9 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
         }
     });
     
-    if (viewMode === 'favorites' && !isZoomingToStation.current && markersRef.current.getLayers().length > 0) {
+    if (markersRef.current.getLayers().length > 0) {
         map.fitBounds(markersRef.current.getBounds(), { padding: [40, 40], maxZoom: 14 });
     }
-    isZoomingToStation.current = false;
   }, [favorites, displayedResults, viewMode, fuelType]);
 
   const getLatestFavoritePriceTimestamp = useCallback(() => {
@@ -283,11 +268,7 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
     
     const handleItemClick = () => {
       if (station.lat && station.lng && mapRef.current) {
-        isZoomingToStation.current = true;
         mapRef.current.setView([station.lat, station.lng], 15);
-        if (!isMapExpanded) { 
-          setMapExpanded(true);
-        }
       }
     };
 
@@ -354,21 +335,10 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
       {error && <Alert severity="error" sx={{ m: 2, mb: 0 }}>{error}</Alert>}
       
       <Box sx={{ p: 2, pb: 1 }}>
-         <Box sx={{ position: 'relative' }}>
-            <Box 
-              sx={{ height: isMapExpanded ? 350 : 150, width: '100%', borderRadius: 1, overflow: 'hidden', transition: 'height 0.3s ease-in-out', backgroundColor: '#f0f0f0' }} 
-              ref={mapContainerRef} 
-            />
-            <Tooltip title={isMapExpanded ? "Karte verkleinern" : "Karte vergrößern"}>
-                <IconButton 
-                    onClick={() => setMapExpanded(prev => !prev)}
-                    size="small"
-                    sx={{ position: 'absolute', top: 4, right: 4, zIndex: 1000, backgroundColor: 'white', '&:hover': { backgroundColor: '#f0f0f0' } }}
-                >
-                    {isMapExpanded ? <CloseFullscreenIcon fontSize="small" /> : <AspectRatioIcon fontSize="small" />}
-                </IconButton>
-            </Tooltip>
-        </Box>
+         <Box 
+            sx={{ height: 150, width: '100%', borderRadius: 1, overflow: 'hidden', backgroundColor: '#f0f0f0' }} 
+            ref={mapContainerRef} 
+        />
       </Box>
 
       {viewMode === 'search' && (

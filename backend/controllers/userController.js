@@ -97,22 +97,22 @@ exports.addFavorite = async (req, res) => {
     try {
         const {
             external_id, name, country_code, brand, street,
-            house_no, post_code, city, lat, lng,
-            last_diesel, last_e5, last_e10, last_status, provider // NEU: Provider
+            house_no, post_code, city, lat, lng, provider,
+            operator_name, charge_point_count, power_kw, connector_types
         } = favorite;
 
         const query = `
             INSERT INTO user_favorites (
                 user_id, favorite_type, external_id, name, country_code, brand,
-                street, house_no, post_code, city, lat, lng,
-                last_diesel, last_e5, last_e10, last_status, provider, last_price_ts
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
+                street, house_no, post_code, city, lat, lng, provider,
+                operator_name, charge_point_count, power_kw, connector_types
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (user_id, favorite_type, external_id) DO NOTHING;
         `;
         const params = [
             userId, widgetType, external_id, name, country_code, brand,
-            street, house_no, post_code, city, lat, lng,
-            last_diesel, last_e5, last_e10, last_status, provider
+            street, house_no, post_code, city, lat, lng, provider,
+            operator_name, charge_point_count, power_kw, connector_types
         ];
 
         await db.query(query, params);

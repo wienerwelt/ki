@@ -32,28 +32,56 @@ const normalizeTankerkoenigStation = (station, countryCode) => ({
     countryCode: countryCode.toUpperCase(),
 });
 
-const normalizeEControlStation = (station, countryCode) => ({
-    id: station.id.toString(),
-    name: station.name,
-    brand: station.name.split(' ')[0],
-    street: station.location.address.split(',')[0].trim(),
-    houseNumber: '',
-    postCode: station.location.postalCode,
-    city: station.location.city,
-    lat: station.location.latitude,
-    lng: station.location.longitude,
-    countryCode: countryCode.toUpperCase(),
-});
+const normalizeEControlStation = (station) => {
+    const chargePoint = station.chargePoints && station.chargePoints[0];
+    if (!chargePoint) return null;
+
+    return {
+        external_id: `AT-${station.id}`,
+        provider: 'E-Control',
+        name: station.name,
+        operator_name: station.operatorName,
+        street: station.address,
+        post_code: station.postalCode,
+        city: station.city,
+        country_code: 'AT',
+        lat: station.latitude,
+        lng: station.longitude,
+        charge_point_count: station.chargePoints.length,
+        power_kw: chargePoint.power,
+        connector_types: [...new Set(station.chargePoints.map(p => p.connector).flat())],
+    };
+};
+
+const normalizeOcmStation = (station) => {
+    const connections = station.Connections || [];
+    const highestPower = connections.length > 0 ? Math.max(...connections.map(c => c.PowerKW || 0)) : null;
+
+    return {
+        external_id: `OCM-${station.ID}`,
+        provider: 'OpenChargeMap',
+        name: station.AddressInfo.Title,
+        operator_name: station.OperatorInfo?.Title || 'Unbekannt',
+        street: station.AddressInfo.AddressLine1,
+        post_code: station.AddressInfo.Postcode,
+        city: station.AddressInfo.Town,
+        country_code: station.AddressInfo.Country?.ISOCode || null,
+        lat: station.AddressInfo.Latitude,
+        lng: station.AddressInfo.Longitude,
+        charge_point_count: connections.length,
+        power_kw: highestPower,
+        connector_types: [...new Set(connections.map(c => c.ConnectionType?.Title).filter(Boolean))],
+    };
+};
 
 function mapFuelKeyDE(k) {
-  // Tankerkönig liefert diesel, e5, e10
   return k;
 }
+
 function mapFuelKeyAT(k) {
-  // E-Control: DIE (Diesel), SUP (Super 95), SUPPLUS (Super+), CNG, etc.
   if (k === 'DIE') return 'diesel';
   if (k === 'SUP') return 'e5';
-  return null; // e10 gibt es in AT i.d.R. nicht
+  return null;
 }
 
 async function upsertFavoritesPriceCache(userId, stationsToUpdate) {
@@ -1128,6 +1156,61 @@ exports.getAllRegions = async (req, res) => {
     } catch (err) {
         console.error('Error fetching all regions:', err.message);
         res.status(500).send('Server error');
+    }
+};
+
+exports.evStationSearch = async (req, res) => {
+    const { country, lat: latStr, lng: lngStr, query } = req.query;
+    const targetCountry = (country || 'DE').toString().toUpperCase();
+    let lat = Number(latStr);
+    let lng = Number(lngStr);
+    const searchTerm = query ? query.toString().trim() : '';
+
+    try {
+        if (searchTerm && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
+            const geocodeResp = await axios.get('https://nominatim.openstreetmap.org/search', {
+                params: { q: searchTerm, countrycodes: targetCountry.toLowerCase(), format: 'json', limit: 1 },
+                headers: { 'User-Agent': 'MobilitiDashboard/1.0 (Ihre-Email@domain.de)' }
+            });
+            if (geocodeResp.data && geocodeResp.data.length > 0) {
+                lat = parseFloat(geocodeResp.data[0].lat);
+                lng = parseFloat(geocodeResp.data[0].lon);
+            } else {
+                return res.status(404).json({ ok: false, message: `Ort "${searchTerm}" nicht gefunden.` });
+            }
+        } else if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+             return res.status(400).json({ ok: false, message: 'Koordinaten oder Suchbegriff erforderlich.' });
+        }
+
+        let stations = [];
+        if (targetCountry === 'AT') {
+            const apiKey = process.env.LADESTELLEN_AT_KEY;
+            if (!apiKey) throw new Error('API-Key für E-Control Ladestellen fehlt.');
+            
+            const response = await axios.get('https://api.e-control.at/charge/1.0/stations/by-proximity', {
+                params: { latitude: lat, longitude: lng, radius: 25000 },
+                // KORREKTUR: Der Header-Name wurde auf 'X-Api-Key' geändert.
+                headers: { 'X-Api-Key': apiKey }
+            });
+            stations = (response.data || []).map(normalizeEControlStation).filter(Boolean);
+
+        } else {
+            const apiKey = process.env.OPENCHARGEMAP_API_KEY;
+            if (!apiKey) throw new Error('API-Key für OpenChargeMap fehlt.');
+
+            const response = await axios.get('https://api.openchargemap.io/v3/poi', {
+                params: {
+                    output: 'json', latitude: lat, longitude: lng,
+                    distance: 25, distanceunit: 'km', maxresults: 100, key: apiKey
+                }
+            });
+            stations = (response.data || []).map(normalizeOcmStation).filter(Boolean);
+        }
+        res.json({ ok: true, stations });
+    } catch (err) {
+        const message = err.response?.data?.message || err.message || 'Fehler bei der Stationssuche.';
+        console.error(`[EV Search Error for ${targetCountry}]:`, message, `Status: ${err.response?.status}`);
+        res.status(500).json({ ok: false, message });
     }
 };
 
