@@ -21,4 +21,6 @@ router.get('/:id', adminScController.getScrapedContentById);
 router.put('/:id', adminScController.updateScrapedContent);
 router.delete('/:id', adminScController.deleteScrapedContent);
 
+router.post('/:id/deep-dive', adminScController.triggerDeepDive);
+
 module.exports = router;

@@ -4,37 +4,61 @@ const { v4: uuidv4 } = require('uuid');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
-// ... (getAllScrapedContent, getScrapedContentById, createScrapedContent sind unverändert) ...
 exports.getAllScrapedContent = async (req, res) => {
-    const { source_identifier } = req.query;
+    // NEU: Parameter für Filter und Paginierung auslesen
+    const { source_identifier, startDate, endDate, limit = 50, offset = 0 } = req.query;
     try {
-        const query = `
+        // Basis-Query bleibt unverändert
+        const baseQuery = `
             SELECT 
                 sc.id, sc.source_identifier, sr.name as rule_name, sc.title, sc.original_url, sc.category,
                 sc.published_date, sc.event_date, sc.region, sc.scraped_at, sc.relevance_score,
+                sc.thumbnail_url, -- <-- ADDED
                 'content' as data_type,
                 (SELECT array_agg(t.name) FROM tags t JOIN scraped_content_tags sct ON t.id = sct.tag_id WHERE sct.scraped_content_id = sc.id) as tags
             FROM scraped_content sc
             LEFT JOIN scraping_rules sr ON sc.source_identifier = sr.source_identifier
-
             UNION ALL
-
             SELECT 
                 ti.id, ti.source_identifier, sr.name as rule_name, ti.title, ti.link as original_url,
                 ti.type as category, ti.published_at as published_date, null as event_date,
-                ti.region, ti.published_at as scraped_at, 0 as relevance_score, 'traffic' as data_type,
+                ti.region, ti.published_at as scraped_at, 0 as relevance_score,
+                null as thumbnail_url, -- <-- ADDED
+                'traffic' as data_type,
                 (SELECT array_agg(t.name) FROM tags t JOIN traffic_incidents_tags tit ON t.id = tit.tag_id WHERE tit.traffic_incident_id = ti.id) as tags
             FROM traffic_incidents ti
             LEFT JOIN scraping_rules sr ON ti.source_identifier = sr.source_identifier
         `;
 
-        let finalQuery = `SELECT * FROM (${query}) AS combined_data`;
+        // NEU: Dynamischer Aufbau der Query
         const queryParams = [];
+        let whereClauses = [];
+        let paramIndex = 1;
+
         if (source_identifier) {
-            finalQuery += ` WHERE combined_data.source_identifier = $1`;
+            whereClauses.push(`combined_data.source_identifier = $${paramIndex++}`);
             queryParams.push(source_identifier);
         }
-        finalQuery += ` ORDER BY combined_data.scraped_at DESC`;
+        if (startDate) {
+            whereClauses.push(`combined_data.published_date >= $${paramIndex++}`);
+            queryParams.push(startDate);
+        }
+        if (endDate) {
+            // Add 1 day to endDate to include the entire day
+            const nextDay = new Date(endDate);
+            nextDay.setDate(nextDay.getDate() + 1);
+            whereClauses.push(`combined_data.published_date < $${paramIndex++}`);
+            queryParams.push(nextDay.toISOString().split('T')[0]);
+        }
+
+        let finalQuery = `SELECT * FROM (${baseQuery}) AS combined_data`;
+        if (whereClauses.length > 0) {
+            finalQuery += ` WHERE ${whereClauses.join(' AND ')}`;
+        }
+        
+        finalQuery += ` ORDER BY combined_data.scraped_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+        queryParams.push(parseInt(limit, 10));
+        queryParams.push(parseInt(offset, 10));
 
         const result = await db.query(finalQuery, queryParams);
         res.json(result.rows);
@@ -44,13 +68,14 @@ exports.getAllScrapedContent = async (req, res) => {
     }
 };
 
+
 exports.getScrapedContentById = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Scraped Content ID format.' });
 
     try {
         const result = await db.query(
-            `SELECT id, source_identifier, original_url, title, summary, full_text, published_date, event_date, category, tags, relevance_score, region, scraped_at, created_at, updated_at
+            `SELECT id, source_identifier, original_url, title, summary, full_text, published_date, event_date, category, tags, relevance_score, region, scraped_at, created_at, updated_at, thumbnail_url
              FROM scraped_content
              WHERE id = $1`,
             [id]
@@ -66,7 +91,7 @@ exports.getScrapedContentById = async (req, res) => {
 };
 
 exports.createScrapedContent = async (req, res) => {
-    const { source_identifier, original_url, title, summary, full_text, published_date, event_date, category_id, tags: tagIds, relevance_score, region } = req.body;
+    const { source_identifier, original_url, title, summary, full_text, published_date, event_date, category_id, tags: tagIds, relevance_score, region, thumbnail_url } = req.body;
     if (!source_identifier || !original_url || !title) {
         return res.status(400).json({ message: 'Source identifier, original URL, and title are required.' });
     }
@@ -77,9 +102,9 @@ exports.createScrapedContent = async (req, res) => {
         const newContentId = uuidv4();
 
         const newEntry = await client.query(
-            `INSERT INTO scraped_content (id, source_identifier, original_url, title, summary, full_text, published_date, event_date, category_id, relevance_score, region)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-            [newContentId, source_identifier, original_url, title, summary, full_text, published_date, event_date, category_id, relevance_score, region]
+            `INSERT INTO scraped_content (id, source_identifier, original_url, title, summary, full_text, published_date, event_date, category_id, relevance_score, region, thumbnail_url)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+            [newContentId, source_identifier, original_url, title, summary, full_text, published_date, event_date, category_id, relevance_score, region, thumbnail_url]
         );
 
         if (tagIds && tagIds.length > 0) {
@@ -103,6 +128,7 @@ exports.createScrapedContent = async (req, res) => {
 };
 
 exports.updateScrapedEvent = async (req, res) => {
+    // This function remains unchanged as it handles specific fields for events
     const { id } = req.params;
     const { title, event_date, original_url, region, summary } = req.body;
 
@@ -138,7 +164,7 @@ exports.updateScrapedContent = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
     
-    const { title, summary, category_id, tags: tagIds, region, relevance_score } = req.body;
+    const { title, summary, category_id, tags: tagIds, region, relevance_score, thumbnail_url } = req.body; // <-- ADDED thumbnail_url
 
     const client = await db.connect();
     try {
@@ -146,9 +172,9 @@ exports.updateScrapedContent = async (req, res) => {
         
         const updatedContent = await client.query(
             `UPDATE scraped_content SET 
-                title = $1, summary = $2, category_id = $3, region = $4, relevance_score = $5, updated_at = CURRENT_TIMESTAMP 
-             WHERE id = $6 RETURNING *`,
-            [title, summary, category_id, region, relevance_score, id]
+                title = $1, summary = $2, category_id = $3, region = $4, relevance_score = $5, thumbnail_url = $6, updated_at = CURRENT_TIMESTAMP 
+             WHERE id = $7 RETURNING *`, // <-- MODIFIED
+            [title, summary, category_id, region, relevance_score, thumbnail_url, id] // <-- MODIFIED
         );
         if (updatedContent.rows.length === 0) throw new Error('Content not found.');
 
@@ -173,6 +199,7 @@ exports.updateScrapedContent = async (req, res) => {
     }
 };
 
+// ... (rest of the file remains unchanged)
 exports.deleteScrapedContent = async (req, res) => {
     const { id } = req.params;
     const { dataType } = req.query;
@@ -237,13 +264,44 @@ exports.createManualEvent = async (req, res) => {
     }
 };
 
-// NEU: Holt alle Regionen für Dropdowns
+// GEÄNDERT: Holt alle Regionen inkl. ID für Dropdowns
 exports.getAllRegions = async (req, res) => {
     try {
-        const { rows } = await db.query('SELECT name, code FROM regions ORDER BY name ASC');
+        const { rows } = await db.query('SELECT id, name, code FROM regions ORDER BY name ASC');
         res.json(rows);
     } catch (err) {
         console.error('Fehler beim Laden der Regionen:', err.message);
+        res.status(500).send('Serverfehler');
+    }
+};
+
+exports.triggerDeepDive = async (req, res) => {
+    const { id: contentId } = req.params;
+
+    try {
+        const contentRes = await db.query(
+            'SELECT original_url, region FROM scraped_content WHERE id = $1',
+            [contentId]
+        );
+        if (contentRes.rows.length === 0) {
+            return res.status(404).json({ message: 'Inhalt nicht gefunden.' });
+        }
+        const { original_url, region } = contentRes.rows[0];
+
+        if (!original_url) {
+            return res.status(400).json({ message: 'Dieser Inhalt hat keine verknüpfte URL für einen Deep Dive.' });
+        }
+
+        await fundingQueue.add('extract-funding-details', {
+            sourceRuleId: null, 
+            articleUrl: original_url,
+            region: region,
+        });
+
+        res.status(202).json({ message: 'KI Deep Dive wurde erfolgreich zur Analyse in die Warteschlange gestellt.' });
+
+    } catch (err) {
+        console.error(`Error triggering deep dive for content ${contentId}:`, err.message);
         res.status(500).send('Serverfehler');
     }
 };

@@ -5,7 +5,7 @@ const dataController = require('../controllers/dataController');
 
 router.use(authMiddleware);
 
-router.get('/relevant-action', dataController.getRelevantAction)
+router.get('/relevant-action', dataController.getRelevantAction);
 router.get('/search', dataController.globalSearch);
 router.get('/fuel/search', dataController.fuelSearch);
 router.post('/fuel/prices-by-ids', dataController.getPricesByIds);
@@ -39,8 +39,7 @@ router.get('/dashboard/config', dataController.getDashboardConfig);
 router.get('/actions', authMiddleware, dataController.getActiveActionsForWidget);
 router.get('/active-advertisement', dataController.getActiveAdvertisement);
 router.get('/tags', dataController.getTagsForCategory);
-
-// --- NEU: Route, um alle existierenden Tags für Autocomplete abzurufen ---
 router.get('/all-tags', dataController.getAllTags);
+router.get('/events', authMiddleware, dataController.getEvents);
 
 module.exports = router;

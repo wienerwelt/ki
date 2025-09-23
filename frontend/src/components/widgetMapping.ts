@@ -19,4 +19,6 @@ export const WIDGET_COMPONENTS: { [key: string]: React.LazyExoticComponent<React
     PodcastWidget: React.lazy(() => import('./widgets/PodcastWidget')),
     VideoWidget: React.lazy(() => import('./widgets/VideoWidget')),
     SurveyWidget: React.lazy(() => import('./widgets/SurveyWidget')),
+    TcoCalculatorWidget: React.lazy(() => import('./widgets/TcoCalculatorWidget')),
+    FundingWidget: React.lazy(() => import('./widgets/FundingWidget')),
 };

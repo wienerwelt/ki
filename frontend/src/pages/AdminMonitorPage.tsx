@@ -22,10 +22,16 @@ interface Log {
 interface SnackbarState { open: boolean; message: string; severity: AlertProps['severity']; }
 type Order = 'asc' | 'desc';
 
+interface ServiceStatus {
+    status: 'online' | 'offline';
+    version?: string;
+    error?: string;
+}
 interface HealthStatus {
-    postgres: { status: 'online' | 'offline'; version?: string; error?: string; };
-    redis: { status: 'online' | 'offline'; error?: string; };
+    postgres: ServiceStatus;
+    redis: ServiceStatus;
     server: { uptime: string; memoryUsage: { rss: number } };
+    workers: { [key: string]: ServiceStatus };
 }
 
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
@@ -59,36 +65,30 @@ const AdminMonitorPage: React.FC = () => {
     const [isDeleting, setIsDeleting] = useState(false);
     const [snackbar, setSnackbar] = useState<SnackbarState>({ open: false, message: '', severity: 'success' });
 
-    // --- HEALTH WIDGET LOGIK START ---
+    // --- HEALTH WIDGET LOGIK ---
     const [healthData, setHealthData] = useState<HealthStatus | null>(null);
     const [isHealthLoading, setIsHealthLoading] = useState(true);
     const [healthError, setHealthError] = useState<string | null>(null);
 
     useEffect(() => {
         const fetchHealth = async () => {
-            // KORREKTUR: AbortController für Timeout implementieren
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => {
-                controller.abort();
-            }, 10000); // 10 Sekunden Timeout
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-            if (!healthData && !healthError) {
-                setIsHealthLoading(true);
-            }
-
+            if (!healthData && !healthError) setIsHealthLoading(true);
+            
             try {
                 const token = localStorage.getItem('jwt_token');
                 const response = await apiClient.get('/api/admin/monitor/status', {
                     headers: { 'x-auth-token': token },
-                    signal: controller.signal // Signal an die Anfrage übergeben
+                    signal: controller.signal
                 });
                 
-                clearTimeout(timeoutId); // Timeout löschen, wenn die Anfrage erfolgreich war
-
+                clearTimeout(timeoutId);
                 setHealthData(response.data);
                 setHealthError(null);
             } catch (err: any) {
-                clearTimeout(timeoutId); // Timeout auch im Fehlerfall löschen
+                clearTimeout(timeoutId);
                 if (err.name === 'AbortError' || err.code === 'ECONNABORTED') {
                     setHealthError('Timeout: Der Server antwortet nicht rechtzeitig.');
                 } else {
@@ -102,7 +102,7 @@ const AdminMonitorPage: React.FC = () => {
         fetchHealth();
         const interval = setInterval(fetchHealth, 30000);
         return () => clearInterval(interval);
-    }, []); // Leeres Array ist korrekt, damit der Effekt nur einmal startet
+    }, []);
     // --- HEALTH WIDGET LOGIK ENDE ---
 
     const fetchLogs = useCallback(async (currentPage = 1) => {
@@ -172,16 +172,16 @@ const AdminMonitorPage: React.FC = () => {
 
     const handleOpenJobQueue = () => {
         const apiUrl = import.meta.env.VITE_API_URL || ''; 
-        window.open(`${apiUrl}/api/admin/jobs`, '_blank');
+        window.open(`${apiUrl}/api/admin/monitor/jobs-auth`, '_blank');
     };
 
-    // --- HEALTH WIDGET RENDER-FUNKTION START ---
+    // --- HEALTH WIDGET RENDER-FUNKTION ---
     const renderHealthWidget = () => {
-        if (isHealthLoading) {
+        if (isHealthLoading && !healthData) {
             return <Paper sx={{p: 2, mb: 3}}><CircularProgress size={20} /></Paper>;
         }
 
-        const StatusChip: React.FC<{ service: HealthStatus['postgres'] | HealthStatus['redis'] }> = ({ service }) => (
+        const StatusChip: React.FC<{ service: ServiceStatus | undefined }> = ({ service }) => (
             <Tooltip title={service?.error || service?.status || 'unbekannt'}>
                 <Chip
                     icon={service?.status === 'online' ? <CheckCircleIcon /> : <ErrorIcon />}
@@ -196,22 +196,20 @@ const AdminMonitorPage: React.FC = () => {
         return (
             <Paper sx={{ p: 2, mb: 3 }}>
                 <Typography variant="h6" gutterBottom>Systemzustand</Typography>
-                {healthError && <Alert severity="error">{healthError}</Alert>}
+                {healthError && <Alert severity="warning">{healthError}</Alert>}
                 {healthData && !healthError && (
                     <Grid container spacing={2} alignItems="center">
-                        {/* KORREKTUR: 'component="span"' hinzugefügt, um ungültiges HTML zu verhindern */}
-                        <Grid item xs={12} sm={6} md={3}>
-                            <Typography component="span">PostgreSQL: <StatusChip service={healthData.postgres} /></Typography>
-                        </Grid>
-                        <Grid item xs={12} sm={6} md={3}>
-                            <Typography component="span">Redis: <StatusChip service={healthData.redis} /></Typography>
-                        </Grid>
-                        <Grid item xs={12} sm={6} md={3}>
-                            <Typography>Server Uptime: {healthData.server.uptime}</Typography>
-                        </Grid>
-                        <Grid item xs={12} sm={6} md={3}>
-                            <Typography>Memory: {(healthData.server.memoryUsage.rss / 1024 / 1024).toFixed(2)} MB</Typography>
-                        </Grid>
+                        <Grid item xs={12} sm={4} md={3}><Typography component="span">PostgreSQL: <StatusChip service={healthData.postgres} /></Typography></Grid>
+                        <Grid item xs={12} sm={4} md={3}><Typography component="span">Redis: <StatusChip service={healthData.redis} /></Typography></Grid>
+                        
+                        {/* KORREKTUR: Server Uptime und Memory wieder hinzugefügt */}
+                        <Grid item xs={12} sm={4} md={3}><Typography>Server Uptime: {healthData.server.uptime}</Typography></Grid>
+                        <Grid item xs={12} sm={4} md={3}><Typography>Memory: {(healthData.server.memoryUsage.rss / 1024 / 1024).toFixed(2)} MB</Typography></Grid>
+                        
+                        {/* Dynamische Anzeige der Worker-Status */}
+                        {Object.entries(healthData.workers || {}).map(([name, status]) => (
+                             <Grid item xs={12} sm={4} md={3} key={name}><Typography component="span">{name}: <StatusChip service={status} /></Typography></Grid>
+                        ))}
                     </Grid>
                 )}
             </Paper>

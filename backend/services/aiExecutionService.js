@@ -36,6 +36,9 @@ const generateAIContent = async (params) => {
     finalPrompt = finalPrompt.replace(/{{region}}/g, region || '');
     finalPrompt = finalPrompt.replace(/{{category}}/g, category || '');
     finalPrompt = finalPrompt.replace(/{{focus_page}}/g, focusPage || '');
+
+    // Ersetzt alle Vorkommen von '+++' durch einen leeren String.
+    finalPrompt = finalPrompt.replace(/\+\+\+/g, '');
     
     await logToDb(jobId, 'INFO', `Finaler Prompt für ${ai_provider} wird vorbereitet.`);
     
@@ -90,5 +93,6 @@ const generateAIContent = async (params) => {
 };
 
 module.exports = {
-    generateAIContent
+    generateAIContent,
+    logToDb
 };

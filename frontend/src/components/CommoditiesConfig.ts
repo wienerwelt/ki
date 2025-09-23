@@ -16,7 +16,7 @@ export const commoditiesConfig: Record<string, CommodityConfig> = {
         unit: 'USD/Barrel'
     },
     'EUR_USD': { 
-        name: 'Wechselkurs EUR/USD', 
+        name: 'EUR/USD', 
         formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 4 },
         color: '#82ca9d',
         unit: 'USD'
@@ -27,17 +27,16 @@ export const commoditiesConfig: Record<string, CommodityConfig> = {
         color: '#ffc658',
         unit: '%'
     },
+    'KVLPI_GESAMT': {
+        name: 'KVLPI',
+        formatOptions: { style: 'decimal', minimumFractionDigits: 1, maximumFractionDigits: 1 },
+        color: '#20c997',
+        unit: 'Index (2020=100)'
+    },    
     'CO2_PRICE': { 
-        name: 'CO2-Emissionspreis', 
+        name: 'CO2-Preis', 
         formatOptions: { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 },
         color: '#ff7300',
-        unit: 'EUR/Tonne'
-    },
-    // Beispiel für einen zukünftigen Rohstoff:
-    // 'NICKEL': { 
-    //     name: 'Nickel', 
-    //     formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 0 },
-    //     color: '#0088FE',
-    //     unit: 'USD/Tonne'
-    // },
+        unit: 'EUR/tCO2'
+    }
 };

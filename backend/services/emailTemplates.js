@@ -192,10 +192,42 @@ function renderNewsletterOptInEmail({ username, confirmUrl, unsubscribeUrl, bran
   });
 }
 
+
+function renderNewOpportunitiesEmail({ username, searchName, newOpportunities, searchUrl, brandLogoUrl }) {
+  const title = `Neue Förderungen für Ihre Suche: "${escapeHtml(searchName)}"`;
+  
+  const opportunitiesHtml = newOpportunities.map(opp => 
+    `<li style="margin-bottom: 8px;">
+       <a href="${getBaseUrl()}/funding-detail/${opp.id}" target="_blank" rel="noopener" style="font-weight: bold; text-decoration: none;">
+         ${escapeHtml(opp.title)}
+       </a>
+     </li>`
+  ).join('');
+
+  const contentHtml = `
+    <p>Hallo ${escapeHtml(username || '')},</p>
+    <p>unser Förder-Assistent hat <strong>${newOpportunities.length} neue relevante Förderung(en)</strong> für Ihre gespeicherte Suche "${escapeHtml(searchName)}" gefunden:</p>
+    <ul style="padding-left: 20px;">
+      ${opportunitiesHtml}
+    </ul>
+    <p>Klicken Sie auf den Button unten, um alle Ergebnisse für diese Suche anzuzeigen.</p>
+  `;
+  
+  return renderLayout({
+    preheader: `${newOpportunities.length} neue Förderungen gefunden!`,
+    title,
+    contentHtml,
+    ctaLabel: 'Alle Treffer anzeigen',
+    ctaUrl: searchUrl,
+    brandLogoUrl,
+  });
+}
+
 module.exports = {
   renderLayout,
   renderShareContentEmail,
   renderVerificationEmail,
   renderPasswordResetEmail,
   renderNewsletterOptInEmail,
+  renderNewOpportunitiesEmail,  
 };

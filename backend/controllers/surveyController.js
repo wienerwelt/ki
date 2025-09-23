@@ -24,26 +24,20 @@ exports.getSurveysForAdmin = async (req, res) => {
     }
 };
 
-// Erstellt eine neue Umfrage mit Fragen
 exports.createSurvey = async (req, res) => {
     const { business_partner_id: user_bp_id, role } = req.user;
     const { title, description, questions, start_date, end_date, status, target_bp_id } = req.body;
 
-    // --- KORREKTUR: Explizite Zuweisung und Validierung der Business Partner ID ---
     let final_bp_id;
-    if (role === 'admin') {
-        final_bp_id = target_bp_id;
-        if (!final_bp_id) {
-            return res.status(400).json({ message: 'Als Admin müssen Sie einen Business Partner für die Umfrage auswählen.' });
-        }
-    } else { // Für 'assistenz'
+    if (role === 'assistenz') {
         final_bp_id = user_bp_id;
+    } else if (role === 'admin') {
+        final_bp_id = target_bp_id;
     }
 
     if (!final_bp_id) {
         return res.status(403).json({ message: 'Die Zuordnung zu einem Business Partner ist ungültig oder fehlt.' });
     }
-    // --- ENDE DER KORREKTUR ---
 
     if (!title || !questions || !Array.isArray(questions) || questions.length === 0) {
         return res.status(400).json({ message: 'Titel und mindestens eine Frage sind erforderlich.' });

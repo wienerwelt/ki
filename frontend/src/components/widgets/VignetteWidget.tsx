@@ -3,9 +3,6 @@ import { Box, Typography, CircularProgress, Alert, FormControl, Select, MenuItem
 import apiClient from '../../apiClient';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
-
-// Icons
-import ConfirmationNumberIcon from '@mui/icons-material/ConfirmationNumber';
 import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import PublicIcon from '@mui/icons-material/Public';
@@ -18,13 +15,19 @@ interface Region {
     name: string;
 }
 
+interface VignetteWidgetProps extends BaseWidgetProps {
+    icon?: React.ReactNode;
+    title: string;
+    widgetTypeKey: string;
+}
+
 const getCurrencySymbol = (currencyCode: string | null): string => {
     if (currencyCode === 'EUR') return '€';
     if (currencyCode === 'CHF') return 'CHF';
     return currencyCode || '';
 };
 
-const VignetteWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRemovable }) => {
+const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, widgetTypeKey }) => {
     const [availableCountries, setAvailableCountries] = useState<Region[]>([]);
     const [selectedCountry, setSelectedCountry] = useState('AT');
     const [rawData, setRawData] = useState<any[]>([]);
@@ -59,7 +62,6 @@ const VignetteWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRemov
                 setSystemInfo({ car: response.data.vignette_system_car || 'N/A', truck: response.data.toll_system_truck || 'N/A' });
                 setProviderUrl(response.data.provider_url || '#');
             } catch (err: any) {
-                // === KORREKTUR: Fehlende Klammern im catch-Block hinzugefügt ===
                 setError(err.response?.data?.message || 'Daten konnten nicht geladen werden.');
                 setRawData([]);
                 setSystemInfo({ car: '-', truck: '-' });
@@ -117,12 +119,12 @@ const VignetteWidget: React.FC<BaseWidgetProps> = ({ onDelete, widgetId, isRemov
         <WidgetPaper 
             title={
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ConfirmationNumberIcon />
-                    <Typography variant="h6">Vignetten & Maut</Typography>
+                    {icon}
+                    <Typography variant="h6">{title}</Typography>
                 </Box>
             }
-            widgetTitle="Vignetten & Maut"
-            widgetTypeKey="vignette-prices"
+            widgetTitle={title}
+            widgetTypeKey={widgetTypeKey}
             widgetId={widgetId} 
             onDelete={onDelete} 
             isRemovable={isRemovable} 

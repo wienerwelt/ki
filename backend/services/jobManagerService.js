@@ -11,7 +11,7 @@ async function setEmailJobSchedule(emailJobId, cronPattern) {
   await removeEmailJobSchedule(emailJobId);
   if (cronPattern) {
     const { rows } = await db.query(
-      'SELECT * FROM email_cronjobs WHERE id = $1 AND is_active = TRUE',
+      'SELECT * FROM cronjobs WHERE id = $1 AND is_active = TRUE',
       [emailJobId]
     );
     if (rows.length === 0) throw new Error('Email job not found or inactive');
@@ -41,7 +41,7 @@ async function removeEmailJobSchedule(emailJobId) {
 
 async function getEmailJobs() {
   const { rows } = await db.query(
-    "SELECT * FROM email_cronjobs WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE"
+    "SELECT * FROM cronjobs WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE"
   );
   return rows.map(job => ({ ...job, next_run_at: calculateNextRun(job.schedule, job.id) }));
 }
@@ -273,7 +273,7 @@ async function synchronizeSchedulesFromDB() {
 
     // 5) Email-Cronjobs → EMAIL-Queue
     const { rows: emailRows } = await client.query(
-      "SELECT id, schedule FROM email_cronjobs WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE"
+      "SELECT id, schedule FROM cronjobs WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE"
     );
     for (const ej of emailRows) {
       const id = `email:${ej.id}`;

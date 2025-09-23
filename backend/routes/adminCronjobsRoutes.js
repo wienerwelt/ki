@@ -21,6 +21,12 @@ router.post('/system-subscriptions', adminCronjobsController.createSystemSubscri
 router.put('/system-subscriptions/:id', adminCronjobsController.updateSystemSubscription);
 router.delete('/system-subscriptions/:id', adminCronjobsController.deleteSystemSubscription);
 
+// --- Data Update Job Routes ---
+router.get('/data-updates', adminCronjobsController.getAllDataUpdateJobs);
+router.put('/data-updates/:id', adminCronjobsController.updateDataUpdateJob);
+router.post('/data-updates/trigger', adminCronjobsController.triggerDataUpdateJob);
+
+
 // --- Scraping Rule Routes ---
 router.get('/scraping-rules', adminCronjobsController.getScheduledScrapingRules);
 

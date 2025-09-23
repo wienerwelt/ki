@@ -9,12 +9,14 @@ const { parse } = require('date-fns');
 const isValidUUID = (uuid) =>
     uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
+
 exports.getAllScrapingRules = async (req, res) => {
     try {
         const query = `
             SELECT
                 r.*,
                 (CASE
+                    WHEN r.rule_type = 'funding' THEN (SELECT COUNT(*) FROM funding_opportunities fo WHERE fo.source_rule_id = r.id)
                     WHEN r.source_identifier LIKE '%traffic%' THEN (SELECT COUNT(*) FROM traffic_incidents ti WHERE ti.source_identifier = r.source_identifier)
                     ELSE (SELECT COUNT(*) FROM scraped_content sc WHERE sc.source_identifier = r.source_identifier)
                 END)::INTEGER AS current_entry_count
@@ -34,8 +36,9 @@ exports.getAllScrapingRules = async (req, res) => {
 exports.createScrapingRule = async (req, res) => {
     const {
         name, source_identifier, url_pattern, content_container_selector, title_selector,
-        date_selector, description_selector, link_selector, date_format,
-        category_default, is_active, region, schedule, scrape_after_date
+        date_selector, description_selector, link_selector, thumbnail_selector,
+        date_format, category_default, is_active, region, schedule, scrape_after_date,
+        rule_type // <-- HINZUGEFÜGT: rule_type aus dem Request-Body lesen
     } = req.body;
 
     if (!source_identifier || !url_pattern || !category_default) {
@@ -44,12 +47,17 @@ exports.createScrapingRule = async (req, res) => {
 
     try {
         const newRuleRes = await db.query(
-            `INSERT INTO scraping_rules (id, name, source_identifier, url_pattern, content_container_selector, title_selector, date_selector, description_selector, link_selector, date_format, category_default, is_active, region, schedule, scrape_after_date)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+            `INSERT INTO scraping_rules (
+                id, name, source_identifier, url_pattern, content_container_selector, title_selector, 
+                date_selector, description_selector, link_selector, thumbnail_selector, date_format, 
+                category_default, is_active, region, schedule, scrape_after_date, rule_type
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
             [
                 uuidv4(), name, source_identifier, url_pattern, content_container_selector, title_selector,
-                date_selector, description_selector, link_selector, date_format, category_default,
-                is_active, region, schedule, scrape_after_date
+                date_selector, description_selector, link_selector, thumbnail_selector,
+                date_format, category_default, is_active, region, schedule, scrape_after_date,
+                rule_type || 'content' // <-- HINZUGEFÜGT: rule_type in die DB einfügen
             ]
         );
         const newRule = newRuleRes.rows[0];
@@ -71,8 +79,9 @@ exports.updateScrapingRule = async (req, res) => {
 
     const {
         name, source_identifier, url_pattern, content_container_selector, title_selector,
-        date_selector, description_selector, link_selector, date_format,
-        category_default, is_active, region, schedule, scrape_after_date
+        date_selector, description_selector, link_selector, thumbnail_selector,
+        date_format, category_default, is_active, region, schedule, scrape_after_date,
+        rule_type // <-- HINZUGEFÜGT: rule_type aus dem Request-Body lesen
     } = req.body;
 
     try {
@@ -80,13 +89,15 @@ exports.updateScrapingRule = async (req, res) => {
             `UPDATE scraping_rules SET
              name = $1, source_identifier = $2, url_pattern = $3, content_container_selector = $4,
              title_selector = $5, date_selector = $6, description_selector = $7, link_selector = $8,
-             date_format = $9, category_default = $10, is_active = $11, region = $12, schedule = $13,
-             scrape_after_date = $14, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $15 RETURNING *`,
+             thumbnail_selector = $9, date_format = $10, category_default = $11, is_active = $12, 
+             region = $13, schedule = $14, scrape_after_date = $15, rule_type = $16, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $17 RETURNING *`,
             [
                 name, source_identifier, url_pattern, content_container_selector, title_selector,
-                date_selector, description_selector, link_selector, date_format, category_default,
-                is_active, region, schedule, scrape_after_date, id
+                date_selector, description_selector, link_selector, thumbnail_selector,
+                date_format, category_default, is_active, region, schedule, scrape_after_date,
+                rule_type || 'content', // <-- HINZUGEFÜGT: rule_type in der DB aktualisieren
+                id
             ]
         );
 
@@ -101,6 +112,8 @@ exports.updateScrapingRule = async (req, res) => {
         res.status(500).send('Server error');
     }
 };
+
+// ... (der Rest der Datei bleibt unverändert)
 
 exports.deleteScrapingRule = async (req, res) => {
     const { id } = req.params;
@@ -140,18 +153,15 @@ exports.updateScrapingRuleSchedule = async (req, res) => {
     }
 };
 
-// Manuelles Triggern: DB-Job anlegen + ENQUEUE in Queue 'scrape-content-generation'
 exports.triggerScrapeJob = async (req, res) => {
     const { id: ruleId } = req.params;
     try {
-        // --- NEU: Regeldetails abrufen, um einen Namen zu haben ---
         const ruleRes = await db.query('SELECT name, source_identifier FROM scraping_rules WHERE id = $1', [ruleId]);
         if (ruleRes.rows.length === 0) {
             return res.status(404).json({ message: 'Scraping-Regel nicht gefunden.' });
         }
         const rule = ruleRes.rows[0];
-        const jobName = rule.name || rule.source_identifier; // Fallback auf source_identifier
-        // --- ENDE NEU ---
+        const jobName = rule.name || rule.source_identifier;
 
         const jobResult = await db.query(
             `INSERT INTO scraping_jobs (scraping_rule_id, status) VALUES ($1, 'pending') RETURNING id`,
@@ -160,9 +170,9 @@ exports.triggerScrapeJob = async (req, res) => {
         const jobId = jobResult.rows[0].id;
 
         await scrapeQueue.add(
-            jobName, // ⬅️ GEÄNDERT: von 'run-rule' zum dynamischen Namen
+            jobName,
             { ruleId, jobId },
-            { jobId: `scrape:${ruleId}:${Date.now()}` } // Die ID kann so bleiben
+            { jobId: `scrape:${ruleId}:${Date.now()}` }
         );
 
         return res.status(202).json({ message: 'Scrape enqueued', jobId });

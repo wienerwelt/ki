@@ -9,7 +9,6 @@ const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F
 const toStr  = (v) => (v === null || v === undefined) ? '' : String(v);
 const normNum = (v) => (v === null || v === undefined) ? null : Number(v);
 
-// --- HILFSFUNKTIONEN ---
 const getDistance = (lat1, lon1, lat2, lon2) => {
     const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -125,7 +124,7 @@ function normalizeDEDetail(detail, priceObj) {
     street: detail.street || null,
     houseNumber: detail.houseNumber || null,
     postCode: detail.postCode ? String(detail.postCode) : null,
-    city: detail.place || null, // wichtig: place -> city
+    city: detail.place || null,
     lat: normNum(detail.lat),
     lng: normNum(detail.lng),
     diesel: priceObj?.diesel ?? null,
@@ -136,7 +135,6 @@ function normalizeDEDetail(detail, priceObj) {
 }
 
 function normalizeATStation(station) {
-  // station: { id, name, location{address,postalCode,city,latitude,longitude}, prices:[{fuelType,amount}] }
   const priceMap = {};
   (station.prices || []).forEach(p => {
     const key = mapFuelKeyAT(p.fuelType);
@@ -145,7 +143,6 @@ function normalizeATStation(station) {
   const addr = station.location?.address || '';
   let street = addr;
   let houseNumber = null;
-  // naive Split (Hausnummer optional am Ende)
   const m = addr.match(/^(.+?)\s+(\d+[a-zA-Z]?)$/);
   if (m) { street = m[1]; houseNumber = m[2]; }
 
@@ -167,8 +164,6 @@ function normalizeATStation(station) {
   };
 }
 
-
-// --- HAUPT-CONTROLLER-FUNKTIONEN ---
 exports.fuelSearch = async (req, res) => {
   const { country, lat: latStr, lng: lngStr, radius: radStr, query } = req.query;
   const targetCountry = (country || 'DE').toString().toUpperCase();
@@ -215,7 +210,6 @@ exports.fuelSearch = async (req, res) => {
             lng, 
             rad: radius, 
             sort: 'dist', 
-            // KORREKTUR: Der 'type'-Parameter wird jetzt fest auf 'all' gesetzt, um alle Preise zu erhalten.
             type: 'all', 
             apikey: apiKey 
         },
@@ -252,7 +246,6 @@ exports.fuelSearch = async (req, res) => {
     res.status(500).json({ ok: false, message: errorMessage });
   }
 };
-
 
 exports.getPricesByIds = async (req, res) => {
     const { country, ids, userId } = req.body || {};
@@ -307,12 +300,9 @@ exports.getPricesByIds = async (req, res) => {
     }
 };
 
-
-// --- NEU: Hilfsfunktion zur Anzeige der SQL-Abfrage ---
 const logQuery = (query, params) => {
     let loggedQuery = query;
     for (let i = 0; i < params.length; i++) {
-        // Ersetzt $1, $2 etc. durch die tatsächlichen Werte für eine leichtere Lesbarkeit
         const param = typeof params[i] === 'string' ? `'${params[i]}'` : params[i];
         loggedQuery = loggedQuery.replace(`$${i + 1}`, param);
     }
@@ -321,15 +311,13 @@ const logQuery = (query, params) => {
     console.log("---------------------");
 };
 
-// Optional: In-Memory-Cache zur Vermeidung häufiger API-Aufrufe für externe APIs
 let fuelPriceCache = {
     data: null,
     timestamp: 0,
-    ttl: 5 * 60 * 1000 // Time To Live: 5 Minuten
+    ttl: 5 * 60 * 1000
 };
 
 exports.getFuelPrices = async (req, res) => {
-    // Prüfen, ob Daten im Cache noch gültig sind
     if (fuelPriceCache.data && (Date.now() - fuelPriceCache.timestamp < fuelPriceCache.ttl)) {
         console.log('Serving fuel prices from cache.');
         return res.json(fuelPriceCache.data);
@@ -354,7 +342,7 @@ exports.getFuelPrices = async (req, res) => {
         const response = await axios.get(FUEL_PRICE_API_URL, {
             params: {
                 api_key: FUEL_PRICE_API_KEY,
-                country: 'AT,DE,FR', // Beispielparameter, ANPASSEN AN DIE ECHTE API
+                country: 'AT,DE,FR',
                 fuel_type: 'diesel,petrol',
             },
         });
@@ -438,9 +426,64 @@ exports.getTaxChanges = async (req, res) => {
     }
 };
 
+
+exports.getEvents = async (req, res) => {
+    const { id: userId, business_partner_id: businessPartnerId } = req.user;
+    const { category } = req.query;
+
+    if (!category) {
+        return res.status(400).json({ message: 'A category is required.' });
+    }
+
+    const categoryArray = category.split(',').map(c => c.trim());
+
+    try {
+        let whereClause = `sc.category = ANY($2::text[])`;
+        const queryParams = [userId, categoryArray];
+        
+        if (businessPartnerId) {
+            whereClause = `(${whereClause} OR sc.source_identifier = $3)`;
+            queryParams.push(`${businessPartnerId}_events`);
+        }
+
+        const dataQuery = `
+            SELECT
+                sc.id, sc.title, sc.event_date AS date, sc.summary,
+                sc.original_url AS url, sc.region, sc.full_text,
+                s.status = 'approved' AS is_trusted_source,
+                EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $1) as is_read,
+                (SELECT COUNT(*) FROM content_relevance_votes WHERE content_id = sc.id AND vote = 1)::INTEGER AS participants,
+                (SELECT COUNT(*) FROM content_relevance_votes WHERE content_id = sc.id AND vote = 0)::INTEGER AS "maybeParticipants",
+                COALESCE((SELECT vote FROM content_relevance_votes WHERE content_id = sc.id AND user_id = $1), NULL) AS "userVote"
+            FROM scraped_content sc
+            LEFT JOIN sources s ON sc.original_url LIKE s.url || '%'
+            WHERE ${whereClause} AND sc.event_date IS NOT NULL
+            ORDER BY sc.event_date ASC
+            LIMIT 50
+        `;
+        const { rows: events } = await db.query(dataQuery, queryParams);
+
+        const availableRegions = [...new Set(events.map(e => e.region).filter(Boolean))];
+        let regionsData = [];
+        if (availableRegions.length > 0) {
+            const regionQuery = 'SELECT name, code FROM regions WHERE name = ANY($1::text[])';
+            const regionsResult = await db.query(regionQuery, [availableRegions]);
+            regionsData = regionsResult.rows;
+        }
+
+        res.json({
+            events: events,
+            availableRegions: regionsData
+        });
+    } catch (err) {
+        console.error(`Error loading calendar events for category ${category}:`, err.message);
+        res.status(500).send('Serverfehler');
+    }
+};
+
 exports.getFleetAssociationNews = async (req, res) => {
     try {
-        const { id: userId } = req.user; // User-ID für "is_read" Status holen
+        const { id: userId } = req.user;
         const query = `
             SELECT 
                 id, title, summary, original_url, published_date, event_date, category, scraped_at,
@@ -475,13 +518,12 @@ exports.getFleetAssociationNews = async (req, res) => {
 
 exports.getCommodityPrices = async (req, res) => {
     try {
-        const indicators = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M']; 
+        const indicators = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'KVLPI_GESAMT', 'CO2_PRICE']; 
         const results = {};
 
         for (const indicator of indicators) {
-            // Aktuellsten Preis und Quelle holen
             const latestPriceQuery = `
-                SELECT value, unit, data_timestamp, source 
+                SELECT value, unit, data_timestamp, source, country_code 
                 FROM economic_indicators
                 WHERE indicator_name = $1
                 ORDER BY data_timestamp DESC
@@ -494,7 +536,6 @@ exports.getCommodityPrices = async (req, res) => {
             const latest = latestPriceResult.rows[0];
             const currentPrice = parseFloat(latest.value);
             
-            // Preis von vor einer Woche holen
             const weekAgoQuery = `
                 SELECT value FROM economic_indicators
                 WHERE indicator_name = $1 AND data_timestamp <= $2::date - interval '7 days'
@@ -504,7 +545,6 @@ exports.getCommodityPrices = async (req, res) => {
             const weekAgoResult = await db.query(weekAgoQuery, [indicator, latest.data_timestamp]);
             const weekAgoPrice = weekAgoResult.rows.length > 0 ? parseFloat(weekAgoResult.rows[0].value) : null;
 
-            // Preis von vor einem Monat holen
             const monthAgoQuery = `
                 SELECT value FROM economic_indicators
                 WHERE indicator_name = $1 AND data_timestamp <= $2::date - interval '1 month'
@@ -514,7 +554,6 @@ exports.getCommodityPrices = async (req, res) => {
             const monthAgoResult = await db.query(monthAgoQuery, [indicator, latest.data_timestamp]);
             const monthAgoPrice = monthAgoResult.rows.length > 0 ? parseFloat(monthAgoResult.rows[0].value) : null;
             
-            // === NEU: Preis von vor einem Jahr holen ===
             const yearAgoQuery = `
                 SELECT value FROM economic_indicators
                 WHERE indicator_name = $1 AND data_timestamp <= $2::date - interval '1 year'
@@ -524,7 +563,6 @@ exports.getCommodityPrices = async (req, res) => {
             const yearAgoResult = await db.query(yearAgoQuery, [indicator, latest.data_timestamp]);
             const yearAgoPrice = yearAgoResult.rows.length > 0 ? parseFloat(yearAgoResult.rows[0].value) : null;
 
-            // Trend bestimmen (Vergleich mit dem Wert von vor einer Woche)
             let trend = 'stable';
             if (weekAgoPrice) {
                 if (currentPrice > weekAgoPrice) trend = 'up';
@@ -536,11 +574,12 @@ exports.getCommodityPrices = async (req, res) => {
                 unit: latest.unit,
                 lastUpdate: latest.data_timestamp,
                 source: latest.source,
+                countryCode: latest.country_code,
                 trend: trend,
                 historical: {
                   weekAgo: weekAgoPrice,
                   monthAgo: monthAgoPrice,
-                  yearAgo: yearAgoPrice // === NEU: Jahreswert zum Ergebnis hinzugefügt ===
+                  yearAgo: yearAgoPrice
                 }
             };
         }
@@ -553,9 +592,7 @@ exports.getCommodityPrices = async (req, res) => {
     }
 };
 
-
 exports.getCommodityHistory = async (req, res) => {
-    // Zeitrahmen vom Frontend erhalten (z.B. '1M', '6M', '1Y')
     const { timeframe = '1Y' } = req.query; 
 
     let startDate;
@@ -565,8 +602,6 @@ exports.getCommodityHistory = async (req, res) => {
     else startDate = new Date(now.setFullYear(now.getFullYear() - 1));
 
     try {
-        // Die Abfrage holt für jeden Tag den letzten verfügbaren Eintrag pro Indikator.
-        // Das ist effizienter, als alle Datenpunkte zu senden.
         const query = `
             SELECT
                 DISTINCT ON (indicator_name, CAST(data_timestamp AS DATE))
@@ -583,7 +618,6 @@ exports.getCommodityHistory = async (req, res) => {
 
         const { rows } = await db.query(query, [startDate]);
 
-        // Daten für das Frontend formatieren
         const formattedData = rows.reduce((acc, row) => {
             const { indicator_name, date, value } = row;
             if (!acc[indicator_name]) {
@@ -600,7 +634,6 @@ exports.getCommodityHistory = async (req, res) => {
         res.status(500).json({ ok: false, message: 'Serverfehler' });
     }
 };
-
 
 exports.getTrafficInfo = async (req, res) => {
     const { regions, limit = 50, offset = 0 } = req.query;
@@ -671,7 +704,7 @@ exports.getUniqueTrafficRegions = async (req, res) => {
 
 exports.getBpScrapedContent = async (req, res) => {
     const { businessPartnerId, category } = req.query;
-    const { id: userId } = req.user; // User-ID aus der Authentifizierung holen
+    const { id: userId } = req.user;
 
     if (!businessPartnerId) {
         return res.status(400).json({ message: 'Business Partner ID is required.' });
@@ -716,7 +749,6 @@ exports.getBpScrapedContent = async (req, res) => {
         });
     }
 };
-
 
 exports.getVignettePrices = async (req, res) => {
     const { country } = req.query;
@@ -766,7 +798,6 @@ exports.getVignettePrices = async (req, res) => {
         res.status(500).json({ message: 'Serverfehler beim Abrufen der Daten.' });
     }
 };
-
 
 exports.voteOnContent = async (req, res) => {
     const { contentId } = req.params;
@@ -834,19 +865,13 @@ exports.markContentAsRead = async (req, res) => {
     }
 };
 
-
-// NEU: Funktion zur Generierung eines E-Mail-Entwurfs mittels KI
 exports.generateEmailFromContent = async (req, res) => {
     const { title, content } = req.body;
-    const { name: userName } = req.user; // Name des angemeldeten Benutzers
+    const { name: userName } = req.user;
 
     if (!content || !title) {
         return res.status(400).json({ message: 'Titel und Inhalt sind zur E-Mail-Generierung erforderlich.' });
     }
-
-    // Hier wird der externe KI-Dienst aufgerufen.
-    // WICHTIG: Ersetzen Sie dies durch Ihren tatsächlichen KI-Service-Aufruf (z.B. OpenAI, Google Gemini, etc.)
-    // Die folgende Implementierung simuliert den Aufruf und gibt eine strukturierte Antwort zurück.
 
     const prompt = `
         Erstelle einen E-Mail-Newsletter für die Fahrer eines Fuhrparks.
@@ -869,14 +894,10 @@ exports.generateEmailFromContent = async (req, res) => {
     `;
 
     try {
-        // --- SIMULATION EINES KI-AUFRUFS ---
-        // In einer echten Anwendung würden Sie hier den API-Call zu Ihrer KI machen.
-        // const aiResponse = await axios.post('https://api.openai.com/v1/completions', { ... });
         console.log("--- Generating Email with Prompt ---");
         console.log(prompt);
         console.log("------------------------------------");
 
-        // Simulierte Antwort für Entwicklungszwecke
         const simulatedAiResponse = {
             subject: `Wichtige Information: ${title}`,
             body: `Liebes Fahrerteam,\n\nwir möchten euch über eine wichtige Neuerung informieren, die uns alle betrifft.\n\n${content}\n\nWas bedeutet das für euch? Achtet bitte ab sofort auf [hier konkrete Anweisung einfügen, z.B. die geänderten Parkregelungen].\n\nBei Fragen stehe ich euch jederzeit zur Verfügung.\n\nBeste Grüße und allzeit gute Fahrt,\n\n${userName}`
@@ -889,7 +910,6 @@ exports.generateEmailFromContent = async (req, res) => {
         res.status(500).json({ message: 'Der E-Mail-Entwurf konnte aufgrund eines internen Fehlers nicht erstellt werden.' });
     }
 };
-
 
 function toAbsoluteUrl(pathOrUrl) {
   if (!pathOrUrl) return null;
@@ -905,16 +925,14 @@ exports.shareContentByEmail = async (req, res) => {
       return res.status(400).json({ message: 'Titel, Inhalt und Empfänger-E-Mail sind erforderlich.' });
     }
 
-    // 1) Absender (User)
     const senderName =
       req.user?.first_name?.trim() ||
       req.user?.username?.trim() ||
       req.user?.email?.trim() ||
       'Dashboard';
 
-    // 2) Business Partner Branding (Titel + Logo)
     let fromName = 'mobiliti Dashboard';
-    let brandLogoUrl = toAbsoluteUrl('/logos/de-mobiliti.png'); // Fallback
+    let brandLogoUrl = toAbsoluteUrl('/logos/de-mobiliti.png');
     try {
       const bpId = req.user?.business_partner_id;
       if (bpId) {
@@ -927,11 +945,8 @@ exports.shareContentByEmail = async (req, res) => {
           if (rows[0].logo_url) brandLogoUrl = toAbsoluteUrl(rows[0].logo_url);
         }
       }
-    } catch {
-      // Fallbacks bleiben bestehen
-    }
+    } catch {}
 
-    // 3) Betreff & Inhalts-HTML
     const subject = `Info von ${fromName}: ${title}`;
     const contentHtml = `
       <p>Hallo,</p>
@@ -946,26 +961,21 @@ exports.shareContentByEmail = async (req, res) => {
       }
     `;
 
-    // 4) Einheitliches Layout – Logo/Name des BPs übergeben (Fallbacks greifen automatisch)
     const htmlBody = renderLayout({
       preheader: title,
-      title: fromName,            // Überschrift/Brand-Name im Layout
+      title: fromName,
       contentHtml,
       ctaLabel: source ? 'Zur Quelle' : undefined,
       ctaUrl: source || undefined,
       footerText: `Gesendet von ${fromName}.`,
-      // ★ optionales Feld – im Template nutzen, falls vorhanden:
       brandLogoUrl,
     });
 
-    // 5) Versand
     await sendEmail({
       to: recipientEmail,
       subject,
       html: htmlBody,
-      fromName, // Absendername
-      // Optional: Wenn du lieber das Logo als CID einbettest, kannst du emailService so erweitern,
-      // dass es eine brandLogoPath/brandLogoCid Option akzeptiert.
+      fromName,
     });
 
     return res.status(200).json({
@@ -976,7 +986,6 @@ exports.shareContentByEmail = async (req, res) => {
     return res.status(500).json({ message: 'Der Inhalt konnte nicht geteilt werden.' });
   }
 };
-
 
 exports.getBusinessPartnerUserStatsForUser = async (req, res) => {
     const { bpId } = req.params;
@@ -1013,7 +1022,6 @@ exports.getBusinessPartnerUserStatsForUser = async (req, res) => {
     }
 };
 
-// Stellt die für den Benutzer sichtbaren AI Prompt Rules bereit.
 exports.getAIPromptRulesForUser = async (req, res) => {
     try {
         const result = await db.query('SELECT id, name, default_category_id FROM ai_prompt_rules ORDER BY name ASC');
@@ -1024,7 +1032,6 @@ exports.getAIPromptRulesForUser = async (req, res) => {
     }
 };
 
-// Stellt die für den Benutzer sichtbaren Kategorien bereit.
 exports.getCategoriesForUser = async (req, res) => {
     try {
         const result = await db.query('SELECT id, name FROM categories ORDER BY name ASC');
@@ -1045,7 +1052,6 @@ exports.getAiContent = async (req, res) => {
     }
 
     try {
-        // KORREKTUR: Lädt die aktuellen Benutzereinstellungen direkt aus der DB, um veraltete JWT-Daten zu umgehen.
         const userSettingsResult = await db.query(
             'SELECT article_score_min, article_score_max FROM users WHERE id = $1',
             [userId]
@@ -1058,7 +1064,6 @@ exports.getAiContent = async (req, res) => {
         }
         const categoryId = categoryResult.rows[0].id;
 
-        // Basis-Query und Parameter-Array werden dynamisch aufgebaut
         let baseQuery = 'FROM ai_generated_content WHERE category_id = $1';
         const queryParams = [categoryId];
         let paramIndex = 2;
@@ -1074,7 +1079,6 @@ exports.getAiContent = async (req, res) => {
             paramIndex++;
         }
 
-        // Score-Filter aus den frisch geladenen Benutzereinstellungen anwenden
         if (article_score_min !== null && typeof article_score_min !== 'undefined') {
             baseQuery += ` AND relevance_score >= $${paramIndex++}`;
             queryParams.push(article_score_min);
@@ -1084,13 +1088,11 @@ exports.getAiContent = async (req, res) => {
             queryParams.push(article_score_max);
         }
 
-        // Gesamtzahl der Artikel für die Paginierung ermitteln (berücksichtigt jetzt den Filter)
         const countQuery = `SELECT COUNT(DISTINCT id) as total_items ${baseQuery}`;
         const totalResult = await db.query(countQuery, queryParams);
         const totalItems = parseInt(totalResult.rows[0].total_items, 10);
         const totalPages = Math.ceil(totalItems / limit);
 
-        // Zählung für "ungelesen" und "neu"
         const countsQuery = `
             WITH all_content AS (
                 SELECT id, created_at, user_id
@@ -1107,7 +1109,6 @@ exports.getAiContent = async (req, res) => {
             new: parseInt(countsResult.rows[0].new_count, 10) || 0,
         };
 
-        // Daten für die aktuelle Seite abrufen (berücksichtigt jetzt den Filter)
         const dataQuery = `
             SELECT
                 id, title, generated_output as summary, source_reference as original_url,
@@ -1146,11 +1147,8 @@ exports.getAiContent = async (req, res) => {
     }
 };
 
-
-// Funktion zum Abrufen aller Regionen aus der Datenbank
 exports.getAllRegions = async (req, res) => {
     try {
-        // KORREKTUR: latitude und longitude werden jetzt mit ausgelesen
         const result = await db.query('SELECT id, name, code, latitude, longitude FROM regions ORDER BY name ASC');
         res.json(result.rows);
     } catch (err) {
@@ -1189,7 +1187,6 @@ exports.evStationSearch = async (req, res) => {
             
             const response = await axios.get('https://api.e-control.at/charge/1.0/stations/by-proximity', {
                 params: { latitude: lat, longitude: lng, radius: 25000 },
-                // KORREKTUR: Der Header-Name wurde auf 'X-Api-Key' geändert.
                 headers: { 'X-Api-Key': apiKey }
             });
             stations = (response.data || []).map(normalizeEControlStation).filter(Boolean);
@@ -1232,17 +1229,15 @@ exports.getEVStations = async (req, res) => {
         const params = {
             output: 'json',
             countrycode,
-            maxresults: 1000, // API-Limit!
+            maxresults: 1000,
             key: apiKey,
         };
 
         const response = await axios.get('https://api.openchargemap.io/v3/poi/', { params });
-        // Stadt-Filter (Case-insensitive)
         const filtered = response.data.filter(st =>
             (st.AddressInfo?.Town || '').toLowerCase().includes(city.trim().toLowerCase())
         );
 
-        // Pagination nach dem Filtern:
         const start = parseInt(offset, 10) || 0;
         const end = start + parseInt(maxresults, 10) || 50;
         const paged = filtered.slice(start, end);
@@ -1268,7 +1263,6 @@ exports.getTagsForCategory = async (req, res) => {
         let query;
         const queryParams = [category];
         
-        // Wenn ein Hauptfilter gesetzt ist, werden nur "Sub-Tags" gezählt.
         if (mainFilter) {
             queryParams.push(mainFilter);
             query = `
@@ -1292,7 +1286,6 @@ exports.getTagsForCategory = async (req, res) => {
                 ORDER BY count DESC, t.name ASC;
             `;
         } else {
-            // Ohne Hauptfilter werden alle Tags der Kategorie gezählt.
             query = `
                 SELECT
                     t.name,
@@ -1315,7 +1308,6 @@ exports.getTagsForCategory = async (req, res) => {
     }
 };
 
-
 exports.getScrapedContent = async (req, res) => {
     const { id: userId, last_login_at: lastLogin, business_partner_id: businessPartnerId } = req.user;
     const {
@@ -1331,7 +1323,6 @@ exports.getScrapedContent = async (req, res) => {
         );
         const { article_score_min, article_score_max } = userSettingsResult.rows[0] || {};
         
-        // --- NEU: Gespeicherte Tags des Nutzers abrufen ---
         const userTagsResult = await db.query('SELECT tag_name FROM user_saved_tags WHERE user_id = $1', [userId]);
         const userSavedTags = userTagsResult.rows.map(row => row.tag_name);
 
@@ -1339,7 +1330,6 @@ exports.getScrapedContent = async (req, res) => {
         let whereClauses = [];
         let paramIndex = 1;
 
-        // --- NEU: Filter für gespeicherte Tags anwenden ---
         if (userSavedTags.length > 0) {
             whereClauses.push(`EXISTS (
                 SELECT 1 FROM scraped_content_tags sct
@@ -1447,6 +1437,7 @@ exports.getScrapedContent = async (req, res) => {
             SELECT
                 sc.id, sc.title, sc.summary, sc.original_url, sc.published_date,
                 sc.event_date, sc.category, sc.scraped_at, sc.relevance_score, sc.region,
+                sc.thumbnail_url, 
                 s.status = 'approved' AS is_trusted_source,
                 EXISTS (
                     SELECT 1 FROM user_read_scraped_content ursc
@@ -1479,9 +1470,6 @@ exports.getScrapedContent = async (req, res) => {
     }
 };
 
-/**
- * Markiert einen gescrapten Inhalt als vom Benutzer gelesen.
- */
 exports.markScrapedContentAsRead = async (req, res) => {
     const { id: userId } = req.user;
     const { contentId } = req.params;
@@ -1501,9 +1489,6 @@ exports.getActiveAdvertisement = async (req, res) => {
     const { business_partner_id } = req.user;
 
     try {
-        // Findet die spezifischste, aktive Anzeige:
-        // 1. Zuerst eine für den Business Partner, die jetzt aktiv ist.
-        // 2. Wenn nicht gefunden, eine globale Anzeige, die jetzt aktiv ist.
         const query = `
             SELECT content, id FROM advertisements
             WHERE
@@ -1512,7 +1497,7 @@ exports.getActiveAdvertisement = async (req, res) => {
                 (end_date IS NULL OR end_date >= NOW()) AND
                 (business_partner_id = $1 OR business_partner_id IS NULL)
             ORDER BY
-                business_partner_id DESC NULLS LAST -- Spezifische Anzeigen vor globalen
+                business_partner_id DESC NULLS LAST
             LIMIT 1;
         `;
         const result = await db.query(query, [business_partner_id]);
@@ -1520,14 +1505,13 @@ exports.getActiveAdvertisement = async (req, res) => {
         if (result.rows.length > 0) {
             res.json(result.rows[0]);
         } else {
-            res.json(null); // Keine aktive Anzeige gefunden
+            res.json(null);
         }
     } catch (err) {
         console.error('Error fetching active advertisement:', err.message);
         res.status(500).send('Server Error');
     }
 };
-
 
 exports.getActiveActionsForWidget = async (req, res) => {
     const { business_partner_id } = req.user;
@@ -1541,7 +1525,6 @@ exports.getActiveActionsForWidget = async (req, res) => {
     const now = new Date();
 
     try {
-        // Basis-Query, die nur die notwendigen Spalten abfragt
         const baseQuery = `
             FROM business_partner_actions
             WHERE
@@ -1552,13 +1535,11 @@ exports.getActiveActionsForWidget = async (req, res) => {
         `;
         const queryParams = [business_partner_id, now];
 
-        // Gesamtzahl der Aktionen für die Paginierung ermitteln
         const totalQuery = `SELECT COUNT(*) ${baseQuery}`;
         const totalResult = await db.query(totalQuery, queryParams);
         const totalItems = parseInt(totalResult.rows[0].count, 10);
         const totalPages = Math.ceil(totalItems / limit);
 
-        // Daten für die aktuelle Seite abrufen
         const dataQuery = `
             SELECT id, layout_type, title, content_text, link_url, image_url, created_at
             ${baseQuery}
@@ -1568,7 +1549,6 @@ exports.getActiveActionsForWidget = async (req, res) => {
         const dataQueryParams = [...queryParams, limit, offset];
         const dataResult = await db.query(dataQuery, dataQueryParams);
 
-        // Zähler für "neue" Aktionen (z.B. in den letzten 3 Tagen erstellt)
         const newQuery = `SELECT COUNT(*) FROM business_partner_actions WHERE business_partner_id = $1 AND is_active = TRUE AND created_at >= NOW() - INTERVAL '3 days'`;
         const newResult = await db.query(newQuery, [business_partner_id]);
         const counts = { new: parseInt(newResult.rows[0].count, 10) || 0 };
@@ -1576,7 +1556,6 @@ exports.getActiveActionsForWidget = async (req, res) => {
         res.json({ data: dataResult.rows, totalPages, counts });
 
     } catch (err) {
-        // Verbessertes Fehler-Logging
         console.error('--- DATABASE ERROR in getActiveActionsForWidget ---');
         console.error('Timestamp:', new Date().toISOString());
         console.error('Error Message:', err.message);
@@ -1585,7 +1564,6 @@ exports.getActiveActionsForWidget = async (req, res) => {
         res.status(500).send('Serverfehler beim Abrufen der Aktionen.');
     }
 }
-
 
 exports.getCalendarEvents = async (req, res) => {
     try {
@@ -1596,14 +1574,13 @@ exports.getCalendarEvents = async (req, res) => {
              ORDER BY event_date ASC`
         );
         
-        // Daten für die Kalender-Bibliothek formatieren
         const events = rows.map(row => ({
             id: row.id,
             title: row.title,
             start: row.event_date,
-            end: row.event_date, // Für ganztägige Events
+            end: row.event_date,
             allDay: true,
-            resource: { // Zusatzinfos
+            resource: {
                 summary: row.summary,
                 url: row.original_url
             }
@@ -1616,10 +1593,9 @@ exports.getCalendarEvents = async (req, res) => {
     }
 };
 
-
 exports.getEnhancedCalendarEvents = async (req, res) => {
     const { id: userId } = req.user;
-    const { page = 1, limit = 5 } = req.query; // NEU: Paginierungs-Parameter
+    const { page = 1, limit = 5 } = req.query;
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
     try {
@@ -1629,7 +1605,6 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
             WHERE sc.category LIKE '%_events' AND sc.event_date IS NOT NULL
         `;
 
-        // Gesamtzahl für Paginierung ermitteln
         const countQuery = `SELECT COUNT(sc.id) as total_items ${baseQuery}`;
         const totalResult = await db.query(countQuery);
         const totalItems = parseInt(totalResult.rows[0].total_items, 10);
@@ -1660,8 +1635,8 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
 
         res.json({
             events: events,
-            totalPages: totalPages, // NEU: Info für Frontend
-            currentPage: parseInt(page, 10), // NEU: Info für Frontend
+            totalPages: totalPages,
+            currentPage: parseInt(page, 10),
             availableRegions: regionsData
         });
     } catch (err) {
@@ -1670,11 +1645,9 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
     }
 };
 
-
-// NEU: Speichert die Teilnahme-Antwort eines Nutzers für ein Event
 exports.voteOnEventAttendance = async (req, res) => {
     const { eventId } = req.params;
-    const { vote } = req.body; // Erwartet 1 für Ja, 0 für Vielleicht, -1 für Nein
+    const { vote } = req.body;
     const { id: userId } = req.user;
 
     if (![1, 0, -1].includes(vote)) {
@@ -1695,7 +1668,6 @@ exports.voteOnEventAttendance = async (req, res) => {
     }
 };
 
-// NEU: Teilt ein Event per E-Mail
 exports.shareEventByEmail = async (req, res) => {
     const { title, date, url, summary, recipientEmail } = req.body;
     const { name: senderName } = req.user;
@@ -1729,8 +1701,6 @@ exports.shareEventByEmail = async (req, res) => {
     }
 };
 
-
-// === NEU: Dashboard-Config inkl. BP + Color Scheme + preferred_theme ===
 exports.getDashboardConfig = async (req, res) => {
   try {
     const userId = req.user?.id || req.user?.sub;
@@ -1739,7 +1709,7 @@ exports.getDashboardConfig = async (req, res) => {
     const sql = `
       SELECT
         u.preferred_theme,
-        u.preferred_language, -- HINZUGEFÜGT
+        u.preferred_language,
         bp.id, bp.name, bp.address, bp.logo_url,
         bp.subscription_start_date, bp.subscription_end_date,
         bp.storage_tier, bp.storage_limit_bytes, bp.storage_usage_bytes,
@@ -1786,14 +1756,13 @@ exports.getDashboardConfig = async (req, res) => {
         [r.id]
       );
       regions = rr.rows;
-    } catch { /* ignore */ }
+    } catch { }
 
-    // KORRIGIERTE ANTWORT-STRUKTUR
     return res.json({
       user: {
         preferred_theme: r.preferred_theme || 'light',
         preferred_language: r.preferred_language || 'de',
-        regions: regions, // Regionen sind jetzt Teil des User-Objekts
+        regions: regions,
       },
       businessPartner: {
         id: r.id,
@@ -1811,7 +1780,6 @@ exports.getDashboardConfig = async (req, res) => {
         level_2_name: r.level_2_name,
         level_3_name: r.level_3_name,
         color_scheme,
-        // "regions" wurde von hier entfernt
       },
     });
   } catch (e) {
@@ -1819,7 +1787,6 @@ exports.getDashboardConfig = async (req, res) => {
     return res.status(500).json({ message: 'Serverfehler' });
   }
 };
-
 
 exports.getAllTags = async (req, res) => {
     try {
@@ -1838,15 +1805,12 @@ exports.globalSearch = async (req, res) => {
         return res.status(400).json({ message: 'Ein Suchbegriff mit mindestens 3 Zeichen ist erforderlich.' });
     }
 
-    // Bereitet den Suchbegriff für die PostgreSQL to_tsquery Funktion vor.
-    // Einzelne Wörter werden mit '&' (UND) verknüpft.
     const formattedTerm = term.trim().split(/\s+/).join(' & ');
 
     try {
         const query = `
             SELECT id, title, summary, published_date, type, relevance
             FROM (
-                -- Scraped Content durchsuchen
                 SELECT
                     id,
                     title,
@@ -1861,7 +1825,6 @@ exports.globalSearch = async (req, res) => {
                 
                 UNION ALL
                 
-                -- AI Generated Content durchsuchen
                 SELECT
                     id,
                     title,
@@ -1887,7 +1850,6 @@ exports.globalSearch = async (req, res) => {
         res.status(500).json({ message: 'Serverfehler bei der Suche.' });
     }
 };
-
 
 exports.getRelevantAction = async (req, res) => {
     const { category, region } = req.query;
@@ -1916,11 +1878,10 @@ exports.getRelevantAction = async (req, res) => {
                 AND target_widget_category = $1
                 AND (target_region = $2 OR target_region IS NULL OR target_region = '')
             ORDER BY
-                RANDOM() -- Wählt eine zufällige Aktion aus den passenden aus
+                RANDOM()
             LIMIT 1;
         `;
-
-        // Region kann optional sein, daher Fallback auf 'all' oder einen leeren String
+        
         const regionParam = region || 'all';
 
         const { rows } = await db.query(query, [category, regionParam]);
@@ -1928,7 +1889,7 @@ exports.getRelevantAction = async (req, res) => {
         if (rows.length > 0) {
             res.json(rows[0]);
         } else {
-            res.json(null); // Kein passender Partner gefunden
+            res.json(null);
         }
 
     } catch (err) {

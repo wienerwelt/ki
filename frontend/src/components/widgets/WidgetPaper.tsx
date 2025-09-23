@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+// frontend/src/components/WidgetPaper.tsx
+
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Paper, Box, Tooltip, IconButton, CircularProgress, Alert,
@@ -15,7 +17,7 @@ export interface WidgetPaperProps {
     widgetTypeKey: string;
     children: React.ReactNode;
     widgetId: string;
-    onDelete?: (id: string, typeKey: string) => void; // Angepasste Signatur für Konsistenz
+    onDelete?: (id: string, typeKey: string) => void;
     isRemovable?: boolean;
     noPadding?: boolean;
     loading?: boolean;
@@ -33,12 +35,12 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
     noPadding = false,
     loading = false,
     error = null,
-    ...rest // Nimmt die Props von react-grid-layout entgegen
+    ...rest
 }) => {
     const navigate = useNavigate();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-    const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+    const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
     const open = Boolean(anchorEl);
 
     const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
@@ -56,14 +58,15 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
         handleMenuClose();
     };
     
+    // ===== ÄNDERUNG HIER =====
     const handleDelete = () => {
         if (onDelete) {
-           if (window.confirm(`Möchten Sie das Widget "${widgetTitle}" wirklich entfernen?`)) {
-               onDelete(widgetId, widgetTypeKey);
-           }
+           // Das window.confirm wurde entfernt. Die Funktion wird jetzt direkt aufgerufen.
+           onDelete(widgetId, widgetTypeKey);
         }
         handleMenuClose();
     };
+    // =========================
 
     const renderActions = () => {
         if (isMobile) {
@@ -107,7 +110,6 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
     return (
         <Paper elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }} {...rest}>
             <Box 
-                // KORREKTUR: className="widget-header" und cursor: 'move' wurden von diesem Container entfernt
                 sx={{ 
                     display: 'flex', 
                     alignItems: 'center', 
@@ -117,8 +119,21 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                     backgroundColor: (theme) => theme.palette.mode === 'dark' ? theme.palette.grey[800] : theme.palette.grey[100],
                 }}
             >
-                {/* KORREKTUR: Das Icon ist jetzt der alleinige "Anfasser" mit der korrekten Klasse */}
-                <Box className="widget-drag-handle" sx={{ cursor: 'grab', mr: 1, color: 'text.disabled' }}>
+                <Box 
+                    className="widget-drag-handle" 
+                    sx={{ 
+                        cursor: 'grab', 
+                        mr: 1, 
+                        color: 'text.disabled',
+                        p: 1,
+                        m: -1,
+                        borderRadius: '50%',
+                        '&:active': {
+                            backgroundColor: 'action.hover',
+                            color: 'text.primary'
+                        }
+                    }}
+                >
                     <DragIndicatorIcon />
                 </Box>
                 
@@ -129,7 +144,7 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                 {renderActions()}
             </Box>
             
-            <Box sx={{ flexGrow: 1, overflow: 'auto', p: noPadding ? 0 : 2, display: 'flex', flexDirection: 'column' }}>
+            <Box sx={{ flexGrow: 1, overflow: 'auto', p: noPadding ? 0 : { xs: 1.5, sm: 2 }, display: 'flex', flexDirection: 'column' }}>
                 {loading ? (
                     <Box sx={{ m: 'auto', textAlign: 'center' }}><CircularProgress /></Box>
                 ) : error ? (

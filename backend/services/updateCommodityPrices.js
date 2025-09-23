@@ -1,27 +1,23 @@
 // backend/services/updateCommodityPrices.js
 const axios = require('axios');
-const db = require('../config/db'); // Passen Sie den Pfad ggf. an
+const cheerio = require('cheerio');
+const db = require('../config/db');
 
 // Laden der API-Schlüssel aus den Umgebungsvariablen
 const METALPRICE_API_KEY = process.env.METALPRICE_API_KEY;
 const OILPRICE_API_KEY = process.env.OILPRICE_API_KEY;
 
-/**
- * Robuste "Upsert"-Logik für einen Wirtschaftsindikator.
- */
+// Die Hilfsfunktion 'upsertIndicator' bleibt unverändert
 const upsertIndicator = async (indicator) => {
     const { name, value, unit, timestamp, source, countryCode = null } = indicator;
-
     if (value === null || value === undefined || isNaN(value)) {
-        console.log(`Kein gültiger Wert für ${name} erhalten. Überspringe Datenbank-Update.`);
+        console.log(`[data-update] Kein gültiger Wert für ${name} erhalten. Überspringe DB-Update.`);
         return;
     }
-
     const existingEntry = await db.query(
         `SELECT id FROM economic_indicators WHERE indicator_name = $1 AND data_timestamp::date = $2::date`,
         [name, timestamp]
     );
-
     if (existingEntry.rows.length > 0) {
         await db.query(
             `UPDATE economic_indicators SET value = $1, data_timestamp = $2, unit = $3, source = $4 WHERE id = $5`,
@@ -34,12 +30,10 @@ const upsertIndicator = async (indicator) => {
             [name, value, unit, timestamp, source, countryCode]
         );
     }
-    console.log(`Daten für ${name} erfolgreich gespeichert/aktualisiert.`);
+    console.log(`[data-update] Daten für ${name} erfolgreich gespeichert/aktualisiert.`);
 };
 
-/**
- * Ruft den EUR/USD-Wechselkurs ab.
- */
+
 const fetchAndStoreCurrencyRates = async () => {
     if (!METALPRICE_API_KEY) throw new Error('METALPRICE_API_KEY nicht gefunden.');
     try {
@@ -62,9 +56,7 @@ const fetchAndStoreCurrencyRates = async () => {
     }
 };
 
-/**
- * Ruft den Preis für Brent-Rohöl ab.
- */
+
 const fetchAndStoreOilPrice = async () => {
     if (!OILPRICE_API_KEY) throw new Error('OILPRICE_API_KEY nicht gefunden.');
     try {
@@ -88,9 +80,7 @@ const fetchAndStoreOilPrice = async () => {
     }
 };
 
-/**
- * FINALE VERSION V2: Nutzt den stabilen Endpunkt und greift dynamisch auf die Daten zu.
- */
+
 const fetchAndStoreEuriborRate = async () => {
     try {
         const url = `https://data-api.ecb.europa.eu/service/data/FM/M.U2.EUR.RT.MM.EURIBOR3MD_.HSTA?lastNObservations=1&detail=dataonly&format=jsondata`;
@@ -137,26 +127,139 @@ const fetchAndStoreEuriborRate = async () => {
     }
 };
 
-/**
- * Hauptfunktion, die alle Abrufe bündelt.
- */
-const updateAllCommodityPrices = async () => {
-    console.log('Starte die Aktualisierung der Wirtschaftsdaten...');
+
+const fetchAndStoreKVLPI = async () => {
+    try {
+        const url = 'https://www.statistik.at/statistiken/volkswirtschaft-und-oeffentliche-finanzen/preise-und-preisindizes/kraftfahrzeughaftpflicht-versicherungsleistungspreisindex-kvlpi';
+        
+        // 1. Lade den HTML-Inhalt der Webseite
+        const { data: html } = await axios.get(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
+        });
+
+        // 2. Parse das HTML mit Cheerio
+        const $ = cheerio.load(html);
+
+        // 3. Finde die Daten in der Tabelle
+        // Wir suchen die Tabellenzeile (tr), die den Text "KVLPI gesamt" enthält
+        const targetRow = $('td:contains("KVLPI gesamt")').parent('tr');
+
+        if (targetRow.length === 0) {
+            throw new Error('KVLPI-Gesamtzeile konnte auf der Webseite nicht gefunden werden.');
+        }
+
+        // Finde den letzten Datenpunkt (td) in dieser Zeile -> das ist der aktuellste Wert
+        const latestValueStr = targetRow.find('td:last-child').text().trim();
+        
+        // Finde den zugehörigen Monat aus dem Tabellenkopf (th)
+        const latestMonthStr = $('table.table--data thead th:last-child').text().trim(); // z.B. "2025M08"
+
+        // 4. Bereite die Daten für die Datenbank auf
+        const year = parseInt(latestMonthStr.substring(0, 4));
+        const month = parseInt(latestMonthStr.substring(5, 7));
+        const timestamp = new Date(year, month - 1, 1); // Monat ist 0-basiert
+
+        // Konvertiere den deutschen Komma-String in eine Zahl
+        const value = parseFloat(latestValueStr.replace(',', '.'));
+
+        if (isNaN(value)) {
+            throw new Error(`Gelesener KVLPI-Wert "${latestValueStr}" ist keine gültige Zahl.`);
+        }
+
+        // 5. Speichere die Daten mit deiner bestehenden Funktion
+        await upsertIndicator({
+            name: 'KVLPI_GESAMT', // Eindeutiger Name für die Datenbank
+            value: value,
+            unit: 'Index (2020=100)',
+            timestamp: timestamp,
+            source: 'statistik.at',
+            countryCode: 'AT'
+        });
+
+    } catch (error) {
+        throw new Error(`KVLPI-Update fehlgeschlagen: ${error.message}`);
+    }
+};
+
+
+const fetchAndStoreCO2Price = async () => {
+    try {
+        const url = 'https://tradingeconomics.com/commodity/carbon';
+
+        // 1. Lade den HTML-Inhalt der Webseite
+        const { data: html } = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36'
+            }
+        });
+
+        // 2. Parse das HTML mit Cheerio
+        const $ = cheerio.load(html);
+
+        // 3. Finde den Preis und die Einheit im HTML
+        // Der Preis steht in einem Element mit der ID "p"
+        const priceStr = $('#p').text().trim();
+        // Die Einheit steht direkt daneben im Element mit der ID "unit"
+        const unitStr = $('#unit').text().trim();
+
+        const price = parseFloat(priceStr);
+
+        if (isNaN(price)) {
+            throw new Error(`Gelesener CO2-Preis "${priceStr}" von TradingEconomics ist keine gültige Zahl.`);
+        }
+
+        // 4. Speichere die Daten
+        await upsertIndicator({
+            name: 'CO2_PRICE',
+            value: price,
+            unit: unitStr || 'EUR/tCO2', // Nutze die gelesene Einheit oder einen Fallback
+            timestamp: new Date(), // Wir nehmen das aktuelle Datum
+            source: 'tradingeconomics.com', // Die neue Quelle!
+            countryCode: null // EU-weiter Preis
+        });
+
+    } catch (error) {
+        throw new Error(`CO2-Preis-Update von TradingEconomics fehlgeschlagen: ${error.message}`);
+    }
+};
+
+
+const updateDailyIndicators = async () => {
+    console.log('[data-update] Starte die Aktualisierung der TÄGLICHEN Wirtschaftsdaten...');
     const results = await Promise.allSettled([
         fetchAndStoreCurrencyRates(),
         fetchAndStoreOilPrice(),
         fetchAndStoreEuriborRate(),
+        fetchAndStoreCO2Price(),
     ]);
 
     const failures = results.filter(result => result.status === 'rejected');
     if (failures.length > 0) {
-        failures.forEach(failure => {
-            console.error('Ein Sub-Job ist fehlgeschlagen:', failure.reason.message);
-        });
-        throw new Error('Mindestens ein Update-Job für Rohstoffdaten ist fehlgeschlagen.');
+        failures.forEach(failure => console.error('[data-update] Ein täglicher Sub-Job ist fehlgeschlagen:', failure.reason.message));
+        throw new Error('Mindestens ein täglicher Update-Job ist fehlgeschlagen.');
     }
-
-    console.log('Aktualisierung der Wirtschaftsdaten erfolgreich abgeschlossen.');
+    console.log('[data-update] Aktualisierung der täglichen Wirtschaftsdaten erfolgreich abgeschlossen.');
 };
 
-module.exports = { updateAllCommodityPrices };
+/**
+ * Bündelt alle MONATLICHEN Abrufe.
+ */
+const updateMonthlyIndicators = async () => {
+    console.log('[data-update] Starte die Aktualisierung der MONATLICHEN Wirtschaftsdaten...');
+    const results = await Promise.allSettled([
+        fetchAndStoreKVLPI(),
+    ]);
+
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length > 0) {
+        failures.forEach(failure => console.error('[data-update] Ein monatlicher Sub-Job ist fehlgeschlagen:', failure.reason.message));
+        throw new Error('Mindestens ein monatlicher Update-Job ist fehlgeschlagen.');
+    }
+    console.log('[data-update] Aktualisierung der monatlichen Wirtschaftsdaten erfolgreich abgeschlossen.');
+};
+
+// Exportiere die neuen Funktionen für den Worker und Scheduler
+module.exports = { 
+    updateDailyIndicators, 
+    updateMonthlyIndicators 
+};

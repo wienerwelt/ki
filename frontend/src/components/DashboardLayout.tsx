@@ -1,10 +1,9 @@
-// frontend/src/components/DashboardLayout.tsx
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
     AppBar, Toolbar, Typography, Box, Drawer, List, ListItem, ListItemText,
-    IconButton, Avatar, Divider, Menu, MenuItem, Tooltip, Badge, Chip
+    IconButton, Avatar, Divider, Menu, MenuItem, Tooltip, Badge, Chip,
+    useTheme, useMediaQuery, Dialog, DialogContent, DialogTitle
 } from '@mui/material';
 import AccountCircle from '@mui/icons-material/AccountCircle';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -33,13 +32,16 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import ContactMailIcon from '@mui/icons-material/ContactMail';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import PollIcon from '@mui/icons-material/Poll';
+import SearchIcon from '@mui/icons-material/Search';
+import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
+
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import posthog from 'posthog-js';
-import SessionTimer from './SessionTimer';
-import AdvertisementBanner from './AdvertisementBanner';
+import SessionTimer from '../components/SessionTimer';
+import AdvertisementBanner from '../components/AdvertisementBanner';
 import apiClient from '../apiClient';
-import GlobalSearchBar from './GlobalSearchBar';
+import GlobalSearchBar from '../components/GlobalSearchBar';
 import { useSnackbar } from '../context/SnackbarContext';
 
 interface DashboardLayoutProps {
@@ -57,6 +59,10 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [isAdVisible, setIsAdVisible] = useState(false);
     const [userTags, setUserTags] = useState<string[]>([]);
     const [tagsLoading, setTagsLoading] = useState(true);
+    const [searchOpen, setSearchOpen] = useState(false);
+    
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
     const token = localStorage.getItem('jwt_token');
 
@@ -140,6 +146,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             setUserTags(oldTags);
         }
     };
+    
+    const handleSearchOpen = () => {
+        setSearchOpen(true);
+    };
+
+    const handleSearchClose = () => {
+        setSearchOpen(false);
+    };
 
     const dashboardTitle = businessPartner?.dashboard_title || businessPartner?.name || 'Fleet KI-Dashboard';
 
@@ -153,76 +167,56 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             <Toolbar />
             <Divider />
             <List>
-                <ListItem button component={RouterLink} to="/dashboard">
-                    <DashboardIcon sx={{ mr: 2 }} />
-                    <ListItemText primary={t('layout.myDashboard')} />
-                </ListItem>
-                <ListItem button component={RouterLink} to="/files">
-                    <FolderIcon sx={{ mr: 2 }} />
-                    <ListItemText primary={t('layout.fileDirectory')} />
-                </ListItem>
-                <ListItem button component={RouterLink} to="/trusted-sources">
-                    <FactCheckIcon sx={{ mr: 2 }} />
-                    <ListItemText primary={t('layout.trustedSources')} />
-                </ListItem>
-                <ListItem button component={RouterLink} to="/feedback">
-                    <FeedbackIcon sx={{ mr: 2 }} />
-                    <ListItemText primary={t('layout.feedbackAndIdeas')} />
-                </ListItem>                
-                <ListItem button component={RouterLink} to="/contact-us">
-                    <ContactMailIcon sx={{ mr: 2 }} />
-                    <ListItemText primary={t('contactUs.title')} />
-                </ListItem>
+                <ListItem button component={RouterLink} to="/dashboard"><DashboardIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.myDashboard')} /></ListItem>
+                <ListItem button component={RouterLink} to="/files"><FolderIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.fileDirectory')} /></ListItem>
+                <ListItem button component={RouterLink} to="/trusted-sources"><FactCheckIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.trustedSources')} /></ListItem>
+                <ListItem button component={RouterLink} to="/feedback"><FeedbackIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.feedbackAndIdeas')} /></ListItem>                
                 <Divider sx={{ my: 1 }} />
                 {user?.role === 'assistenz' && (
                    <>
-                        <ListItem button component={RouterLink} to="/admin/users">
-                            <GroupIcon sx={{ mr: 2 }} />
-                            <ListItemText primary={t('layout.userManagement')} />
-                        </ListItem>
-                        <ListItem button component={RouterLink} to="/admin/actions">
-                            <StarsIcon sx={{ mr: 2 }} />
-                            <ListItemText primary={t('layout.manageActions')} />
-                        </ListItem>
-                        <ListItem button component={RouterLink} to="/admin/surveys">
-                            <PollIcon sx={{ mr: 2 }} />
-                            <ListItemText primary={t('layout.surveys')} />
-                        </ListItem>                        
+                        <ListItem button component={RouterLink} to="/admin/users"><GroupIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.userManagement')} /></ListItem>
+                        <ListItem button component={RouterLink} to="/admin/actions"><StarsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.manageActions')} /></ListItem>
+                        <ListItem button component={RouterLink} to="/admin/surveys"><PollIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.surveys')} /></ListItem>                        
                         <Divider sx={{ my: 1 }} />
                    </>
                 )}
                 {user?.role === 'admin' && (
                     <>
-                        <ListItem button component={RouterLink} to="/admin">
-                            <SettingsIcon sx={{ mr: 2 }} />
-                            <ListItemText primary={t('layout.adminArea')} />
-                        </ListItem>
+                        <ListItem button component={RouterLink} to="/admin"><SettingsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.adminArea')} /></ListItem>
                         <List component="div" disablePadding sx={{ pl: 4 }}>
+                            {/* --- System & Verwaltung --- */}
+                            <ListItem button component={RouterLink} to="/admin/funding"><ShoppingCartCheckoutIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.funding')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/cronjobs"><ScheduleIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.automatedTasks')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/statistics"><QueryStatsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.statistics')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/monitor"><MonitorIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.activityMonitor')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/advertisements"><CampaignIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.advertising')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/actions"><StarsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.manageActions')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/business-partners"><BusinessIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.businessPartners')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/users"><GroupIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.users')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/widget-types"><WidgetsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.widgetTypes')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/bp-widget-access"><SubscriptionsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.subscriptions')} /></ListItem>
+                            
+                            {/* --- Angebote & Interaktion --- */}
+                            <ListItem button component={RouterLink} to="/admin/actions"><StarsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.manageActions')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/advertisements"><CampaignIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.advertising')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/surveys"><PollIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.surveys')} /></ListItem>
+
+                            {/* --- Inhalte & KI --- */}
                             <ListItem button component={RouterLink} to="/admin/sources"><FactCheckIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.sourceManagement')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/events"><CalendarMonthIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.events')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/scraped-content"><DataObjectIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.scrapedContent')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/scraping-rules"><PolicyIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.scrapingRules')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/ai-prompt-rules"><AutoAwesomeIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.aiPromptRules')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/ai-content"><SmartToyIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.aiContent')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/ai-prompt-rules"><AutoAwesomeIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.aiPromptRules')} /></ListItem>
+                            
+                            {/* --- Taxonomie --- */}
                             <ListItem button component={RouterLink} to="/admin/categories"><CategoryIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.categories')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/tags"><TagIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.tags')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/events"><CalendarMonthIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.events')} /></ListItem>
+
+                            {/* --- Monitoring --- */}
+                            <ListItem button component={RouterLink} to="/admin/statistics"><QueryStatsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.statistics')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/monitor"><MonitorIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.activityMonitor')} /></ListItem>
                         </List>
                     </>
                 )}
                 <Divider sx={{ my: 1 }} />
-                <ListItem button onClick={handleLogout}>
-                    <LogoutIcon sx={{ mr: 2 }} />
-                    <ListItemText primary={t('layout.logout')} />
-                </ListItem>
+                <ListItem button onClick={handleLogout}><LogoutIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.logout')} /></ListItem>
             </List>
         </Box>
     );
@@ -230,79 +224,55 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     return (
         <Box sx={{ display: 'flex', minHeight: '100vh', backgroundColor: themeMode === 'dark' ? '#333' : '#f4f6f8' }}>
             <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }} color="primary">
-                {isAdVisible && ad && (
-                    <AdvertisementBanner content={ad.content} onClose={handleCloseAd} />
-                )}
+                {isAdVisible && ad && (<AdvertisementBanner content={ad.content} onClose={handleCloseAd} />)}
                 <Toolbar>
-                    <IconButton color="inherit" aria-label="open drawer" onClick={toggleDrawer(true)} edge="start" sx={{ mr: 2 }}>
-                        <MenuIcon />
-                    </IconButton>
+                    <IconButton color="inherit" aria-label="open drawer" onClick={toggleDrawer(true)} edge="start" sx={{ mr: 2 }}><MenuIcon /></IconButton>
                     <RouterLink to="/dashboard" style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center' }}>
-                        {businessPartner?.logo_url && (
-                            <Avatar alt={businessPartner.name} src={businessPartner.logo_url} sx={{ width: 60, height: 40, mr: 2 }} variant="rounded" />
-                        )}
-                        <Typography variant="h6" noWrap component="div" sx={{ display: { xs: 'none', sm: 'block' } }}>
-                            {dashboardTitle}
-                        </Typography>
+                        {businessPartner?.logo_url && (<Avatar alt={businessPartner.name} src={businessPartner.logo_url} sx={{ width: 60, height: 40, mr: 2 }} variant="rounded" />)}
+                        <Typography variant="h6" noWrap component="div" sx={{ display: { xs: 'none', sm: 'block' } }}>{dashboardTitle}</Typography>
                     </RouterLink>
 
-                    <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', ml: { xs: 0, md: 3 }, mr: 2 }}>
-                        <Box sx={{ width: '50%' }}>
-                           <GlobalSearchBar />
-                        </Box>
-                        <Tooltip title={t('layout.tagsTooltip')}>
-                            <Box sx={{ display: { xs: 'none', sm: 'flex' }, flexWrap: 'wrap', gap: 1, ml: 2 }}>
-                                {!tagsLoading && userTags.map(tag => (
-                                    <Chip
-                                        key={tag}
-                                        label={tag}
-                                        onDelete={user?.role !== 'demo' ? handleRemoveTag(tag) : undefined}
-                                        color="secondary"
-                                        size="small"
-                                        variant="outlined"
-                                        sx={{
-                                            color: 'inherit',
-                                            borderColor: 'currentColor',
-                                            '& .MuiChip-deleteIcon': {
-                                                color: 'inherit',
-                                                '&:hover': { color: 'white' },
-                                            },
-                                        }}
-                                    />
-                                ))}
-                            </Box>
-                        </Tooltip>
+                    <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: isMobile ? 'flex-end' : 'flex-start', alignItems: 'center', ml: { xs: 1, md: 3 }, mr: 2 }}>
+                        {isMobile ? (
+                            <IconButton color="inherit" onClick={handleSearchOpen}><SearchIcon /></IconButton>
+                        ) : (
+                            <>
+                                <Box sx={{ width: '50%' }}><GlobalSearchBar /></Box>
+                                <Tooltip title={t('layout.tagsTooltip')}>
+                                    <Box sx={{ display: { xs: 'none', sm: 'flex' }, flexWrap: 'wrap', gap: 1, ml: 2 }}>
+                                        {!tagsLoading && userTags.map(tag => (
+                                            <Chip
+                                                key={tag}
+                                                label={tag}
+                                                onDelete={user?.role !== 'demo' ? handleRemoveTag(tag) : undefined}
+                                                color="secondary"
+                                                size="small"
+                                                variant="outlined"
+                                                sx={{ color: 'inherit', borderColor: 'currentColor', '& .MuiChip-deleteIcon': { color: 'inherit', '&:hover': { color: 'white' } } }}
+                                            />
+                                        ))}
+                                    </Box>
+                                </Tooltip>
+                            </>
+                        )}
                     </Box>
                     
                     <SessionTimer />
                     
                     {user && (
                         <div>
-                            <Tooltip title="Community-Punkte">
-                                <Chip
-                                    icon={<StarsIcon sx={{ color: 'inherit !important' }}/>}
-                                    label={user.contribution_score ?? 0}
-                                    sx={{ color: 'inherit', mr: 1 }}
-                                    variant="outlined"
-                                />
-                            </Tooltip>
-
-                            <IconButton size="large" aria-label="Benachrichtigungen" color="inherit">
-                                <Badge badgeContent={0} color="error">
-                                    <NotificationsIcon />
-                                </Badge>
-                            </IconButton>
-                            <IconButton
-                                size="large"
-                                edge="end"
-                                aria-label="account of current user"
-                                aria-controls="menu-appbar"
-                                aria-haspopup="true"
-                                onClick={handleMenu}
-                                color="inherit"
-                            >
-                                <AccountCircle />
-                            </IconButton>
+                            {!isMobile && (
+                                <Tooltip title="Community-Punkte">
+                                    <Chip
+                                        icon={<StarsIcon sx={{ color: 'inherit !important' }} />}
+                                        label={user.contribution_score ?? 0}
+                                        sx={{ color: 'inherit', mr: 1 }}
+                                        variant="outlined"
+                                    />
+                                </Tooltip>
+                            )}
+                            <IconButton size="large" aria-label="Benachrichtigungen" color="inherit"><Badge badgeContent={0} color="error"><NotificationsIcon /></Badge></IconButton>
+                            <IconButton size="large" edge="end" aria-label="account of current user" aria-controls="menu-appbar" aria-haspopup="true" onClick={handleMenu} color="inherit"><AccountCircle /></IconButton>
                             <Menu
                                 id="menu-appbar"
                                 anchorEl={anchorEl}
@@ -312,9 +282,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 open={Boolean(anchorEl)}
                                 onClose={handleClose}
                             >
-                                <MenuItem onClick={handleProfile}>
-                                    {t('layout.myProfile')} {user.role && `(${user.role})`}
-                                </MenuItem>
+                                {isMobile && (
+                                    <Box>
+                                        <MenuItem disabled><StarsIcon sx={{ mr: 1.5, color: theme.palette.text.secondary }}/>{`Punkte: ${user.contribution_score ?? 0}`}</MenuItem>
+                                        <Divider />
+                                    </Box>
+                                )}
+                                <MenuItem onClick={handleProfile}>{t('layout.myProfile')} {user.role && `(${user.role})`}</MenuItem>
                                 <MenuItem onClick={handleLogout}>{t('layout.logout')}</MenuItem>
                             </Menu>
                         </div>
@@ -326,22 +300,30 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 open={drawerOpen}
                 onClose={toggleDrawer(false)}
                 ModalProps={{ keepMounted: true }}
-                sx={{
-                    width: 250,
-                    flexShrink: 0,
-                    [`& .MuiDrawer-paper`]: { width: 250, boxSizing: 'border-box' },
-                }}
+                sx={{ width: 250, flexShrink: 0, [`& .MuiDrawer-paper`]: { width: 250, boxSizing: 'border-box' } }}
             >
                 {drawerContent}
             </Drawer>
             
-            {/* HIER IST DIE KORREKTUR */}
-            <Box component="main" sx={{ flexGrow: 1, p: 3, width: `calc(100% - 250px)` }}>
-                {/* Die <Toolbar/> sorgt für den korrekten Abstand unter der AppBar. 
-                    Der zusätzliche 'mt' (margin-top) wurde entfernt. */}
+            <Box component="main" sx={{ flexGrow: 1, p: { xs: 1.5, sm: 2, md: 3 }, width: `calc(100% - 250px)` }}>
                 <Toolbar />
                 {children}
             </Box>
+
+            <Dialog
+                open={searchOpen}
+                onClose={handleSearchClose}
+                fullWidth
+                maxWidth="md"
+                fullScreen={isMobile}
+            >
+                <DialogTitle>Suchen</DialogTitle>
+                <DialogContent>
+                    <Box sx={{ pt: 1 }}>
+                        <GlobalSearchBar />
+                    </Box>
+                </DialogContent>
+            </Dialog>
         </Box>
     );
 };

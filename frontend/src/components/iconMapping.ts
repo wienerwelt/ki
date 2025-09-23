@@ -22,6 +22,8 @@ import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import PodcastsIcon from '@mui/icons-material/Podcasts';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import PollIcon from '@mui/icons-material/Poll';
+import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
+import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
 
 export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     SpaIcon: SpaIcon,
@@ -43,6 +45,8 @@ export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     PodcastsIcon: PodcastsIcon,
     VideoLibraryIcon: VideoLibraryIcon,
     PollIcon: PollIcon,
+    CompareArrowsIcon: CompareArrowsIcon,
+    ShoppingCartCheckoutIcon: ShoppingCartCheckoutIcon,
 };
 
 // === GEÄNDERT: Die Funktion ist jetzt ein einfacher, direkter Lookup ===

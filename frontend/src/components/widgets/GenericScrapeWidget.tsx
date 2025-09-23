@@ -3,8 +3,9 @@ import {
     Box, Typography, CircularProgress, MenuItem, Alert, List, ListItem, ListItemText, Divider,
     Dialog, DialogTitle, DialogContent, Button, Stack, IconButton, Tooltip, Link as MuiLink,
     DialogActions, Select, FormControl, InputLabel, SelectChangeEvent, Avatar, Chip,
-    TextField, InputAdornment, Paper
+    TextField, InputAdornment, Paper, ListItemAvatar
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
 import LinkIcon from '@mui/icons-material/Link';
 import SearchIcon from '@mui/icons-material/Search';
@@ -18,6 +19,7 @@ import DynamicFeedIcon from '@mui/icons-material/DynamicFeed';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
+import NewspaperIcon from '@mui/icons-material/Newspaper';
 import { useNavigate } from 'react-router-dom';
 import posthog from 'posthog-js';
 import WidgetPaper from './WidgetPaper';
@@ -40,6 +42,8 @@ interface ScrapedContentItem {
     scraped_at: string;
     region: string | null;
     is_trusted_source: boolean;
+    thumbnail_url?: string | null;
+    tags?: string[] | null;
 }
 interface Tag {
     name: string;
@@ -163,6 +167,7 @@ const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onS
         </ClickAwayListener>
     );
 };
+
 
 const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, description, filterLabel, widgetTypeKey }) => {
     const { user } = useAuth();
@@ -330,7 +335,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
     return (
         <WidgetPaper
             title={
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', width: '100%' }}>
+                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', width: '100%' }}>
                     <Tooltip title={description || title}><span>{icon}</span></Tooltip>
                     <Typography variant="h6">{title}</Typography>
                     
@@ -408,15 +413,27 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                             <List dense>
                                 {items.map((item, index) => {
                                     const domain = getDomain(item.original_url);
+                                    const displayDate = item.published_date || item.scraped_at;
                                     return (
                                         <React.Fragment key={item.id}>
-                                            <ListItem button onClick={() => handleOpenArticle(item)}>
+                                            <ListItem button onClick={() => handleOpenArticle(item)} alignItems="flex-start">
+                                                <ListItemAvatar>
+                                                    {item.thumbnail_url ? (
+                                                        <Avatar variant="rounded" src={item.thumbnail_url} sx={{ width: 56, height: 56, mr: 1.5 }} />
+                                                    ) : (
+                                                        <Avatar variant="rounded" sx={{ width: 56, height: 56, mr: 1.5, bgcolor: 'background.default' }}>
+                                                            <NewspaperIcon color="action" />
+                                                        </Avatar>
+                                                    )}
+                                                </ListItemAvatar>
                                                 <ListItemText
                                                     primary={<Typography variant="body2" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>{item.title}</Typography>}
                                                     secondaryTypographyProps={{ component: 'div' }}
                                                     secondary={
                                                         <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
-                                                            <Typography variant="caption" color="text.secondary">Gefunden am: {new Date(item.scraped_at).toLocaleDateString('de-AT')}</Typography>
+                                                            <Typography variant="caption" color="text.secondary">
+                                                                {new Date(displayDate).toLocaleDateString('de-AT')}
+                                                            </Typography>
                                                             {domain && (
                                                                 <MuiLink href={item.original_url!} target="_blank" rel="noopener noreferrer" variant="caption" color="text.secondary" onClick={(e) => e.stopPropagation()} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
                                                                     ({domain})
@@ -470,19 +487,57 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                         <IconButton aria-label="close" onClick={handleCloseDialog} sx={{ ml: 2 }}><CloseIcon /></IconButton>
                     </Box>
                 </DialogTitle>
-                <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', p: 2 }}>
+                <DialogContent dividers sx={{ p: 2 }}>
+                    {selectedArticle?.thumbnail_url && (
+                        <Box
+                            component="img"
+                            src={selectedArticle.thumbnail_url}
+                            alt={selectedArticle.title}
+                            sx={{
+                                width: '100%',
+                                maxHeight: '300px',
+                                objectFit: 'cover',
+                                borderRadius: 1,
+                                mb: 2,
+                            }}
+                        />
+                    )}
+                     <Box sx={{ mb: 2, borderBottom: 1, borderColor: 'divider', pb: 2 }}>
+                        {selectedArticle?.published_date && (
+                            <Typography variant="caption" color="text.secondary" display="block">
+                                Veröffentlicht am: {new Date(selectedArticle.published_date).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                            </Typography>
+                        )}
+                        {selectedArticle?.tags && selectedArticle.tags.length > 0 && (
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                                {selectedArticle.tags.map(tag => <Chip key={tag} label={tag} size="small" />)}
+                            </Box>
+                        )}
+                    </Box>
+
                     <Box sx={{ flexGrow: 1, overflowY: 'auto', pr: 2 }}>
                         <ArticleBodyRenderer summary={selectedArticle?.summary} />
                         {selectedArticle?.original_url && (
                             <Box sx={{ mt: 3, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                                <MuiLink href={selectedArticle.original_url} target="_blank" rel="noopener noreferrer" sx={{ display: 'inline-flex', alignItems: 'center' }}>
-                                    <LinkIcon sx={{ mr: 1 }} />
-                                    Originalquelle besuchen ({getDomain(selectedArticle.original_url)})
+                                <MuiLink
+                                    href={selectedArticle.original_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    sx={{ display: 'inline-flex', alignItems: 'center', fontWeight: 'bold' }}
+                                >
+                                    {getDomain(selectedArticle.original_url)}
                                 </MuiLink>
                             </Box>
                         )}
                     </Box>
-                    <Paper elevation={3} sx={{ position: 'sticky', bottom: 0, mt: 2, p: 1, alignSelf: 'center', borderRadius: '50px', backdropFilter: 'blur(8px)', backgroundColor: 'rgba(255, 255, 255, 0.8)' }}>
+                    <Paper 
+                        elevation={3} 
+                        sx={{ 
+                            position: 'sticky', bottom: 0, mt: 2, p: 1, alignSelf: 'center', 
+                            borderRadius: '50px', backdropFilter: 'blur(8px)', 
+                            backgroundColor: (theme) => alpha(theme.palette.background.paper, 0.8) 
+                        }}
+                    >
                         <Stack direction="row" spacing={1} alignItems="center">
                             {selectedArticle && <VoteComponent item={selectedArticle} onVote={(vote) => handleVote(selectedArticle.id, vote)} size="medium" />}
                             <Divider orientation="vertical" flexItem />

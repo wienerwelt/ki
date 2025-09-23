@@ -1,5 +1,7 @@
 // frontend/src/types/dashboard.types.ts
 
+import type { Layouts } from 'react-grid-layout';
+
 export interface Region {
   id: string;
   name: string;
@@ -28,10 +30,10 @@ export interface BaseWidgetProps {
     onDelete: (widgetId: string) => void;
     widgetId: string;
     isRemovable: boolean;
-    // Hinzugefügte optionale Props für eine bessere Integration
     icon?: React.ReactNode;
-    title?: string;
+    title?: React.ReactNode;
     widgetTypeKey?: string;
+    widgetTitle?: string;
 }
 
 export interface BusinessPartnerInfoWidgetProps extends BaseWidgetProps {
@@ -47,7 +49,7 @@ export interface WidgetConfig {
 
 export interface DashboardSavedConfig {
   name: string; 
-  layout: any[];
+  layouts: Layouts;
   widgets: WidgetConfig[];
 }
 
@@ -56,10 +58,11 @@ export interface WidgetTypeMeta {
   name: string;
   type_key: string;
   component_key: string;
-  description?: string | null; // === HIER IST DIE KORREKTUR ===
+  description?: string | null;
   icon_name?: string;
   config?: any;
   is_removable?: boolean;
+  is_multi_instance?: boolean;
   default_width?: number;
   default_height?: number;
   default_min_width?: number;

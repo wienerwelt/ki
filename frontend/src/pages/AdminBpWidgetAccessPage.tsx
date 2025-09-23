@@ -134,20 +134,18 @@ const AdminBpWidgetAccessPage: React.FC = () => {
         }
     };
 
-const handleRevokeAccess = async (business_partner_id: string, widget_type_id: string) => {
-    if (!window.confirm('Sind Sie sicher, dass Sie diesen Widget-Zugriff entziehen möchten?')) return;
-    const token = localStorage.getItem('jwt_token');
-    try {
-        // KORREKTUR: IDs werden jetzt direkt in die URL eingefügt
-        await apiClient.delete(`/api/admin/bp-widget-access/revoke/${business_partner_id}/${widget_type_id}`, {
-            headers: { 'x-auth-token': token },
-            // Das 'data'-Objekt wird nicht mehr benötigt
-        });
-        fetchAccessData();
-    } catch (err: any) {
-        alert(err.response?.data?.message || 'Fehler beim Entziehen des Zugriffs.');
-    }
-};
+    const handleRevokeAccess = async (business_partner_id: string, widget_type_id: string) => {
+        if (!window.confirm('Sind Sie sicher, dass Sie diesen Widget-Zugriff entziehen möchten?')) return;
+        const token = localStorage.getItem('jwt_token');
+        try {
+            await apiClient.delete(`/api/admin/bp-widget-access/revoke/${business_partner_id}/${widget_type_id}`, {
+                headers: { 'x-auth-token': token },
+            });
+            fetchAccessData();
+        } catch (err: any) {
+            alert(err.response?.data?.message || 'Fehler beim Entziehen des Zugriffs.');
+        }
+    };
     
     const handleSortRequest = (property: keyof BpWidgetAccess) => {
         const isAsc = orderBy === property && order === 'asc';
@@ -258,9 +256,26 @@ const handleRevokeAccess = async (business_partner_id: string, widget_type_id: s
                             value={formWidgetTypeId}
                             onChange={(e) => setFormWidgetTypeId(e.target.value)}
                             sx={{ mb: 2 }}
+                            // HINZUGEFÜGT: Feld wird deaktiviert, bis ein BP ausgewählt ist
+                            disabled={!formBusinessPartnerId}
                         >
                             <MenuItem value=""><em>Widget-Typ wählen</em></MenuItem>
-                            {widgetTypeOptions.map((wt) => (<MenuItem key={wt.id} value={wt.id}>{wt.name} ({wt.type_key})</MenuItem>))}
+                            {/* HINZUGEFÜGT: Logik zum Deaktivieren bereits zugewiesener Widgets */}
+                            {widgetTypeOptions.map((wt) => {
+                                const isAlreadyAssigned = bpWidgetAccess.some(access =>
+                                    access.business_partner_id === formBusinessPartnerId &&
+                                    access.widget_type_id === wt.id
+                                );
+                                return (
+                                    <MenuItem 
+                                        key={wt.id} 
+                                        value={wt.id} 
+                                        disabled={isAlreadyAssigned}
+                                    >
+                                        {wt.name} ({wt.type_key})
+                                    </MenuItem>
+                                );
+                            })}
                         </TextField>
                     </DialogContent>
                     <DialogActions>

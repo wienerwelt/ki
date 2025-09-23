@@ -19,14 +19,20 @@ function getTokenFromRequest(req) {
   return token;
 }
 
+// backend/middleware/authorize.js
+
 function extractUserFromPayload(decoded) {
   if (decoded && typeof decoded === 'object') {
     if (decoded.user && typeof decoded.user === 'object') return decoded.user;
+    
+    // Korrekte Version
     return {
       id: decoded.id || decoded.userId || decoded.sub,
-      role: decoded.role || (decoded.user && decoded.user.role),
-      email: decoded.email || (decoded.user && decoded.user.email),
-      username: decoded.username || (decoded.user && decoded.user.username),
+      role: decoded.role,
+      email: decoded.email,
+      username: decoded.username,
+      business_partner_id: decoded.business_partner_id || null,
+      contribution_score: decoded.contribution_score ?? 0,
     };
   }
   return null;

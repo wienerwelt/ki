@@ -209,9 +209,13 @@ const FileManagementPage: React.FC = () => {
   const usagePercent = limitBytes > 0 ? (Math.max(0, usageBytes) / limitBytes) * 100 : 0;
   
   const canUpload = useMemo(() => {
-    if (isAdmin) return true;
     if (isAssistent) {
-      return businessPartner && businessPartner.storage_limit_bytes > 0 && businessPartner.storage_usage_bytes < businessPartner.storage_limit_bytes;
+      const limit = parseInt(String(businessPartner?.storage_limit_bytes ?? 0), 10);
+      const usage = parseInt(String(businessPartner?.storage_usage_bytes ?? 0), 10);
+      return limit > 0 && usage < limit;
+    }
+    if (isAdmin) {
+      return true;
     }
     return false;
   }, [isAdmin, isAssistent, businessPartner]);

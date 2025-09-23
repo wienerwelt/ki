@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Box, Typography, CircularProgress, Alert, Chip, Link } from '@mui/material';
-import { FleetNewsWidgetProps } from '../../types/dashboard.types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Box, Typography, CircularProgress, Alert, Chip, Link as MuiLink, Stack, Divider } from '@mui/material';
 import WidgetPaper from './WidgetPaper';
+import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 
 interface NewsItem {
@@ -9,22 +9,50 @@ interface NewsItem {
     title: string;
     original_url: string;
     event_date?: string;
-    description?: string;
-    type?: string;
+    summary?: string;
+    category?: string;
     is_read: boolean;
 }
 
-const FleetNewsWidget: React.FC<FleetNewsWidgetProps> = ({ data, loading, error, onDelete, widgetId, isRemovable }) => {
+interface FleetNewsWidgetProps extends BaseWidgetProps {
+  icon?: React.ReactNode;
+  title: string;
+  category: string;
+  widgetTypeKey: string;
+}
+
+const FleetNewsWidget: React.FC<FleetNewsWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey }) => {
     const [items, setItems] = useState<NewsItem[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    const fetchData = useCallback(async () => {
+        if (!category) {
+            setError("Keine Kategorie im Widget-Typ konfiguriert.");
+            setLoading(false);
+            return;
+        }
+        setLoading(true);
+        setError(null);
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const response = await apiClient.get('/api/data/scraped-content', {
+                params: { category, limit: 10 },
+                headers: { 'x-auth-token': token }
+            });
+            setItems(response.data?.data || []);
+        } catch (err: any) {
+            setError(err.response?.data?.message || 'Nachrichten konnten nicht geladen werden.');
+        } finally {
+            setLoading(false);
+        }
+    }, [category]);
 
     useEffect(() => {
-        if (data?.data) {
-            setItems(data.data);
-        }
-    }, [data]);
+        fetchData();
+    }, [fetchData]);
 
     const markAsRead = async (itemId: string) => {
-        // Optimistisches Update der UI
         setItems(prevItems => prevItems.map(item =>
             item.id === itemId ? { ...item, is_read: true } : item
         ));
@@ -35,7 +63,6 @@ const FleetNewsWidget: React.FC<FleetNewsWidgetProps> = ({ data, loading, error,
             });
         } catch (err) {
             console.error("Fehler beim Markieren als gelesen:", err);
-            // Optional: Bei Fehler Zustand zurücksetzen oder neu laden
         }
     };
 
@@ -48,39 +75,50 @@ const FleetNewsWidget: React.FC<FleetNewsWidgetProps> = ({ data, loading, error,
     };
 
     return (
-        <WidgetPaper title="Fuhrparkverband Austria News & Events" widgetId={widgetId} onDelete={onDelete} isRemovable={isRemovable} loading={loading} error={error}>
-            {loading ? <CircularProgress size={24} /> :
-                error ? <Alert severity="error">{error}</Alert> :
-                    items.length > 0 ? (
-                        <Box>
-                            {items.map((item, index) => (
-                                <Box key={item.id || index} sx={{ mb: 1.5 }}>
-                                    <Link 
-                                        href={item.original_url} 
-                                        onClick={(e) => handleItemClick(e, item)}
-                                        sx={{ textDecoration: 'none', cursor: 'pointer' }}
-                                    >
-                                        <Typography variant="subtitle2" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>
-                                            {item.title}
-                                        </Typography>
-                                    </Link>
-                                    {item.event_date && (
-                                        <Typography variant="caption" color="text.secondary" display="block">
-                                            Datum: {new Date(item.event_date).toLocaleDateString()}
-                                        </Typography>
-                                    )}
-                                    <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-                                        {item.description && item.description.substring(0, 150)}...
-                                    </Typography>
-                                    <Chip label={item.type || 'News'} size="small" sx={{ mt: 0.5 }} />
-                                </Box>
-                            ))}
-                            <Typography variant="caption" sx={{ mt: 1 }}>Quelle: {data.source}</Typography>
+        <WidgetPaper
+            title={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>{icon}<Typography variant="h6">{title}</Typography></Box>}
+            widgetId={widgetId}
+            onDelete={onDelete}
+            isRemovable={isRemovable}
+            loading={loading}
+            error={error}
+            widgetTitle={title}
+            widgetTypeKey={widgetTypeKey}
+        >
+            {items.length > 0 ? (
+                <Stack spacing={2} divider={<Divider />}>
+                    {items.map(item => (
+                        <Box key={item.id}>
+                            <MuiLink
+                                href={item.original_url}
+                                onClick={(e) => handleItemClick(e, item)}
+                                sx={{ textDecoration: 'none', cursor: 'pointer', color: 'text.primary' }}
+                            >
+                                <Typography variant="subtitle2" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>
+                                    {item.title}
+                                </Typography>
+                            </MuiLink>
+                            {item.summary && (
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                                    {item.summary.substring(0, 120)}...
+                                </Typography>
+                            )}
+                            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                                {item.event_date && (
+                                    <Chip label={`Datum: ${new Date(item.event_date).toLocaleDateString()}`} size="small" variant="outlined" />
+                                )}
+                                {item.category && (
+                                    <Chip label={item.category} size="small" />
+                                )}
+                            </Stack>
                         </Box>
-                    ) : (
-                        <Typography variant="body2" color="text.secondary">Keine Nachrichten oder Veranstaltungen gefunden.</Typography>
-                    )
-            }
+                    ))}
+                </Stack>
+            ) : (
+                <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
+                    Keine Nachrichten oder Veranstaltungen gefunden.
+                </Typography>
+            )}
         </WidgetPaper>
     );
 };

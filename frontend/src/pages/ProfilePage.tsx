@@ -1,4 +1,3 @@
-// frontend/src/pages/ProfilePage.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Container, Typography, Box, TextField, Button, Grid, Paper, CircularProgress,
@@ -14,6 +13,7 @@ import { useTranslation } from 'react-i18next';
 import posthog from 'posthog-js';
 
 type ScoreFilter = 'all' | 'balanced' | 'positive';
+interface FundingCategory { id: number; name: string; }
 
 const ProfilePage: React.FC = () => {
   const { t } = useTranslation();
@@ -34,28 +34,40 @@ const ProfilePage: React.FC = () => {
   const [userTags, setUserTags] = useState<string[]>([]);
   const [allAvailableTags, setAllAvailableTags] = useState<string[]>([]);
   const [tagsLoading, setTagsLoading] = useState(true);
+  
+  const [allFundingCategories, setAllFundingCategories] = useState<FundingCategory[]>([]);
+  const [userFundingCategoryIds, setUserFundingCategoryIds] = useState<number[]>([]);
 
   const [newsletterOptIn, setNewsletterOptIn] = useState<boolean>(false);
   const isDemoUser = user?.role === 'demo';
 
-  const fetchUserTags = useCallback(async () => {
+  const fetchData = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
     try {
-        const response = await apiClient.get('/api/users/tags');
-        setUserTags(response.data || []);
-    } catch (err) {
-        console.error("Fehler beim Laden der User-Tags:", err);
-        setSnackbar({ open: true, message: 'Ihre persönlichen Themen konnten nicht geladen werden.' });
-    }
-  }, []);
+        const token = localStorage.getItem('jwt_token');
+        const headers = { headers: { 'x-auth-token': token } };
+        
+        const [tagsRes, allTagsRes, allCatsRes, userCatsRes] = await Promise.all([
+            apiClient.get('/api/users/tags', headers),
+            apiClient.get('/api/data/all-tags', headers),
+            apiClient.get('/api/funding/categories', headers),
+            apiClient.get('/api/funding/user-categories', headers)
+        ]);
 
-  const fetchAllAvailableTags = useCallback(async () => {
-    try {
-        const response = await apiClient.get('/api/data/all-tags');
-        setAllAvailableTags(response.data || []);
+        setUserTags(tagsRes.data || []);
+        setAllAvailableTags(allTagsRes.data || []);
+        setAllFundingCategories(allCatsRes.data || []);
+        setUserFundingCategoryIds(userCatsRes.data || []);
+
     } catch (err) {
-        console.error("Fehler beim Laden aller Tags:", err);
+        console.error("Fehler beim Laden der Profildaten:", err);
+        setError("Einige Profildaten konnten nicht geladen werden.");
+    } finally {
+        setLoading(false);
+        setTagsLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (user) {
@@ -71,13 +83,9 @@ const ProfilePage: React.FC = () => {
 
       setNewsletterOptIn(Boolean((user as any).newsletter_opt_in));
       
-      setTagsLoading(true);
-      Promise.all([fetchUserTags(), fetchAllAvailableTags()]).finally(() => {
-        setTagsLoading(false);
-        setLoading(false);
-      });
+      fetchData();
     }
-  }, [user, fetchUserTags, fetchAllAvailableTags]);
+  }, [user, fetchData]);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -94,21 +102,23 @@ const ProfilePage: React.FC = () => {
       if (scoreFilter === 'positive') articleScoreMin = 1;
       else if (scoreFilter === 'balanced') articleScoreMin = 0;
 
-      const profileData: Record<string, any> = {
-        first_name: firstName,
-        last_name: lastName,
-        organization_name: organizationName,
-        linkedin_url: linkedinUrl,
+      const profileData = {
+        first_name: firstName, lastName, organization_name: organizationName, linkedin_url: linkedinUrl,
         password: password || undefined,
-        article_score_min: articleScoreMin,
-        article_score_max: null,
-        preferred_theme: themeMode,
-        preferred_language: language,
+        article_score_min: articleScoreMin, article_score_max: null,
+        preferred_theme: themeMode, preferred_language: language,
         newsletter_opt_in: newsletterOptIn,
       };
 
-      const response = await apiClient.put('/api/users/me', profileData);
-      updateUser(response.data);
+      const token = localStorage.getItem('jwt_token');
+      const headers = { headers: { 'x-auth-token': token } };
+
+      const [profileResponse] = await Promise.all([
+        apiClient.put('/api/users/me', profileData, headers),
+        apiClient.post('/api/funding/user-categories', { categoryIds: userFundingCategoryIds }, headers)
+      ]);
+      
+      updateUser(profileResponse.data);
       setSnackbar({ open: true, message: t('profile.updateSuccess') });
       setPassword('');
       setConfirmPassword('');
@@ -118,25 +128,15 @@ const ProfilePage: React.FC = () => {
     }
   };
 
-  const handleTagsChange = async (event: React.SyntheticEvent, newTags: string[]) => {
+  const handleTagsChange = async (_event: React.SyntheticEvent, newTags: string[]) => {
     if (isDemoUser) return;
-    
     const oldTags = userTags;
     setUserTags(newTags);
-
     const tagsToAdd = newTags.filter(tag => !oldTags.includes(tag));
     const tagsToRemove = oldTags.filter(tag => !newTags.includes(tag));
-
     try {
-        if (tagsToAdd.length > 0) {
-            await Promise.all(tagsToAdd.map(tag => apiClient.post('/api/users/tags', { tagName: tag })));
-        }
-        if (tagsToRemove.length > 0) {
-            // GEÄNDERT: tagName wird an die URL angehängt.
-            await Promise.all(tagsToRemove.map(tag => 
-                apiClient.delete(`/api/users/tags/${encodeURIComponent(tag)}`)
-            ));
-        }
+        if (tagsToAdd.length > 0) await Promise.all(tagsToAdd.map(tag => apiClient.post('/api/users/tags', { tagName: tag })));
+        if (tagsToRemove.length > 0) await Promise.all(tagsToRemove.map(tag => apiClient.delete(`/api/users/tags/${encodeURIComponent(tag)}`)));
         setSnackbar({ open: true, message: 'Themen aktualisiert.'});
     } catch (err) {
         setSnackbar({ open: true, message: 'Fehler beim Aktualisieren der Themen.' });
@@ -159,7 +159,6 @@ const ProfilePage: React.FC = () => {
   const handleNewsletterToggle = async (_event: React.ChangeEvent<HTMLInputElement>, checked: boolean) => {
     if (isDemoUser || !user?.email) return;
     setNewsletterOptIn(checked);
-
     try {
       if (checked) {
         await apiClient.post('/api/newsletter/subscribe', { email: user.email });
@@ -169,10 +168,7 @@ const ProfilePage: React.FC = () => {
         setSnackbar({ open: true, message: t('profile.newsletterUnsubscribeSuccess') });
       }
     } catch (e: any) {
-      setSnackbar({
-        open: true,
-        message: e?.response?.data?.message || t('profile.newsletterActionError'),
-      });
+      setSnackbar({ open: true, message: e?.response?.data?.message || t('profile.newsletterActionError')});
     }
   };
 
@@ -184,9 +180,7 @@ const ProfilePage: React.FC = () => {
     <Container maxWidth="md">
       <Paper sx={{ p: 4, mt: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>{t('profile.title')}</Typography>
-
         {isDemoUser && <Alert severity="info" sx={{ mb: 3 }}>{t('profile.demoUserNotice')}</Alert>}
-
         <Box component="form" onSubmit={handleSubmit}>
           <Grid container spacing={3}>
             <Grid item xs={12} sm={6}><TextField label={t('profile.firstname')} fullWidth value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={isDemoUser}/></Grid>
@@ -194,6 +188,35 @@ const ProfilePage: React.FC = () => {
             <Grid item xs={12}><TextField label={t('profile.organization')} fullWidth value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} disabled={isDemoUser}/></Grid>
             <Grid item xs={12}><TextField label={t('profile.linkedinUrl')} fullWidth value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} disabled={isDemoUser}/></Grid>
             
+            {/* --- NEUER ABSCHNITT FÜR FÖRDER-INTERESSEN --- */}
+            <Grid item xs={12}>
+                <Typography variant="h6" sx={{ mt: 2 }}>Meine Förder-Interessen</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Wählen Sie Ihre relevanten Branchen und Themen aus, damit wir Ihnen die passendsten Förderungen mit einem "Match-Score" anzeigen können.
+                </Typography>
+                {tagsLoading ? <CircularProgress size={24} /> : (
+                    <Autocomplete
+                        multiple
+                        options={allFundingCategories}
+                        getOptionLabel={(option) => option.name}
+                        value={allFundingCategories.filter(cat => userFundingCategoryIds.includes(cat.id))}
+                        onChange={(_event, newValue) => {
+                            setUserFundingCategoryIds(newValue.map(v => v.id));
+                        }}
+                        isOptionEqualToValue={(option, value) => option.id === value.id}
+                        disabled={isDemoUser}
+                        renderInput={(params) => (
+                            <TextField {...params} variant="outlined" label="Branchen, Themen & Unternehmens-Typen" placeholder="Interessen hinzufügen" />
+                        )}
+                        renderTags={(value, getTagProps) =>
+                            value.map((option, index) => (
+                                <Chip label={option.name} {...getTagProps({ index })} />
+                            ))
+                        }
+                    />
+                )}
+            </Grid>
+
             <Grid item xs={12}>
                 <Typography variant="h6" sx={{ mt: 2 }}>Meine Themen / Tags</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -201,29 +224,17 @@ const ProfilePage: React.FC = () => {
                 </Typography>
                 {tagsLoading ? <CircularProgress size={24} /> : (
                     <Autocomplete
-                        multiple
-                        freeSolo
-                        options={allAvailableTags}
-                        value={userTags}
-                        onChange={handleTagsChange}
-                        disabled={isDemoUser}
+                        multiple freeSolo options={allAvailableTags} value={userTags}
+                        onChange={handleTagsChange} disabled={isDemoUser}
                         renderTags={(value: readonly string[], getTagProps) =>
-                            value.map((option: string, index: number) => (
-                                <Chip variant="outlined" label={option} {...getTagProps({ index })} />
-                            ))
+                            value.map((option: string, index: number) => (<Chip variant="outlined" label={option} {...getTagProps({ index })} />))
                         }
-                        renderInput={(params) => (
-                            <TextField
-                                {...params}
-                                variant="outlined"
-                                label="Themen hinzufügen..."
-                                placeholder="Tippen oder auswählen"
-                            />
-                        )}
+                        renderInput={(params) => (<TextField {...params} variant="outlined" label="Themen hinzufügen..." placeholder="Tippen oder auswählen"/>)}
                     />
                 )}
             </Grid>
 
+            {/* ... (restliche Grid-Items für Einstellungen, Passwort etc. bleiben unverändert) ... */}
             <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.dashboardSettings')}</Typography></Grid>
             <Grid item xs={12}>
               <Typography variant="body2" color="text.secondary" gutterBottom>{t('profile.articleQuality')}</Typography>
@@ -251,15 +262,8 @@ const ProfilePage: React.FC = () => {
           </Grid>
         </Box>
       </Paper>
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-        message={snackbar.message}
-      />
+      <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={() => setSnackbar({ ...snackbar, open: false })} message={snackbar.message} />
     </Container>
   );
 };
-
 export default ProfilePage;

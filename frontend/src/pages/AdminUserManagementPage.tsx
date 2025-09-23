@@ -76,7 +76,7 @@ const AdminUserManagementPage: React.FC = () => {
   const { businessPartnerId: adminFilterBpId } = useParams<{ businessPartnerId?: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user: loggedInUser } = useAuth();
+  const { user: loggedInUser, isLoading: isAuthLoading } = useAuth();
 
   const isAdmin = loggedInUser?.role === 'admin';
   const isAssistant = loggedInUser?.role === 'assistenz';
@@ -101,7 +101,7 @@ const AdminUserManagementPage: React.FC = () => {
   const [formOrganizationName, setFormOrganizationName] = useState('');
   const [formLinkedinUrl, setFormLinkedinUrl] = useState('');
   const [formMembershipLevel, setFormMembershipLevel] = useState('');
-  const [formRole, setFormRole] = useState('fleet_manager');
+  const [formRole, setFormRole] = useState('user');
   const [formBusinessPartnerId, setFormBusinessPartnerId] = useState('');
   const [formIsActive, setFormIsActive] = useState(true);
 
@@ -116,9 +116,55 @@ const AdminUserManagementPage: React.FC = () => {
   const [importReport, setImportReport] = useState<any>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean, message: string, severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
 
+
+const handleDownloadTemplate = async () => {
+    try {
+      // Wir holen den Token manuell aus dem Local Storage
+      const token = localStorage.getItem('jwt_token');
+      if (!token) {
+        throw new Error('Authentifizierungs-Token nicht gefunden.');
+      }
+
+      const apiBase = (import.meta as any).env?.VITE_API_URL || '';
+      
+      // Wir verwenden die Standard-fetch-Methode und fügen den Auth-Header hinzu
+      const res = await fetch(`${apiBase}/api/admin/users/import/template`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'benutzer-import-vorlage.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setSnackbar({ open: true, message: 'Download der Vorlage fehlgeschlagen: ' + (err?.message || 'Unbekannter Fehler'), severity: 'error' });
+    }
+  };
+
+
+
   // KORREKTUR: Die Logik zum Abrufen der Benutzer wurde in eine separate useCallback-Funktion
   // ausgelagert, um sie nach Änderungen wieder aufrufen zu können.
   const fetchUsers = useCallback(async () => {
+    // FRÜHZEITIGER ABBRUCH: Wenn ein Assistent eingeloggt ist, aber seine
+    // Business Partner ID noch nicht geladen wurde, warten wir ab.
+    if (isAssistant && !loggedInUser?.business_partner_id) {
+        setUsers([]); // Setze Benutzer vorübergehend auf eine leere Liste
+        setLoading(false); // Beende den Ladezustand
+        return;
+    }
+
     setLoading(true);
     try {
       let userUrl = '/api/admin/users';
@@ -141,24 +187,28 @@ const AdminUserManagementPage: React.FC = () => {
     }
   }, [isAdmin, isAssistant, adminFilterBpId, loggedInUser?.business_partner_id]);
 
-  useEffect(() => {
+// Ersetzen Sie Ihren bestehenden useEffect-Hook mit diesem
+useEffect(() => {
     const fetchDropdownData = async () => {
-      if (!loggedInUser || !isAdmin) return; // Dropdowns nur für Admins relevant
-      try {
-        const [bpRes, roleRes] = await Promise.all([
-          apiClient.get('/api/admin/business-partners'),
-          apiClient.get('/api/admin/roles'),
-        ]);
-        setBusinessPartnerOptions(asArray<any>(bpRes.data).map((bp: any) => ({ id: bp.id, name: bp.name })));
-        setRoleOptions(asArray<RoleOption>(roleRes.data));
-      } catch(err) {
-        setError('Fehler beim Laden der Auswahloptionen.');
-      }
+        if (!loggedInUser || !isAdmin) return;
+        try {
+            const [bpRes, roleRes] = await Promise.all([
+                apiClient.get('/api/admin/business-partners'),
+                apiClient.get('/api/admin/roles'),
+            ]);
+            setBusinessPartnerOptions(asArray<any>(bpRes.data).map((bp: any) => ({ id: bp.id, name: bp.name })));
+            setRoleOptions(asArray<RoleOption>(roleRes.data));
+        } catch(err) {
+            setError('Fehler beim Laden der Auswahloptionen.');
+        }
     };
-    
-    fetchUsers();
-    fetchDropdownData();
-  }, [fetchUsers, isAdmin, loggedInUser]);
+
+    // Führen Sie die Ladefunktionen nur aus, wenn die Authentifizierung nicht mehr lädt
+    if (!isAuthLoading) {
+        fetchUsers();
+        fetchDropdownData();
+    }
+}, [fetchUsers, isAdmin, loggedInUser, isAuthLoading]); // <-- isAuthLoading hier hinzufügen
 
   useEffect(() => {
     const fetchLevels = async (bpId: string) => {
@@ -192,7 +242,7 @@ const AdminUserManagementPage: React.FC = () => {
     setFormOrganizationName('');
     setFormLinkedinUrl('');
     setFormMembershipLevel('');
-    setFormRole('fleet_manager');
+    setFormRole('user');
     setFormBusinessPartnerId(isAssistant ? (loggedInUser?.business_partner_id || '') : (adminFilterBpId || ''));
     setFormIsActive(true);
     setDialogError(null);
@@ -264,11 +314,28 @@ const AdminUserManagementPage: React.FC = () => {
     }
   };
 
-  const handleExport = async () => {
+const handleExport = async () => {
     try {
+      // 1. Wir holen uns den Token manuell aus dem Local Storage
+      const token = localStorage.getItem('jwt_token');
+      if (!token) {
+        throw new Error('Authentifizierungs-Token nicht gefunden.');
+      }
+
       const apiBase = (import.meta as any).env?.VITE_API_URL || '';
-      const res = await fetch(`${apiBase}/api/admin/users/export/csv`, { credentials: 'include' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      
+      // 2. Wir verwenden die Standard-fetch-Methode und fügen den Auth-Header hinzu
+      const res = await fetch(`${apiBase}/api/admin/users/export/csv`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      }
+
+      // 3. Der Rest der Funktion verarbeitet die Datei wie zuvor
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -557,6 +624,11 @@ const AdminUserManagementPage: React.FC = () => {
             <Typography gutterBottom>
               Wählen Sie eine CSV-Datei zum Hochladen aus. Erforderliche Spalten: <strong>username, email, password, role, first_name, last_name, organization_name, linkedin_url, membership_level</strong>.
             </Typography>
+    <Box sx={{ mt: 1 }}>
+        <Button onClick={handleDownloadTemplate} size="small">
+            Vorlage herunterladen
+        </Button>
+    </Box>        
             <Button variant="contained" component="label" sx={{ mt: 2 }}>
               Datei auswählen
               <input type="file" hidden accept=".csv" onChange={handleFileChange} />

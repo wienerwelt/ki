@@ -19,6 +19,18 @@ const getBusinessPartnerName = async (bpId) => {
     }
 };
 
+// Helper to format timestamp for filenames
+const getFormattedTimestamp = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+};
+
 
 // GET all users
 exports.getAllUsers = async (req, res) => {
@@ -369,38 +381,88 @@ exports.exportUsersToCSV = async (req, res) => {
     const { role: requesterRole, business_partner_id: requesterBpId } = req.user;
 
     try {
-        let query = `
-            SELECT u.username, u.first_name, u.last_name, u.organization_name, u.email, u.linkedin_url, u.membership_level, u.role, u.is_active, bp.name as business_partner_name
+        const query = `
+            SELECT 
+                u.username, 
+                u.email,
+                '' as password, -- Empty password for security
+                u.role, 
+                u.first_name, 
+                u.last_name, 
+                u.organization_name, 
+                u.linkedin_url, 
+                u.membership_level,
+                bp.name as business_partner_name
             FROM users u
             LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
         `;
+        
+        let finalQuery = query;
         const queryParams = [];
-        let whereClauses = [];
-
+        
         if (requesterRole === 'assistenz') {
-            whereClauses.push(`u.business_partner_id = $1`);
+            finalQuery += ` WHERE u.business_partner_id = $1 AND u.role != 'admin'`;
             queryParams.push(requesterBpId);
-            whereClauses.push(`u.role != 'admin'`);
         }
+        
+        finalQuery += ` ORDER BY u.last_name ASC, u.first_name ASC`;
 
-        if (whereClauses.length > 0) {
-            query += ` WHERE ${whereClauses.join(' AND ')}`;
-        }
-        query += ` ORDER BY u.last_name ASC, u.first_name ASC`;
-
-        const { rows } = await db.query(query, queryParams);
+        const { rows } = await db.query(finalQuery, queryParams);
         
         if (rows.length === 0) {
             return res.status(404).json({ message: 'Keine Benutzer zum Exportieren gefunden.' });
         }
+        
+        const timestamp = getFormattedTimestamp();
+        const filename = `Export-Benutzer-${timestamp}.csv`;
 
-        const csv = Papa.unparse(rows);
+        const csv = Papa.unparse(rows, {
+            // Ensure header order matches the template
+            columns: [
+                "username", "email", "password", "role", "first_name", 
+                "last_name", "organization_name", "linkedin_url", 
+                "membership_level", "business_partner_name"
+            ]
+        });
+
         res.header('Content-Type', 'text/csv');
-        res.attachment('benutzer-export.csv');
+        res.attachment(filename);
         res.send(csv);
 
     } catch (err) {
         console.error('Fehler beim Exportieren der Benutzer:', err.message);
+        res.status(500).send('Serverfehler');
+    }
+};
+
+// GET CSV Template for Import
+exports.getImportTemplate = async (req, res) => {
+    const { role: requesterRole, business_partner_id: requesterBpId } = req.user;
+    
+    try {
+        const headers = [
+            "username", "email", "password", "role", "first_name", 
+            "last_name", "organization_name", "linkedin_url", 
+            "membership_level", "business_partner_name"
+        ];
+        
+        let filename = 'Vorlage-Benutzerimport.csv';
+        if (requesterRole === 'assistenz') {
+            const bpName = await getBusinessPartnerName(requesterBpId);
+            if (bpName) {
+                const sanitizedName = bpName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                filename = `Vorlage-Benutzerimport-${sanitizedName}.csv`;
+            }
+        }
+        
+        const csv = Papa.unparse([headers]);
+        
+        res.header('Content-Type', 'text/csv');
+        res.attachment(filename);
+        res.send(csv);
+
+    } catch (err) {
+        console.error('Fehler beim Erstellen der Import-Vorlage:', err.message);
         res.status(500).send('Serverfehler');
     }
 };

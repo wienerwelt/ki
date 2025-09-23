@@ -20,6 +20,8 @@ import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
 import DisclaimerPage from './pages/DisclaimerPage';
 import NewsletterConfirmed from './pages/NewsletterConfirmed';
+import FundingSearchPage from './pages/FundingSearchPage';
+import FundingDetailPage from './pages/FundingDetailPage'; 
 
 // Geschützte Seiten
 import DashboardPage from './pages/DashboardPage';
@@ -47,6 +49,7 @@ import FeedbackCenterPage from './pages/FeedbackCenterPage';
 import FileManagementPage from './pages/FileManagementPage';
 import AdminEventsPage from './pages/AdminEventsPage';
 import AdminSurveysPage from './pages/AdminSurveysPage';
+import AdminFundingPage from './pages/AdminFundingPage';
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
@@ -151,13 +154,14 @@ function App() {
             <Route path="/trusted-sources" element={<TrustedSourcesPage />} />
             <Route path="/feedback" element={<FeedbackCenterPage />} />
             <Route path="/files" element={<FileManagementPage />} />
+            <Route path="/funding-search" element={<FundingSearchPage />} />
+            <Route path="/funding-detail/:id" element={<FundingDetailPage />} />
 
             {/* Routen für Admins und Assistenten */}
             <Route element={<BpStaffAllowedRoutes />}>
               <Route path="/admin/users" element={<AdminUserManagementPage />} />
               <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
               <Route path="/admin/actions" element={<AdminBpActionsPage />} />
-              {/* KORREKTUR: Die Surveys-Route wurde hierher verschoben, damit Assistenten Zugriff haben */}
               <Route path="/admin/surveys" element={<AdminSurveysPage />} />
             </Route>
 
@@ -180,7 +184,8 @@ function App() {
               <Route path="cronjobs" element={<AdminCronjobsPage />} />
               <Route path="sources" element={<AdminSourcesPage />} />
               <Route path="events" element={<AdminEventsPage />} />
-              {/* Die Surveys-Route wurde von hier entfernt */}
+              {/* --- HIER DIE KORREKTUR --- */}
+              <Route path="funding" element={<AdminFundingPage />} />
             </Route>
           </Route>
 

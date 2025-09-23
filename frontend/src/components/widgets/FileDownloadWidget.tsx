@@ -1,19 +1,15 @@
-// frontend/src/components/widgets/FileDownloadWidget.tsx
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-    Box, Typography, Grid, Paper, IconButton, Tooltip, TextField, 
+    Box, Typography, Grid, Paper, IconButton, Tooltip, TextField,
     InputAdornment, Chip, FormControl, InputLabel, Select, MenuItem,
-    List, ListItem, ListItemIcon, ListItemText, SelectChangeEvent, 
+    List, ListItem, ListItemIcon, ListItemText, SelectChangeEvent,
     ToggleButtonGroup, ToggleButton, Stack
 } from '@mui/material';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import WidgetPaper from './WidgetPaper';
 import apiClient from '../../apiClient';
-
-// Icons
 import SearchIcon from '@mui/icons-material/Search';
 import DownloadIcon from '@mui/icons-material/Download';
-import FolderIcon from '@mui/icons-material/Folder';
 import SortByAlphaIcon from '@mui/icons-material/SortByAlpha';
 import EventIcon from '@mui/icons-material/Event';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
@@ -27,14 +23,12 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 
-// --- Interfaces & Typen (unverändert) ---
 interface PartnerFile { id: string; filename: string; file_type: string; file_size: number; created_at: string; description?: string; tags?: string[]; download_count?: number; }
-interface FileDownloadWidgetProps extends BaseWidgetProps { title: string; widgetTypeKey: string; }
+interface FileDownloadWidgetProps extends BaseWidgetProps { icon?: React.ReactNode; title: string; category: string; widgetTypeKey: string; }
 type SortOrder = 'asc' | 'desc';
 type SortBy = 'filename' | 'created_at' | 'download_count';
 type ViewMode = 'tiles' | 'list';
 
-// --- Hilfsfunktionen ---
 const getFileIcon = (fileType: string) => {
     if (fileType.includes('pdf')) return <PictureAsPdfIcon sx={{ fontSize: 30, color: '#D32F2F' }} />;
     if (fileType.includes('image')) return <ImageIcon sx={{ fontSize: 30, color: '#388E3C' }} />;
@@ -51,7 +45,6 @@ const formatFileSize = (bytes: number) => {
 };
 const removeFileExtension = (filename: string) => filename.replace(/\.[^/.]+$/, "");
 
-// --- Hilfskomponenten ---
 const FileCard: React.FC<{ file: PartnerFile, onDownload: (id: string) => void }> = ({ file, onDownload }) => (
     <Grid item xs={12} sm={6} md={4} lg={3}>
         <Paper variant="outlined" sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -60,7 +53,6 @@ const FileCard: React.FC<{ file: PartnerFile, onDownload: (id: string) => void }
                 <Typography variant="subtitle1" sx={{ flexGrow: 1, wordBreak: 'break-word', fontWeight: 'bold' }}>{file.filename}</Typography>
             </Box>
             <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1, minHeight: '40px' }}>{file.description || `Hochgeladen am ${new Date(file.created_at).toLocaleDateString('de-DE')}`}</Typography>
-            {/* KORREKTUR: Das überflüssige '<' vor der geschweiften Klammer wurde entfernt */}
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, my: 1 }}>{(file.tags || []).map(tag => <Chip key={tag} label={tag} size="small" />)}</Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2, pt: 1, borderTop: 1, borderColor: 'divider' }}>
                 <Typography variant="caption" color="text.secondary">{formatFileSize(file.file_size)}</Typography>
@@ -90,8 +82,7 @@ const FileListItem: React.FC<{ file: PartnerFile, onDownload: (id: string) => vo
     );
 };
 
-// --- Hauptkomponente ---
-const FileDownloadWidget: React.FC<FileDownloadWidgetProps> = ({ onDelete, widgetId, isRemovable, title, widgetTypeKey }) => {
+const FileDownloadWidget: React.FC<FileDownloadWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey }) => {
     const [files, setFiles] = useState<PartnerFile[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -103,90 +94,73 @@ const FileDownloadWidget: React.FC<FileDownloadWidgetProps> = ({ onDelete, widge
 
     useEffect(() => () => { if (errorTimeoutRef.current) clearTimeout(errorTimeoutRef.current); }, []);
 
-    const fetchFiles = useCallback(async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const token = localStorage.getItem('jwt_token');
-            const response = await apiClient.get('/api/files', { headers: { 'x-auth-token': token } });
-            setFiles(response.data);
-        } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Laden der Dateien.');
-        } finally {
-            setLoading(false);
-        }
-    }, []);
+const fetchFiles = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+        const token = localStorage.getItem('jwt_token');
+        // Dieser Endpunkt konnte nur ALLE Dateien des Partners laden, ohne Unterscheidung.
+        const response = await apiClient.get(`/api/files`, { headers: { 'x-auth-token': token } });
+        setFiles(response.data);
+    } catch (err: any) {
+        setError(err.response?.data?.message || 'Fehler beim Laden der Dateien.');
+    } finally {
+        setLoading(false);
+    }
+}, []);
 
     useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
-const handleFileDownload = useCallback(async (fileId: string) => {
-    if (errorTimeoutRef.current) clearTimeout(errorTimeoutRef.current);
-    setError(null);
-
-    try {
-        const token = localStorage.getItem('jwt_token');
-        // 1. Sichere S3-Download-URL vom Backend anfordern
-        const urlResponse = await apiClient.get(`/api/files/${fileId}/download`, {
-            headers: { 'x-auth-token': token }
-        });
-        const { url } = urlResponse.data;
-
-        // 2. Die URL direkt in einem neuen Tab öffnen
-        window.open(url, '_blank');
-
-        // 3. Den Download-Zähler im Hintergrund aktualisieren
-        await apiClient.post(`/api/files/${fileId}/track-download`, {}, {
-            headers: { 'x-auth-token': token }
-        });
-
-        // 4. Dateiliste neu laden, um den aktualisierten Zähler anzuzeigen
-        fetchFiles();
-
-    } catch (err: any) {
-        const errorMessage = err.response?.data?.message || 'Fehler beim Herunterladen der Datei.';
-        setError(errorMessage);
-        errorTimeoutRef.current = setTimeout(() => setError(null), 5000);
-    }
-}, [fetchFiles]);
+    const handleFileDownload = useCallback(async (fileId: string) => {
+        if (errorTimeoutRef.current) clearTimeout(errorTimeoutRef.current);
+        setError(null);
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const urlResponse = await apiClient.get(`/api/files/${fileId}/download`, {
+                headers: { 'x-auth-token': token }
+            });
+            const { url } = urlResponse.data;
+            window.open(url, '_blank');
+            await apiClient.post(`/api/files/${fileId}/track-download`, {}, {
+                headers: { 'x-auth-token': token }
+            });
+            fetchFiles();
+        } catch (err: any) {
+            const errorMessage = err.response?.data?.message || 'Fehler beim Herunterladen der Datei.';
+            setError(errorMessage);
+            errorTimeoutRef.current = window.setTimeout(() => setError(null), 5000);
+        }
+    }, [fetchFiles]);
 
     const handleSortChange = (event: SelectChangeEvent<SortBy>) => setSortBy(event.target.value as SortBy);
     const handleSortOrderChange = () => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
     const handleViewModeChange = (_: React.MouseEvent<HTMLElement>, newViewMode: ViewMode | null) => { if (newViewMode) setViewMode(newViewMode); };
 
-const sortedAndFilteredFiles = useMemo(() => {
-    const lowercasedSearchTerm = searchTerm.toLowerCase();
-    const filtered = files.filter(file =>
-        file.filename.toLowerCase().includes(lowercasedSearchTerm) ||
-        (file.description || '').toLowerCase().includes(lowercasedSearchTerm) ||
-        file.tags?.some(tag => tag.toLowerCase().includes(lowercasedSearchTerm))
-    );
+    const sortedAndFilteredFiles = useMemo(() => {
+        const lowercasedSearchTerm = searchTerm.toLowerCase();
+        const filtered = files.filter(file =>
+            file.filename.toLowerCase().includes(lowercasedSearchTerm) ||
+            (file.description || '').toLowerCase().includes(lowercasedSearchTerm) ||
+            file.tags?.some(tag => tag.toLowerCase().includes(lowercasedSearchTerm))
+        );
 
-    return filtered.sort((a, b) => {
-        let comparison = 0;
-        switch (sortBy) {
-            case 'filename':
-                comparison = a.filename.localeCompare(b.filename);
-                break;
-            case 'created_at':
-                comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-                break;
-            case 'download_count':
-                comparison = (a.download_count ?? 0) - (b.download_count ?? 0);
-                break;
-            default:
-                comparison = 0;
-        }
-        
-        // Wenn die Sortierrichtung 'desc' (absteigend) ist, kehren wir das Ergebnis um.
-        return sortOrder === 'desc' ? comparison * -1 : comparison;
-    });
-}, [files, searchTerm, sortBy, sortOrder]);
+        return filtered.sort((a, b) => {
+            let comparison = 0;
+            switch (sortBy) {
+                case 'filename': comparison = a.filename.localeCompare(b.filename); break;
+                case 'created_at': comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime(); break;
+                case 'download_count': comparison = (a.download_count ?? 0) - (b.download_count ?? 0); break;
+                default: comparison = 0;
+            }
+            return sortOrder === 'desc' ? comparison * -1 : comparison;
+        });
+    }, [files, searchTerm, sortBy, sortOrder]);
 
     return (
         <WidgetPaper
             title={
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <FolderIcon />
+                    {icon}
                     <Typography variant="h6">{title}</Typography>
                 </Box>
             }
@@ -218,7 +192,6 @@ const sortedAndFilteredFiles = useMemo(() => {
                         </ToggleButtonGroup>
                     </Box>
                 </Box>
-
                 <Box>
                     {viewMode === 'tiles' ? (
                         <Grid container spacing={2}>

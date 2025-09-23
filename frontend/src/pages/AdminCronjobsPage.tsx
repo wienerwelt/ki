@@ -7,10 +7,13 @@ import AdminAITab from '../components/AdminAITab';
 import AdminScrapingTab from '../components/AdminScrapingTab';
 import AdminEmailTab from '../components/AdminEmailTab';
 import AdminAISystemTab from '../components/AdminAISystemTab';
+import AdminDataUpdateTab from '../components/AdminDataUpdateTab';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import SearchIcon from '@mui/icons-material/Search';
 import EmailIcon from '@mui/icons-material/Email';
 import VpnKeyIcon from '@mui/icons-material/VpnKey';
+import SyncIcon from '@mui/icons-material/Sync'; // NEUER IMPORT
+
 
 const AdminCronjobsPage: React.FC = () => {
     const location = useLocation(); // NEU
@@ -32,6 +35,7 @@ const AdminCronjobsPage: React.FC = () => {
                         <Tab icon={<VpnKeyIcon />} iconPosition="start" label="KI-System (Redaktionell)" />
                         <Tab icon={<SearchIcon />} iconPosition="start" label="Content Scraping" />
                         <Tab icon={<EmailIcon />} iconPosition="start" label="E-Mail Versand" />
+                        <Tab icon={<SyncIcon />} iconPosition="start" label="Data Updates" />
                     </Tabs>
                 </Box>
                 <Box sx={{ pt: 3 }}>
@@ -39,6 +43,7 @@ const AdminCronjobsPage: React.FC = () => {
                     {currentTab === 1 && <AdminAISystemTab />}
                     {currentTab === 2 && <AdminScrapingTab />}
                     {currentTab === 3 && <AdminEmailTab />}
+                    {currentTab === 4 && <AdminDataUpdateTab />}
                 </Box>
             </Container>
         </DashboardLayout>

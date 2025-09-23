@@ -20,16 +20,18 @@ function getTokenFromRequest(req) {
 }
 
 function extractUserFromPayload(decoded) {
-  // häufige Varianten
   if (decoded && typeof decoded === 'object') {
     if (decoded.user && typeof decoded.user === 'object') return decoded.user;
-    // flache Claims
-    const maybe = {
+    
+    // Korrekte Version
+    return {
       id: decoded.id || decoded.userId || decoded.sub,
-      role: decoded.role || (decoded.user && decoded.user.role),
-      email: decoded.email || (decoded.user && decoded.user.email),
+      role: decoded.role,
+      email: decoded.email,
+      username: decoded.username,
+      business_partner_id: decoded.business_partner_id || null,
+      contribution_score: decoded.contribution_score ?? 0,
     };
-    return maybe;
   }
   return null;
 }

@@ -23,6 +23,7 @@ import ScheduleIcon from '@mui/icons-material/Schedule';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import PollIcon from '@mui/icons-material/Poll';
+import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
 
 
 const AdminDashboardPage: React.FC = () => {
@@ -37,7 +38,14 @@ const AdminDashboardPage: React.FC = () => {
                 </Typography>
 
                 <Grid container spacing={3}>
-                    {/* --- Bestehende Kacheln --- */}
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <ShoppingCartCheckoutIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
+                            <Typography variant="h6" component="h2" gutterBottom>Förderungen</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Gefundene Förderungen und KI-Kosten überwachen.</Typography>
+                            <Button component={Link} to="/admin/funding" variant="contained" color="primary">Öffnen</Button>
+                        </Paper>
+                    </Grid>
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <ScheduleIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />

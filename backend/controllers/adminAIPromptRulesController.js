@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { aiContentQueue } = require('../services/queueService');
 const jobManager = require('../services/jobManagerService');
 
-const PROMPT_SEPARATOR = '';
+const PROMPT_SEPARATOR = '+++';
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
@@ -24,20 +24,19 @@ exports.getAIProviders = (req, res) => {
 };
 
 exports.createAIPromptRule = async (req, res) => {
-    const { name, prompt_persona, prompt_task, prompt_format, ai_provider, output_format, keywords, region, schedule, is_active, category_id } = req.body;
+    const { name, prompt_persona, prompt_task, prompt_format, ai_provider, output_format, keywords, region, schedule, is_active, category_id, purpose } = req.body;
     if (!name || !prompt_persona || !prompt_task || !ai_provider) {
         return res.status(400).json({ message: 'Name, Persona, Aufgabe und KI-Provider sind Pflichtfelder.' });
     }
     try {
         const prompt_template = [prompt_persona, prompt_task, prompt_format || ''].join(PROMPT_SEPARATOR);
         const newRuleRes = await db.query(
-            `INSERT INTO ai_prompt_rules (id, name, prompt_template, ai_provider, output_format, keywords, region, schedule, is_active, default_category_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-            [uuidv4(), name, prompt_template, ai_provider, output_format || 'text', keywords, region, schedule, is_active, category_id]
+            `INSERT INTO ai_prompt_rules (id, name, prompt_template, ai_provider, output_format, keywords, region, schedule, is_active, default_category_id, purpose)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+            [uuidv4(), name, prompt_template, ai_provider, output_format || 'text', keywords, region, schedule, is_active, category_id, purpose || 'content_generation']
         );
         const newRule = newRuleRes.rows[0];
-
-        if (newRule.schedule && newRule.is_active) {
+        if (newRule.schedule && newRule.is_active && newRule.purpose !== 'funding_discovery') {
             await jobManager.setSystemSubscriptionSchedule(newRule.id, newRule.schedule);
         }
         res.status(201).json(newRule);
@@ -50,8 +49,7 @@ exports.createAIPromptRule = async (req, res) => {
 exports.updateAIPromptRule = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
-
-    const { name, prompt_persona, prompt_task, prompt_format, ai_provider, output_format, keywords, region, schedule, is_active, category_id } = req.body;
+    const { name, prompt_persona, prompt_task, prompt_format, ai_provider, output_format, keywords, region, schedule, is_active, category_id, purpose } = req.body;
     if (!name || !prompt_persona || !prompt_task || !ai_provider) {
         return res.status(400).json({ message: 'Name, Persona, Aufgabe und KI-Provider sind Pflichtfelder.' });
     }
@@ -60,20 +58,17 @@ exports.updateAIPromptRule = async (req, res) => {
         const result = await db.query(
             `UPDATE ai_prompt_rules SET 
              name = $1, prompt_template = $2, ai_provider = $3, output_format = $4, keywords = $5, 
-             region = $6, schedule = $7, is_active = $8, default_category_id = $9, updated_at = CURRENT_TIMESTAMP 
-             WHERE id = $10 RETURNING *`,
-            [name, prompt_template, ai_provider, output_format || 'text', keywords, region, schedule, is_active, category_id, id]
+             region = $6, schedule = $7, is_active = $8, default_category_id = $9, purpose = $10, updated_at = CURRENT_TIMESTAMP 
+             WHERE id = $11 RETURNING *`,
+            [name, prompt_template, ai_provider, output_format || 'text', keywords, region, schedule, is_active, category_id, purpose || 'content_generation', id]
         );
         if (result.rows.length === 0) return res.status(404).json({ message: 'Regel nicht gefunden.' });
-        
         const updatedRule = result.rows[0];
-        
-        if (updatedRule.is_active && updatedRule.schedule) {
+        if (updatedRule.is_active && updatedRule.schedule && updatedRule.purpose !== 'funding_discovery') {
             await jobManager.setSystemSubscriptionSchedule(updatedRule.id, updatedRule.schedule);
         } else {
             await jobManager.removeSystemSubscriptionSchedule(updatedRule.id);
         }
-        
         res.json(updatedRule);
     } catch (err) {
         console.error('Error updating AI prompt rule:', err.message);
@@ -131,15 +126,25 @@ exports.triggerRule = async (req, res) => {
         }
         const rule = ruleRes.rows[0];
 
-        if (!rule.keywords || rule.keywords.length === 0) {
-            return res.status(400).json({ message: 'Die Regel kann nicht gestartet werden, da keine Keywords konfiguriert sind.' });
+        if ((!rule.keywords || rule.keywords.length === 0) && rule.purpose === 'funding_discovery') {
+            return res.status(400).json({ message: 'Förder-Scout-Regeln können nicht gestartet werden, da keine Keywords konfiguriert sind.' });
         }
+        
+        const jobResult = await db.query(
+            `INSERT INTO ai_jobs (ai_prompt_rule_id, status, is_automated) VALUES ($1, 'pending', FALSE) RETURNING id`,
+            [ruleId]
+        );
+        const jobId = jobResult.rows[0].id;
 
-        // Füge einen einmaligen System-Job zur Warteschlange hinzu
-        await aiContentQueue.add('system-job-processing', { systemSubscription: rule });
-        console.log(`[API] Manually triggered system job for rule ${ruleId}`);
-
-        res.status(202).json({ message: 'Job wurde manuell zur Warteschlange hinzugefügt.' });
+        // KORREKTUR: Wir übergeben das Job-Datum in der korrekten Struktur
+        await aiContentQueue.add('system-job-processing', { 
+            systemSubscription: rule, 
+            jobId: jobId 
+        });
+        
+        console.log(`[API] Manually triggered system job ${jobId} for rule ${ruleId}`);
+        
+        res.status(202).json({ message: 'Job wurde manuell zur Warteschlange hinzugefügt.', jobId: jobId });
 
     } catch (err) {
         console.error(`Error triggering rule ${ruleId}:`, err.message);
@@ -249,3 +254,6 @@ async function generateAndSaveContentForManualJob(jobId, rule, inputText, region
     }
 }
 exports.generateAndSaveContentForManualJob = generateAndSaveContentForManualJob;
+
+
+

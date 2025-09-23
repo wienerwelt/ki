@@ -156,6 +156,10 @@ const AdminSurveysPage: React.FC = () => {
 
     const handleSubmit = async () => {
         try {
+            if (!isEditMode && !currentSurvey.business_partner_id) {
+                showSnackbar('Die Zuordnung zu einem Business Partner fehlt. Bitte erneut einloggen oder den Administrator kontaktieren.', 'error');
+                return;
+            }            
             const payload = {
                 ...currentSurvey,
                 start_date: currentSurvey.start_date || null,

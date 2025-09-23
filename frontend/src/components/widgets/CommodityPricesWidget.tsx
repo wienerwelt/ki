@@ -38,6 +38,7 @@ interface CommodityData {
     lastUpdate: string;
     source: string;
     trend: 'up' | 'down' | 'stable';
+    countryCode?: string | null;
     historical: HistoricalData;
 }
 
@@ -50,6 +51,8 @@ const sourceUrls: { [key: string]: string } = {
     'metalpriceapi.com': 'https://metalpriceapi.com/',
     'ecb.europa.eu': 'https://www.ecb.europa.eu/stats/financial_markets_and_interest_rates/euro_area_yield_curves/html/index.en.html',
     'commodities-api.com': 'https://commodities-api.com/',
+    'statistik.at': 'https://www.statistik.at/statistiken/volkswirtschaft-und-oeffentliche-finanzen/preise-und-preisindizes/kraftfahrzeughaftpflicht-versicherungsleistungspreisindex-kvlpi',
+    'tradingeconomics.com': 'https://tradingeconomics.com/commodity/carbon',
 };
 
 // --- Hilfskomponenten ---
@@ -64,6 +67,10 @@ const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = (
     const displayInfo = commoditiesConfig[indicatorKey] || { name: indicatorKey, formatOptions: { style: 'decimal' } };
     const sourceUrl = sourceUrls[data.source] || '#';
 
+    const flagCode = data.countryCode ? data.countryCode.toLowerCase() : 'eu';
+    const flagUrl = `https://flagcdn.com/w20/${flagCode}.png`; // 20px breite Flagge
+    // -----------------------------    
+
     const formatPrice = (price: number | null | undefined) => {
         if (price == null) return 'N/A';
         if (data.unit === '%') {
@@ -74,7 +81,17 @@ const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = (
 
     return (
         <Paper variant="outlined" sx={{ p: 2, display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>{displayInfo.name}</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                <img 
+                    src={flagUrl} 
+                    width="20" 
+                    alt={`${flagCode} flag`} 
+                    style={{ borderRadius: '2px', boxShadow: '0 0 1px rgba(0,0,0,0.5)' }}
+                />
+                <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                    {displayInfo.name}
+                </Typography>
+            </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, my: 1 }}>
                 <Typography variant="h4">{formatPrice(data.currentPrice)}</Typography>
                 <Tooltip title={`Trend seit letzter Woche`}>
@@ -188,7 +205,7 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
     };
 
     const sortedDataEntries = data ? Object.entries(data).sort(([keyA], [keyB]) => {
-        const order = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'CO2_PRICE'];
+        const order = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'CO2_PRICE', 'KVLPI_GESAMT'];
         return order.indexOf(keyA) - order.indexOf(keyB);
     }) : [];
 

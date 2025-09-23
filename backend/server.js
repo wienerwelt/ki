@@ -1,5 +1,7 @@
-// backend/server.js
-require('dotenv').config();
+// Nur laden, wenn die Umgebung NICHT 'production' ist
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 
 // --- 1. IMPORTE ---
 const express = require('express');
@@ -8,19 +10,25 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const db = require('./config/db');
 const auth = require('./middleware/authMiddleware');
-const adminAuth = require('./middleware/adminAuth');        // ⬅️ Variante B
+const bullAuth = require('./middleware/bullAuth');
 const jobManager = require('./services/jobManagerService');
 
 // Bull Board & Queue
 const { createBullBoard } = require('@bull-board/api');
 const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
 const { ExpressAdapter } = require('@bull-board/express');
-const { Queue } = require('bullmq');
 
-// Zentrale Redis-Connection nutzen
-const { connection } = require('./services/queueService');
+// KORREKTUR 1: Importiere ALLE benötigten Queues direkt aus dem Service
+const { 
+  aiContentQueue, 
+  scrapeQueue, 
+  emailQueue, 
+  dataUpdatesQueue,
+  fundingQueue
+} = require('./services/queueService');
 
-// Routen
+// Routen (unverändert)
+// ... (alle Ihre Routen-Imports) ...
 const authRoutes = require('./routes/authRoutes');
 const sessionRoutes = require('./routes/sessionRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
@@ -53,7 +61,8 @@ const fileRoutes = require('./routes/fileRoutes');
 const dataController = require('./controllers/dataController');
 const newsletterRoutes = require('./routes/newsletterRoutes');
 const surveyRoutes = require('./routes/surveyRoutes');
-
+const adminFundingRoutes = require('./routes/adminFundingRoutes'); 
+const fundingRoutes = require('./routes/fundingRoutes');
 
 // --- 2. INITIALISIERUNG & KONFIGURATION ---
 const app = express();
@@ -63,28 +72,32 @@ const PORT = process.env.PORT || 5000;
 const serverAdapter = new ExpressAdapter();
 serverAdapter.setBasePath('/api/admin/jobs');
 
-// Queues für Bull Board mit geteilter Connection
-const qAi     = new Queue('ai-content-generation',     { connection });
-const qScrape = new Queue('scrape-content-generation', { connection });
-const qEmails = new Queue('emails',                    { connection });
+// KORREKTUR 2: Diese lokalen Deklarationen werden entfernt, da wir die Queues jetzt importieren
+// const qAi     = new Queue('ai-content-generation',     { connection });
+// const qScrape = new Queue('scrape-content-generation', { connection });
+// const qEmails = new Queue('emails',                    { connection });
 
 createBullBoard({
+  // KORREKTUR 3: Verwende die direkt importierten Queue-Instanzen
   queues: [
-    new BullMQAdapter(qAi),
-    new BullMQAdapter(qScrape),
-    new BullMQAdapter(qEmails),
+    new BullMQAdapter(aiContentQueue),
+    new BullMQAdapter(scrapeQueue),
+    new BullMQAdapter(emailQueue),
+    new BullMQAdapter(dataUpdatesQueue),
+    new BullMQAdapter(fundingQueue),
   ],
   serverAdapter,
 });
 
 
 // --- 3. MIDDLEWARE ---
+// ... (Middleware-Code unverändert) ...
 const allowedOrigins = ['http://localhost:5173', 'https://dashboard.mobiliti.at'];
 app.use(cors({
-origin: allowedOrigins,
-credentials: true,
-allowedHeaders: ['Content-Type', 'Authorization'],
-methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  origin: allowedOrigins,
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
 }));
 app.use(express.json());
 app.use(cookieParser());
@@ -92,8 +105,10 @@ app.use((req, res, next) => { console.log(`[${req.method}] ${req.originalUrl}`);
 
 
 // --- 4. ROUTEN ---
-// Bull Board: nur Admin/Assistenz per adminAuth (Variante B)
-app.use('/api/admin/jobs', adminAuth, serverAdapter.getRouter());
+// ... (Routen-Code unverändert) ...
+app.use('/api/admin/jobs', bullAuth);
+app.use('/api/admin/jobs', serverAdapter.getRouter());
+
 
 // REST-API
 app.use('/api/auth', authRoutes);
@@ -114,6 +129,7 @@ app.use('/api/admin/scraped-content', adminScrapedContentRoutes);
 app.use('/api/admin/scraping-rules', adminScrapingRulesRoutes);
 app.use('/api/admin/ai-prompt-rules', adminAIPromptRulesRoutes);
 app.use('/api/admin/ai-content', adminAIContentRoutes);
+app.use('/api/admin/funding', adminFundingRoutes);
 app.use('/api/admin/categories', adminCategoriesRoutes);
 app.use('/api/admin/ai', adminAIExecutionRoutes);
 app.use('/api/admin/tags', adminTagsRoutes);
@@ -128,7 +144,9 @@ app.use('/api/admin/sources', adminSourcesRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/newsletter', newsletterRoutes);
 app.use('/api/surveys', surveyRoutes);
+app.use('/api/funding', fundingRoutes);
 
+// ... (Debug-Routen und Frontend-Serving unverändert) ...
 // Debug
 app.get('/api/debug/db-inspector', async (req, res) => {
   try {
@@ -171,7 +189,7 @@ app.use((err, req, res, next) => {
 
 
 // --- 6. SERVERSTART ---
-// Nur starten, wenn direkt ausgeführt (verhindert EADDRINUSE in Workern)
+// ... (Serverstart-Logik unverändert) ...
 if (require.main === module) {
   db.query('SELECT 1')
     .then(() => {

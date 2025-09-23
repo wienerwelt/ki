@@ -4,7 +4,7 @@ import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
     TextField, MenuItem, Switch, FormControlLabel, Tooltip as MuiTooltip, TableSortLabel, InputAdornment, Chip,
-    Tabs, Tab, Grid, Link as MuiLink, Select, SelectChangeEvent, LinearProgress
+    Tabs, Tab, Grid, Link as MuiLink, LinearProgress
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -47,6 +47,7 @@ interface BusinessPartner {
     storage_usage_bytes: string;
     storage_limit_bytes: string;
     file_count: string;
+    allow_automated_newsletter: boolean; // NEU
 }
 
 interface ColorScheme {
@@ -62,13 +63,11 @@ function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
     let valA = a[orderBy];
     let valB = b[orderBy];
 
-    // Handle numeric strings for sorting
     if (orderBy === 'user_count' || orderBy === 'widget_count') {
         valA = parseInt(valA as string || '0', 10) as any;
         valB = parseInt(valB as string || '0', 10) as any;
     }
     
-    // Handle date strings for sorting
     if (orderBy === 'subscription_end_date') {
         valA = (valA ? new Date(valA as string).getTime() : 0) as any;
         valB = (valB ? new Date(valB as string).getTime() : 0) as any;
@@ -129,6 +128,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [formLevel2Name, setFormLevel2Name] = useState('');
     const [formLevel3Name, setFormLevel3Name] = useState('');
     const [formStorageTier, setFormStorageTier] = useState<'free' | 'standard' | 'premium'>('free');
+    const [formAllowNewsletter, setFormAllowNewsletter] = useState(false); // NEU
 
     const navigate = useNavigate();
 
@@ -174,6 +174,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setFormLevel2Name('');
         setFormLevel3Name('');
         setFormStorageTier('free');
+        setFormAllowNewsletter(false); // NEU
         setOpenDialog(true);
     };
 
@@ -196,6 +197,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setFormLevel2Name(bp.level_2_name || '');
         setFormLevel3Name(bp.level_3_name || '');
         setFormStorageTier(bp.storage_tier || 'free');
+        setFormAllowNewsletter(bp.allow_automated_newsletter); // NEU
         setOpenDialog(true);
     };
 
@@ -224,6 +226,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
             level_2_name: formLevel2Name || null,
             level_3_name: formLevel3Name || null,
             storage_tier: formStorageTier,
+            allow_automated_newsletter: formAllowNewsletter, // NEU
         };
 
         try {
@@ -305,7 +308,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
                 </Box>
 
                 <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-                    <Tabs value={statusFilter} onChange={(e, newValue) => setStatusFilter(newValue)}>
+                    <Tabs value={statusFilter} onChange={(_, newValue) => setStatusFilter(newValue)}>
                         <Tab label={`Alle (${businessPartners.length})`} value="all" />
                         <Tab label={`Aktiv (${businessPartners.filter(bp => bp.is_active).length})`} value="active" />
                         <Tab label={`Inaktiv (${businessPartners.filter(bp => !bp.is_active).length})`} value="inactive" />
@@ -345,11 +348,26 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                                     </MuiLink>
                                                 </TableCell>
                                                 <TableCell>
-                                                    <Box>
-                                                        <Typography component="span" sx={{ fontWeight: 'bold' }}>{bp.name}</Typography>
-                                                        <Typography variant="body2" color="text.secondary" display="block">
-                                                            ID: <code>{bp.id.slice(0, -8)}<Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>{bp.id.slice(-8)}</Box></code>
-                                                        </Typography>
+                                                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                                        <MuiTooltip title={bp.allow_automated_newsletter ? "Newsletter erlaubt" : "Newsletter nicht erlaubt"}>
+                                                            <Box
+                                                                component="span"
+                                                                sx={{
+                                                                    width: 10,
+                                                                    height: 10,
+                                                                    borderRadius: '50%',
+                                                                    backgroundColor: bp.allow_automated_newsletter ? 'success.main' : 'error.main',
+                                                                    mr: 1.5,
+                                                                    flexShrink: 0
+                                                                }}
+                                                            />
+                                                        </MuiTooltip>
+                                                        <Box>
+                                                            <Typography component="span" sx={{ fontWeight: 'bold' }}>{bp.name}</Typography>
+                                                            <Typography variant="body2" color="text.secondary" display="block">
+                                                                ID: <code>{bp.id.slice(0, -8)}<Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>{bp.id.slice(-8)}</Box></code>
+                                                            </Typography>
+                                                        </Box>
                                                     </Box>
                                                 </TableCell>
                                                 <TableCell>
@@ -431,7 +449,8 @@ const AdminBusinessPartnersPage: React.FC = () => {
                             <Grid item xs={12} sm={6}><TextField label="Abo Startdatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formSubscriptionStartDate} onChange={(e) => setFormSubscriptionStartDate(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={6}><TextField label="Abo Enddatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formSubscriptionEndDate} onChange={(e) => setFormSubscriptionEndDate(e.target.value)} /></Grid>
                             <Grid item xs={12}><TextField select label="Farbschema" fullWidth value={formColorSchemeId} onChange={(e) => setFormColorSchemeId(e.target.value)}> <MenuItem value=""><em>Kein Farbschema</em></MenuItem> {colorSchemes.map((cs) => (<MenuItem key={cs.id} value={cs.id}>{cs.name} <Box sx={{ width: 20, height: 20, bgcolor: cs.primary_color, border: '1px solid grey', ml: 1, display: 'inline-block', verticalAlign: 'middle' }} /></MenuItem>))} </TextField></Grid>
-                            <Grid item xs={12}><FormControlLabel control={<Switch checked={formIsActive} onChange={(e) => setFormIsActive(e.target.checked)} color="primary" />} label="Aktiv" /></Grid>
+                            <Grid item xs={12} sm={6}><FormControlLabel control={<Switch checked={formIsActive} onChange={(e) => setFormIsActive(e.target.checked)} color="primary" />} label="Partner-Account aktiv" /></Grid>
+                            <Grid item xs={12} sm={6}><FormControlLabel control={<Switch checked={formAllowNewsletter} onChange={(e) => setFormAllowNewsletter(e.target.checked)} color="primary" />} label="Automatisierte Newsletter erlaubt" /></Grid>
                         </Grid>
                     </DialogContent>
                     <DialogActions>

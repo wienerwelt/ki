@@ -1,9 +1,8 @@
-// src/pages/AdminAIPromptRulesPage.tsx
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Grid, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Tooltip, Chip, Snackbar, Stack, TextField, MenuItem,
-    Dialog, DialogActions, DialogContent, DialogTitle, TableSortLabel, InputAdornment, FormControlLabel, Switch, Divider, Tabs, Tab, LinearProgress
+    Dialog, DialogActions, DialogContent, DialogTitle, InputAdornment, FormControlLabel, Switch, Tabs, Tab, LinearProgress
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import SaveIcon from '@mui/icons-material/Save';
@@ -17,11 +16,11 @@ import AdminScheduleSelector from '../components/AdminScheduleSelector';
 import apiClient from '../apiClient';
 import { Autocomplete } from '@mui/material';
 
-// --- Interfaces ---
 interface AIPromptRule {
     id: string; name: string; prompt_template: string; ai_provider: string | null; output_format: string | null;
     keywords: string[] | null; region: string | null; schedule: string | null; is_active: boolean;
     default_category_id: string | null;
+    purpose: 'content_generation' | 'funding_discovery';
 }
 interface Region { id: string; name: string; }
 interface Category { id: string; name: string; }
@@ -29,15 +28,16 @@ interface FormState {
     name: string; promptPersona: string; promptTask: string; promptFormat: string; ai_provider: string;
     output_format: string; keywords: string[]; region: string; schedule: string | null; is_active: boolean;
     category_id: string;
+    purpose: string;
 }
 interface TestState { inputText: string; focus_page: string; }
 
-// --- Konstanten & Initialer Zustand ---
-const PROMPT_SEPARATOR = '<!--PROMPT_PART_SEPARATOR-->';
+const PROMPT_SEPARATOR = '+++';
 const placeholders = ['{{data}}', '{{category}}', '{{region}}', '{{focus_page}}'];
 const initialFormState: FormState = {
     name: '', promptPersona: '', promptTask: '', promptFormat: '', ai_provider: '',
-    output_format: 'text', keywords: [], region: '', schedule: null, is_active: true, category_id: ''
+    output_format: 'text', keywords: [], region: '', schedule: null, is_active: true, category_id: '',
+    purpose: 'content_generation'
 };
 const initialTestState: TestState = { inputText: '', focus_page: '' };
 
@@ -55,13 +55,11 @@ const AdminAIPromptRulesPage: React.FC = () => {
     const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
     const [searchTerm, setSearchTerm] = useState('');
     const [dialogTab, setDialogTab] = useState(0);
-
     const [logModalOpen, setLogModalOpen] = useState(false);
     const [currentJobId, setCurrentJobId] = useState<string | null>(null);
     const [jobLogs, setJobLogs] = useState<{ log_level: string, message: string, created_at: string }[]>([]);
     const [jobStatus, setJobStatus] = useState<string | null>(null);
     const [finalJobResult, setFinalJobResult] = useState<string | null>(null);
-    
     const [activePromptField, setActivePromptField] = useState<keyof FormState | null>(null);
     const inputRefs = {
         promptPersona: useRef<HTMLInputElement>(null),
@@ -121,7 +119,8 @@ const AdminAIPromptRulesPage: React.FC = () => {
                 region: rule.region || '',
                 schedule: rule.schedule || null,
                 is_active: rule.is_active,
-                category_id: rule.default_category_id || ''
+                category_id: rule.default_category_id || '',
+                purpose: rule.purpose || 'content_generation'
             });
         } else {
             setEditingRule(null);
@@ -133,6 +132,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
     };
     
     const handleCloseDialog = () => setOpenDialog(false);
+    
     const handleCloseLogModal = () => {
         setLogModalOpen(false);
         setCurrentJobId(null);
@@ -147,7 +147,6 @@ const AdminAIPromptRulesPage: React.FC = () => {
             alert('Name, Persona, Aufgabe und KI-Provider sind Pflichtfelder.');
             return;
         }
-
         const ruleData = {
             ...rest,
             name,
@@ -156,7 +155,6 @@ const AdminAIPromptRulesPage: React.FC = () => {
             prompt_format: rest.promptFormat,
             category_id: rest.category_id || null
         };
-
         try {
             const token = localStorage.getItem('jwt_token');
             const method = editingRule?.id ? 'put' : 'post';
@@ -174,18 +172,26 @@ const AdminAIPromptRulesPage: React.FC = () => {
     const handleTriggerRule = async (rule: AIPromptRule) => {
         if (!window.confirm(`Möchten Sie die Regel "${rule.name}" jetzt einmalig ausführen? Es werden die gespeicherten Keywords und die Region verwendet.`)) return;
         
-        setLogModalOpen(true);
-        setJobStatus('pending');
         setJobLogs([{ log_level: 'INFO', message: `Starte manuellen Job für Regel "${rule.name}"...`, created_at: new Date().toISOString() }]);
         setFinalJobResult(null);
+        setCurrentJobId(null);
+        setJobStatus('pending');
+        setLogModalOpen(true);
 
         try {
             const token = localStorage.getItem('jwt_token');
             const res = await apiClient.post(`/api/admin/ai-prompt-rules/${rule.id}/trigger`, {}, { headers: { 'x-auth-token': token } });
-            setCurrentJobId(res.data.jobId);
-            setJobStatus('running');
+            
+            if (res.data.jobId) {
+                setCurrentJobId(res.data.jobId);
+                setJobStatus('running');
+            } else {
+                 throw new Error("Server hat keine Job-ID zurückgegeben.");
+            }
         } catch (err: any) {
-            setSnackbar({ open: true, message: err.response?.data?.message || 'Fehler beim Starten des Jobs.' });
+            const message = err.response?.data?.message || 'Fehler beim Starten des Jobs.';
+            setJobLogs(prev => [...prev, { log_level: 'ERROR', message: message, created_at: new Date().toISOString() }]);
+            setSnackbar({ open: true, message: message });
             setJobStatus('failed');
         }
     };
@@ -195,7 +201,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
             alert("Es muss eine Regel ausgewählt und ein Eingabetext (data) vorhanden sein, um einen Testlauf zu starten.");
             return;
         }
-        handleCloseDialog(); // Schließe den Editier-Dialog
+        handleCloseDialog();
         setLogModalOpen(true);
         setJobStatus('pending');
         try {
@@ -322,33 +328,36 @@ const AdminAIPromptRulesPage: React.FC = () => {
                         </TableContainer>
                     </Paper>
                 )}
-
                 <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
                     <DialogTitle>{editingRule ? `KI-Regel: ${editingRule.name}` : 'Neue KI-Regel erstellen'}</DialogTitle>
                     <DialogContent>
-                        <Tabs value={dialogTab} onChange={(e, newValue) => setDialogTab(newValue)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+                        <Tabs value={dialogTab} onChange={(_event, newValue) => setDialogTab(newValue)} sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
                             <Tab label="Konfiguration & Planung" />
                             <Tab label="Prompt-Struktur" />
                             <Tab label="Sonstiges" />
                         </Tabs>
-
                         {dialogTab === 0 && (
                              <Grid container spacing={2}>
-                                <Grid item xs={12}><TextField name="name" label="Name der Regel" fullWidth value={formState.name} onChange={(e) => setFormState(p => ({...p, name: e.target.value}))} required /></Grid>
-                                <Grid item xs={12}><TextField select name="ai_provider" label="KI-Provider" fullWidth value={formState.ai_provider} onChange={(e) => setFormState(p => ({...p, ai_provider: e.target.value}))} required>{aiProviders.map((p) => (<MenuItem key={p} value={p}>{p}</MenuItem>))}</TextField></Grid>
-                                <Grid item xs={12}><Autocomplete multiple freeSolo options={[]} value={formState.keywords} onChange={(e, val) => setFormState(p => ({...p, keywords: val}))} renderInput={(params) => <TextField {...params} label="Keywords für Recherche" />} /></Grid>
-                                <Grid item xs={6}><TextField select name="region" label="Region" fullWidth value={formState.region} onChange={(e) => setFormState(p => ({...p, region: e.target.value}))}>{regions.map(r => <MenuItem key={r.id} value={r.name}>{r.name}</MenuItem>)}</TextField></Grid>
-                                <Grid item xs={6}><TextField select name="category_id" label="Standard-Kategorie" fullWidth value={formState.category_id || ''} onChange={(e) => setFormState(p => ({...p, category_id: e.target.value}))}><MenuItem value=""><em>Keine</em></MenuItem>{categories.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</TextField></Grid>
+                                <Grid item xs={12}><TextField name="name" label="Name der Regel" fullWidth value={formState.name} onChange={e => setFormState(p => ({...p, name: e.target.value}))} required /></Grid>
+                                <Grid item xs={12} sm={6}><TextField select name="ai_provider" label="KI-Provider" fullWidth value={formState.ai_provider} onChange={e => setFormState(p => ({...p, ai_provider: e.target.value}))} required>{aiProviders.map((p) => (<MenuItem key={p} value={p}>{p}</MenuItem>))}</TextField></Grid>
+                                <Grid item xs={12} sm={6}>
+                                    <TextField select name="purpose" label="Zweck der Regel" fullWidth value={formState.purpose} onChange={e => setFormState(p => ({...p, purpose: e.target.value}))} helperText="Bestimmt, wie das KI-Ergebnis verarbeitet wird.">
+                                        <MenuItem value="content_generation">Inhalt generieren</MenuItem>
+                                        <MenuItem value="funding_discovery">Förderung entdecken</MenuItem>
+                                    </TextField>
+                                </Grid>
+                                <Grid item xs={12}><Autocomplete multiple freeSolo options={[]} value={formState.keywords} onChange={(_event, val) => setFormState(p => ({...p, keywords: val}))} renderInput={(params) => <TextField {...params} label="Keywords für Recherche" />} /></Grid>
+                                <Grid item xs={6}><TextField select name="region" label="Region" fullWidth value={formState.region} onChange={e => setFormState(p => ({...p, region: e.target.value}))}>{regions.map(r => <MenuItem key={r.id} value={r.name}>{r.name}</MenuItem>)}</TextField></Grid>
+                                <Grid item xs={6}><TextField select name="category_id" label="Standard-Kategorie" fullWidth value={formState.category_id || ''} onChange={e => setFormState(p => ({...p, category_id: e.target.value}))}><MenuItem value=""><em>Keine</em></MenuItem>{categories.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</TextField></Grid>
                                 <Grid item xs={12}><AdminScheduleSelector value={formState.schedule} onChange={(cron) => setFormState(p => ({...p, schedule: cron}))} /></Grid>
-                                <Grid item xs={12}><FormControlLabel control={<Switch checked={formState.is_active} onChange={(e) => setFormState(p => ({...p, is_active: e.target.checked}))} />} label="Cronjob aktiv" /></Grid>
+                                <Grid item xs={12}><FormControlLabel control={<Switch checked={formState.is_active} name="is_active" onChange={(e) => setFormState(p => ({...p, is_active: e.target.checked}))} />} label="Cronjob aktiv" /></Grid>
                             </Grid>
                         )}
-                        
                         {dialogTab === 1 && (
                             <Box>
-                                <TextField name="promptPersona" label="Rolle der KI" fullWidth multiline rows={4} value={formState.promptPersona} onChange={(e) => setFormState(p => ({...p, promptPersona: e.target.value}))} onFocus={() => setActivePromptField('promptPersona')} inputRef={inputRefs.promptPersona} required />
-                                <TextField name="promptTask" label="Haupt-Aufgabe" fullWidth multiline rows={5} value={formState.promptTask} onChange={(e) => setFormState(p => ({...p, promptTask: e.target.value}))} onFocus={() => setActivePromptField('promptTask')} inputRef={inputRefs.promptTask} sx={{mt: 2}} required />
-                                <TextField name="promptFormat" label="Formatierung (optional)" fullWidth multiline rows={3} value={formState.promptFormat} onChange={(e) => setFormState(p => ({...p, promptFormat: e.target.value}))} onFocus={() => setActivePromptField('promptFormat')} inputRef={inputRefs.promptFormat} sx={{mt: 2}} />
+                                <TextField name="promptPersona" label="Rolle der KI" fullWidth multiline rows={4} value={formState.promptPersona} onChange={e => setFormState(p => ({...p, promptPersona: e.target.value}))} onFocus={() => setActivePromptField('promptPersona')} inputRef={inputRefs.promptPersona} required />
+                                <TextField name="promptTask" label="Haupt-Aufgabe" fullWidth multiline rows={5} value={formState.promptTask} onChange={e => setFormState(p => ({...p, promptTask: e.target.value}))} onFocus={() => setActivePromptField('promptTask')} inputRef={inputRefs.promptTask} sx={{mt: 2}} required />
+                                <TextField name="promptFormat" label="Formatierung (optional)" fullWidth multiline rows={3} value={formState.promptFormat} onChange={e => setFormState(p => ({...p, promptFormat: e.target.value}))} onFocus={() => setActivePromptField('promptFormat')} inputRef={inputRefs.promptFormat} sx={{mt: 2}} />
                                 <Box sx={{ mt: 1 }}>
                                     <Stack direction="row" spacing={1} component="span">
                                         {placeholders.map(p => (<Chip key={p} label={p} onClick={() => handleInsertPlaceholder(p)} size="small" variant="outlined" clickable />))}
@@ -356,7 +365,6 @@ const AdminAIPromptRulesPage: React.FC = () => {
                                 </Box>
                             </Box>
                         )}
-                        
                         {dialogTab === 2 && (
                             <Box>
                                 <Typography variant="h6" gutterBottom>Manueller Testlauf</Typography>
@@ -384,7 +392,6 @@ const AdminAIPromptRulesPage: React.FC = () => {
                         </Box>
                     </DialogActions>
                 </Dialog>
-                
                 <Dialog open={logModalOpen} onClose={handleCloseLogModal} fullWidth maxWidth="md">
                     <DialogTitle>KI-Fortschritt</DialogTitle>
                     <DialogContent>
@@ -413,7 +420,6 @@ const AdminAIPromptRulesPage: React.FC = () => {
                         <Button onClick={handleCloseLogModal}>Schließen</Button>
                     </DialogActions>
                 </Dialog>
-                
                 <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={() => setSnackbar({ ...snackbar, open: false })} message={snackbar.message} />
             </Container>
         </DashboardLayout>

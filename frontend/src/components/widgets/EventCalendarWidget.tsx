@@ -1,11 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box, Typography, CircularProgress, Alert, TextField, Tooltip,
   IconButton, Paper, Stack, Divider, InputAdornment, Modal, Button, ToggleButtonGroup, ToggleButton,
-  Collapse, Grid, Snackbar, List, ListItem, ListItemText,
+  Collapse, Grid, List, ListItem, ListItemText,
   MenuItem, FormControl, Select, SelectChangeEvent, Link as MuiLink
 } from '@mui/material';
-import EventIcon from '@mui/icons-material/Event';
 import SearchIcon from '@mui/icons-material/Search';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
@@ -21,7 +20,14 @@ import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
-import { useSnackbar } from '../../context/SnackbarContext'; // NEU: Snackbar-Hook importieren
+import { useSnackbar } from '../../context/SnackbarContext';
+
+interface EventCalendarWidgetProps extends BaseWidgetProps {
+  icon?: React.ReactNode;
+  title: string;
+  category: string;
+  widgetTypeKey: string;
+}
 
 const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, alt, size = 20 }) => {
   if (!code) return null;
@@ -57,33 +63,36 @@ interface EventData {
     is_read: boolean;
 }
 interface ShareState { expanded: boolean; loading: boolean; error: string | null; success: string | null; recipientEmail: string; }
-interface EventCalendarWidgetProps extends BaseWidgetProps { title: string; widgetTypeKey: string; }
 
-const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, widgetId, isRemovable, title, widgetTypeKey }) => {
+const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey }) => {
   const { user } = useAuth();
-  const { showSnackbar } = useSnackbar(); // NEU: Snackbar-Hook initialisieren
-  const [allEvents, setAllEvents] = React.useState<EventData[]>([]);
-  const [availableRegions, setAvailableRegions] = React.useState<Region[]>([]);
-  const [allPossibleRegions, setAllPossibleRegions] = React.useState<Region[]>([]);
-  const [searchTerm, setSearchTerm] = React.useState('');
-  const [selectedRegionCode, setSelectedRegionCode] = React.useState<string>('all');
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const [selectedEvent, setSelectedEvent] = React.useState<EventData | null>(null);
-  const [showAddForm, setShowAddForm] = React.useState(false);
-  // --- GEÄNDERT: URL mit 'https://' vorbelegen ---
-  const [newEvent, setNewEvent] = React.useState({ title: '', event_date: '', region: '', summary: '', original_url: 'https://' });
-  const [shareState, setShareState] = React.useState<ShareState>({ expanded: false, loading: false, error: null, success: null, recipientEmail: '' });
-  const [showPastEvents, setShowPastEvents] = React.useState(false);
+  const { showSnackbar } = useSnackbar();
+  const [allEvents, setAllEvents] = useState<EventData[]>([]);
+  const [availableRegions, setAvailableRegions] = useState<Region[]>([]);
+  const [allPossibleRegions, setAllPossibleRegions] = useState<Region[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedRegionCode, setSelectedRegionCode] = useState<string>('all');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<EventData | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newEvent, setNewEvent] = useState({ title: '', event_date: '', region: '', summary: '', original_url: 'https://' });
+  const [shareState, setShareState] = useState<ShareState>({ expanded: false, loading: false, error: null, success: null, recipientEmail: '' });
+  const [showPastEvents, setShowPastEvents] = useState(false);
 
-  const [page, setPage] = React.useState(1);
-  const [totalPages, setTotalPages] = React.useState(0);
-
-  const fetchEvents = React.useCallback(async () => {
+  const fetchEvents = useCallback(async () => {
+    if (!category) {
+      setError("Keine Kategorie im Widget-Typ konfiguriert.");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const token = localStorage.getItem('jwt_token');
-      const res = await apiClient.get('/api/data/enhanced-calendar-events', { headers: { 'x-auth-token': token } });
+      const res = await apiClient.get('/api/data/events', { 
+        params: { category },
+        headers: { 'x-auth-token': token } 
+      });
       setAllEvents(res.data.events);
       setAvailableRegions(res.data.availableRegions);
     } catch (err: any) {
@@ -91,9 +100,9 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [category]);
   
-  const fetchAllRegions = React.useCallback(async () => {
+  const fetchAllRegions = useCallback(async () => {
     try {
       const token = localStorage.getItem('jwt_token');
       const res = await apiClient.get('/api/data/regions', { headers: { 'x-auth-token': token } });
@@ -103,7 +112,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
     }
   }, []);
 
-  React.useEffect(() => { 
+  useEffect(() => { 
     fetchEvents();
     fetchAllRegions();
   }, [fetchEvents, fetchAllRegions]);
@@ -127,7 +136,6 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
   };
 
   const handleAddEvent = async () => {
-    // --- GEÄNDERT: alert() durch showSnackbar ersetzt ---
     if (!newEvent.title || !newEvent.event_date) {
       showSnackbar('Titel und Datum sind erforderlich.', 'warning');
       return;
@@ -139,7 +147,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
 
     try {
       const token = localStorage.getItem('jwt_token');
-      await apiClient.post('/api/admin/scraped-content/events', newEvent, { headers: { 'x-auth-token': token } });
+      await apiClient.post('/api/admin/scraped-content/events', { ...newEvent, category }, { headers: { 'x-auth-token': token } });
       setShowAddForm(false);
       setNewEvent({ title: '', event_date: '', region: '', summary: '', original_url: 'https://' });
       showSnackbar('Event erfolgreich hinzugefügt.', 'success');
@@ -219,7 +227,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
     return Math.ceil((d.getTime() - t.getTime()) / (1000 * 60 * 60 * 24));
   };
 
-  const filteredAndGrouped = React.useMemo(() => {
+  const filteredAndGrouped = useMemo(() => {
     const regionName = availableRegions.find(r => r.code === selectedRegionCode)?.name;
     const filtered = allEvents.filter(e => {
       const matchesRegion = selectedRegionCode === 'all' || e.region === regionName;
@@ -243,7 +251,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
   );
 
   return (
-    <WidgetPaper title={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}><EventIcon /><Typography variant="h6">{title}</Typography><Box sx={{ flexGrow: 1 }} /><FormControl size="small" sx={{ minWidth: 150, '.MuiOutlinedInput-notchedOutline': { border: 'none' } }} onMouseDown={(e) => e.stopPropagation()}><Select value={selectedRegionCode} onChange={(e: SelectChangeEvent) => setSelectedRegionCode(e.target.value)} renderValue={(value) => { const region = availableRegions.find(r => r.code === value); return (<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><Flag code={value === 'all' ? 'EU' : (value as string)} alt={region?.name || 'Alle'} /> {value === 'all' ? 'Alle' : region?.name}</Box>); }}><MenuItem value="all"><span style={{ marginRight: 8 }}><Flag code="EU" alt="EU" /></span>Alle Regionen</MenuItem>{availableRegions.map((region) => (<MenuItem key={region.code} value={region.code}><span style={{ marginRight: 8 }}><Flag code={region.code} alt={region.name} /></span>{region.name}</MenuItem>))}</Select></FormControl></Box>} widgetId={widgetId} onDelete={onDelete} isRemovable={isRemovable} widgetTitle={title} widgetTypeKey={widgetTypeKey}>
+    <WidgetPaper title={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>{icon}<Typography variant="h6">{title}</Typography><Box sx={{ flexGrow: 1 }} /><FormControl size="small" sx={{ minWidth: 150, '.MuiOutlinedInput-notchedOutline': { border: 'none' } }} onMouseDown={(e) => e.stopPropagation()}><Select value={selectedRegionCode} onChange={(e: SelectChangeEvent) => setSelectedRegionCode(e.target.value)} renderValue={(value) => { const region = availableRegions.find(r => r.code === value); return (<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><Flag code={value === 'all' ? 'EU' : (value as string)} alt={region?.name || 'Alle'} /> {value === 'all' ? 'Alle' : region?.name}</Box>); }}><MenuItem value="all"><span style={{ marginRight: 8 }}><Flag code="EU" alt="EU" /></span>Alle Regionen</MenuItem>{availableRegions.map((region) => (<MenuItem key={region.code} value={region.code}><span style={{ marginRight: 8 }}><Flag code={region.code} alt={region.name} /></span>{region.name}</MenuItem>))}</Select></FormControl></Box>} widgetId={widgetId} onDelete={onDelete} isRemovable={isRemovable} widgetTitle={title} widgetTypeKey={widgetTypeKey}>
       <Stack spacing={2} sx={{ p: 2 }}>
         <Stack direction="row" spacing={1} onMouseDown={(e) => e.stopPropagation()} alignItems="center"><TextField fullWidth size="small" placeholder="Events durchsuchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }}/><Tooltip title={showPastEvents ? "Vergangene Events ausblenden" : "Vergangene Events anzeigen"}><Button size="small" variant={showPastEvents ? 'contained' : 'outlined'} onClick={() => setShowPastEvents(!showPastEvents)} sx={{ flexShrink: 0 }}>Vergangene</Button></Tooltip><Tooltip title="Neuen Termin hinzufügen"><IconButton onClick={() => setShowAddForm(!showAddForm)}><AddCircleOutlineIcon color={showAddForm ? 'primary' : 'action'} /></IconButton></Tooltip></Stack>
         <Collapse in={showAddForm}><Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}><Typography variant="h6" gutterBottom>Neuen Termin hinzufügen</Typography><Grid container spacing={2}><Grid item xs={12} sm={8}><TextField fullWidth size="small" label="Event-Titel" value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })} /></Grid><Grid item xs={12} sm={4}><TextField fullWidth size="small" type="date" label="Datum" value={newEvent.event_date} onChange={e => setNewEvent({ ...newEvent, event_date: e.target.value })} InputLabelProps={{ shrink: true }} /></Grid><Grid item xs={12}><TextField fullWidth size="small" label="URL (Optional)" value={newEvent.original_url} onChange={e => setNewEvent({ ...newEvent, original_url: e.target.value })} /></Grid><Grid item xs={12}><TextField select fullWidth size="small" label="Region (Optional)" value={newEvent.region} onChange={e => setNewEvent({ ...newEvent, region: e.target.value })}><MenuItem value=""><em>Keine Region</em></MenuItem>{allPossibleRegions.map((r: Region) => (<MenuItem key={r.id} value={r.name}>{r.name}</MenuItem>))}</TextField></Grid><Grid item xs={12}><TextField fullWidth size="small" multiline rows={2} label="Kurzbeschreibung (Optional)" value={newEvent.summary} onChange={e => setNewEvent({ ...newEvent, summary: e.target.value })} /></Grid></Grid><Box sx={{ mt: 2, textAlign: 'right' }}><Button size="small" onClick={() => setShowAddForm(false)}>Abbrechen</Button><Button size="small" variant="contained" onClick={handleAddEvent} sx={{ ml: 1 }}>Speichern</Button></Box></Paper></Collapse>

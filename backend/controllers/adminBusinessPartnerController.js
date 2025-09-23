@@ -12,6 +12,7 @@ exports.getAllBusinessPartners = async (req, res) => {
                 bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 bp.storage_tier, bp.storage_usage_bytes, bp.storage_limit_bytes,
+                bp.allow_automated_newsletter, -- NEU
                 cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
                 (SELECT COUNT(*) FROM users u WHERE u.business_partner_id = bp.id) AS user_count,
                 (SELECT COUNT(*) FROM business_partner_widget_access wa WHERE wa.business_partner_id = bp.id) AS widget_count,
@@ -35,8 +36,6 @@ exports.getAllBusinessPartners = async (req, res) => {
 };
 
 // GET a single business partner by ID
-// KORREKTUR: SELECT bp.* wurde durch eine explizite Liste aller Spalten ersetzt,
-// um sicherzustellen, dass 'email' und 'url_businesspartner' immer zurückgegeben werden.
 exports.getBusinessPartnerById = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Business Partner ID format.' });
@@ -48,6 +47,7 @@ exports.getBusinessPartnerById = async (req, res) => {
                 bp.subscription_start_date, bp.subscription_end_date, bp.color_scheme_id,
                 bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
+                bp.allow_automated_newsletter, -- NEU
                 cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
                (SELECT COALESCE(json_agg(
                    jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
@@ -77,7 +77,7 @@ exports.createBusinessPartner = async (req, res) => {
         name, address, logo_url, subscription_start_date, subscription_end_date,
         color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
-        default_region_id, email
+        default_region_id, email, allow_automated_newsletter // NEU
     } = req.body;
 
     if (!name) return res.status(400).json({ message: 'Name is required.' });
@@ -90,22 +90,14 @@ exports.createBusinessPartner = async (req, res) => {
             `INSERT INTO business_partners (
                 name, address, logo_url, subscription_start_date, subscription_end_date,
                 color_scheme_id, is_active, url_businesspartner, dashboard_title,
-                level_1_name, level_2_name, level_3_name, email
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+                level_1_name, level_2_name, level_3_name, email, allow_automated_newsletter
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
             [
-                name,
-                address || null,
-                logo_url || null,
-                subscription_start_date || null,
-                subscription_end_date || null,
-                color_scheme_id || null,
-                is_active,
-                url_businesspartner || null,
-                dashboard_title || null,
-                level_1_name || null,
-                level_2_name || null,
-                level_3_name || null,
-                email || null
+                name, address || null, logo_url || null, subscription_start_date || null,
+                subscription_end_date || null, color_scheme_id || null, is_active,
+                url_businesspartner || null, dashboard_title || null, level_1_name || null,
+                level_2_name || null, level_3_name || null, email || null,
+                !!allow_automated_newsletter // NEU
             ]
         );
         const newBp = bpResult.rows[0];
@@ -144,19 +136,19 @@ exports.updateBusinessPartner = async (req, res) => {
         name, address, logo_url, subscription_start_date, subscription_end_date,
         color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
-        default_region_id, email, storage_tier // Tier is now part of the main update
+        default_region_id, email, storage_tier, allow_automated_newsletter // NEU
     } = req.body;
 
     const validTiers = {
         'free': 0,
-        'standard': 104857600,    // 100 MB
-        'premium': 1048576000     // 1 GB
+        'standard': 104857600,
+        'premium': 1048576000
     };
 
-    if (!validTiers.hasOwnProperty(storage_tier)) {
+    if (storage_tier && !validTiers.hasOwnProperty(storage_tier)) {
         return res.status(400).json({ message: 'Ungültiger Tier-Name.' });
     }
-    const newLimit = validTiers[storage_tier];
+    const newLimit = storage_tier ? validTiers[storage_tier] : undefined;
 
     const client = await db.connect();
     try {
@@ -168,13 +160,16 @@ exports.updateBusinessPartner = async (req, res) => {
                 subscription_end_date = $5, color_scheme_id = $6, is_active = $7,
                 url_businesspartner = $8, dashboard_title = $9, level_1_name = $10,
                 level_2_name = $11, level_3_name = $12, email = $13, 
-                storage_tier = $14, storage_limit_bytes = $15, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $16 RETURNING *`,
+                storage_tier = COALESCE($14, storage_tier), 
+                storage_limit_bytes = COALESCE($15, storage_limit_bytes), 
+                allow_automated_newsletter = $16,
+                updated_at = CURRENT_TIMESTAMP
+             WHERE id = $17 RETURNING *`,
             [
                 name, address || null, logo_url || null, subscription_start_date || null, subscription_end_date || null,
                 color_scheme_id || null, is_active, url_businesspartner || null, dashboard_title || null,
                 level_1_name || null, level_2_name || null, level_3_name || null, email || null,
-                storage_tier, newLimit, id
+                storage_tier, newLimit, !!allow_automated_newsletter, id // NEU
             ]
         );
         if (updatedBpResult.rows.length === 0) throw new Error('Business Partner not found.');
@@ -202,7 +197,7 @@ exports.updateBusinessPartner = async (req, res) => {
     }
 };
 
-// ... (restlicher Code bleibt unverändert)
+// ... (rest of the controller remains unchanged)
 exports.deleteBusinessPartner = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Business Partner ID format.' });

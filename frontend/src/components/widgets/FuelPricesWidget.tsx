@@ -8,7 +8,6 @@ import {
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import axios from 'axios';
-
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
@@ -19,7 +18,6 @@ import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import ScienceIcon from '@mui/icons-material/Science';
 import OpacityIcon from '@mui/icons-material/Opacity';
 import RefreshIcon from '@mui/icons-material/Refresh';
-
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
@@ -31,6 +29,7 @@ type ViewMode = 'favorites' | 'search';
 type CountryCode = 'DE' | 'AT';
 
 interface FuelPricesWidgetProps extends BaseWidgetProps {
+  icon?: React.ReactNode;
   title: string;
   widgetTypeKey: string;
 }
@@ -69,7 +68,7 @@ L.Icon.Default.mergeOptions({
 });
 
 const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
-  onDelete, widgetId, isRemovable, title, widgetTypeKey
+  onDelete, widgetId, isRemovable, icon, title, widgetTypeKey
 }) => {
   const { user } = useAuth();
   const { showSnackbar } = useSnackbar();
@@ -134,7 +133,7 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
             const price = typeof priceRaw === 'string' ? parseFloat(priceRaw) : priceRaw;
             const mapUrl = `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`;
             const priceString = typeof price === 'number' ? `<b>${price.toFixed(3)} €</b>` : 'N/A';
-            const popupContent = `<b>${s.brand || s.name}</b><br/>${s.street || ''} ${s.house_no || ''}<br/>${fuelTypeConfig[fuelType].label}: ${priceString}<br/><a href="${mapUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-flex; align-items:center; text-decoration:none; margin-top: 4px;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGhlaWdodD0iMWVtIiB2aWV3Qm94PSIwIDAgMjQgMjQiPjxwYXRoIGZpbGw9ImN1cnJlbnRDb2xvciIgZD0ibTEyIDIgYzAtMy44Ny0zLjEzLTctNy03cy03IDMuMTMtNyA3YzAgNS4yNSA3IDEzIDcgMTNzNy03Ljc1IDctMTNjMC0zLjg3LTMuMTMtNy03LTd6bTAgOS41Yy0xLjkzIDAtMy41LTEuNTctMy41LTMuNXMxLjU3LTMuNSAzLjUtMy41czMuNSAxLjU3IDMuNSAzLjVzLTEuNTcgMy41LTMuNSAzLjV6Ii8+PC9zdmc+" width="16" height="16" style="margin-right:4px;"/>Auf Google Maps ansehen</a>`;
+            const popupContent = `<b>${s.brand || s.name}</b><br/>${s.street || ''} ${s.house_no || ''}<br/>${fuelTypeConfig[fuelType].label}: ${priceString}<br/><a href="${mapUrl}" target="_blank" rel="noopener noreferrer">Auf Google Maps ansehen</a>`;
             L.marker([s.lat, s.lng]).bindPopup(popupContent).addTo(markersRef.current);
         }
     });
@@ -149,13 +148,7 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
     const timestamps = favorites.map(fav => fav.last_price_ts ? new Date(fav.last_price_ts).getTime() : 0).filter(ts => ts > 0);
     if (timestamps.length === 0) return null;
     const latestTimestamp = Math.max(...timestamps);
-    const latestDate = new Date(latestTimestamp);
-    const allSame = timestamps.every(ts => Math.abs(ts - latestTimestamp) < 1000);
-    if (allSame) {
-      return latestDate.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    } else {
-      return 'Diverse';
-    }
+    return new Date(latestTimestamp).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   }, [favorites]);
 
   useEffect(() => {
@@ -319,7 +312,7 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
     <WidgetPaper 
       title={
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <LocalGasStationIcon />
+            {icon}
             <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
                 {title}
             </Typography>

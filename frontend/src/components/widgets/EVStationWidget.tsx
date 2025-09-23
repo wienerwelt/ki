@@ -14,7 +14,6 @@ import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import SearchIcon from '@mui/icons-material/Search';
 import MyLocationIcon from '@mui/icons-material/MyLocation';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import EvStationIcon from '@mui/icons-material/EvStation';
 import PowerIcon from '@mui/icons-material/Power';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import CloseIcon from '@mui/icons-material/Close';
@@ -30,6 +29,7 @@ type ViewMode = 'favorites' | 'search';
 type CountryCode = 'DE' | 'AT' | string;
 
 interface EVStationWidgetProps extends BaseWidgetProps {
+  icon?: React.ReactNode;
   title: string;
   widgetTypeKey: string;
 }
@@ -54,7 +54,7 @@ L.Icon.Default.mergeOptions({
 });
 
 const EVStationWidget: React.FC<EVStationWidgetProps> = ({
-  onDelete, widgetId, isRemovable, title, widgetTypeKey
+  onDelete, widgetId, isRemovable, icon, title, widgetTypeKey
 }) => {
   const { user } = useAuth();
   const { showSnackbar } = useSnackbar();
@@ -126,7 +126,7 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
     
     stationsToShow.forEach((s) => {
         if (s.lat && s.lng) {
-            const mapUrl = `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`;
+            const mapUrl = `https://www.google.com/maps?q=${s.lat},${s.lng}`;
             const popupContent = `<b>${s.name}</b><br/>Betreiber: ${s.operator_name || 'N/A'}<br/><a href="${mapUrl}" target="_blank" rel="noopener noreferrer">Auf Google Maps ansehen</a>`;
             L.marker([s.lat, s.lng]).bindPopup(popupContent).addTo(markersRef.current);
         }
@@ -238,7 +238,7 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
   
   return (
     <WidgetPaper 
-      title={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}><EvStationIcon /><Typography variant="h6">{title}</Typography></Box>}
+      title={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>{icon}<Typography variant="h6">{title}</Typography></Box>}
       widgetId={widgetId} onDelete={onDelete} isRemovable={isRemovable} 
       widgetTitle={title} widgetTypeKey={widgetTypeKey} noPadding
     >

@@ -4,6 +4,8 @@ const db = require('../config/db');
 const { processSubscription } = require('./intelligentContentService');
 const { triggerSingleRuleScrape } = require('./scraperService');
 const { triggerEmailJob } = require('../controllers/adminCronjobsController');
+const { dataUpdatesQueue } = require('../services/queueService');
+const { processSavedSearchNotifications } = require('./notificationService');
 
 /**
  * Checks all relevant tables for jobs that are due and executes them.
@@ -33,13 +35,40 @@ const runScheduledJobs = async () => {
         }
 
         // 3. Execute scheduled Email Jobs
-        const emailJobs = await client.query("SELECT * FROM email_cronjobs WHERE is_active = TRUE AND schedule IS NOT NULL AND schedule <> ''");
+        // PASST DIE QUERY AN, UM DATA-UPDATE-JOBS AUSZUSCHLIESSEN
+        const emailJobs = await client.query("SELECT * FROM cronjobs WHERE recipient_group <> 'data-update' AND is_active = TRUE AND schedule IS NOT NULL AND schedule <> ''");
         for (const job of emailJobs.rows) {
             if (isDue(job.schedule, now)) {
-                console.log(`[CRON] Executing Email Job: ${job.name} (ID: ${job.id})`);
-                triggerEmailJob({ params: { id: job.id } }).catch(err => console.error(`[CRON] Error in background email job ${job.id}:`, err.message));
+                console.log(`[CRON] Enqueueing Email Job: ${job.name} (ID: ${job.id})`);
+                // KORREKTUR: Job direkt zur emailQueue hinzufügen
+                emailQueue.add(job.name, { emailJobId: job.id })
+                    .catch(err => console.error(`[CRON] Error enqueueing email job ${job.id}:`, err.message));
+                // last_run_at aktualisieren, wie bei den anderen Jobs auch
+                client.query('UPDATE cronjobs SET last_run_at = NOW() WHERE id = $1', [job.id]);
             }
         }
+        
+        // 4. Execute scheduled Data Update Jobs (NEUER ABSCHNITT)
+        // FRAGT DIESELBE TABELLE AB, ABER NUR NACH DEM NEUEN TYP
+        const dataJobs = await client.query("SELECT * FROM cronjobs WHERE recipient_group = 'data-update' AND is_active = TRUE AND schedule IS NOT NULL AND schedule <> ''");
+        for (const job of dataJobs.rows) {
+            if (isDue(job.schedule, now)) {
+                console.log(`[CRON] Enqueueing Data Update Job: ${job.name}`);
+                // Job zur neuen 'data-updates'-Queue hinzufügen
+                dataUpdatesQueue.add(job.name, { jobId: job.id });
+                client.query('UPDATE cronjobs SET last_run_at = NOW() WHERE id = $1', [job.id]);
+            }
+        }
+
+        // 5. Execute Saved Search Notifications (NEUER ABSCHNITT)
+        // Dieser Job wird fest einmal pro Tag ausgeführt, kann aber auch in die cronjobs-Tabelle verschoben werden.
+        const fundingNotificationSchedule = '0 3 * * *'; // Jeden Tag um 03:00 Uhr
+        if (isDue(fundingNotificationSchedule, now)) {
+            console.log(`[CRON] Enqueueing Saved Search Notification Job`);
+            // Wir rufen die Logik direkt auf, da sie nicht in einer Queue laufen muss.
+            // Alternativ könnte man sie auch in die emailQueue einreihen.
+            processSavedSearchNotifications().catch(err => console.error(`[CRON] Error in Saved Search Notification job:`, err.message));
+        }        
 
     } catch (error) {
         console.error('[CRON] Error during scheduled job execution:', error);

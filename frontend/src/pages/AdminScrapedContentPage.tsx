@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
-    TextField, MenuItem, Chip, Grid, TableSortLabel, InputAdornment, SelectChangeEvent, Link as MuiLink, Tooltip,
-    Checkbox // NEU
+    TextField, MenuItem, Chip, Grid, TableSortLabel, InputAdornment, Tooltip,
+    Checkbox, Avatar
 } from '@mui/material';
 import { Autocomplete } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
@@ -12,10 +12,12 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import LinkIcon from '@mui/icons-material/Link';
+import FilterListIcon from '@mui/icons-material/FilterList';
+import ScienceIcon from '@mui/icons-material/Science';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
+import { useSnackbar } from '../context/SnackbarContext';
 
-// --- Interfaces ---
 interface UnifiedContent {
     id: string;
     source_identifier: string;
@@ -33,14 +35,15 @@ interface UnifiedContent {
     tags: string[] | null;
     summary?: string | null;
     full_text?: string | null;
+    thumbnail_url?: string | null;
 }
 
 interface ScrapingRuleOption { id: string; source_identifier: string; name?: string; }
 interface Category { id: string; name: string; }
 interface Tag { id: string; name: string; }
-
-// --- Helper-Funktionen ---
+interface Region { id: string; name: string; }
 type Order = 'asc' | 'desc';
+
 function descendingComparator(a: UnifiedContent, b: UnifiedContent, orderBy: keyof UnifiedContent) {
     const valA = a[orderBy] ?? '';
     const valB = b[orderBy] ?? '';
@@ -48,9 +51,11 @@ function descendingComparator(a: UnifiedContent, b: UnifiedContent, orderBy: key
     if (valB > valA) return 1;
     return 0;
 }
+
 function getComparator(order: Order, orderBy: keyof UnifiedContent): (a: UnifiedContent, b: UnifiedContent) => number {
     return order === 'desc' ? (a, b) => descendingComparator(a, b, orderBy) : (a, b) => -descendingComparator(a, b, orderBy);
 }
+
 function useQuery() { return new URLSearchParams(useLocation().search); }
 
 const initialFormState = {
@@ -65,58 +70,97 @@ const initialFormState = {
     tags: [] as Tag[],
     relevance_score: '' as number | '',
     region: '',
+    thumbnail_url: '',
 };
+
+const PAGE_SIZE = 50;
 
 const AdminScrapedContentPage: React.FC = () => {
     const [content, setContent] = useState<UnifiedContent[]>([]);
     const [sourceIdentifierOptions, setSourceIdentifierOptions] = useState<ScrapingRuleOption[]>([]);
     const [allCategories, setAllCategories] = useState<Category[]>([]);
     const [allTags, setAllTags] = useState<Tag[]>([]);
+    const [allRegions, setAllRegions] = useState<Region[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [openDialog, setOpenDialog] = useState(false);
     const [editingContent, setEditingContent] = useState<UnifiedContent | null>(null);
-    const [selected, setSelected] = useState<string[]>([]); // NEU: State für ausgewählte Zeilen
-
+    const [selected, setSelected] = useState<string[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [order, setOrder] = useState<Order>('desc');
     const [orderBy, setOrderBy] = useState<keyof UnifiedContent>('scraped_at');
     const [formState, setFormState] = useState(initialFormState);
-    
+    const [page, setPage] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
     const query = useQuery();
     const sourceIdentifierFilter = query.get('source_identifier');
     const navigate = useNavigate();
+    const { showSnackbar } = useSnackbar();
 
-    const fetchInitialData = async () => {
+    const fetchStaticData = useCallback(async () => {
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const [rulesRes, categoriesRes, tagsRes, regionsRes] = await Promise.all([
+                apiClient.get('/api/admin/scraping-rules', { headers: { 'x-auth-token': token } }),
+                apiClient.get('/api/admin/categories', { headers: { 'x-auth-token': token } }),
+                apiClient.get('/api/admin/tags', { headers: { 'x-auth-token': token } }),
+                apiClient.get('/api/admin/scraped-content/regions', { headers: { 'x-auth-token': token } })
+            ]);
+            setSourceIdentifierOptions(rulesRes.data);
+            setAllCategories(categoriesRes.data);
+            setAllTags(tagsRes.data);
+            setAllRegions(regionsRes.data);
+        } catch (err: any) {
+             setError(err.response?.data?.message || 'Fehler beim Laden der Stammdaten.');
+        }
+    }, []);
+
+    const fetchContent = useCallback(async (currentPage: number, replace = false) => {
         setLoading(true);
         setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
-            let contentUrl = '/api/admin/scraped-content';
-            if (sourceIdentifierFilter) {
-                contentUrl += `?source_identifier=${sourceIdentifierFilter}`;
-            }
+            const params = new URLSearchParams({
+                limit: String(PAGE_SIZE),
+                offset: String((currentPage - 1) * PAGE_SIZE)
+            });
+            if (sourceIdentifierFilter) params.append('source_identifier', sourceIdentifierFilter);
+            if (startDate) params.append('startDate', startDate);
+            if (endDate) params.append('endDate', endDate);
 
-            const [contentRes, rulesRes, categoriesRes, tagsRes] = await Promise.all([
-                apiClient.get(contentUrl, { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/admin/scraping-rules', { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/admin/categories', { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/admin/tags', { headers: { 'x-auth-token': token } })
-            ]);
-            setContent(contentRes.data);
-            setSourceIdentifierOptions(rulesRes.data);
-            setAllCategories(categoriesRes.data);
-            setAllTags(tagsRes.data);
+            const contentRes = await apiClient.get(`/api/admin/scraped-content?${params.toString()}`, { headers: { 'x-auth-token': token } });
+            
+            setContent(prev => replace ? contentRes.data : [...prev, ...contentRes.data]);
+            setHasMore(contentRes.data.length === PAGE_SIZE);
+            setPage(currentPage);
+
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Laden der Inhalte.');
         } finally {
             setLoading(false);
         }
+    }, [sourceIdentifierFilter, startDate, endDate]);
+
+    useEffect(() => {
+        fetchStaticData();
+    }, [fetchStaticData]);
+
+    useEffect(() => {
+        fetchContent(1, true);
+    }, [fetchContent]);
+
+    const handleApplyFilter = () => {
+        setContent([]);
+        fetchContent(1, true);
+    };
+    
+    const handleLoadMore = () => {
+        fetchContent(page + 1, false);
     };
 
-    useEffect(() => { fetchInitialData(); }, [sourceIdentifierFilter]);
-
-    const handleFormChange = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent<string>) => {
+    const handleFormChange = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         const { name, value } = event.target;
         setFormState(prevState => ({ ...prevState, [name]: value }));
     };
@@ -145,6 +189,7 @@ const AdminScrapedContentPage: React.FC = () => {
             tags: allTags.filter(t => item.tags?.includes(t.name)),
             relevance_score: item.relevance_score ?? '',
             region: item.region || '',
+            thumbnail_url: item.thumbnail_url || '',
         });
         setOpenDialog(true);
     };
@@ -164,6 +209,7 @@ const AdminScrapedContentPage: React.FC = () => {
             event_date: formState.event_date || null,
             relevance_score: formState.relevance_score === '' ? null : Number(formState.relevance_score),
             region: formState.region || null,
+            thumbnail_url: formState.thumbnail_url || null,
         };
 
         try {
@@ -173,7 +219,7 @@ const AdminScrapedContentPage: React.FC = () => {
                 await apiClient.post('/api/admin/scraped-content', contentData, { headers: { 'x-auth-token': token } });
             }
             handleCloseDialog();
-            fetchInitialData();
+            handleApplyFilter();
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Speichern des Inhalts.');
         } finally {
@@ -186,13 +232,12 @@ const AdminScrapedContentPage: React.FC = () => {
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.delete(`/api/admin/scraped-content/${id}?dataType=${dataType}`, { headers: { 'x-auth-token': token } });
-            fetchInitialData();
+            handleApplyFilter();
         } catch (err: any) {
             alert(err.response?.data?.message || 'Fehler beim Löschen des Inhalts.');
         }
     };
 
-    // NEU: Handler für Bulk-Delete
     const handleBulkDelete = async () => {
         if (!window.confirm(`Sind Sie sicher, dass Sie ${selected.length} Einträge löschen möchten?`)) return;
         setLoading(true);
@@ -205,7 +250,7 @@ const AdminScrapedContentPage: React.FC = () => {
                 }
             }
             setSelected([]);
-            fetchInitialData();
+            handleApplyFilter();
         } catch (err: any) {
             alert(err.response?.data?.message || 'Fehler beim Löschen der Inhalte.');
             setLoading(false);
@@ -234,7 +279,6 @@ const AdminScrapedContentPage: React.FC = () => {
         return filtered.sort(getComparator(order, orderBy));
     }, [content, searchTerm, order, orderBy]);
 
-    // NEU: Handler für Checkboxen
     const handleSelectAllClick = (event: React.ChangeEvent<HTMLInputElement>) => {
         if (event.target.checked) {
             const newSelecteds = sortedAndFilteredContent.map((n) => n.id);
@@ -244,7 +288,7 @@ const AdminScrapedContentPage: React.FC = () => {
         setSelected([]);
     };
 
-    const handleClick = (event: React.MouseEvent<unknown>, id: string) => {
+    const handleClick = (_event: React.MouseEvent<unknown>, id: string) => {
         const selectedIndex = selected.indexOf(id);
         let newSelected: string[] = [];
 
@@ -265,19 +309,26 @@ const AdminScrapedContentPage: React.FC = () => {
     
     const isSelected = (id: string) => selected.indexOf(id) !== -1;
 
+    const handleDeepDive = async (contentId: string) => {
+        if (!window.confirm('Möchten Sie diesen Inhalt als potenzielle Förderung analysieren? Dies verbraucht KI-Tokens.')) return;
+        try {
+            const token = localStorage.getItem('jwt_token');
+            await apiClient.post(`/api/admin/scraped-content/${contentId}/deep-dive`, {}, { headers: { 'x-auth-token': token } });
+            showSnackbar('Deep Dive gestartet. Das Ergebnis erscheint in Kürze im Funding Cockpit.', 'success');
+        } catch (err) {
+            showSnackbar('Fehler beim Starten des Deep Dive.', 'error');
+        }
+    };
+
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, flexWrap: 'wrap', gap: 2 }}>
                     <Box>
-                        <Typography variant="h4" component="h1">
-                            Alle Inhalte ({sortedAndFilteredContent.length})
-                        </Typography>
+                        <Typography variant="h4" component="h1">Alle Inhalte</Typography>
                         {sourceIdentifierFilter && <Chip label={`Filter: ${sourceIdentifierFilter}`} onDelete={handleClearFilter} sx={{ mt: 1 }} />}
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), }} />
-                        {/* NEU: Bulk-Delete-Button wird angezeigt, wenn etwas ausgewählt ist */}
                         {selected.length > 0 ? (
                             <Button variant="contained" color="error" startIcon={<DeleteIcon />} onClick={handleBulkDelete}>
                                 {selected.length} Auswahl löschen
@@ -287,16 +338,23 @@ const AdminScrapedContentPage: React.FC = () => {
                         )}
                     </Box>
                 </Box>
+                
+                <Paper sx={{ p: 2, mb: 3, display: 'flex', gap: 2, alignItems: 'center' }}>
+                    <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), }} sx={{ flexGrow: 1 }} />
+                    <TextField label="Start-Datum" type="date" size="small" InputLabelProps={{ shrink: true }} value={startDate} onChange={e => setStartDate(e.target.value)} />
+                    <TextField label="End-Datum" type="date" size="small" InputLabelProps={{ shrink: true }} value={endDate} onChange={e => setEndDate(e.target.value)} />
+                    <Button variant="contained" startIcon={<FilterListIcon />} onClick={handleApplyFilter}>Filtern</Button>
+                </Paper>
 
-                {loading ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box> 
+                {loading && content.length === 0 ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box> 
                 : error ? <Alert severity="error">{error}</Alert> 
                 : (
+                    <>
                     <Paper>
                         <TableContainer sx={{ maxHeight: '70vh' }}>
                             <Table stickyHeader>
                                 <TableHead>
                                     <TableRow>
-                                        {/* NEU: Checkbox im Header */}
                                         <TableCell padding="checkbox">
                                             <Checkbox
                                                 indeterminate={selected.length > 0 && selected.length < sortedAndFilteredContent.length}
@@ -304,6 +362,7 @@ const AdminScrapedContentPage: React.FC = () => {
                                                 onChange={handleSelectAllClick}
                                             />
                                         </TableCell>
+                                        <TableCell>Bild</TableCell>
                                         <TableCell sortDirection={orderBy === 'source_identifier' ? order : false}><TableSortLabel active={orderBy === 'source_identifier'} direction={order} onClick={() => handleSortRequest('source_identifier')}>Quelle</TableSortLabel></TableCell>
                                         <TableCell sortDirection={orderBy === 'title' ? order : false}><TableSortLabel active={orderBy === 'title'} direction={order} onClick={() => handleSortRequest('title')}>Titel</TableSortLabel></TableCell>
                                         <TableCell sortDirection={orderBy === 'category' ? order : false}><TableSortLabel active={orderBy === 'category'} direction={order} onClick={() => handleSortRequest('category')}>Kategorie</TableSortLabel></TableCell>
@@ -318,9 +377,11 @@ const AdminScrapedContentPage: React.FC = () => {
                                         const isItemSelected = isSelected(item.id);
                                         return (
                                             <TableRow key={`${item.data_type}-${item.id}`} hover onClick={(event) => handleClick(event, item.id)} role="checkbox" aria-checked={isItemSelected} selected={isItemSelected}>
-                                                {/* NEU: Checkbox in jeder Zeile */}
                                                 <TableCell padding="checkbox">
                                                     <Checkbox checked={isItemSelected} />
+                                                </TableCell>
+                                                <TableCell>
+                                                    {item.thumbnail_url && <Avatar variant="rounded" src={item.thumbnail_url} />}
                                                 </TableCell>
                                                 <TableCell><Chip label={item.source_identifier} size="small" variant="outlined" color={item.data_type === 'traffic' ? 'secondary' : 'default'} /><Typography variant="caption" display="block" sx={{ mt: 0.5 }}>{item.rule_name || ''}</Typography></TableCell>
                                                 <TableCell sx={{ maxWidth: 350, wordBreak: 'break-word' }}>{item.title}</TableCell>
@@ -331,6 +392,13 @@ const AdminScrapedContentPage: React.FC = () => {
                                                 <TableCell>
                                                     <Tooltip title="Original-URL öffnen"><IconButton component="a" href={item.original_url} target="_blank" rel="noopener noreferrer"><LinkIcon /></IconButton></Tooltip>
                                                     <Tooltip title="Inhalt bearbeiten"><span><IconButton onClick={() => handleOpenEditDialog(item)} disabled={item.data_type === 'traffic'}><EditIcon /></IconButton></span></Tooltip>
+                                                    <Tooltip title="KI Deep Dive: Als Förderung analysieren">
+                                                        <span>
+                                                            <IconButton onClick={() => handleDeepDive(item.id)} disabled={item.data_type === 'traffic'}>
+                                                                <ScienceIcon />
+                                                            </IconButton>
+                                                        </span>
+                                                    </Tooltip>
                                                     <Tooltip title="Löschen"><span><IconButton onClick={() => handleDelete(item.id, item.data_type)}><DeleteIcon color="error" /></IconButton></span></Tooltip>
                                                 </TableCell>
                                             </TableRow>
@@ -340,6 +408,14 @@ const AdminScrapedContentPage: React.FC = () => {
                             </Table>
                         </TableContainer>
                     </Paper>
+                    {hasMore && (
+                        <Box sx={{ textAlign: 'center', mt: 2 }}>
+                            <Button onClick={handleLoadMore} disabled={loading}>
+                                {loading ? <CircularProgress size={24} /> : 'Mehr laden'}
+                            </Button>
+                        </Box>
+                    )}
+                    </>
                 )}
                 
                 <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
@@ -352,6 +428,7 @@ const AdminScrapedContentPage: React.FC = () => {
                         </TextField>
                         <TextField name="title" label="Titel" fullWidth value={formState.title} onChange={handleFormChange} margin="dense" required />
                         <TextField name="original_url" label="Original URL" fullWidth value={formState.original_url} onChange={handleFormChange} margin="dense" required />
+                        <TextField name="thumbnail_url" label="Thumbnail URL" fullWidth value={formState.thumbnail_url} onChange={handleFormChange} margin="dense" />
                         <TextField name="summary" label="Zusammenfassung" fullWidth multiline rows={3} value={formState.summary} onChange={handleFormChange} margin="dense" />
                         <TextField name="full_text" label="Volltext" fullWidth multiline rows={5} value={formState.full_text} onChange={handleFormChange} margin="dense" />
                         <Grid container spacing={2}>
@@ -364,7 +441,7 @@ const AdminScrapedContentPage: React.FC = () => {
                                     options={allCategories}
                                     getOptionLabel={(option) => option.name}
                                     value={allCategories.find(c => c.id === formState.category_id) || null}
-                                    onChange={(event, newValue) => { setFormState(p => ({...p, category_id: newValue?.id || null})); }}
+                                    onChange={(_, newValue) => { setFormState(p => ({...p, category_id: newValue?.id || null})); }}
                                     isOptionEqualToValue={(option, value) => option.id === value.id}
                                     renderInput={(params) => <TextField {...params} label="Kategorie" margin="dense" />}
                                 />
@@ -375,7 +452,7 @@ const AdminScrapedContentPage: React.FC = () => {
                                     options={allTags}
                                     getOptionLabel={(option) => option.name}
                                     value={formState.tags}
-                                    onChange={(event, newValue) => { setFormState(p => ({...p, tags: newValue})); }}
+                                    onChange={(_, newValue) => { setFormState(p => ({...p, tags: newValue})); }}
                                     isOptionEqualToValue={(option, value) => option.id === value.id}
                                     renderTags={(value, getTagProps) => value.map((option, index) => (<Chip label={option.name} {...getTagProps({ index })} />))}
                                     renderInput={(params) => <TextField {...params} label="Tags" margin="dense" placeholder="Tags auswählen" />}
@@ -384,7 +461,14 @@ const AdminScrapedContentPage: React.FC = () => {
                         </Grid>
                         <Grid container spacing={2}>
                             <Grid item xs={6}><TextField name="relevance_score" label="Relevanz Score" type="number" fullWidth value={formState.relevance_score} onChange={handleFormChange} margin="dense" /></Grid>
-                            <Grid item xs={6}><TextField name="region" label="Region" fullWidth value={formState.region} onChange={handleFormChange} margin="dense" /></Grid>
+                            <Grid item xs={6}>
+                                <TextField select name="region" label="Region" fullWidth value={formState.region} onChange={handleFormChange} margin="dense">
+                                    <MenuItem value=""><em>Alle Regionen</em></MenuItem>
+                                    {(allRegions || []).map((region) => (
+                                        <MenuItem key={region.id} value={region.name}>{region.name}</MenuItem>
+                                    ))}
+                                </TextField>
+                            </Grid>
                         </Grid>
                     </DialogContent>
                     <DialogActions>

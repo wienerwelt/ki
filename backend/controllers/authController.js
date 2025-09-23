@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const zxcvbn = require('zxcvbn');
 
 const db = require('../config/db');
+const { logActivity } = require('../services/auditLogService');
 const {
   sendVerificationEmail,
   sendPasswordResetEmail,
@@ -70,14 +71,15 @@ async function resolveBusinessPartnerId(voucher) {
 
 function issueJwt(user) {
   const secret = process.env.JWT_SECRET || 'dev-secret';
-  // KORREKTUR: contribution_score zum Token-Payload hinzufügen
   const payload = {
     sub: user.id,
     username: user.username,
     email: user.email,
     role: user.role || 'user',
+    business_partner_id: user.business_partner_id || null,
     contribution_score: user.contribution_score ?? 0,
   };
+
   return jwt.sign(payload, secret, { expiresIn: '7d' });
 }
 
@@ -248,6 +250,8 @@ exports.register = async (req, res) => {
 };
 
 // === Login ===
+// backend/controllers/authController.js
+
 exports.login = async (req, res) => {
   const { identifier, password } = req.body || {};
   if (!identifier || !password) {
@@ -255,18 +259,12 @@ exports.login = async (req, res) => {
   }
 
   try {
-    // KORREKTUR: Kommentar aus der SQL-Abfrage entfernt
     const r = await db.query(
       `SELECT
-          u.id,
-          u.username,
-          u.email,
-          u.role,
-          u.password_hash,
-          u.is_email_verified,
-          u.contribution_score,
-          bp.name as business_partner_name,
-          bp.dashboard_title
+          u.id, u.username, u.email, u.role, u.password_hash,
+          u.is_email_verified, u.contribution_score,
+          u.business_partner_id,
+          bp.name as business_partner_name, bp.dashboard_title
         FROM users u
         LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
         WHERE LOWER(u.email) = LOWER($1) OR LOWER(u.username) = LOWER($1)
@@ -275,6 +273,12 @@ exports.login = async (req, res) => {
     );
 
     if (r.rows.length === 0) {
+      await logActivity({
+        actionType: 'LOGIN_FAILURE',
+        status: 'failure',
+        details: { reason: 'User not found', identifier },
+        ipAddress: req.ip
+      });
       return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
     }
 
@@ -282,18 +286,43 @@ exports.login = async (req, res) => {
 
     const ok = await bcrypt.compare(password, user.password_hash || '');
     if (!ok) {
+      await logActivity({
+        userId: user.id,
+        username: user.username,
+        actionType: 'LOGIN_FAILURE',
+        status: 'failure',
+        details: { reason: 'Invalid password' },
+        ipAddress: req.ip
+      });
       return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
     }
 
     if (process.env.REQUIRE_EMAIL_VERIFIED === 'true' && !user.is_email_verified) {
-      return res.status(403).json({
-        message: 'Bitte verifizieren Sie Ihre E-Mail-Adresse, bevor Sie sich anmelden.',
-      });
+      return res.status(403).json({ message: 'Bitte verifizieren Sie Ihre E-Mail-Adresse, bevor Sie sich anmelden.' });
     }
 
     const token = issueJwt(user);
 
-    // KORREKTUR: Kommentar aus dem User-Objekt entfernt
+    await logActivity({
+        userId: user.id,
+        username: user.username,
+        actionType: 'LOGIN_SUCCESS',
+        status: 'success',
+        ipAddress: req.ip
+    });
+
+    // ========================================================================
+    // ✅ HIER DIE ÄNDERUNG EINFÜGEN
+    // Setze den Token zusätzlich in ein sicheres Cookie.
+    // Dieses wird vom Browser automatisch bei allen Anfragen mitgesendet.
+    res.cookie('token', token, {
+      httpOnly: true, // Macht das Cookie für JavaScript im Frontend unzugänglich (wichtig für Sicherheit!)
+      secure: process.env.NODE_ENV === 'production', // Cookie nur über HTTPS senden, wenn in Produktion
+      sameSite: 'strict', // Schutz vor Cross-Site-Request-Forgery-Angriffen
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 Tage, passend zur Token-Lebensdauer
+    });
+    // ========================================================================    
+
     return res.status(200).json({
       token,
       user: {
@@ -301,6 +330,7 @@ exports.login = async (req, res) => {
         username: user.username,
         email: user.email,
         role: user.role || 'user',
+        business_partner_id: user.business_partner_id || null,
         business_partner_name: user.business_partner_name || null,
         dashboard_title: user.dashboard_title || null,
         contribution_score: user.contribution_score ?? 0,
@@ -309,6 +339,12 @@ exports.login = async (req, res) => {
 
   } catch (err) {
     console.error('Login error:', err);
+    await logActivity({
+        actionType: 'LOGIN_FAILURE',
+        status: 'failure',
+        details: { error: err.message },
+        ipAddress: req.ip
+    });
     return res.status(500).json({ message: 'Serverfehler' });
   }
 };

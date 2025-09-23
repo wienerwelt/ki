@@ -1,4 +1,3 @@
-// src/components/AdminScrapingTab.tsx
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
@@ -16,7 +15,6 @@ import SearchIcon from '@mui/icons-material/Search';
 import AdminScheduleSelector from './AdminScheduleSelector';
 import apiClient from '../apiClient';
 
-// --- Interfaces ---
 interface ScheduledScrapingRule {
     id: string;
     name: string | null;
@@ -25,11 +23,11 @@ interface ScheduledScrapingRule {
     schedule: string | null;
     last_scraped_at: string | null;
     next_run_at: string | null;
+    rule_type: 'content' | 'funding';
 }
 type Order = 'asc' | 'desc';
 type RuleKey = keyof ScheduledScrapingRule;
 
-// --- Helper Functions ---
 const formatTimestamp = (timestamp: string | null): string => {
     if (!timestamp) return 'Nie';
     return new Date(timestamp).toLocaleString('de-AT', { dateStyle: 'short', timeStyle: 'short' });
@@ -160,8 +158,7 @@ const AdminScrapingTab: React.FC = () => {
     
     const sortedAndFilteredRules = useMemo(() => {
         let filtered = rules.filter(rule =>
-            (rule.name || rule.source_identifier).toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (rule.region || '').toLowerCase().includes(searchTerm.toLowerCase())
+            (rule.name || rule.source_identifier).toLowerCase().includes(searchTerm.toLowerCase())
         );
         return filtered.sort(getComparator(order, orderBy));
     }, [rules, searchTerm, order, orderBy]);
@@ -178,7 +175,7 @@ const AdminScrapingTab: React.FC = () => {
                             </Button>
                         )}
                     </Box>
-                    <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), }}/>
+                    <TextField variant="outlined" size="small" placeholder="Quelle suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), }}/>
                 </Box>
                 {loading ? <CircularProgress sx={{ m: 2 }} /> : error ? <Alert severity="error" sx={{ m: 2 }}>{error}</Alert> : (
                     <TableContainer>
@@ -205,6 +202,15 @@ const AdminScrapingTab: React.FC = () => {
                             <TableBody>
                                 {sortedAndFilteredRules.map(rule => {
                                     const isItemSelected = selectedIds.indexOf(rule.id) !== -1;
+                                    const viewContentLink = rule.rule_type === 'funding'
+                                        ? '/admin/funding'
+                                        : `/admin/scraped-content?source_identifier=${rule.source_identifier}`;
+                                    
+                                    // HIER IST DIE KORREKTUR: Wir übergeben die ID der Regel für den Filter
+                                    const linkState = rule.rule_type === 'funding'
+                                        ? { prefillSource: rule.id }
+                                        : {};                                    
+                                    
                                     return (
                                         <TableRow key={rule.id} hover selected={isItemSelected}>
                                             <TableCell padding="checkbox"><Checkbox checked={isItemSelected} onChange={() => handleSelectClick(rule.id)} /></TableCell>
@@ -220,7 +226,11 @@ const AdminScrapingTab: React.FC = () => {
                                             <TableCell>
                                                 <Tooltip title="Zeitplan bearbeiten"><IconButton onClick={() => setEditingRule(rule)}><EditIcon /></IconButton></Tooltip>
                                                 <Tooltip title="Jetzt ausführen"><IconButton onClick={() => handleTrigger(rule.id)}><PlayArrowIcon /></IconButton></Tooltip>
-                                                <Tooltip title="Gescrapte Inhalte anzeigen"><IconButton component={RouterLink} to={`/admin/scraped-content?source_identifier=${rule.source_identifier}`}><PageviewIcon /></IconButton></Tooltip>
+                                                <Tooltip title="Gefundene Inhalte anzeigen">
+                                                    <IconButton component={RouterLink} to={viewContentLink} state={linkState}>
+                                                        <PageviewIcon />
+                                                    </IconButton>
+                                                </Tooltip>
                                                 <Tooltip title="Komplette Regel bearbeiten"><IconButton component={RouterLink} to={`/admin/scraping-rules`} state={{ prefillSearch: rule.name || rule.source_identifier }}><SettingsIcon /></IconButton></Tooltip>
                                             </TableCell>
                                         </TableRow>

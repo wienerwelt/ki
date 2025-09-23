@@ -6,6 +6,7 @@ const {
   renderVerificationEmail,
   renderPasswordResetEmail,
   renderNewsletterOptInEmail,
+  renderNewOpportunitiesEmail,
 } = require('./emailTemplates');
 
 /**
@@ -93,6 +94,25 @@ function buildNewsletterConfirmUrl(token) {
   return `${getBaseUrl()}/newsletter/confirm/${token}`;
 }
 
+function buildSearchUrl(searchCriteria) {
+    const params = new URLSearchParams();
+    if (searchCriteria.q) params.append('q', searchCriteria.q);
+    if (searchCriteria.regions) params.append('regions', searchCriteria.regions);
+    if (searchCriteria.selectedCategories) params.append('categories', searchCriteria.selectedCategories.join(','));
+    // ... weitere Parameter nach Bedarf
+    return `${getBaseUrl()}/funding-search?${params.toString()}`;
+}
+
+// ...
+
+// NEUE High-Level Funktion einfügen
+async function sendNewOpportunitiesNotification({ to, username, searchName, newOpportunities, searchCriteria }) {
+    const searchUrl = buildSearchUrl(searchCriteria);
+    const html = renderNewOpportunitiesEmail({ username, searchName, newOpportunities, searchUrl });
+    const subject = `Neue Förderungen für Ihre Suche: "${searchName}"`;
+    await sendEmail({ to, subject, html });
+}
+
 /** High-Level Sender */
 
 async function sendVerificationEmail({ to, username, verifyUrl }) {
@@ -141,6 +161,7 @@ module.exports = {
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendNewsletterOptInEmail,
+  sendNewOpportunitiesNotification,
   // URL-Builder
   buildVerifyUrl,
   buildResetUrl,

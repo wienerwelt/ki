@@ -1,10 +1,12 @@
 // backend/workers/emailWorker.js
 require('dotenv').config();
 process.title = 'emailWorker';
+const workerName = 'emailWorker'; 
 
 const { Worker } = require('bullmq');
-const { connection } = require('../services/queueService');
-// KORREKTUR: Importieren Sie den Service, der die Arbeit erledigt, nicht den Controller.
+// KORREKTUR: Nutze die zentrale Heartbeat-Verbindung aus dem queueService
+const { connection: redisClient, heartbeatRedisClient } = require('../services/queueService');
+
 const { generateAndSendDailyReport } = require('../services/reportingService');
 
 console.log('[mail] Worker-Prozess startet...');
@@ -14,16 +16,9 @@ const worker = new Worker(
   async (job) => {
     console.log(`[mail] Verarbeite Job ${job.id} (${job.name})`);
     try {
-      const { emailJobId } = job.data;
-      if (!emailJobId) {
-        throw new Error('emailJobId fehlt im Job-Payload');
-      }
-
-      // KORREKTUR: Rufen Sie die Funktion auf, die den Report tatsächlich erstellt und sendet.
-      console.log(`[mail] Starte generateAndSendDailyReport für emailJobId: ${emailJobId}`);
-      await generateAndSendDailyReport(emailJobId);
-      console.log(`[mail] generateAndSendDailyReport für ${emailJobId} erfolgreich abgeschlossen.`);
-
+      console.log(`[mail] Starte generateAndSendDailyReport...`);
+      await generateAndSendDailyReport();
+      console.log(`[mail] generateAndSendDailyReport erfolgreich abgeschlossen.`);
     } catch (err) {
       console.error(
         `[mail] Fehler bei Job ${job.id} (${job.name}):`,
@@ -33,7 +28,7 @@ const worker = new Worker(
     }
   },
   {
-    connection,
+    connection: redisClient,
     concurrency: 3,
     limiter: { max: 10, duration: 1000 },
   }
@@ -47,3 +42,13 @@ worker.on('failed', (job, err) =>
 );
 
 console.log('[mail] Worker läuft und wartet auf Jobs...');
+
+setInterval(() => {
+  // Der Heartbeat nutzt jetzt die zentrale, importierte Verbindung
+  heartbeatRedisClient.set(`worker_heartbeat:${workerName}`, new Date().toISOString(), 'EX', 60)
+    .catch(err => {
+      console.error(`[mail-Heartbeat] FEHLER: Konnte Heartbeat nicht an Redis senden:`, err.message);
+    });
+}, 15000);
+
+console.log(`[${workerName}-Worker] Heartbeat-Monitoring gestartet.`);
