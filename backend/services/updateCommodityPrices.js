@@ -1,9 +1,10 @@
 // backend/services/updateCommodityPrices.js
 const axios = require('axios');
 const cheerio = require('cheerio');
+const Papa = require('papaparse');
+const xlsx = require('xlsx');
 const db = require('../config/db');
 
-// Laden der API-Schlüssel aus den Umgebungsvariablen
 const METALPRICE_API_KEY = process.env.METALPRICE_API_KEY;
 const OILPRICE_API_KEY = process.env.OILPRICE_API_KEY;
 
@@ -83,47 +84,46 @@ const fetchAndStoreOilPrice = async () => {
 
 const fetchAndStoreEuriborRate = async () => {
     try {
+        // Zurück zur stabilen, monatlichen API der EZB
         const url = `https://data-api.ecb.europa.eu/service/data/FM/M.U2.EUR.RT.MM.EURIBOR3MD_.HSTA?lastNObservations=1&detail=dataonly&format=jsondata`;
+        
         const response = await axios.get(url, { headers: { 'Accept': 'application/json' } });
 
         const dataSet = response.data?.dataSets?.[0];
         if (!dataSet || !dataSet.series) {
-            console.log('Keine Euribor-Datensätze in der Antwort gefunden. Überspringe Update.');
-            return;
+            throw new Error('Keine Euribor-Datensätze in der EZB-Antwort gefunden.');
         }
 
-        // KORREKTUR: Greife dynamisch auf den ersten verfügbaren Serien-Schlüssel zu.
         const seriesKey = Object.keys(dataSet.series)[0];
         const series = dataSet.series[seriesKey];
 
         if (!series || !series.observations) {
-            console.log('Keine Euribor-Beobachtungen in der Antwort gefunden. Überspringe Update.');
-            return;
+            throw new Error('Keine Euribor-Beobachtungen in der EZB-Antwort gefunden.');
         }
 
         const observationKeys = Object.keys(series.observations);
         if (observationKeys.length === 0) {
-            console.log('Keine neuen Euribor-Beobachtungen gefunden. Überspringe Update.');
-            return;
+            throw new Error('Keine neuen Euribor-Beobachtungen gefunden.');
         }
         
         const lastObservationIndex = observationKeys[0];
         const lastObservationValue = series.observations[lastObservationIndex][0];
 
         const dateDimension = response.data.structure.dimensions.observation.find(dim => dim.id === 'TIME_PERIOD');
-        const lastDate = dateDimension.values[lastObservationIndex].name;
+        const lastDate = dateDimension.values[lastObservationIndex].name; // z.B. "2025-08"
 
         await upsertIndicator({
             name: 'EURIBOR_3M',
             value: lastObservationValue,
             unit: '%',
-            timestamp: new Date(`${lastDate}-01`),
+            // Wir nehmen den ersten Tag des Monats für den Zeitstempel
+            timestamp: new Date(lastDate), 
             source: 'ecb.europa.eu'
         });
 
     } catch (error) {
         const errorMessage = error.response ? `Status ${error.response.status}` : error.message;
-        throw new Error(`Euribor-Update fehlgeschlagen: ${errorMessage}`);
+        throw new Error(`Euribor-Update (monatlich) fehlgeschlagen: ${errorMessage}`);
     }
 };
 
@@ -132,45 +132,54 @@ const fetchAndStoreKVLPI = async () => {
     try {
         const url = 'https://www.statistik.at/statistiken/volkswirtschaft-und-oeffentliche-finanzen/preise-und-preisindizes/kraftfahrzeughaftpflicht-versicherungsleistungspreisindex-kvlpi';
         
-        // 1. Lade den HTML-Inhalt der Webseite
         const { data: html } = await axios.get(url, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
         });
 
-        // 2. Parse das HTML mit Cheerio
         const $ = cheerio.load(html);
 
-        // 3. Finde die Daten in der Tabelle
-        // Wir suchen die Tabellenzeile (tr), die den Text "KVLPI gesamt" enthält
-        const targetRow = $('td:contains("KVLPI gesamt")').parent('tr');
+        const headlineSpan = $('span').filter(function() {
+            return $(this).text().trim() === 'KVLPI gesamt';
+        });
 
-        if (targetRow.length === 0) {
-            throw new Error('KVLPI-Gesamtzeile konnte auf der Webseite nicht gefunden werden.');
+        if (headlineSpan.length === 0) {
+            throw new Error('Der "KVLPI gesamt" Indikator-Block konnte auf der Webseite nicht gefunden werden.');
         }
 
-        // Finde den letzten Datenpunkt (td) in dieser Zeile -> das ist der aktuellste Wert
-        const latestValueStr = targetRow.find('td:last-child').text().trim();
-        
-        // Finde den zugehörigen Monat aus dem Tabellenkopf (th)
-        const latestMonthStr = $('table.table--data thead th:last-child').text().trim(); // z.B. "2025M08"
+        // KORREKTUR 1: Genauerer Selektor, um wirklich nur den EINEN korrekten Block zu finden.
+        // Wir nehmen ".key-indicators__item" als eindeutigen Wrapper für einen einzelnen Indikator.
+        const indicatorBlock = headlineSpan.closest('.key-indicators__item');
 
-        // 4. Bereite die Daten für die Datenbank auf
-        const year = parseInt(latestMonthStr.substring(0, 4));
-        const month = parseInt(latestMonthStr.substring(5, 7));
-        const timestamp = new Date(year, month - 1, 1); // Monat ist 0-basiert
+        if (indicatorBlock.length === 0) {
+            throw new Error('Der übergeordnete Container für den KVLPI-Indikator wurde nicht gefunden.');
+        }
 
-        // Konvertiere den deutschen Komma-String in eine Zahl
-        const value = parseFloat(latestValueStr.replace(',', '.'));
+        const valueStr = indicatorBlock.find('.key-indicator__value').text().trim();
+        const dateStr = indicatorBlock.find('.key-indicator__year').text().trim();
+
+        const value = parseFloat(valueStr.replace(',', '.'));
+
+        const monthMap = {
+            'Jänner': 0, 'Februar': 1, 'März': 2, 'April': 3, 'Mai': 4, 'Juni': 5,
+            'Juli': 6, 'August': 7, 'September': 8, 'Oktober': 9, 'November': 10, 'Dezember': 11
+        };
+        const [monthName, year] = dateStr.split(' ');
+        const monthIndex = monthMap[monthName];
+
+        if (monthIndex === undefined || !year) {
+             throw new Error(`Datum "${dateStr}" konnte nicht verarbeitet werden.`);
+        }
+        const timestamp = new Date(year, monthIndex, 1);
 
         if (isNaN(value)) {
-            throw new Error(`Gelesener KVLPI-Wert "${latestValueStr}" ist keine gültige Zahl.`);
+            throw new Error(`Gelesener KVLPI-Wert "${valueStr}" ist keine gültige Zahl.`);
         }
 
-        // 5. Speichere die Daten mit deiner bestehenden Funktion
         await upsertIndicator({
-            name: 'KVLPI_GESAMT', // Eindeutiger Name für die Datenbank
+            name: 'KVLPI_GESAMT',
             value: value,
-            unit: 'Index (2020=100)',
+            // KORREKTUR 2: Den 'unit'-Text kürzen, damit er in die DB-Spalte (varchar(20)) passt.
+            unit: 'Index (Statistik.at)',
             timestamp: timestamp,
             source: 'statistik.at',
             countryCode: 'AT'
@@ -224,12 +233,231 @@ const fetchAndStoreCO2Price = async () => {
 };
 
 
+// Neue Hilfsfunktion, um Statistiken zu speichern (ähnlich wie upsertIndicator)
+const upsertStatistic = async (client, statistic) => {
+    const {
+        country_code, statistic_type, statistic_subtype, time_period,
+        value, unit, source_name, source_url
+    } = statistic;
+
+    const existing = await client.query(
+        `SELECT id FROM economic_statistics WHERE
+         country_code = $1 AND statistic_type = $2 AND statistic_subtype = $3 AND time_period = $4`,
+        [country_code, statistic_type, statistic_subtype, time_period]
+    );
+
+    if (existing.rows.length > 0) {
+        await client.query(
+            `UPDATE economic_statistics SET value = $1, last_updated = NOW() WHERE id = $2`,
+            [value, existing.rows[0].id]
+        );
+    } else {
+        await client.query(
+            `INSERT INTO economic_statistics (
+                country_code, statistic_type, statistic_subtype, time_period, time_period_granularity,
+                value, unit, source_name, source_url
+            ) VALUES ($1, $2, $3, $4, 'monthly', $5, $6, $7, $8)`,
+            [country_code, statistic_type, statistic_subtype, time_period, value, unit, source_name, source_url]
+        );
+    }
+};
+
+
+const fetchAndStoreCarRegistrationsDE = async () => {
+    console.log('[data-update] Starte Abruf der KFZ-Neuzulassungen für Deutschland (KBA)...');
+    
+    const today = new Date();
+    const targetDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const year = targetDate.getFullYear();
+    const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
+    
+    const csvUrl = `https://www.kba.de/DE/Statistik/Fahrzeuge/Umwelt/Diagramme/Monatliche_NZL/${year}${month}_NZL_Pkw_KREN_csv.html?nn=852372&view=kbawebdiagramcsvexport`;
+    console.log(`[data-update] Dynamisch erstellte KBA-URL: ${csvUrl}`);
+
+    const client = await db.connect();
+
+    try {
+        const csvResponse = await axios.get(csvUrl, { responseType: 'arraybuffer' });
+        const csvData = new TextDecoder('windows-1252').decode(csvResponse.data);
+
+        const parsedData = Papa.parse(csvData, {
+            header: true,
+            skipEmptyLines: true,
+            delimiter: ';',
+        });
+
+        let upsertCount = 0;
+        await client.query('BEGIN');
+        
+        // KORREKTUR 2: Die Datums-Logik wurde robuster gemacht, um Fehler abzufangen.
+        const parseMonth = (monthStr) => {
+            if (!monthStr || typeof monthStr !== 'string') return null;
+            const parts = monthStr.split('. ');
+            if (parts.length !== 2) return null;
+            
+            const [mon, year] = parts;
+            const monthMap = { 'Jan': 0, 'Feb': 1, 'Mär': 2, 'Apr': 3, 'Mai': 4, 'Jun': 5, 'Jul': 6, 'Aug': 7, 'Sep': 8, 'Okt': 9, 'Nov': 10, 'Dez': 11 };
+            const monthIndex = monthMap[mon];
+
+            if (monthIndex === undefined || !year) return null;
+
+            return new Date(`20${year}`, monthIndex, 1);
+        };
+        
+        for (const row of parsedData.data) {
+            const monthString = row['Berichtsmonat'];
+            const time_period = parseMonth(monthString);
+
+            // Überspringe Zeilen, bei denen das Datum nicht geparst werden konnte
+            if (!time_period) continue;
+
+            for (const driveType in row) {
+                if (driveType === 'Berichtsmonat' || !row[driveType]) continue;
+
+                const registrationCount = parseInt(row[driveType], 10);
+                if (isNaN(registrationCount)) continue;
+
+                const statistic = {
+                    country_code: 'DE',
+                    statistic_type: 'fleet_statistics',
+                    statistic_subtype: driveType,
+                    time_period: time_period,
+                    value: registrationCount,
+                    unit: 'Stück',
+                    source_name: 'Kraftfahrt-Bundesamt (KBA)',
+                    source_url: 'https://www.kba.de/'
+                };
+                
+                await upsertStatistic(client, statistic);
+                upsertCount++;
+            }
+        }
+        
+        await client.query('COMMIT');
+        console.log(`[data-update] ${upsertCount} Einträge für KFZ-Neuzulassungen (DE) erfolgreich gespeichert/aktualisiert.`);
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+            console.warn(`[data-update] KBA-Daten für ${year}-${month} noch nicht verfügbar (404). Überspringe...`);
+            return;
+        }
+        throw new Error(`Update der KFZ-Neuzulassungen (DE) fehlgeschlagen: ${error.message}`);
+    } finally {
+        client.release();
+    }
+};
+
+
+
+// ERSETZEN Sie die alte 'fetchAndStoreCarRegistrations'-Funktion komplett mit dieser neuen Version:
+const fetchAndStoreCarRegistrations = async () => {
+    console.log('[data-update] Starte Abruf der KFZ-Neuzulassungen für Österreich (Statistik Austria ODS)...');
+    
+    const monthNames = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+    const today = new Date();
+    const year = today.getFullYear();
+    const endMonthName = monthNames[new Date(today.getFullYear(), today.getMonth() - 1, 1).getMonth()];
+    
+    const odsUrl = `https://www.statistik.at/fileadmin/pages/77/NeuzulassungenFahrzeugeJaennerBis${endMonthName}${year}.ods`;
+    console.log(`[data-update] Dynamisch erstellte ODS-URL: ${odsUrl}`);
+
+    const client = await db.connect();
+
+    try {
+        const response = await axios.get(odsUrl, { responseType: 'arraybuffer' });
+        const fileData = new Uint8Array(response.data);
+        const workbook = xlsx.read(fileData, { type: 'array' });
+
+        await client.query('BEGIN');
+        let totalUpsertCount = 0;
+
+        for (const sheetName of workbook.SheetNames) {
+            const monthIndex = monthNames.findIndex(m => m.toLowerCase() === sheetName.trim().toLowerCase());
+            if (monthIndex === -1) {
+                console.log(`[data-update] Überspringe Tabellenblatt "${sheetName}", da es keinem Monat zugeordnet werden kann.`);
+                continue;
+            }
+
+            // KORREKTUR: Erstellt ein timezone-sicheres Datum für den LETZTEN Tag des Monats.
+            // new Date(Date.UTC(year, monthIndex + 1, 0)) ist die korrekte Methode hierfür.
+            const time_period = new Date(Date.UTC(year, monthIndex + 1, 0));
+            console.log(`[data-update] Verarbeite Tabellenblatt "${sheetName}" für den Zeitraum ${time_period.toISOString().split('T')[0]}`);
+
+            const worksheet = workbook.Sheets[sheetName];
+            const sheetData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: null });
+            
+            const monthlyTotals = {};
+            const foundFlags = {};
+
+            for (const row of sheetData) {
+                if (!row || !row[0] || row[1] === null) continue;
+
+                const driveTypeRaw = String(row[0]).trim();
+                const registrationCount = parseInt(String(row[1]).replace(/\D/g, ''), 10);
+
+                if (!driveTypeRaw || isNaN(registrationCount)) continue;
+
+                if (driveTypeRaw.startsWith('darunter Benzin/Elektro (hybrid) – Plug-In') && !foundFlags['plug-in-benzin']) {
+                    monthlyTotals['Plug-in-Hybrid'] = (monthlyTotals['Plug-in-Hybrid'] || 0) + registrationCount;
+                    foundFlags['plug-in-benzin'] = true;
+                } else if (driveTypeRaw.startsWith('darunter Diesel/Elektro (hybrid) – Plug-In') && !foundFlags['plug-in-diesel']) {
+                    monthlyTotals['Plug-in-Hybrid'] = (monthlyTotals['Plug-in-Hybrid'] || 0) + registrationCount;
+                    foundFlags['plug-in-diesel'] = true;
+                } else if (driveTypeRaw.startsWith('Benzin/Elektro (hybrid)') && !foundFlags['hybrid-benzin']) {
+                    monthlyTotals['Hybrid (ohne Plug-in)'] = (monthlyTotals['Hybrid (ohne Plug-in)'] || 0) + registrationCount;
+                    foundFlags['hybrid-benzin'] = true;
+                } else if (driveTypeRaw.startsWith('Diesel/Elektro (hybrid)') && !foundFlags['hybrid-diesel']) {
+                    monthlyTotals['Hybrid (ohne Plug-in)'] = (monthlyTotals['Hybrid (ohne Plug-in)'] || 0) + registrationCount;
+                    foundFlags['hybrid-diesel'] = true;
+                } else if (['Benzin', 'Diesel', 'Elektro'].includes(driveTypeRaw)) {
+                    if (!foundFlags[driveTypeRaw]) {
+                        monthlyTotals[driveTypeRaw] = registrationCount;
+                        foundFlags[driveTypeRaw] = true;
+                    }
+                }
+            }
+            
+            let currentMonthUpsertCount = 0;
+            for (const driveType in monthlyTotals) {
+                const statistic = {
+                    country_code: 'AT',
+                    statistic_type: 'fleet_statistics',
+                    statistic_subtype: driveType,
+                    time_period: time_period,
+                    value: monthlyTotals[driveType],
+                    unit: 'Stück',
+                    source_name: 'Statistik Austria',
+                    source_url: 'https://www.statistik.at/statistiken/tourismus-und-verkehr/fahrzeuge/kfz-neuzulassungen'
+                };
+                
+                await upsertStatistic(client, statistic);
+                currentMonthUpsertCount++;
+            }
+            totalUpsertCount += currentMonthUpsertCount;
+        }
+        
+        await client.query('COMMIT');
+        console.log(`[data-update] Insgesamt ${totalUpsertCount} Einträge für KFZ-Neuzulassungen (AT ODS) erfolgreich gespeichert/aktualisiert.`);
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+            console.warn(`[data-update] Statistik Austria ODS-Datei für ${endMonthName} ${year} noch nicht verfügbar (404). Überspringe...`);
+            return;
+        }
+        throw new Error(`Update der KFZ-Neuzulassungen (AT ODS) fehlgeschlagen: ${error.message}`);
+    } finally {
+        client.release();
+    }
+};
+
+
 const updateDailyIndicators = async () => {
     console.log('[data-update] Starte die Aktualisierung der TÄGLICHEN Wirtschaftsdaten...');
     const results = await Promise.allSettled([
         fetchAndStoreCurrencyRates(),
         fetchAndStoreOilPrice(),
-        fetchAndStoreEuriborRate(),
         fetchAndStoreCO2Price(),
     ]);
 
@@ -241,13 +469,14 @@ const updateDailyIndicators = async () => {
     console.log('[data-update] Aktualisierung der täglichen Wirtschaftsdaten erfolgreich abgeschlossen.');
 };
 
-/**
- * Bündelt alle MONATLICHEN Abrufe.
- */
+
 const updateMonthlyIndicators = async () => {
     console.log('[data-update] Starte die Aktualisierung der MONATLICHEN Wirtschaftsdaten...');
     const results = await Promise.allSettled([
         fetchAndStoreKVLPI(),
+        fetchAndStoreEuriborRate(),
+        fetchAndStoreCarRegistrations(),
+        fetchAndStoreCarRegistrationsDE(),
     ]);
 
     const failures = results.filter(result => result.status === 'rejected');

@@ -5,30 +5,56 @@ const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F
 
 // Holt alle KI-Inhalte und verknüpft sie mit Regel- und Kategorie-Namen
 exports.getAllAIContent = async (req, res) => {
+    // NEU: Parameter für Filter und Paginierung auslesen
+    const { search, region, page = 1, limit = 10 } = req.query;
+    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
     try {
-        const query = `
+        const queryParams = [];
+        let paramIndex = 1;
+        let whereClauses = [];
+
+        // NEU: Filter-Logik
+        if (search) {
+            whereClauses.push(`(agc.title ILIKE $${paramIndex} OR cat.name ILIKE $${paramIndex})`);
+            queryParams.push(`%${search}%`);
+            paramIndex++;
+        }
+        if (region && region !== 'all') {
+            whereClauses.push(`agc.region = $${paramIndex++}`);
+            queryParams.push(region);
+        }
+        
+        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+        // Zähl-Query für die Paginierung
+        const totalQuery = `SELECT COUNT(*) FROM ai_generated_content agc LEFT JOIN categories cat ON agc.category_id = cat.id ${whereString}`;
+        const totalResult = await db.query(totalQuery, queryParams);
+        const totalItems = parseInt(totalResult.rows[0].count, 10);
+
+        // Daten-Query mit Paginierung
+        queryParams.push(limit, offset);
+        const dataQuery = `
             SELECT 
-                agc.id, 
-                agc.title,
-                agc.generated_output,
-                agc.output_format, 
-                agc.region,
-                agc.created_at,
+                agc.id, agc.title, agc.generated_output, agc.output_format, agc.region, agc.created_at,
                 apr.name as rule_name,
-                cat.name as category_name,
-                cat.id as category_id,
+                cat.name as category_name, cat.id as category_id,
                 (SELECT array_agg(t.name) FROM tags t JOIN ai_generated_content_tags aict ON t.id = aict.tag_id WHERE aict.ai_content_id = agc.id) as tags
-            FROM 
-                ai_generated_content agc
-            LEFT JOIN 
-                ai_prompt_rules apr ON agc.ai_prompt_rule_id = apr.id
-            LEFT JOIN
-                categories cat ON agc.category_id = cat.id
-            ORDER BY 
-                agc.created_at DESC
+            FROM ai_generated_content agc
+            LEFT JOIN ai_prompt_rules apr ON agc.ai_prompt_rule_id = apr.id
+            LEFT JOIN categories cat ON agc.category_id = cat.id
+            ${whereString}
+            ORDER BY agc.created_at DESC
+            LIMIT $${paramIndex++} OFFSET $${paramIndex++}
         `;
-        const result = await db.query(query);
-        res.json(result.rows);
+        
+        const result = await db.query(dataQuery, queryParams);
+        
+        res.json({
+            data: result.rows,
+            totalItems: totalItems
+        });
+
     } catch (err) {
         console.error('Error fetching all AI content:', err.message);
         res.status(500).send('Server error');
@@ -88,5 +114,28 @@ exports.deleteAIContent = async (req, res) => {
     } catch (err) {
         console.error('Error deleting AI content:', err.message);
         res.status(500).send('Server error');
+    }
+};
+
+
+exports.deleteMultipleAIContent = async (req, res) => {
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: 'Eine Liste von IDs ist erforderlich.' });
+    }
+
+    try {
+        const result = await db.query(
+            'DELETE FROM ai_generated_content WHERE id = ANY($1::uuid[])',
+            [ids]
+        );
+        
+        res.status(200).json({ 
+            message: `${result.rowCount} KI-Inhalt(e) erfolgreich gelöscht.` 
+        });
+    } catch (err) {
+        console.error('Fehler beim Löschen von KI-Inhalten:', err.message);
+        res.status(500).send('Serverfehler beim Löschen der Inhalte.');
     }
 };

@@ -10,7 +10,7 @@ exports.getProfile = async (req, res) => {
                 id, username, email, first_name, last_name, organization_name,
                 linkedin_url, membership_level, role, business_partner_id,
                 article_score_min, article_score_max,
-                contribution_score
+                contribution_score, newsletter_opt_in
              FROM users WHERE id = $1`,
             [userId]
         );
@@ -27,13 +27,14 @@ exports.getProfile = async (req, res) => {
 exports.updateProfile = async (req, res) => {
     try {
         const userId = req.user.id;
-        const { 
-            first_name, last_name, organization_name, linkedin_url, password, 
-            article_score_min, article_score_max, preferred_theme, preferred_language 
+        const {
+            first_name, last_name, organization_name, linkedin_url, password,
+            article_score_min, article_score_max, preferred_theme, preferred_language,
+            newsletter_opt_in
         } = req.body;
         const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
         if (rows.length === 0) return res.status(404).json({ message: 'Benutzer nicht gefunden.' });
-        
+
         let password_hash = rows[0].password_hash;
         if (password && password.trim() !== '') {
             const salt = await bcrypt.genSalt(10);
@@ -44,11 +45,13 @@ exports.updateProfile = async (req, res) => {
             `UPDATE users SET
                 first_name = $1, last_name = $2, organization_name = $3, linkedin_url = $4, password_hash = $5,
                 article_score_min = $6, article_score_max = $7, preferred_theme = $8, preferred_language = $9,
+                newsletter_opt_in = $10,
                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = $10 RETURNING *`,
+             WHERE id = $11 RETURNING *`,
             [
-                first_name, last_name, organization_name, linkedin_url, password_hash, 
-                article_score_min, article_score_max, preferred_theme, preferred_language, 
+                first_name, last_name, organization_name, linkedin_url, password_hash,
+                article_score_min, article_score_max, preferred_theme, preferred_language,
+                newsletter_opt_in,
                 userId
             ]
         );
@@ -69,6 +72,22 @@ exports.markWelcomeAsSeen = async (req, res) => {
         res.status(500).send('Server error');
     }
 };
+
+
+exports.getContributionHistory = async (req, res) => {
+    const { id: userId } = req.user;
+    try {
+        const { rows } = await db.query(
+            'SELECT * FROM user_score_logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50',
+            [userId]
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error('Fehler beim Abrufen der Punkte-Historie:', err.message);
+        res.status(500).json({ message: 'Serverfehler.' });
+    }
+};
+
 
 // --- FAVORITEN-FUNKTIONEN ---
 exports.getFavorites = async (req, res) => {

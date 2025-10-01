@@ -13,6 +13,7 @@ router.post('/mark-welcome-seen', userController.markWelcomeAsSeen);
 router.get('/favorites', userController.getFavorites);
 router.post('/favorites', userController.addFavorite);
 router.delete('/favorites/:externalId', userController.removeFavorite);
+router.get('/contribution-history', userController.getContributionHistory);
 
 // Routen für benutzerdefinierte Tags
 router.get('/tags', userController.getUserTags);

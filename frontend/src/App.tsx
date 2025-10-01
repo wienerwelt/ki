@@ -184,7 +184,6 @@ function App() {
               <Route path="cronjobs" element={<AdminCronjobsPage />} />
               <Route path="sources" element={<AdminSourcesPage />} />
               <Route path="events" element={<AdminEventsPage />} />
-              {/* --- HIER DIE KORREKTUR --- */}
               <Route path="funding" element={<AdminFundingPage />} />
             </Route>
           </Route>

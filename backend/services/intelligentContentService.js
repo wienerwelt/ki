@@ -2,7 +2,7 @@
 const db = require('../config/db');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { generateAIContent, logToDb } = require('./aiExecutionService');
+const { generateAIContent } = require('./aiExecutionService');
 const { searchGoogle } = require('./googleSearchService');
 const { extractTextFromUrl } = require('./scraperService');
 const { logActivity } = require('./auditLogService');
@@ -215,6 +215,8 @@ const processSystemSubscription = async (data) => {
         }
         
         const { region, keywords, purpose } = systemSubscription;
+        const keywordsHash = createKeywordsHash(keywords || [], region || '');
+        
         await logToDb(jobId, 'INFO', `Job gestartet. Zweck: ${purpose || 'content_generation'}.`);
 
         const ruleResult = await client.query('SELECT * FROM ai_prompt_rules WHERE id = $1', [ruleId]);
@@ -258,7 +260,10 @@ const processSystemSubscription = async (data) => {
 
         const combinedSummaries = `Recherche-Ergebnisse...\n\n${articleSummaries.join('\n\n')}`;
         await logToDb(jobId, 'INFO', `Sende ${articleSummaries.length} Zusammenfassungen an die KI.`);
-        const { aiResultString } = await generateAIContent({ /* ... unverändert ... */ });
+        const { aiResultString } = await generateAIContent({
+            promptTemplate: rule.prompt_template, inputText: combinedSummaries, region,
+            ai_provider: rule.ai_provider, jobId, userId: null
+        });
         await logToDb(jobId, 'INFO', `Antwort von KI erhalten.`);
 
         if (rule.purpose === 'funding_discovery') {
@@ -272,7 +277,32 @@ const processSystemSubscription = async (data) => {
                  await logToDb(jobId, 'ERROR', `KI hat eine ungültige URL zurückgegeben: "${discoveredUrl}"`);
             }
         } else {
-            // ... (Ihre bestehende Logik für 'content_generation' bleibt hier)
+            let contentToStore = aiResultString;
+            let finalTitle = `Hot Topics: ${keywords.join(', ')}`;
+            let finalKeywords = keywords;
+            let finalCategoryId = rule.default_category_id;
+
+            if (rule.output_format === 'json') {
+                try {
+                    const parsedResult = JSON.parse(aiResultString);
+                    contentToStore = parsedResult.content || contentToStore;
+                    finalTitle = parsedResult.title || finalTitle;
+                    finalKeywords = parsedResult.keywords || finalKeywords;
+                    if (parsedResult.category) {
+                        const foundCategoryRes = await client.query('SELECT id FROM categories WHERE name ILIKE $1', [parsedResult.category.trim()]);
+                        if (foundCategoryRes.rows.length > 0) finalCategoryId = foundCategoryRes.rows[0].id;
+                    }
+                } catch (e) {}
+            }
+            const newContentRes = await client.query(
+                `INSERT INTO ai_generated_content (id, ai_prompt_rule_id, job_id, title, generated_output, region, user_id, keywords, category_id, output_format) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+                [uuidv4(), ruleId, jobId, finalTitle, contentToStore, region, null, finalKeywords, finalCategoryId, rule.output_format]
+            );
+            const newContentId = newContentRes.rows[0].id;
+            await client.query(
+                `INSERT INTO generated_content_cache (ai_prompt_rule_id, region, keywords_hash, generated_content_id) VALUES ($1, $2, $3, $4) ON CONFLICT (ai_prompt_rule_id, region, keywords_hash) DO UPDATE SET generated_content_id = $4, created_at = CURRENT_TIMESTAMP`,
+                [ruleId, region, keywordsHash, newContentId]
+            );
         }
         
         await client.query(`UPDATE ai_jobs SET status = 'completed' WHERE id = $1`, [jobId]);

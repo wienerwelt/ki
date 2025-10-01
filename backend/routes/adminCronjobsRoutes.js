@@ -25,6 +25,7 @@ router.delete('/system-subscriptions/:id', adminCronjobsController.deleteSystemS
 router.get('/data-updates', adminCronjobsController.getAllDataUpdateJobs);
 router.put('/data-updates/:id', adminCronjobsController.updateDataUpdateJob);
 router.post('/data-updates/trigger', adminCronjobsController.triggerDataUpdateJob);
+router.post('/data-updates', adminCronjobsController.createDataUpdateJob);
 
 
 // --- Scraping Rule Routes ---

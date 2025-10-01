@@ -49,7 +49,7 @@ interface ApiData {
 const sourceUrls: { [key: string]: string } = {
     'oilpriceapi.com': 'https://oilpriceapi.com/',
     'metalpriceapi.com': 'https://metalpriceapi.com/',
-    'ecb.europa.eu': 'https://www.ecb.europa.eu/stats/financial_markets_and_interest_rates/euro_area_yield_curves/html/index.en.html',
+    'ecb.europa.eu': 'https://www.ecb.europa.eu/stats/financial_markets_and_interest_rates/money_market/html/index.en.html',
     'commodities-api.com': 'https://commodities-api.com/',
     'statistik.at': 'https://www.statistik.at/statistiken/volkswirtschaft-und-oeffentliche-finanzen/preise-und-preisindizes/kraftfahrzeughaftpflicht-versicherungsleistungspreisindex-kvlpi',
     'tradingeconomics.com': 'https://tradingeconomics.com/commodity/carbon',
@@ -198,7 +198,7 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
         });
     };
     
-    const handleViewChange = (event: React.MouseEvent<HTMLElement>, newView: 'cards' | 'chart') => {
+    const handleViewChange = (_event: React.MouseEvent<HTMLElement>, newView: 'cards' | 'chart') => {
         if (newView !== null) {
             setViewMode(newView);
         }

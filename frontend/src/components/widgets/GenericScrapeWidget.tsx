@@ -3,11 +3,10 @@ import {
     Box, Typography, CircularProgress, MenuItem, Alert, List, ListItem, ListItemText, Divider,
     Dialog, DialogTitle, DialogContent, Button, Stack, IconButton, Tooltip, Link as MuiLink,
     DialogActions, Select, FormControl, InputLabel, SelectChangeEvent, Avatar, Chip,
-    TextField, InputAdornment, Paper, ListItemAvatar
+    TextField, InputAdornment, Paper, ListItemAvatar, useTheme, useMediaQuery, Popover, Card, CardMedia, CardContent, CardActionArea
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
-import LinkIcon from '@mui/icons-material/Link';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
@@ -17,9 +16,11 @@ import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
 import ShareIcon from '@mui/icons-material/Share';
 import DynamicFeedIcon from '@mui/icons-material/DynamicFeed';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import LinkIcon from '@mui/icons-material/Link';
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import NewspaperIcon from '@mui/icons-material/Newspaper';
+import TuneIcon from '@mui/icons-material/Tune';
 import { useNavigate } from 'react-router-dom';
 import posthog from 'posthog-js';
 import WidgetPaper from './WidgetPaper';
@@ -28,6 +29,7 @@ import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
 import ClickAwayListener from '@mui/material/ClickAwayListener';
 
+// --- Interfaces und Hilfs-Komponenten (unverändert) ---
 interface ScrapedContentItem {
     id: string;
     title: string;
@@ -120,6 +122,7 @@ const getDomain = (url: string | null | undefined): string | null => {
         return null;
     }
 };
+// Die kompakte Desktop-Suche
 const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onSearch }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -172,6 +175,14 @@ const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onS
 const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, description, filterLabel, widgetTypeKey }) => {
     const { user } = useAuth();
     const navigate = useNavigate();
+    
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+    const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
+
+    const handleOpenFilterMenu = (event: React.MouseEvent<HTMLElement>) => setFilterAnchorEl(event.currentTarget);
+    const handleCloseFilterMenu = () => setFilterAnchorEl(null);
+
     const [items, setItems] = useState<ScrapedContentItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -191,6 +202,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
     const [filterMode, setFilterMode] = useState<'all' | 'new' | 'unread'>('all');
     const [relevantAction, setRelevantAction] = useState<RelevantAction | null>(null);
 
+    // ... (Logik-Hooks bleiben unverändert) ...
     useEffect(() => { const handler = setTimeout(() => { setDebouncedSearchTerm(searchTerm); }, 500); return () => { clearTimeout(handler); }; }, [searchTerm]);
     useEffect(() => { if (user?.regions && user.regions.length > 0) { const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0]; setSelectedRegion(defaultRegion); } }, [user?.regions]);
 
@@ -247,8 +259,9 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
             fetchData(1, sortBy, selectedRegion, debouncedSearchTerm, selectedTag, filterMode);
         }
      }, [sortBy, selectedRegion, debouncedSearchTerm, selectedTag, filterMode, fetchData, user?.regions]);
-
-    const handleLoadMore = () => {
+    
+     // ... (alle handle... Funktionen bleiben unverändert) ...
+     const handleLoadMore = () => {
         const nextPage = page + 1;
         setPage(nextPage);
         fetchData(nextPage, sortBy, selectedRegion, debouncedSearchTerm, selectedTag, filterMode, true);
@@ -332,59 +345,143 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
     const handleCloseTemplateDialog = () => setTemplateState({ ...templateState, open: false });
     const handleCopyToClipboard = (text: string) => navigator.clipboard.writeText(text);
 
-    return (
-        <WidgetPaper
-            title={
-                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', width: '100%' }}>
-                    <Tooltip title={description || title}><span>{icon}</span></Tooltip>
-                    <Typography variant="h6">{title}</Typography>
-                    
-                    <Chip
-                        label="Neu"
+    // Render-Funktion für die Filter-Steuerelemente
+    const renderFilterControls = (isMenu: boolean) => {
+        const controlWrapper = (child: React.ReactNode) => isMenu 
+            ? <Box sx={{ p: 1, width: 220 }}>{child}</Box> 
+            : child;
+        
+        return (
+            <>
+                {/* KORREKTUR: Suchfeld hier für das mobile Menü hinzugefügt */}
+                {isMenu && controlWrapper(
+                     <TextField
+                        variant="outlined"
+                        fullWidth
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder="Suchen..."
                         size="small"
-                        variant={filterMode === 'new' ? 'filled' : 'outlined'}
-                        color="primary"
-                        clickable
-                        onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')}
-                        avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'primary.main', color: 'primary.contrastText' }}>{counts.new}</Avatar>}
+                        InputProps={{
+                            startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>)
+                        }}
                     />
-                    <Chip
-                        label="Ungelesen"
-                        size="small"
-                        variant={filterMode === 'unread' ? 'filled' : 'outlined'}
-                        color="secondary"
-                        clickable
-                        onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')}
-                        avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{counts.unread}</Avatar>}
-                    />
-                    
-                    <Box sx={{ flexGrow: 1 }} />
-                    <AnimatedSearchBar onSearch={setSearchTerm} />
-                    {user?.regions && user.regions.length > 1 && (
-                        <TextField select value={selectedRegion?.id || ''} onChange={(e) => { const region = user?.regions?.find(r => r.id === e.target.value); setSelectedRegion(region || null); }} size="small" variant="outlined" sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '24px' } }}>
-                            {user?.regions?.map((region) => <MenuItem key={region.id} value={region.id}><Tooltip title={region.name} placement="right"><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} /></Tooltip></MenuItem>)}
-                        </TextField>
-                    )}
-                    {filterLabel && availableTags.length > 0 && (
-                        <FormControl size="small" variant="outlined" sx={{ minWidth: 140 }}>
-                            <InputLabel>{filterLabel}</InputLabel>
-                            <Select value={selectedTag} onChange={(e: SelectChangeEvent) => setSelectedTag(e.target.value)} label={filterLabel}>
-                                <MenuItem value="all">Alle</MenuItem>
-                                {availableTags.map((tag) => (
-                                    <MenuItem key={tag.name} value={tag.name}>
-                                        {tag.name} ({tag.count})
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    )}
-                    <FormControl size="small" variant="outlined" sx={{ minWidth: 120 }}>
+                )}
+                {user?.regions && user.regions.length > 1 && controlWrapper(
+                    <TextField select value={selectedRegion?.id || ''} onChange={(e) => { const region = user?.regions?.find(r => r.id === e.target.value); setSelectedRegion(region || null); }} size="small" fullWidth={isMenu} variant="outlined" sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '24px' } }} label={isMenu ? "Region" : ""}>
+                        {user?.regions?.map((region) => <MenuItem key={region.id} value={region.id}><Tooltip title={region.name} placement="right"><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} /></Tooltip></MenuItem>)}
+                    </TextField>
+                )}
+                {filterLabel && availableTags.length > 0 && controlWrapper(
+                    <FormControl size="small" variant="outlined" fullWidth={isMenu} sx={{ minWidth: 140 }}>
+                        <InputLabel>{filterLabel}</InputLabel>
+                        <Select value={selectedTag} onChange={(e: SelectChangeEvent) => setSelectedTag(e.target.value)} label={filterLabel}>
+                            <MenuItem value="all">Alle</MenuItem>
+                            {availableTags.map((tag) => (
+                                <MenuItem key={tag.name} value={tag.name}>
+                                    {tag.name} ({tag.count})
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                )}
+                {controlWrapper(
+                    <FormControl size="small" variant="outlined" fullWidth={isMenu} sx={{ minWidth: 120 }}>
                         <InputLabel>Sortieren</InputLabel>
                         <Select value={sortBy} onChange={(e: SelectChangeEvent) => setSortBy(e.target.value)} label="Sortieren">
                             <MenuItem value="date">Neueste</MenuItem>
                             <MenuItem value="relevance">Relevanz</MenuItem>
                         </Select>
                     </FormControl>
+                )}
+            </>
+        );
+    };
+
+    return (
+        <WidgetPaper
+            title={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'nowrap', width: '100%', overflow: 'hidden' }}>
+                    <Tooltip title={description || title}><span>{icon}</span></Tooltip>
+                    <Typography variant="h6" noWrap>{title}</Typography>
+                    
+                    {/* KORREKTUR: Bedingte Anzeige für mobile Chips */}
+                    {isMobile ? (
+                        <>
+                            <Tooltip title="Neu">
+                                <Chip
+                                    size="small"
+                                    onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')}
+                                    sx={{ 
+                                        bgcolor: filterMode === 'new' ? 'primary.main' : 'action.hover',
+                                        color: filterMode === 'new' ? 'primary.contrastText' : 'text.primary',
+                                        '& .MuiChip-avatar': { color: 'inherit !important' }
+                                    }}
+                                    avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', color: 'inherit', bgcolor: 'transparent' }}>{counts.new}</Avatar>}
+                                />
+                            </Tooltip>
+                             <Tooltip title="Ungelesen">
+                                <Chip
+                                    size="small"
+                                    onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')}
+                                     sx={{ 
+                                        bgcolor: filterMode === 'unread' ? 'secondary.main' : 'action.hover',
+                                        color: filterMode === 'unread' ? 'secondary.contrastText' : 'text.primary',
+                                        '& .MuiChip-avatar': { color: 'inherit !important' }
+                                    }}
+                                    avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', color: 'inherit', bgcolor: 'transparent' }}>{counts.unread}</Avatar>}
+                                />
+                            </Tooltip>
+                        </>
+                    ) : (
+                         <>
+                            <Chip
+                                label="Neu"
+                                size="small"
+                                variant={filterMode === 'new' ? 'filled' : 'outlined'}
+                                color="primary"
+                                clickable
+                                onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')}
+                                avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'primary.main', color: 'primary.contrastText' }}>{counts.new}</Avatar>}
+                            />
+                            <Chip
+                                label="Ungelesen"
+                                size="small"
+                                variant={filterMode === 'unread' ? 'filled' : 'outlined'}
+                                color="secondary"
+                                clickable
+                                onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')}
+                                avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{counts.unread}</Avatar>}
+                            />
+                        </>
+                    )}
+                    
+                    <Box sx={{ flexGrow: 1 }} />
+                    
+                    {isMobile ? (
+                        <>
+                            <IconButton onClick={handleOpenFilterMenu} size="small">
+                                <TuneIcon />
+                            </IconButton>
+                            <Popover
+                                open={Boolean(filterAnchorEl)}
+                                anchorEl={filterAnchorEl}
+                                onClose={handleCloseFilterMenu}
+                                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                            >
+                                <Stack spacing={1.5} sx={{ p: 1 }}>
+                                    {/* KORREKTUR: Suche wird nun hier gerendert */}
+                                    {renderFilterControls(true)}
+                                </Stack>
+                            </Popover>
+                        </>
+                    ) : (
+                        <>
+                            <AnimatedSearchBar onSearch={setSearchTerm} />
+                            {renderFilterControls(false)}
+                        </>
+                    )}
                 </Box>
             }
             widgetTitle={title}
@@ -392,7 +489,9 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
             widgetId={widgetId || ''}
             onDelete={onDelete}
             isRemovable={isRemovable}
+            noPadding
         >
+             {/* ... (Rest der Komponente (Content-Rendering) bleibt unverändert) ... */}
             {isLoading && page === 1 ? (
                 <Box sx={{ m: 'auto', textAlign: 'center' }}><CircularProgress /></Box>
             ) : error ? (
@@ -410,18 +509,58 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                 <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                     <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
                         {items.length > 0 ? (
-                            <List dense>
+                            <Box>
                                 {items.map((item, index) => {
                                     const domain = getDomain(item.original_url);
                                     const displayDate = item.published_date || item.scraped_at;
+
+                                    if (index === 0 && item.thumbnail_url) {
+                                        return (
+                                            <Card key={item.id} elevation={0} square sx={{ borderBottom: 1, borderColor: 'divider' }}>
+                                                <CardActionArea onClick={() => handleOpenArticle(item)}>
+                                                    <CardMedia
+                                                        component="img"
+                                                        image={item.thumbnail_url}
+                                                        alt={item.title}
+                                                        sx={{ 
+                                                            width: '100%',
+                                                            height: 'auto',
+                                                            maxHeight: '180px',
+                                                            objectFit: 'cover'
+                                                        }}
+                                                    />
+                                                    <CardContent>
+                                                        <Typography gutterBottom variant="h6" component="div" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>
+                                                            {item.title}
+                                                        </Typography>
+                                                        <Stack direction="row" justifyContent="space-between" alignItems="center" mt={1}>
+                                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+                                                                <Typography variant="caption" color="text.secondary">
+                                                                    {new Date(displayDate).toLocaleDateString('de-AT')}
+                                                                </Typography>
+                                                                {domain && (
+                                                                    <MuiLink href={item.original_url!} target="_blank" rel="noopener noreferrer" variant="caption" color="text.secondary" onClick={(e) => e.stopPropagation()} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                                                                        ({domain})
+                                                                        {item.is_trusted_source && (<Tooltip title="Geprüfte Quelle"><VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main', ml: 0.5 }} /></Tooltip>)}
+                                                                    </MuiLink>
+                                                                )}
+                                                            </Box>
+                                                            <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
+                                                        </Stack>
+                                                    </CardContent>
+                                                </CardActionArea>
+                                            </Card>
+                                        );
+                                    }
+
                                     return (
-                                        <React.Fragment key={item.id}>
+                                        <List key={item.id} disablePadding>
                                             <ListItem button onClick={() => handleOpenArticle(item)} alignItems="flex-start">
-                                                <ListItemAvatar>
+                                                <ListItemAvatar sx={{ mt: 1, mr: 2 }}>
                                                     {item.thumbnail_url ? (
-                                                        <Avatar variant="rounded" src={item.thumbnail_url} sx={{ width: 56, height: 56, mr: 1.5 }} />
+                                                        <Avatar variant="rounded" src={item.thumbnail_url} sx={{ width: 56, height: 56 }} />
                                                     ) : (
-                                                        <Avatar variant="rounded" sx={{ width: 56, height: 56, mr: 1.5, bgcolor: 'background.default' }}>
+                                                         <Avatar variant="rounded" sx={{ width: 56, height: 56, bgcolor: 'background.default' }}>
                                                             <NewspaperIcon color="action" />
                                                         </Avatar>
                                                     )}
@@ -447,22 +586,22 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                                                 />
                                             </ListItem>
                                             {index < items.length - 1 && <Divider component="li" />}
-                                        </React.Fragment>
+                                        </List>
                                     );
                                 })}
-                            </List>
+                            </Box>
                         ) : (<Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>Keine Inhalte für Ihre Auswahl gefunden.</Typography>)}
 
                         {page < totalPages && (
-                            <Box sx={{ textAlign: 'center', py: 1 }}>
+                            <Box sx={{ textAlign: 'center', py: 1, mt: 'auto' }}>
                                 <Button onClick={handleLoadMore} disabled={isLoadingMore}>
                                     {isLoadingMore ? <CircularProgress size={24} /> : 'Mehr laden'}
                                 </Button>
                             </Box>
                         )}
 
-                        {relevantAction && (
-                            <Paper variant="outlined" sx={{ mt: 2, p: 1.5, borderColor: 'primary.main' }}>
+                        {relevantAction && !isLoading && items.length > 0 &&(
+                            <Paper variant="outlined" sx={{ mt: 2, p: 1.5, mx: 2, mb: 1, borderColor: 'primary.main' }}>
                                 <Stack direction="row" spacing={2} alignItems="center">
                                     {relevantAction.image_url && <Avatar src={relevantAction.image_url} sx={{ width: 56, height: 56 }} variant="rounded" />}
                                     <Box flexGrow={1}>
@@ -479,7 +618,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                     </Box>
                 </Box>
             )}
-
+            
             <Dialog open={!!selectedArticle} onClose={handleCloseDialog} fullWidth maxWidth="md" PaperProps={{ sx: { height: '90vh' } }}>
                 <DialogTitle sx={{ m: 0, p: 2 }}>
                     <Box display="flex" justifyContent="space-between" alignItems="center">
@@ -523,9 +662,11 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                                     href={selectedArticle.original_url}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    sx={{ display: 'inline-flex', alignItems: 'center', fontWeight: 'bold' }}
+                                    variant="button"
+                                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}
                                 >
-                                    {getDomain(selectedArticle.original_url)}
+                                    <LinkIcon fontSize="small" />
+                                    Weiterlesen bei der Quelle
                                 </MuiLink>
                             </Box>
                         )}

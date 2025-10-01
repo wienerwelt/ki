@@ -5,7 +5,9 @@ const { JSDOM } = require('jsdom');
 const { Readability } = require('@mozilla/readability');
 const { parse } = require('date-fns');
 const { de } = require('date-fns/locale');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 const db = require('../config/db');
 const { logActivity } = require('./auditLogService');
 const { callOpenAI } = require('./aiService');
@@ -64,6 +66,23 @@ const extractTags = (text, availableTags) => {
     });
     return Array.from(foundTagIds);
 };
+
+
+const computeRelevanceScore = (publishedAt, tagCount) => {
+    let score = 0;
+    const now = new Date();
+    if (publishedAt) {
+        const days = Math.floor((now - new Date(publishedAt)) / 86400000);
+        if (days <= 7) score += 30;
+        else if (days <= 30) score += 20;
+        else if (days <= 90) score += 10;
+    }
+    score += (tagCount || 0) * 10;
+    if (score > 100) score = 100;
+    if (score < 0) score = 0;
+    return score;
+};
+
 
 async function _processYoutubeChannel(rule, jobId) {
     const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
@@ -179,7 +198,7 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
             );
             if (result.rowCount > 0) itemsInserted++;
         } else {
-            const articleUrl = item.link?.href || item.link || null;
+            const articleUrl = item.enclosure?.$?.url || item.link?.href || item.link || null;
             if (!articleUrl) continue;
             let thumbnailUrl = null;
             try {
@@ -271,22 +290,69 @@ async function extractTextFromUrl(url) {
     }
 }
 
+
+
+// in scraperService.js
+
 async function _fetchContentWithPuppeteer(url, waitForSelector, jobId) {
     let browser = null;
     try {
-        await logToDb(jobId, 'INFO', `Starte Headless-Browser für ${url}`);
-        browser = await puppeteer.launch({ 
+        await logToDb(jobId, 'INFO', `Starte Headless-Browser (Stealth-Modus) für ${url}`);
+        browser = await puppeteer.launch({
             headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'] // Wichtig für Server-Umgebungen
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
         });
         const page = await browser.newPage();
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-        
+        await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 }); // networkidle0 ist hier besser
+
+        // Die intelligente Cookie-Logik bleibt, falls sie für andere Seiten benötigt wird
+        try {
+            await logToDb(jobId, 'INFO', 'Suche nach generischem Cookie-Banner zum Akzeptieren...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            const keywords = ['alle akzeptieren', 'akzeptieren', 'zustimmen', 'einverstanden', 'got it', 'accept all', 'allow all', 'ich stimme zu'];
+            const elements = await page.$$('button, a');
+            let clicked = false;
+            for (const el of elements) {
+                const textContent = await el.evaluate(node => node.textContent);
+                if (textContent) {
+                    const text = textContent.trim().toLowerCase();
+                    if (keywords.includes(text)) {
+                        await logToDb(jobId, 'INFO', `Potenzieller Cookie-Button gefunden mit Text: "${text}". Versuche Klick.`);
+                        try {
+                            await el.click();
+                            clicked = true;
+                            await logToDb(jobId, 'INFO', 'Cookie-Banner wurde erfolgreich geklickt.');
+                            break;
+                        } catch (clickError) {
+                            await logToDb(jobId, 'WARN', `Klick auf Element mit Text "${text}" fehlgeschlagen.`);
+                        }
+                    }
+                }
+            }
+            if (clicked) await new Promise(resolve => setTimeout(resolve, 2000));
+            else await logToDb(jobId, 'INFO', 'Kein generischer Cookie-Banner-Button gefunden.');
+        } catch (e) {
+            await logToDb(jobId, 'WARN', `Fehler bei der Suche nach Cookie-Banner: ${e.message}`);
+        }
+
         if (waitForSelector) {
-            await logToDb(jobId, 'INFO', `Warte auf Selektor: ${waitForSelector}`);
-            await page.waitForSelector(waitForSelector, { timeout: 15000 });
+            await logToDb(jobId, 'INFO', `Warte auf iFrame und dann auf Selektor: ${waitForSelector}`);
+
+            // --- HIER IST DIE IFRAME-LOGIK ---
+            // 1. Warte auf das iFrame-Element selbst
+            // Der Selektor 'iframe' ist ausreichend, da es der einzige relevante auf der Seite ist.
+            const iframeElement = await page.waitForSelector('iframe', { timeout: 10000 });
+            if (!iframeElement) throw new Error('Das iFrame-Element wurde auf der Seite nicht gefunden.');
+
+            // 2. Hole den Inhalts-Frame des iFrames
+            const frame = await iframeElement.contentFrame();
+            if (!frame) throw new Error('Konnte den Inhalt des iFrames nicht laden.');
+            
+            // 3. Warte auf den Selektor INNERHALB des iFrames
+            await frame.waitForSelector(waitForSelector, { timeout: 15000 });
         }
         
+        // Gib den Inhalt der gesamten Seite zurück (inklusive des gerenderten iFrames)
         const content = await page.content();
         await logToDb(jobId, 'INFO', `Inhalt erfolgreich mit Headless-Browser geladen.`);
         return content;
@@ -297,6 +363,77 @@ async function _fetchContentWithPuppeteer(url, waitForSelector, jobId) {
     }
 }
 
+
+// in scraperService.js
+
+async function _scrapeWAWPrograms(rule, jobId) {
+    await logToDb(jobId, 'INFO', 'Starte WAW-Programmscrape (Übersichtsseite).');
+    const PROGRAMS_URL = 'https://wirtschaftsagentur.at/aktuelle-foerderungen-der-wirtschaftsagentur-wien/';
+    let enqueued = 0;
+
+    // 1. Primärversuch: JSON aus Script-Tag (#waw-programs-data) auslesen
+    try {
+        const res = await axios.get(PROGRAMS_URL, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' },
+            timeout: 20000
+        });
+        const $ = cheerio.load(res.data);
+        const dataScript = $('script#waw-programs-data').html();
+        if (dataScript) {
+            await logToDb(jobId, 'INFO', 'Erfolgreich #waw-programs-data gefunden, parse JSON.');
+            const programs = JSON.parse(dataScript);
+            if (Array.isArray(programs)) {
+                for (const p of programs) {
+                    if (!p?.url) continue;
+                    const url = new URL(p.url, PROGRAMS_URL).href;
+                    await fundingQueue.add('extract-funding-details', {
+                        sourceRuleId: rule.id, articleUrl: url, region: rule.region
+                    });
+                    enqueued++;
+                }
+                await logToDb(jobId, 'INFO', `WAW JSON: ${enqueued} Förderungen in die Queue gelegt.`);
+                return enqueued; // Erfolgreich, Funktion hier beenden
+            }
+        }
+        await logToDb(jobId, 'INFO', 'Kein #waw-programs-data JSON gefunden. Fallback auf Headless Browser wird gestartet.');
+    } catch (e) {
+        await logToDb(jobId, 'WARN', `JSON-Script-Versuch fehlgeschlagen: ${e.message}. Nutze Fallback.`);
+    }
+
+    // --- KORRIGIERTER FALLBACK-BLOCK ---
+    // 2. Fallback: DOM mit Puppeteer scrapen und Links gezielt aus den Förderkarten extrahieren
+    await logToDb(jobId, 'INFO', 'Fallback: Starte Puppeteer, um die gerenderte Seite zu analysieren.');
+    // Warten auf die Karten, um sicherzustellen, dass sie geladen sind
+    const html = await _fetchContentWithPuppeteer(PROGRAMS_URL, '.card.card-program', jobId);
+    const $ = cheerio.load(html);
+
+    const links = new Set();
+    
+    // Finde zuerst alle Förder-Karten-Container
+    $('.card.card-program').each((_, container) => {
+        // Suche DANN den Link innerhalb des Containers. Da die ganze Karte ein Link ist, ist es einfach.
+        const linkElement = $(container).find('a');
+        const href = linkElement.attr('href');
+        
+        if (href && !href.startsWith('#')) {
+            links.add(new URL(href, PROGRAMS_URL).href);
+        }
+    });
+
+    for (const url of links) {
+        await fundingQueue.add('extract-funding-details', {
+            sourceRuleId: rule.id, articleUrl: url, region: rule.region
+        });
+        enqueued++;
+    }
+    await logToDb(jobId, 'INFO', `DOM-Fallback: ${enqueued} Förderungen in die Queue gelegt.`);
+    return enqueued;
+}
+
+
+
+// in scraperService.js
+
 async function triggerSingleRuleScrape(ruleId, jobId) {
     let itemsProcessed = 0;
     try {
@@ -306,66 +443,95 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
         const ruleResult = await db.query('SELECT * FROM scraping_rules WHERE id = $1', [ruleId]);
         if (ruleResult.rows.length === 0) throw new Error(`Scraping-Regel mit ID ${ruleId} nicht gefunden.`);
         const rule = ruleResult.rows[0];
-        
         const tagsResult = await db.query('SELECT id, name FROM tags');
         const availableTags = tagsResult.rows;
 
-        let rawContent;
-        let contentType;
+        switch (rule.scraping_strategy) {
+            case 'html_embedded_json':
+                itemsProcessed = await _scrapeWAWPrograms(rule, jobId);
+                break;
+            case 'youtube_channel':
+                itemsProcessed = await _processYoutubeChannel(rule, jobId);
+                break;
+            case 'youtube_podcast':
+                itemsProcessed = await _processYoutubePodcastsTab(rule, jobId, availableTags);
+                break;
+            case 'youtube_music':
+                itemsProcessed = await _processYoutubeMusicPlaylist(rule, jobId, availableTags);
+                break;
+            case 'standard':
+            default:
+                let rawContent;
+                let contentType;
+                if (rule.use_headless_browser) {
+                    rawContent = await _fetchContentWithPuppeteer(rule.url_pattern, rule.content_container_selector, jobId);
+                    contentType = 'text/html';
+                } else {
+                    const response = await axios.get(rule.url_pattern, { timeout: 15000 });
+                    rawContent = response.data;
+                    contentType = response.headers['content-type'] || '';
+                }
 
-        if (rule.url_pattern && rule.url_pattern.includes('youtube.com/channel/')) {
-            itemsProcessed = await _processYoutubeChannel(rule, jobId);
-        } else {
-            if (rule.use_headless_browser) {
-                rawContent = await _fetchContentWithPuppeteer(rule.url_pattern, rule.content_container_selector, jobId);
-                contentType = 'text/html';
-            } else {
-                const response = await axios.get(rule.url_pattern, { timeout: 15000 });
-                rawContent = response.data;
-                contentType = response.headers['content-type'] || '';
-            }
-
-            if (rule.rule_type === 'funding') {
-                await logToDb(jobId, 'INFO', `Regel-Typ 'funding' erkannt. Prüfe Inhaltstyp: ${contentType}`);
-                
-                if (contentType.includes('xml') || contentType.includes('rss')) {
-                    itemsProcessed = await _processFundingXmlFeed(rawContent, rule, jobId);
-                } else if (contentType.includes('html')) {
-                    const $ = cheerio.load(rawContent);
-                    const articleContainers = $(rule.content_container_selector);
-                    await logToDb(jobId, 'INFO', `${articleContainers.length} potenzielle Förderungs-Einträge auf der Seite gefunden.`);
-                    
-                    if(articleContainers.length === 0 && rule.use_headless_browser) {
-                        await logToDb(jobId, 'WARN', `Headless-Browser hat Inhalt geladen, aber Selektor '${rule.content_container_selector}' hat nichts gefunden.`);
-                    }
-
-                    for (const container of articleContainers) {
-                        const element = $(container);
-                        const linkElement = element.find(rule.link_selector);
-                        const relativeUrl = linkElement.attr('href');
-                        if (!relativeUrl) continue;
-                        try {
+                if (rule.rule_type === 'funding') {
+                    if (contentType.includes('html')) {
+                        const $ = cheerio.load(rawContent);
+                        const articleContainers = $(rule.content_container_selector);
+                        await logToDb(jobId, 'INFO', `${articleContainers.length} potenzielle Förderungs-Einträge gefunden.`);
+                        for (const container of articleContainers) {
+                            const linkElement = $(container).find(rule.link_selector);
+                            const relativeUrl = linkElement.attr('href');
+                            if (!relativeUrl) continue;
                             const absoluteUrl = new URL(relativeUrl, rule.url_pattern).href;
                             await fundingQueue.add('extract-funding-details', { sourceRuleId: rule.id, articleUrl: absoluteUrl, region: rule.region });
                             itemsProcessed++;
-                        } catch (e) {}
+                        }
+                    } else {
+                         itemsProcessed = await _processFundingXmlFeed(rawContent, rule, jobId);
                     }
-                } else {
-                     throw new Error(`Nicht unterstützter Inhaltstyp für Funding-Regel: ${contentType}.`);
-                }
-                await logToDb(jobId, 'INFO', `${itemsProcessed} Jobs für die Detailanalyse wurden erfolgreich zur 'funding-extraction'-Queue hinzugefügt.`);
-            } else {
-                await logToDb(jobId, 'INFO', `Regel-Typ 'content' erkannt. Starte Standard-Scraping.`);
-                if (contentType.includes('xml') || contentType.includes('rss')) {
-                    itemsProcessed = await _processXmlFeedByRule(rawContent, rule, jobId, availableTags);
-                } else if (contentType.includes('html')) {
-                    // ... Ihre bestehende Logik für HTML-Listen und einzelne Seiten für 'content' ...
-                } else {
-                    throw new Error(`Nicht unterstützter Inhaltstyp: ${contentType}.`);
-                }
-            }
-        }
+                } else { // rule_type 'content'
+                    // --- HIER IST DIE KORREKTUR ---
+                    if (contentType.includes('html')) {
+                        const $ = cheerio.load(rawContent);
+                        const articleContainers = $(rule.content_container_selector);
+                        await logToDb(jobId, 'INFO', `${articleContainers.length} potenzielle Content-Einträge gefunden.`);
+                        for (const container of articleContainers) {
+                            const element = $(container);
+                            const title = sanitizeHtml(element.find(rule.title_selector).text());
+                            const linkHref = element.find(rule.link_selector).attr('href');
+                            if (!title || !linkHref) continue;
 
+                            const link = new URL(linkHref, rule.url_pattern).href;
+                            const summary = sanitizeHtml(element.find(rule.description_selector).text());
+                            const dateString = element.find(rule.date_selector).text();
+                            const publishedDate = parseDateString(dateString, rule.date_format, jobId);
+                            const thumbnailSrc = element.find(rule.thumbnail_selector).attr('src');
+                            const thumbnailUrl = thumbnailSrc ? new URL(thumbnailSrc, rule.url_pattern).href : null;
+                            const fullText = `${title} ${summary}`;
+                            const foundTagIds = extractTags(fullText, availableTags);
+
+                            const res = await db.query(
+                                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, category, region, thumbnail_url)
+                                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                                 ON CONFLICT (original_url) DO NOTHING RETURNING id`,
+                                [rule.source_identifier, link, title, summary, publishedDate, rule.category_default, rule.region, thumbnailUrl]
+                            );
+                            if (res.rowCount > 0) {
+                                itemsProcessed++;
+                                const contentId = res.rows[0].id;
+                                for (const tagId of foundTagIds) {
+                                    await db.query('INSERT INTO scraped_content_tags (scraped_content_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [contentId, tagId]);
+                                }
+                            }
+                        }
+                    } else if (contentType.includes('xml') || contentType.includes('rss')) {
+                        itemsProcessed = await _processXmlFeedByRule(rawContent, rule, jobId, availableTags);
+                    } else {
+                        throw new Error(`Nicht unterstützter Inhaltstyp für Regel-Typ 'content': ${contentType}.`);
+                    }
+                }
+                break;
+        }
+        
         await logToDb(jobId, 'INFO', `Zusammenfassung: ${itemsProcessed} Einträge wurden erfolgreich verarbeitet.`);
         await db.query('UPDATE scraping_rules SET last_scraped_at = CURRENT_TIMESTAMP WHERE id = $1', [ruleId]);
         await db.query(`UPDATE scraping_jobs SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);
@@ -377,6 +543,8 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
         await db.query(`UPDATE scraping_jobs SET status = 'failed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);
     }
 }
+
+
 
 async function startAllScrapingJobs() {
     console.log(`[Scraper] Starting all scheduled scraping jobs...`);
@@ -508,6 +676,315 @@ async function getScrapingRuleSuggestion(url, userId) {
         throw new Error(`Fehler bei der KI-Analyse: ${error.message}`);
     }
 }
+
+
+// NEU: Hauptprozessor für YouTube Music Playlists
+async function _processYoutubeMusicPlaylist(rule, jobId, availableTags) {
+    await logToDb(jobId, 'INFO', `Starte YouTube Music Playlist-Verarbeitung für: ${rule.url_pattern}`);
+
+    // Extrahiere die Playlist-ID aus der URL
+    const playlistIdMatch = rule.url_pattern.match(/list=([a-zA-Z0-9_-]+)/);
+    if (!playlistIdMatch || !playlistIdMatch[1]) {
+        await logToDb(jobId, 'ERROR', `Konnte keine gültige Playlist-ID in der URL finden: ${rule.url_pattern}`);
+        throw new Error('Invalid YouTube Music Playlist URL format.');
+    }
+    const playlistId = playlistIdMatch[1];
+    await logToDb(jobId, 'INFO', `Playlist-ID gefunden: ${playlistId}`);
+
+    // Rufe alle Video-IDs aus der Playlist ab
+    const allVideoIds = new Set();
+    try {
+        const items = await _ytListPlaylistItems(jobId, playlistId);
+        for (const it of items) {
+            const vid = it.contentDetails?.videoId || it.snippet?.resourceId?.videoId;
+            if (vid) allVideoIds.add(vid);
+        }
+    } catch (error) {
+        await logToDb(jobId, 'ERROR', `Konnte Playlist-Inhalt für ID ${playlistId} nicht abrufen: ${error.message}`);
+        throw new Error(`Failed to retrieve playlist items: ${error.message}`);
+    }
+
+    const videoIds = [...allVideoIds];
+    if (!videoIds.length) {
+        await logToDb(jobId, 'INFO', `Keine Videos in der Playlist gefunden.`);
+        return 0;
+    }
+
+    // Hole die Details für alle Videos und speichere sie
+    const videosMap = await _ytVideosListBulk(jobId, videoIds);
+    let inserted = 0;
+    for (const id of videoIds) {
+        const v = videosMap.get(id);
+        if (!v) continue;
+
+        const sn = v.snippet || {};
+        const videoUrl = `https://www.youtube.com/watch?v=${id}`;
+        const publishedAt = sn.publishedAt ? new Date(sn.publishedAt) : null;
+        const title = sn.title || 'Ohne Titel';
+        const description = sn.description || null;
+        const thumbnail = sn.thumbnails?.high?.url || sn.thumbnails?.standard?.url || sn.thumbnails?.medium?.url || null;
+        const category = rule.category_default || 'music';
+
+        const cleanTitle = sanitizeHtml(title);
+        const cleanDescription = sanitizeHtml(description);
+        const foundTagIds = extractTags(`${cleanTitle} ${cleanDescription}`, availableTags);
+        const relevanceScore = computeRelevanceScore(publishedAt, foundTagIds.length);
+
+        try {
+            const res = await db.query(
+                `INSERT INTO scraped_content
+                 (source_identifier, original_url, title, summary, published_date, category, region, thumbnail_url, full_text, relevance_score)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                 ON CONFLICT (original_url) DO NOTHING
+                 RETURNING id;`,
+                [
+                    rule.source_identifier, videoUrl, cleanTitle, cleanDescription, publishedAt, category,
+                    rule.region || null, thumbnail, sn.channelTitle || null, relevanceScore
+                ]
+            );
+
+            if (res.rowCount > 0) {
+                inserted++;
+                const scrapedContentId = res.rows[0].id;
+                if (foundTagIds.length > 0) {
+                    for (const tagId of foundTagIds) {
+                        await db.query(
+                            `INSERT INTO scraped_content_tags (scraped_content_id, tag_id)
+                             VALUES ($1, $2) ON CONFLICT DO NOTHING;`,
+                            [scrapedContentId, tagId]
+                        );
+                    }
+                }
+            }
+        } catch (e) {
+            await logToDb(jobId, 'WARN', `Insert übersprungen für ${videoUrl}: ${e.message}`);
+        }
+    }
+
+    await logToDb(jobId, 'INFO', `Musik-Titel gespeichert: ${inserted}/${videoIds.length}`);
+    return inserted;
+}
+
+
+// NEU: Hauptprozessor für YouTube-Podcasts
+async function _processYoutubePodcastsTab(rule, jobId, availableTags) {
+    await logToDb(jobId, 'INFO', `Starte YouTube Podcasts-API-Verarbeitung für: ${rule.url_pattern}`);
+    const channelId = await _ytResolveChannelId(jobId, rule.url_pattern);
+    
+    let playlistIds = await _ytGetPodcastPlaylistIdsFromSections(jobId, channelId);
+    if (!playlistIds.length) {
+        await logToDb(jobId, 'WARN', `Keine explizite "Podcasts"-Section gefunden. Fallback auf Playlist-Heuristik.`);
+        playlistIds = await _ytGetPodcastPlaylistIdsHeuristic(jobId, channelId);
+    }
+
+    if (!playlistIds.length) {
+        await logToDb(jobId, 'INFO', `Keine Podcast-Playlists gefunden – nichts zu speichern.`);
+        return 0;
+    }
+
+    await logToDb(jobId, 'INFO', `Podcast-Playlists gefunden: ${playlistIds.join(', ')}`);
+    
+const allVideoIds = new Set();
+    for (const plId of playlistIds) {
+        try {
+            const items = await _ytListPlaylistItems(jobId, plId);
+            for (const it of items) {
+                const vid = it.contentDetails?.videoId || it.snippet?.resourceId?.videoId;
+                if (vid) allVideoIds.add(vid);
+            }
+        } catch (error) {
+            await logToDb(jobId, 'WARN', `Konnte Playlist-Inhalt für ID ${plId} nicht abrufen (möglicherweise nicht öffentlich). Überspringe...`);
+        }
+    }
+
+    const videoIds = [...allVideoIds];
+    if (!videoIds.length) {
+        await logToDb(jobId, 'INFO', `Keine Videos in den Podcast-Playlists gefunden.`);
+        return 0;
+    }
+
+    const videosMap = await _ytVideosListBulk(jobId, videoIds);
+    let inserted = 0;
+    for (const id of videoIds) {
+        const v = videosMap.get(id);
+        if (!v) continue;
+
+        const sn = v.snippet || {};
+        const videoUrl = `https://www.youtube.com/watch?v=${id}`;
+        const publishedAt = sn.publishedAt ? new Date(sn.publishedAt) : null;
+        const title = sn.title || 'Ohne Titel';
+        const description = sn.description || null;
+        const thumbnail = sn.thumbnails?.high?.url || sn.thumbnails?.standard?.url || sn.thumbnails?.medium?.url || sn.thumbnails?.default?.url || null;
+        const category = rule.category_default || 'podcast';
+
+        const cleanTitle = sanitizeHtml(title);
+        const cleanDescription = sanitizeHtml(description);
+        const foundTagIds = extractTags(`${cleanTitle} ${cleanDescription}`, availableTags);
+        const relevanceScore = computeRelevanceScore(publishedAt, foundTagIds.length);
+
+        try {
+            const res = await db.query(
+                `INSERT INTO scraped_content
+                 (source_identifier, original_url, title, summary, published_date, category, region, thumbnail_url, full_text, relevance_score)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                 ON CONFLICT (original_url) DO NOTHING
+                 RETURNING id;`,
+                [
+                    rule.source_identifier,
+                    videoUrl,
+                    cleanTitle,
+                    cleanDescription,
+                    publishedAt,
+                    category,
+                    rule.region || null,
+                    thumbnail,
+                    sn.channelTitle || null,
+                    relevanceScore
+                ]
+            );
+
+            if (res.rowCount > 0) {
+                inserted++;
+                const scrapedContentId = res.rows[0].id;
+                if (foundTagIds.length > 0) {
+                     for (const tagId of foundTagIds) {
+                        await db.query(
+                            `INSERT INTO scraped_content_tags (scraped_content_id, tag_id)
+                             VALUES ($1, $2) ON CONFLICT DO NOTHING;`,
+                            [scrapedContentId, tagId]
+                        );
+                    }
+                }
+            }
+        } catch (e) {
+            await logToDb(jobId, 'WARN', `Insert übersprungen für ${videoUrl}: ${e.message}`);
+        }
+    }
+
+    await logToDb(jobId, 'INFO', `Podcast-Videos gespeichert: ${inserted}/${videoIds.length}`);
+    return inserted;
+}
+
+
+// NEU: YouTube Podcasts API-Helpers
+async function _ytApiGet(jobId, endpoint, params) {
+    const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+    if (!YOUTUBE_API_KEY) {
+        await logToDb(jobId, 'ERROR', 'YouTube API Key ist nicht in der .env-Datei konfiguriert.');
+        throw new Error('YouTube API Key not configured.');
+    }
+    const url = `https://www.googleapis.com/youtube/v3/${endpoint}`;
+    const res = await axios.get(url, { params: { key: YOUTUBE_API_KEY, ...params } });
+    return res.data;
+}
+
+// NEU: YouTube Podcasts – Handle/ChannelId Resolver
+function _extractHandleOrChannelId(input) {
+    if (!input) return null;
+    const chMatch = input.match(/youtube\.com\/channel\/([a-zA-Z0-9_-]+)/);
+    if (chMatch) return { type: 'channelId', value: chMatch[1] };
+    const handleMatch = input.match(/@([A-Za-z0-9_.-]+)/);
+    if (handleMatch) return { type: 'handle', value: handleMatch[1] };
+    return null;
+}
+
+// NEU
+async function _ytResolveChannelId(jobId, handleOrUrl) {
+    const parsed = _extractHandleOrChannelId(handleOrUrl);
+    if (!parsed) throw new Error('Konnte Handle/Kanal aus der URL nicht erkennen.');
+    if (parsed.type === 'channelId') return parsed.value;
+    
+    // Suche nach dem Kanal über den Handle, um die ID zu bekommen
+    const data = await _ytApiGet(jobId, 'search', {
+        part: 'snippet',
+        type: 'channel',
+        q: parsed.value,
+        maxResults: 1,
+    });
+    const item = (data.items || [])[0];
+    const channelId = item?.snippet?.channelId || item?.id?.channelId;
+    if (!channelId) throw new Error(`Channel mit Handle '${parsed.value}' nicht gefunden.`);
+    return channelId;
+}
+
+// NEU
+async function _ytGetPodcastPlaylistIdsFromSections(jobId, channelId) {
+    const data = await _ytApiGet(jobId, 'channelSections', {
+        part: 'snippet,contentDetails',
+        channelId,
+    });
+    const out = new Set();
+    for (const s of data.items || []) {
+        const title = (s.snippet?.title || '').toLowerCase();
+        const isPlaylistShelf = ['singlePlaylist', 'multiplePlaylists'].includes(s.snippet?.type);
+        // Prüfen, ob eine Section explizit "Podcasts" heißt
+        const looksLikePodcast = /podcast/.test(title);
+        if (isPlaylistShelf && looksLikePodcast) {
+            (s.contentDetails?.playlists || []).forEach(id => out.add(id));
+        }
+    }
+    return [...out];
+}
+
+// NEU: Fallback-Methode, falls die "Sections"-API keine Ergebnisse liefert
+async function _ytGetPodcastPlaylistIdsHeuristic(jobId, channelId) {
+    let pageToken;
+    const matches = [];
+    do {
+        const data = await _ytApiGet(jobId, 'playlists', {
+            part: 'snippet,contentDetails',
+            channelId,
+            maxResults: 50,
+            pageToken,
+        });
+        for (const p of data.items || []) {
+            // Suche in Titel und Beschreibung nach typischen Podcast-Keywords
+            const text = `${p.snippet?.title || ''} ${p.snippet?.description || ''}`.toLowerCase();
+            if (/(^|\s)podcast(s)?(\s|$)|folge|episode/.test(text)) {
+                matches.push(p.id);
+            }
+        }
+        pageToken = data.nextPageToken;
+    } while (pageToken);
+    return matches;
+}
+
+// NEU
+async function _ytListPlaylistItems(jobId, playlistId) {
+    let pageToken, items = [];
+    do {
+        const data = await _ytApiGet(jobId, 'playlistItems', {
+            part: 'snippet,contentDetails',
+            playlistId,
+            maxResults: 50,
+            pageToken,
+        });
+        items.push(...(data.items || []));
+        pageToken = data.nextPageToken;
+    } while (pageToken);
+    return items;
+}
+
+// NEU: Effizientes Abrufen von vielen Video-Details auf einmal
+async function _ytVideosListBulk(jobId, videoIds) {
+    const batches = [];
+    for (let i = 0; i < videoIds.length; i += 50) {
+        batches.push(videoIds.slice(i, i + 50));
+    }
+    const out = [];
+    for (const b of batches) {
+        const data = await _ytApiGet(jobId, 'videos', {
+            part: 'snippet,contentDetails',
+            id: b.join(','),
+            maxResults: 50,
+        });
+        out.push(...(data.items || []));
+    }
+    const map = new Map();
+    for (const v of out) map.set(v.id, v);
+    return map;
+}
+
 
 module.exports = {
     triggerSingleRuleScrape,

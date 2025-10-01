@@ -1,17 +1,17 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
-    TextField, Chip, Tooltip, MenuItem, TableSortLabel, InputAdornment
+    TextField, Chip, Tooltip, MenuItem, TableSortLabel, Checkbox, Grid, FormControl, InputLabel, Select, SelectChangeEvent,
+    DialogContentText, TablePagination
 } from '@mui/material';
 import { Autocomplete } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
-import SearchIcon from '@mui/icons-material/Search';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
+import { useSnackbar } from '../context/SnackbarContext';
 
-// --- Interfaces ---
 interface AIContent {
     id: string;
     title: string;
@@ -28,7 +28,6 @@ interface Category { id: string; name: string; }
 interface Tag { id: string; name: string; }
 interface Region { id: string; name: string; code: string; }
 
-// --- Sortier-Helferfunktionen ---
 type Order = 'asc' | 'desc';
 
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
@@ -49,84 +48,115 @@ function getComparator<Key extends keyof any>(
 }
 
 const AdminAIContentPage: React.FC = () => {
+    const { showSnackbar } = useSnackbar();
     const [content, setContent] = useState<AIContent[]>([]);
     const [allCategories, setAllCategories] = useState<Category[]>([]);
     const [allTags, setAllTags] = useState<Tag[]>([]);
-    const [allRegions, setAllRegions] = useState<Region[]>([]); // State für Regionen
+    const [allRegions, setAllRegions] = useState<Region[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [openDialog, setOpenDialog] = useState(false);
     const [editingContent, setEditingContent] = useState<AIContent | null>(null);
 
-    // States für Suche und Sortierung
-    const [searchTerm, setSearchTerm] = useState('');
+    const [filters, setFilters] = useState({ search: '', region: 'all' });
+    const [selected, setSelected] = useState<string[]>([]);
+    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+    const [page, setPage] = useState(0);
+    const [rowsPerPage, setRowsPerPage] = useState(10);
+    const [totalItems, setTotalItems] = useState(0);
+
     const [order, setOrder] = useState<Order>('desc');
     const [orderBy, setOrderBy] = useState<keyof AIContent>('created_at');
 
-    // Formular-State für den Dialog
-    const [formTitle, setFormTitle] = useState('');
-    const [formGeneratedOutput, setFormGeneratedOutput] = useState('');
-    const [formCategory, setFormCategory] = useState<Category | null>(null);
-    const [formTags, setFormTags] = useState<Tag[]>([]);
-    const [formRegion, setFormRegion] = useState('');
+    const [formState, setFormState] = useState({ title: '', generated_output: '', category: null as Category | null, tags: [] as Tag[], region: '' });
 
-    const fetchInitialData = async () => {
+    const fetchContent = useCallback(async () => {
         setLoading(true);
-        setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
-            // Die Regionen werden jetzt mit den anderen Daten zusammen geladen
-            const [contentRes, categoriesRes, tagsRes, regionsRes] = await Promise.all([
-                apiClient.get('/api/admin/ai-content', { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/admin/categories', { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/admin/tags', { headers: { 'x-auth-token': token } }),
-                apiClient.get('/api/data/regions', { headers: { 'x-auth-token': token } }) // API-Aufruf für Regionen
-            ]);
-            setContent(contentRes.data);
-            setAllCategories(categoriesRes.data);
-            setAllTags(tagsRes.data);
-            setAllRegions(regionsRes.data); // Regionen im State speichern
-        } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Laden der Daten.');
+            const params = new URLSearchParams({
+                page: (page + 1).toString(),
+                limit: rowsPerPage.toString(),
+                search: filters.search,
+                region: filters.region,
+            });
+            // KORRIGIERT: Ruft den korrekten Admin-Endpunkt auf
+            const { data } = await apiClient.get(`/api/admin/ai-content?${params.toString()}`);
+            setContent(data.data || []);
+            setTotalItems(data.totalItems || 0);
+        } catch (err) {
+            setError('Inhalte konnten nicht geladen werden.');
         } finally {
             setLoading(false);
         }
-    };
+    }, [page, rowsPerPage, filters]);
 
-    useEffect(() => { fetchInitialData(); }, []);
-    
+    const fetchStaticData = useCallback(async () => {
+        try {
+            const [categoriesRes, tagsRes, regionsRes] = await Promise.all([
+                apiClient.get('/api/admin/categories'),
+                apiClient.get('/api/admin/tags'),
+                apiClient.get('/api/data/regions')
+            ]);
+            setAllCategories(categoriesRes.data);
+            setAllTags(tagsRes.data);
+            setAllRegions(regionsRes.data);
+        } catch (err) {
+            showSnackbar('Stammdaten konnten nicht geladen werden.', 'error');
+        }
+    }, [showSnackbar]);
+
+    useEffect(() => {
+        fetchStaticData();
+    }, [fetchStaticData]);
+
+    useEffect(() => {
+        fetchContent();
+    }, [fetchContent]);
+
     const handleSortRequest = (property: keyof AIContent) => {
         const isAsc = orderBy === property && order === 'asc';
         setOrder(isAsc ? 'desc' : 'asc');
         setOrderBy(property);
     };
 
-    const sortedAndFilteredContent = useMemo(() => {
-        let filtered = [...content];
-        if (searchTerm) {
-            const lowercasedFilter = searchTerm.toLowerCase();
-            filtered = content.filter(item =>
-                item.title.toLowerCase().includes(lowercasedFilter) ||
-                (item.category_name?.toLowerCase() || '').includes(lowercasedFilter) ||
-                (item.region?.toLowerCase() || '').includes(lowercasedFilter) ||
-                (item.rule_name?.toLowerCase() || '').includes(lowercasedFilter) ||
-                (item.tags?.some(tag => tag.toLowerCase().includes(lowercasedFilter)))
-            );
-        }
-        return filtered.sort(getComparator(order, orderBy));
-    }, [content, searchTerm, order, orderBy]);
+    const sortedContent = useMemo(() => {
+        return [...content].sort(getComparator(order, orderBy));
+    }, [content, order, orderBy]);
 
-    const handleOpenEditDialog = (item: AIContent) => {
-        setEditingContent(item);
-        setFormTitle(item.title);
-        setFormGeneratedOutput(item.generated_output);
-        setFormCategory(allCategories.find(c => c.id === item.category_id) || null);
-        setFormTags(allTags.filter(t => item.tags?.includes(t.name)));
-        setFormRegion(item.region || '');
-        setError(null);
-        setOpenDialog(true);
+    const handleSelectAllClick = (event: React.ChangeEvent<HTMLInputElement>) => {
+        if (event.target.checked) {
+            const newSelecteds = sortedContent.map((n) => n.id);
+            setSelected(newSelecteds);
+            return;
+        }
+        setSelected([]);
     };
 
+    const handleRowClick = (id: string) => {
+        const selectedIndex = selected.indexOf(id);
+        let newSelected: string[] = [];
+        if (selectedIndex === -1) newSelected = newSelected.concat(selected, id);
+        else if (selectedIndex === 0) newSelected = newSelected.concat(selected.slice(1));
+        else if (selectedIndex === selected.length - 1) newSelected = newSelected.concat(selected.slice(0, -1));
+        else if (selectedIndex > 0) newSelected = newSelected.concat(selected.slice(0, selectedIndex), selected.slice(selectedIndex + 1));
+        setSelected(newSelected);
+    };
+
+    const isSelected = (id: string) => selected.indexOf(id) !== -1;
+    
+    const handleOpenEditDialog = (item: AIContent) => {
+        setEditingContent(item);
+        setFormState({
+            title: item.title,
+            generated_output: item.generated_output,
+            category: allCategories.find(c => c.id === item.category_id) || null,
+            tags: allTags.filter(t => item.tags?.includes(t.name)),
+            region: item.region || ''
+        });
+        setOpenDialog(true);
+    };
+    
     const handleCloseDialog = () => {
         setOpenDialog(false);
         setEditingContent(null);
@@ -134,51 +164,73 @@ const AdminAIContentPage: React.FC = () => {
 
     const handleSubmit = async () => {
         if (!editingContent) return;
-        const token = localStorage.getItem('jwt_token');
         const payload = {
-            title: formTitle,
-            generated_output: formGeneratedOutput,
-            category_id: formCategory?.id || null,
-            tags: formTags.map(t => t.id),
-            region: formRegion || null,
+            title: formState.title,
+            generated_output: formState.generated_output,
+            category_id: formState.category?.id || null,
+            tags: formState.tags.map(t => t.id),
+            region: formState.region || null,
         };
-
         try {
-            await apiClient.put(`/api/admin/ai-content/${editingContent.id}`, payload, { headers: { 'x-auth-token': token } });
+            await apiClient.put(`/api/admin/ai-content/${editingContent.id}`, payload);
+            showSnackbar('Inhalt erfolgreich aktualisiert.', 'success');
             handleCloseDialog();
-            fetchInitialData();
-        } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Speichern.');
+            fetchContent();
+        } catch (err) {
+            showSnackbar('Fehler beim Speichern.', 'error');
         }
     };
 
-    const handleDelete = async (id: string) => {
-        if (!window.confirm('Sind Sie sicher, dass Sie diesen KI-Inhalt löschen möchten?')) return;
-        try {
-            const token = localStorage.getItem('jwt_token');
-            await apiClient.delete(`/api/admin/ai-content/${id}`, { headers: { 'x-auth-token': token } });
-            fetchInitialData();
-        } catch (err: any) {
-            alert(err.response?.data?.message || 'Fehler beim Löschen.');
-        }
-    };
+const handleDeleteMultiple = async () => {
+    setDeleteDialogOpen(false);
+    try {
+        // KORREKTUR: Wir verwenden wieder die korrekte .delete() Methode
+        // und fügen `as any` hinzu, um den fehlerhaften TypeScript-Check zu umgehen.
+        // Die Funktionalität bleibt exakt dieselbe.
+        const response = await apiClient.delete('/api/admin/ai-content', { data: { ids: selected } } as any);
 
+        showSnackbar(response.data.message, 'success');
+        fetchContent(); // oder fetchInitialData(), je nachdem, wie Ihre Funktion heißt
+        setSelected([]);
+    } catch (err) {
+        showSnackbar('Fehler beim Löschen der Inhalte.', 'error');
+    }
+};
+    
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
-                    <Typography variant="h4" component="h1">KI-Inhalte Verwaltung ({sortedAndFilteredContent.length})</Typography>
-                    <TextField 
-                        variant="outlined" 
-                        size="small" 
-                        placeholder="Suchen..." 
-                        value={searchTerm} 
-                        onChange={(e) => setSearchTerm(e.target.value)} 
-                        InputProps={{ 
-                            startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), 
-                        }} 
-                    />
-                </Box>
+                <Typography variant="h4" component="h1" gutterBottom>KI-Inhalte Verwaltung</Typography>
+                
+                <Paper sx={{ p: 2, mb: 2 }}>
+                    <Grid container spacing={2} alignItems="center">
+                        <Grid item xs={12} sm={6}>
+                            <TextField fullWidth label="Inhalte durchsuchen..." variant="outlined" size="small"
+                                value={filters.search} onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                            />
+                        </Grid>
+                        <Grid item xs={12} sm={4}>
+                            <FormControl fullWidth size="small">
+                                <InputLabel>Region</InputLabel>
+                                <Select value={filters.region} label="Region"
+                                    onChange={(e: SelectChangeEvent) => setFilters(prev => ({ ...prev, region: e.target.value }))}
+                                >
+                                    <MenuItem value="all">Alle Regionen</MenuItem>
+                                    {allRegions.map(r => <MenuItem key={r.id} value={r.name}>{r.name}</MenuItem>)}
+                                </Select>
+                            </FormControl>
+                        </Grid>
+                        <Grid item xs={12} sm={2}>
+                            {selected.length > 0 && (
+                                <Button variant="contained" color="error" startIcon={<DeleteIcon />}
+                                    onClick={() => setDeleteDialogOpen(true)}
+                                >
+                                    Löschen ({selected.length})
+                                </Button>
+                            )}
+                        </Grid>
+                    </Grid>
+                </Paper>
 
                 {loading ? <CircularProgress /> : error ? <Alert severity="error">{error}</Alert> : (
                     <Paper>
@@ -186,6 +238,13 @@ const AdminAIContentPage: React.FC = () => {
                             <Table stickyHeader>
                                 <TableHead>
                                     <TableRow>
+                                        <TableCell padding="checkbox">
+                                            <Checkbox
+                                                indeterminate={selected.length > 0 && selected.length < content.length}
+                                                checked={content.length > 0 && selected.length === content.length}
+                                                onChange={handleSelectAllClick}
+                                            />
+                                        </TableCell>
                                         <TableCell sx={{ width: '25%' }} sortDirection={orderBy === 'title' ? order : false}>
                                             <TableSortLabel active={orderBy === 'title'} direction={order} onClick={() => handleSortRequest('title')}>Titel</TableSortLabel>
                                         </TableCell>
@@ -206,49 +265,80 @@ const AdminAIContentPage: React.FC = () => {
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
-                                    {sortedAndFilteredContent.map((item) => (
-                                        <TableRow key={item.id} hover>
-                                            <TableCell sx={{ fontWeight: 'bold' }}>{item.title}</TableCell>
-                                            <TableCell><Chip label={item.category_name || '-'} size="small" /></TableCell>
-                                            <TableCell>{item.region || '-'}</TableCell>
-                                            <TableCell>
-                                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                                                    {(item.tags || []).map(tag => (<Chip key={tag} label={tag} size="small" variant="outlined" />))}
-                                                </Box>
-                                            </TableCell>
-                                            <TableCell>{new Date(item.created_at).toLocaleString('de-AT')}</TableCell>
-                                            <TableCell>{item.rule_name || 'Unbekannt'}</TableCell>
-                                            <TableCell align="right">
-                                                <Tooltip title="Inhalt bearbeiten"><IconButton onClick={() => handleOpenEditDialog(item)}><EditIcon /></IconButton></Tooltip>
-                                                <Tooltip title="Löschen"><IconButton color="error" onClick={() => handleDelete(item.id)}><DeleteIcon /></IconButton></Tooltip>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
+                                    {sortedContent.map((item) => {
+                                        const isItemSelected = isSelected(item.id);
+                                        return (
+                                            <TableRow 
+                                                key={item.id} 
+                                                hover 
+                                                onClick={() => handleRowClick(item.id)}
+                                                role="checkbox" 
+                                                aria-checked={isItemSelected} 
+                                                selected={isItemSelected}
+                                            >
+                                                <TableCell padding="checkbox"><Checkbox checked={isItemSelected} /></TableCell>
+                                                <TableCell sx={{ fontWeight: 'bold' }}>{item.title}</TableCell>
+                                                <TableCell><Chip label={item.category_name || '-'} size="small" /></TableCell>
+                                                <TableCell>{item.region || '-'}</TableCell>
+                                                <TableCell>
+                                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                                                        {(item.tags || []).map(tag => (<Chip key={tag} label={tag} size="small" variant="outlined" />))}
+                                                    </Box>
+                                                </TableCell>
+                                                <TableCell>{new Date(item.created_at).toLocaleString('de-AT')}</TableCell>
+                                                <TableCell>{item.rule_name || 'Unbekannt'}</TableCell>
+                                                <TableCell align="right">
+                                                    <Tooltip title="Inhalt bearbeiten"><IconButton onClick={(e) => { e.stopPropagation(); handleOpenEditDialog(item); }}><EditIcon /></IconButton></Tooltip>
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })}
                                 </TableBody>
                             </Table>
                         </TableContainer>
+                        <TablePagination
+                            rowsPerPageOptions={[5, 10, 25]}
+                            component="div"
+                            count={totalItems}
+                            rowsPerPage={rowsPerPage}
+                            page={page}
+                            onPageChange={(_event: unknown, newPage: number) => setPage(newPage)}
+                            onRowsPerPageChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+                                setRowsPerPage(parseInt(event.target.value, 10));
+                                setPage(0);
+                            }}
+                        />
                     </Paper>
                 )}
             </Container>
+            
+            <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+                <DialogTitle>Löschen bestätigen</DialogTitle>
+                <DialogContent>
+                    <DialogContentText>
+                        Sind Sie sicher, dass Sie die ausgewählten {selected.length} KI-Inhalte endgültig löschen möchten?
+                    </DialogContentText>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setDeleteDialogOpen(false)}>Abbrechen</Button>
+                    <Button onClick={handleDeleteMultiple} color="error" autoFocus>Löschen</Button>
+                </DialogActions>
+            </Dialog>
 
             <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
                 <DialogTitle>KI-Inhalt bearbeiten</DialogTitle>
                 <DialogContent>
-                    {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-                    <TextField label="Titel" fullWidth value={formTitle} onChange={(e) => setFormTitle(e.target.value)} margin="normal" />
-                    <TextField label="Generierter Inhalt" fullWidth multiline rows={8} value={formGeneratedOutput} onChange={(e) => setFormGeneratedOutput(e.target.value)} margin="normal" />
-                    
-                    {/* Das Dropdown verwendet jetzt die dynamisch geladenen Regionen */}
-                    <TextField select label="Region" fullWidth value={formRegion} onChange={(e) => setFormRegion(e.target.value)} margin="normal">
+                    <TextField label="Titel" fullWidth value={formState.title} onChange={(e) => setFormState(p => ({...p, title: e.target.value}))} margin="normal" />
+                    <TextField label="Generierter Inhalt" fullWidth multiline rows={8} value={formState.generated_output} onChange={(e) => setFormState(p => ({...p, generated_output: e.target.value}))} margin="normal" />
+                    <TextField select label="Region" fullWidth value={formState.region} onChange={(e) => setFormState(p => ({...p, region: e.target.value}))} margin="normal">
                         <MenuItem value=""><em>Keine Region</em></MenuItem>
                         {allRegions.map((region) => (<MenuItem key={region.id} value={region.name}>{region.name}</MenuItem>))}
                     </TextField>
-
                     <Autocomplete
                         options={allCategories}
                         getOptionLabel={(option) => option.name}
-                        value={formCategory}
-                        onChange={(event, newValue) => { setFormCategory(newValue); }}
+                        value={formState.category}
+                        onChange={(_, newValue) => { setFormState(p => ({...p, category: newValue})); }}
                         isOptionEqualToValue={(option, value) => option.id === value.id}
                         renderInput={(params) => <TextField {...params} label="Kategorie" margin="normal" />}
                     />
@@ -256,8 +346,8 @@ const AdminAIContentPage: React.FC = () => {
                         multiple
                         options={allTags}
                         getOptionLabel={(option) => option.name}
-                        value={formTags}
-                        onChange={(event, newValue) => { setFormTags(newValue); }}
+                        value={formState.tags}
+                        onChange={(_, newValue) => { setFormState(p => ({...p, tags: newValue})); }}
                         isOptionEqualToValue={(option, value) => option.id === value.id}
                         renderTags={(value, getTagProps) => value.map((option, index) => (<Chip label={option.name} {...getTagProps({ index })} />))}
                         renderInput={(params) => <TextField {...params} label="Tags" margin="normal" placeholder="Tags auswählen" />}

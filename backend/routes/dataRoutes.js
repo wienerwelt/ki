@@ -41,5 +41,7 @@ router.get('/active-advertisement', dataController.getActiveAdvertisement);
 router.get('/tags', dataController.getTagsForCategory);
 router.get('/all-tags', dataController.getAllTags);
 router.get('/events', authMiddleware, dataController.getEvents);
+router.get('/economic-statistics', dataController.getEconomicStatistics);
+router.get('/economic-statistics/countries', dataController.getUniqueStatCountries);
 
 module.exports = router;

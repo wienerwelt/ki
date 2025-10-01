@@ -29,11 +29,10 @@ import FolderIcon from '@mui/icons-material/Folder';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import LogoutIcon from '@mui/icons-material/Logout';
-import ContactMailIcon from '@mui/icons-material/ContactMail';
 import NotificationsIcon from '@mui/icons-material/Notifications';
-import PollIcon from '@mui/icons-material/Poll';
 import SearchIcon from '@mui/icons-material/Search';
 import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
+import PollIcon from '@mui/icons-material/Poll';
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -43,6 +42,7 @@ import AdvertisementBanner from '../components/AdvertisementBanner';
 import apiClient from '../apiClient';
 import GlobalSearchBar from '../components/GlobalSearchBar';
 import { useSnackbar } from '../context/SnackbarContext';
+import ContributionHistoryModal from '../components/ContributionHistoryModal';
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -60,6 +60,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [userTags, setUserTags] = useState<string[]>([]);
     const [tagsLoading, setTagsLoading] = useState(true);
     const [searchOpen, setSearchOpen] = useState(false);
+    const [historyModalOpen, setHistoryModalOpen] = useState(false);
     
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -262,14 +263,15 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     {user && (
                         <div>
                             {!isMobile && (
-                                <Tooltip title="Community-Punkte">
-                                    <Chip
-                                        icon={<StarsIcon sx={{ color: 'inherit !important' }} />}
-                                        label={user.contribution_score ?? 0}
-                                        sx={{ color: 'inherit', mr: 1 }}
-                                        variant="outlined"
-                                    />
-                                </Tooltip>
+                            <Tooltip title="Community-Punkte anzeigen">
+                                <Chip
+                                    icon={<StarsIcon sx={{ color: 'inherit !important' }} />}
+                                    label={user.contribution_score ?? 0}
+                                    sx={{ color: 'inherit', mr: 1, cursor: 'pointer' }} // NEU: cursor: 'pointer'
+                                    variant="outlined"
+                                    onClick={() => setHistoryModalOpen(true)} // NEU: onClick Handler
+                                />
+                            </Tooltip>
                             )}
                             <IconButton size="large" aria-label="Benachrichtigungen" color="inherit"><Badge badgeContent={0} color="error"><NotificationsIcon /></Badge></IconButton>
                             <IconButton size="large" edge="end" aria-label="account of current user" aria-controls="menu-appbar" aria-haspopup="true" onClick={handleMenu} color="inherit"><AccountCircle /></IconButton>
@@ -324,6 +326,11 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     </Box>
                 </DialogContent>
             </Dialog>
+            <ContributionHistoryModal 
+                open={historyModalOpen} 
+                onClose={() => setHistoryModalOpen(false)} 
+                currentUserScore={user?.contribution_score || 0}
+            />            
         </Box>
     );
 };

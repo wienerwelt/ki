@@ -56,7 +56,7 @@
   },
   "layout": {
     "myDashboard": "Mein Dashboard",
-    "fileDirectory": "Dateiverzeichnis",
+    "fileDirectory": "Datencloud",
     "trustedSources": "Vertrauensw. Quellen",
     "feedbackAndIdeas": "Feedback & Ideen",
     "userManagement": "Benutzerverwaltung",
@@ -75,6 +75,7 @@
     "scrapingRules": "Scraping-Regeln",
     "aiPromptRules": "KI-Prompt-Regeln",
     "aiContent": "KI-Inhalte",
+    "funding": "Förderung",
     "events": "Veranstaltungen",
     "categories": "Kategorien",
     "tags": "Tags",

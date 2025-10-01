@@ -1,5 +1,5 @@
 // backend/services/jobManagerService.js
-const { aiContentQueue, scrapeQueue, emailQueue } = require('./queueService'); // ⬅️ zentral
+const { aiContentQueue, scrapeQueue, emailQueue, dataUpdatesQueue } = require('./queueService');
 const db = require('../config/db');
 const cronParser = require('cron-parser');
 
@@ -201,94 +201,129 @@ async function getScheduledScrapingRules() {
   }
 }
 
+function findQueueForJob(job) {
+    // Hinzugefügte Prüfung: Ignoriere Jobs ohne gültige ID
+    if (!job || typeof job.id !== 'string') {
+        console.warn(`[JobManager] Ein fehlerhafter Job ohne gültige ID in Redis gefunden, wird ignoriert:`, job);
+        return null; // Wichtig: null zurückgeben, um den Fehler zu signalisieren
+    }
+    if (job.id.startsWith('scrape:')) return scrapeQueue;
+    if (job.id.startsWith('email:')) return emailQueue;
+    // Alle anderen (sub:, sys-sub:, system:) gehören zur aiContentQueue
+    return aiContentQueue;
+}
+
 // ========================================================================
 // == Zentrale Synchronisation
 // ========================================================================
 async function synchronizeSchedulesFromDB() {
-  console.log('[JobManager] Starting synchronization of all DB schedules with Redis queue...');
-  const client = await db.connect();
-  try {
-    const [aiRepeat, scrapeRepeat, emailRepeat] = await Promise.all([
-      aiContentQueue.getRepeatableJobs(),
-      scrapeQueue.getRepeatableJobs(),
-      emailQueue.getRepeatableJobs(),
-    ]);
-    const scheduledAiIds     = new Set(aiRepeat.map(j => j.id));
-    const scheduledScrapeIds = new Set(scrapeRepeat.map(j => j.id));
-    const scheduledEmailIds  = new Set(emailRepeat.map(j => j.id));
+    console.log('[JobManager] Starting full synchronization of DB schedules with Redis queue...');
+    const client = await db.connect();
+    try {
+        // Schritt 1: Hole alle Jobs aus der DB und aus Redis
+        const [
+            repeatableJobs,
+            userSubs,
+            systemSubs,
+            scrapingRules,
+            // KORREKTUR 1: Lese das Feld 'recipient_group', um die Jobs unterscheiden zu können
+            cronJobsFromDb 
+        ] = await Promise.all([
+            Promise.all([
+                aiContentQueue.getRepeatableJobs(),
+                scrapeQueue.getRepeatableJobs(),
+                emailQueue.getRepeatableJobs(),
+                dataUpdatesQueue.getRepeatableJobs(), // Auch hier die Jobs abrufen
+            ]).then(results => results.flat()),
+            client.query("SELECT id, schedule FROM user_ai_content_subscriptions WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE").then(res => res.rows),
+            client.query("SELECT id, schedule FROM system_ai_content_subscriptions WHERE schedule IS NOT NULL AND is_active = TRUE").then(res => res.rows),
+            client.query("SELECT id, schedule FROM scraping_rules WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE").then(res => res.rows),
+            // Lese jetzt alle relevanten Felder aus der cronjobs Tabelle
+            client.query("SELECT id, name, schedule, recipient_group FROM cronjobs WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE").then(res => res.rows)
+        ]);
 
-    let addedCount = 0;
+        // Schritt 2: Erstelle eine Liste aller Job-IDs, die in der DB aktiv sind
+        const activeDbJobIds = new Set([
+            ...userSubs.map(j => `sub:${j.id}`),
+            ...systemSubs.map(j => `sys-sub:${j.id}`),
+            ...scrapingRules.map(j => `scrape:${j.id}`),
+            // KORREKTUR 2: Verwende eine generische Job-ID für cronjobs
+            ...cronJobsFromDb.map(j => `cronjob:${j.id}`) 
+        ]);
 
-    // 1) User-Subscriptions → AI-Queue
-    const { rows: userSubs } = await client.query(
-      "SELECT id, schedule FROM user_ai_content_subscriptions WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE"
-    );
-    for (const sub of userSubs) {
-      const jobId = `sub:${sub.id}`;
-      if (!scheduledAiIds.has(jobId)) {
-        await setSubscriptionSchedule(sub.id, sub.schedule);
-        addedCount++;
-      }
+        let removedCount = 0;
+        let addedCount = 0;
+
+        // Schritt 3: Entferne veraltete Jobs aus Redis
+        for (const job of repeatableJobs) {
+            if (!job || !job.id || !activeDbJobIds.has(job.id)) {
+                // Finde die richtige Queue, um den Job zu entfernen
+                const queue = findQueueForJob(job) || (job.id?.startsWith('cronjob:') ? (cronJobsFromDb.find(dbJob => `cronjob:${dbJob.id}` === job.id)?.recipient_group === 'data-update' ? dataUpdatesQueue : emailQueue) : null);
+                if (queue) {
+                    await queue.removeRepeatableByKey(job.key);
+                    console.log(`[JobManager] Removed obsolete job '${job.id}' from queue.`);
+                    removedCount++;
+                }
+            }
+        }
+        
+        // Schritt 4: Füge neue/fehlende Jobs zur richtigen Queue hinzu
+        const scheduledRedisIds = new Set(repeatableJobs.map(j => j.id).filter(Boolean));
+
+        // User-, System- und Scraping-Jobs hinzufügen (unverändert)
+        const allOtherDbJobs = [
+            ...userSubs.map(j => ({ type: 'userSub', ...j })),
+            ...systemSubs.map(j => ({ type: 'systemSub', ...j })),
+            ...scrapingRules.map(j => ({ type: 'scrapeRule', ...j })),
+        ];
+        
+        for (const job of allOtherDbJobs) {
+            let jobId;
+            switch(job.type) {
+                case 'userSub':    jobId = `sub:${job.id}`; break;
+                case 'systemSub':  jobId = `sys-sub:${job.id}`; break;
+                case 'scrapeRule': jobId = `scrape:${job.id}`; break;
+            }
+
+            if (!scheduledRedisIds.has(jobId)) {
+                addedCount++;
+                switch(job.type) {
+                    case 'userSub':    await setSubscriptionSchedule(job.id, job.schedule); break;
+                    case 'systemSub':  await setSystemSubscriptionSchedule(job.id, job.schedule); break;
+                    case 'scrapeRule': await setScrapingSchedule(job.id, job.schedule); break;
+                }
+            }
+        }
+
+        // KORREKTUR 3: Iteriere separat über die cronjobs und weise sie der korrekten Queue zu
+        for (const job of cronJobsFromDb) {
+            const jobId = `cronjob:${job.id}`;
+            if (!scheduledRedisIds.has(jobId)) {
+                addedCount++;
+                const jobData = { cronJobId: job.id };
+                const jobOptions = {
+                    jobId,
+                    repeat: { cron: job.schedule, tz: 'Europe/Vienna' },
+                };
+
+                if (job.recipient_group === 'data-update') {
+                    // Zum Data-Update-Worker
+                    await dataUpdatesQueue.add(job.name, jobData, jobOptions);
+                    console.log(`[JobManager] Scheduled data-update job '${job.name}' (${jobId}) with '${job.schedule}'.`);
+                } else {
+                    // Zum E-Mail-Worker
+                    await emailQueue.add(job.name, jobData, jobOptions);
+                    console.log(`[JobManager] Scheduled email job '${job.name}' (${jobId}) with '${job.schedule}'.`);
+                }
+            }
+        }
+
+        console.log(`[JobManager] Synchronization complete. Removed ${removedCount} obsolete jobs, added ${addedCount} new jobs.`);
+    } catch (error) {
+        console.error('[JobManager] Critical error during schedule synchronization:', error);
+    } finally {
+        client.release();
     }
-
-    // 2) System-Subscriptions → AI-Queue
-    const { rows: systemSubs } = await client.query(
-      "SELECT id, schedule FROM system_ai_content_subscriptions WHERE schedule IS NOT NULL AND is_active = TRUE"
-    );
-    for (const sub of systemSubs) {
-      const jobId = `sys-sub:${sub.id}`;
-      if (!scheduledAiIds.has(jobId)) {
-        await setSystemSubscriptionSchedule(sub.id, sub.schedule);
-        addedCount++;
-      }
-    }
-
-    // 3) Scraping-Regeln → SCRAPE-Queue
-    const { rows: scrapingRules } = await client.query(
-      "SELECT id, schedule FROM scraping_rules WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE"
-    );
-    for (const rule of scrapingRules) {
-      const jobId = `scrape:${rule.id}`;
-      if (!scheduledScrapeIds.has(jobId)) {
-        await setScrapingSchedule(rule.id, rule.schedule);
-        addedCount++;
-      }
-    }
-
-    // 4) Generische System-Jobs → AI-Queue
-    const { rows: systemJobs } = await client.query(
-      "SELECT job_name, schedule FROM system_jobs WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE"
-    );
-    for (const job of systemJobs) {
-      const jobId = `system:${job.job_name}`;
-      if (!scheduledAiIds.has(jobId)) {
-        await aiContentQueue.add(job.job_name, { jobDetails: job }, {
-          jobId,
-          repeat: { cron: job.schedule, tz: 'Europe/Vienna' },
-        });
-        console.log(`[JobManager] Scheduled system job '${jobId}' with pattern '${job.schedule}'.`);
-        addedCount++;
-      }
-    }
-
-    // 5) Email-Cronjobs → EMAIL-Queue
-    const { rows: emailRows } = await client.query(
-      "SELECT id, schedule FROM cronjobs WHERE schedule IS NOT NULL AND schedule <> '' AND is_active = TRUE"
-    );
-    for (const ej of emailRows) {
-      const id = `email:${ej.id}`;
-      if (!scheduledEmailIds.has(id)) {
-        await setEmailJobSchedule(ej.id, ej.schedule);
-        addedCount++;
-      }
-    }
-
-    console.log(`[JobManager] Synchronization complete. Added/verified ${addedCount} missing scheduled jobs.`);
-  } catch (error) {
-    console.error('[JobManager] Critical error during schedule synchronization:', error);
-  } finally {
-    client.release();
-  }
 }
 
 // ========================================================================

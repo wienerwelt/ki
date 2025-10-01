@@ -1,18 +1,23 @@
 // backend/controllers/adminStatusController.js
 const db = require('../config/db');
-const { connection: redisConnection } = require('../services/queueService');
+// KORREKTUR: Importiere beide Redis-Clients, um den Heartbeat-Client zu nutzen
+const { connection: redisClient, heartbeatRedisClient } = require('../services/queueService'); 
+// HINZUGEFÜGT: Für die Server-Version
+const packageJson = require('../package.json'); 
 
 /**
  * Überprüft den Zustand der Kerndienste sowie der einzelnen Worker-Prozesse.
  */
 exports.getSystemHealth = async (req, res) => {
-    // Promise für den Datenbank-Status
+    // Promise für den Datenbank-Status (Ihre Logik wurde beibehalten, sie ist gut)
     const dbPromise = db.connect()
         .then(client => {
             return client.query('SELECT version()')
                 .then(result => {
                     client.release();
-                    return { status: 'online', version: result.rows[0].version };
+                    // Kleines Detail: Nehmen Sie nur den Teil vor dem ersten Komma für die Übersicht
+                    const version = result.rows[0].version.split(',')[0];
+                    return { status: 'online', version };
                 })
                 .catch(err => {
                     client.release();
@@ -22,19 +27,17 @@ exports.getSystemHealth = async (req, res) => {
         .catch(err => ({ status: 'offline', error: err.message }));
 
     // Promise für den Redis-Status
-    const redisPromise = redisConnection.ping()
+    const redisPromise = redisClient.ping()
         .then(pong => (pong === 'PONG' ? { status: 'online' } : { status: 'offline', error: 'Invalid PING response' }))
         .catch(err => ({ status: 'offline', error: err.message }));
 
-
-    const workersToCheck = ['api', 'aiWorker', 'scrapeWorker', 'emailWorker', 'dataUpdateWorker'];
+    // ERWEITERT: 'fundingWorker' zur Liste der zu prüfenden Worker hinzugefügt
+    const workersToCheck = ['aiContentWorker', 'scrapeWorker', 'emailWorker', 'dataUpdateWorker', 'fundingWorker'];
     const workerPromise = (async () => {
         try {
-            // Der API-Service setzt seinen eigenen Heartbeat genau jetzt.
-            await redisConnection.set('worker_heartbeat:api', new Date().toISOString(), { EX: 60 });
-
             const heartbeatKeys = workersToCheck.map(name => `worker_heartbeat:${name}`);
-            const heartbeats = await redisConnection.mGet(heartbeatKeys);
+            // KORREKTUR: Nutze den dedizierten Heartbeat-Client
+            const heartbeats = await heartbeatRedisClient.mGet(heartbeatKeys); 
             
             const workerStatus = {};
             const now = new Date();
@@ -45,8 +48,9 @@ exports.getSystemHealth = async (req, res) => {
                     workerStatus[name] = { status: 'offline', error: 'Kein Heartbeat gefunden.' };
                 } else {
                     const lastBeat = new Date(heartbeat);
+                    // 90 Sekunden Toleranz
                     const diffSeconds = (now - lastBeat) / 1000;
-                    if (diffSeconds > 60) {
+                    if (diffSeconds > 90) { 
                         workerStatus[name] = { status: 'offline', error: `Letzter Heartbeat ist ${Math.round(diffSeconds)}s alt.` };
                     } else {
                         workerStatus[name] = { status: 'online' };
@@ -68,17 +72,19 @@ exports.getSystemHealth = async (req, res) => {
     
     // Server-Informationen
     const uptimeInSeconds = process.uptime();
-    const hours = Math.floor(uptimeInSeconds / 3600);
-    const minutes = Math.floor((uptimeInSeconds % 3600) / 60);
-    const seconds = Math.floor(uptimeInSeconds % 60);
+    const d = Math.floor(uptimeInSeconds / (3600*24));
+    const h = Math.floor(uptimeInSeconds % (3600*24) / 3600);
+    const m = Math.floor(uptimeInSeconds % 3600 / 60);
 
     res.status(200).json({
         postgres: dbResult,
         redis: redisResult,
-        workers: workerResult, // NEU
+        workers: workerResult,
         server: {
-            uptime: `${hours}h ${minutes}m ${seconds}s`,
-            memoryUsage: process.memoryUsage()
+            uptime: `${d}d ${h}h ${m}m`,
+            memoryUsage: process.memoryUsage(),
+            currentTime: new Date().toISOString(),
+            version: packageJson.version || 'N/A'
         }
     });
 };

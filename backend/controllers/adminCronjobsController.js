@@ -245,24 +245,24 @@ exports.deleteSystemSubscription = async (req, res) => {
 
 exports.getAllDataUpdateJobs = async (req, res) => {
   try {
-    const { rows } = await db.query("SELECT * FROM cronjobs WHERE recipient_group = 'data-update' ORDER BY name ASC");
+    // KORREKTUR: Das Feld 'recipient_group' zur SELECT-Anweisung hinzugefügt
+    const { rows } = await db.query("SELECT id, name, schedule, is_active, last_run_at, recipient_group FROM cronjobs WHERE recipient_group = 'data-update' ORDER BY name ASC");
 
     // Berechne für jeden Job die nächste Ausführungszeit
     const jobsWithNextRun = rows.map(job => {
       let next_run_at = null;
       try {
         if (job.schedule) {
-          const interval = cronParser.parseExpression(job.schedule, { 
+          const interval = cronParser.parseExpression(job.schedule, {
             currentDate: new Date(),
-            tz: 'Europe/Vienna' 
+            tz: 'Europe/Vienna'
           });
           next_run_at = interval.next().toISOString();
         }
-      } catch (e) { 
+      } catch (e) {
         console.error(`Ungültiger Cron-String für Job ${job.id}: ${job.schedule}`);
       }
-      // 'name' wird zu 'job_name' umbenannt, um konsistent mit der DB-Struktur zu sein
-      return { ...job, job_name: job.name, next_run_at };
+      return { ...job, next_run_at };
     });
 
     res.json(jobsWithNextRun);
@@ -272,15 +272,35 @@ exports.getAllDataUpdateJobs = async (req, res) => {
   }
 };
 
-// ERWEITERTE VERSION
-exports.updateDataUpdateJob = async (req, res) => {
-  const { id } = req.params;
-  // 'description' und 'name' als bearbeitbare Felder hinzufügen
-  const { name, description, schedule, is_active } = req.body; 
+
+exports.createDataUpdateJob = async (req, res) => {
+  const { name, schedule, is_active } = req.body;
+  // Empfängergruppe ist hier fix
+  const recipient_group = 'data-update';
+
+  if (!name) {
+    return res.status(400).json({ message: 'Ein Name für den Job ist erforderlich.' });
+  }
   try {
     const { rows } = await db.query(
-      'UPDATE cronjobs SET name = $1, description = $2, schedule = $3, is_active = $4, updated_at = NOW() WHERE id = $5 AND recipient_group = \'data-update\' RETURNING *',
-      [name, description, schedule, is_active, id]
+      'INSERT INTO cronjobs (name, recipient_group, schedule, is_active) VALUES ($1, $2, $3, $4) RETURNING *',
+      [name, recipient_group, schedule, is_active === undefined ? true : is_active]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('Error creating data update job:', err.message);
+    res.status(500).send('Server error');
+  }
+};
+
+
+exports.updateDataUpdateJob = async (req, res) => {
+  const { id } = req.params;
+  const { name, recipient_group, schedule, is_active } = req.body;
+  try {
+    const { rows } = await db.query(
+      'UPDATE cronjobs SET name = $1, recipient_group = $2, schedule = $3, is_active = $4, updated_at = NOW() WHERE id = $5 AND recipient_group = \'data-update\' RETURNING *',
+      [name, recipient_group, schedule, is_active, id]
     );
     if (rows.length === 0) return res.status(404).json({ message: 'Data update job not found.' });
     res.json(rows[0]);
@@ -290,11 +310,20 @@ exports.updateDataUpdateJob = async (req, res) => {
   }
 };
 
+
 exports.triggerDataUpdateJob = async (req, res) => {
   const { job_name } = req.body;
+  if (!job_name) {
+    return res.status(400).json({ message: 'Job-Name fehlt.'});
+  }
   try {
+    await db.query(
+      "UPDATE cronjobs SET last_run_at = NOW() WHERE name = $1 AND recipient_group = 'data-update'",
+      [job_name]
+    );
+
     await dataUpdatesQueue.add(job_name, { triggeredManually: true });
-    res.status(202).json({ message: `Job '${job_name}' was manually added to the queue.` });
+    res.status(202).json({ message: `Job '${job_name}' wurde manuell zur Warteschlange hinzugefügt.` });
   } catch (err) {
     console.error(`Error triggering data update job ${job_name}:`, err.message);
     res.status(500).send('Server error');
@@ -305,14 +334,33 @@ exports.triggerDataUpdateJob = async (req, res) => {
 // --- Email Cronjob Functions ---
 exports.getAllEmailJobs = async (req, res) => {
   try {
-    // PASST QUERY AN: Schließt 'data-update' Jobs aus
-    const { rows } = await db.query("SELECT * FROM cronjobs WHERE recipient_group <> 'data-update' ORDER BY name ASC");
-    res.json(rows);
+    // Query angepasst, um last_run_at explizit abzufragen
+    const { rows } = await db.query("SELECT id, name, recipient_group, schedule, is_active, last_run_at FROM cronjobs WHERE recipient_group <> 'data-update' ORDER BY name ASC");
+
+    // Berechne für jeden Job die nächste Ausführungszeit
+    const jobsWithNextRun = rows.map(job => {
+      let next_run_at = null;
+      try {
+        if (job.schedule) {
+          const interval = cronParser.parseExpression(job.schedule, {
+            currentDate: new Date(),
+            tz: 'Europe/Vienna'
+          });
+          next_run_at = interval.next().toISOString();
+        }
+      } catch (e) {
+        console.error(`Ungültiger Cron-String für E-Mail-Job ${job.id}: ${job.schedule}`);
+      }
+      return { ...job, next_run_at };
+    });
+
+    res.json(jobsWithNextRun);
   } catch (err) {
     console.error('Error fetching email jobs:', err.message);
     res.status(500).send('Server error');
   }
 };
+
 
 exports.createEmailJob = async (req, res) => {
   const { name, recipient_group, schedule, is_active } = req.body;
@@ -330,6 +378,7 @@ exports.createEmailJob = async (req, res) => {
     res.status(500).send('Server error');
   }
 };
+
 
 exports.updateEmailJob = async (req, res) => {
   const { id } = req.params;
@@ -363,23 +412,24 @@ exports.deleteEmailJob = async (req, res) => {
 
 async function enqueueEmailJobById(id) {
   if (!isValidUUID(id)) throw new Error('Invalid ID format.');
-  
-  // NEU: Den Namen des Jobs aus der Datenbank abrufen
+
   const jobDetailsRes = await db.query('SELECT name FROM cronjobs WHERE id = $1', [id]);
   if (jobDetailsRes.rows.length === 0) {
     throw new Error(`E-Mail-Job mit ID ${id} nicht in der Datenbank gefunden.`);
   }
-  const jobName = jobDetailsRes.rows[0].name || 'Unbenannter E-Mail-Job'; // Fallback
+  const jobName = jobDetailsRes.rows[0].name || 'Unbenannter E-Mail-Job';
 
-  // Den abgerufenen Namen als Job-Namen verwenden
   await emailQueue.add(jobName, { emailJobId: id }, { jobId: `email:${id}:${Date.now()}` });
   return { ok: true };
 }
 exports.enqueueEmailJobById = enqueueEmailJobById;
 
+
 exports.triggerEmailJob = async (req, res) => {
   const { id } = req.params;
   try {
+    await db.query('UPDATE cronjobs SET last_run_at = NOW() WHERE id = $1', [id]);
+
     await enqueueEmailJobById(id);
     return res.status(202).json({ message: 'E-Mail-Job enqueued.' });
   } catch (err) {
@@ -387,3 +437,5 @@ exports.triggerEmailJob = async (req, res) => {
     return res.status(400).json({ message: err.message || 'Enqueue failed' });
   }
 };
+
+

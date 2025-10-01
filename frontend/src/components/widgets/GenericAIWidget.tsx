@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Accordion, AccordionDetails, AccordionSummary, Box, Typography, TextField, CircularProgress, MenuItem, Alert, List, ListItem, ListItemText, Divider,
     Dialog, DialogTitle, DialogContent, Chip, Button, Grid, Stack, IconButton, Tooltip, Link as MuiLink,
-    DialogActions, Paper, InputAdornment, Avatar
+    DialogActions, Paper, InputAdornment, Avatar, useTheme, useMediaQuery, Popover
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SendIcon from '@mui/icons-material/Send';
@@ -20,6 +20,7 @@ import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt';
 import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
+import TuneIcon from '@mui/icons-material/Tune'; // Import für Filter-Icon
 import { Autocomplete } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import posthog from 'posthog-js';
@@ -29,6 +30,7 @@ import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
 import ClickAwayListener from '@mui/material/ClickAwayListener';
 
+// --- Interfaces und Hilfs-Komponenten (unverändert) ---
 interface ContentItem {
     id: string;
     title: string;
@@ -81,6 +83,15 @@ const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onS
 const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, isRemovable, title, category, icon, widgetTypeKey }) => {
     const { user } = useAuth();
     const navigate = useNavigate();
+
+    // KORREKTUR: Hooks für Mobile-Ansicht und Filter-Menü
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+    const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
+
+    const handleOpenFilterMenu = (event: React.MouseEvent<HTMLElement>) => setFilterAnchorEl(event.currentTarget);
+    const handleCloseFilterMenu = () => setFilterAnchorEl(null);
+
     const [items, setItems] = useState<ContentItem[]>([]);
     const [counts, setCounts] = useState({ unread: 0, new: 0 });
     const [isLoading, setIsLoading] = useState(true);
@@ -102,6 +113,7 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
     const [filterMode, setFilterMode] = useState<'all' | 'new' | 'unread'>('all');
     const [relevantAction, setRelevantAction] = useState<RelevantAction | null>(null);
 
+    // ... (Logik-Hooks bleiben unverändert) ...
     useEffect(() => { const handler = setTimeout(() => { setDebouncedSearchTerm(searchTerm); }, 500); return () => { clearTimeout(handler); }; }, [searchTerm]);
     useEffect(() => { if (user?.regions && user.regions.length > 0) { const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0]; setSelectedRegion(defaultRegion); } }, [user?.regions]);
     useEffect(() => { if (relevantRules.length === 1) setSelectedRuleId(relevantRules[0].id); else setSelectedRuleId(''); }, [relevantRules]);
@@ -245,44 +257,123 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
     const handleCloseDialog = () => setSelectedArticle(null);
     const handleCloseEmailDialog = () => setEmailState({ ...emailState, open: false });
     const handleCopyToClipboard = (text: string) => navigator.clipboard.writeText(text);
+    
+    // KORREKTUR: Render-Funktion für die Filter-Steuerelemente
+    const renderFilterControls = (isMenu: boolean) => {
+         const controlWrapper = (child: React.ReactNode) => isMenu 
+            ? <Box sx={{ p: 1, width: 220 }}>{child}</Box> 
+            : child;
+        return (
+            <>
+                {isMenu && controlWrapper(
+                     <TextField
+                        variant="outlined"
+                        fullWidth
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder="Suchen..."
+                        size="small"
+                        InputProps={{
+                            startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>)
+                        }}
+                    />
+                )}
+                 {user?.regions && user.regions.length > 0 && controlWrapper(
+                    <TextField
+                        select value={selectedRegion?.id || ''}
+                        onChange={(e) => {
+                            const region = user?.regions?.find(r => r.id === e.target.value);
+                            setSelectedRegion(region || null);
+                        }}
+                        size="small" variant="outlined" sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '24px' } }}
+                        fullWidth={isMenu}
+                        label={isMenu ? "Region" : ""}
+                    >
+                        {user?.regions?.map((region) => <MenuItem key={region.id} value={region.id}><Tooltip title={region.name} placement="right"><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} /></Tooltip></MenuItem>)}
+                    </TextField>
+                )}
+            </>
+        );
+    };
 
     return (
         <WidgetPaper 
             title={
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', width: '100%' }}>
+                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'nowrap', width: '100%', overflow: 'hidden' }}>
                     {icon}
-                    <Typography variant="h6">{title}</Typography>
-                    <Chip
-                        label="Neu"
-                        size="small"
-                        variant={filterMode === 'new' ? 'filled' : 'outlined'}
-                        color="primary"
-                        clickable
-                        onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')}
-                        avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'primary.main', color: 'primary.contrastText' }}>{counts.new}</Avatar>}
-                    />
-                    <Chip
-                        label="Ungelesen"
-                        size="small"
-                        variant={filterMode === 'unread' ? 'filled' : 'outlined'}
-                        color="secondary"
-                        clickable
-                        onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')}
-                        avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{counts.unread}</Avatar>}
-                    />
+                    <Typography variant="h6" noWrap>{title}</Typography>
+                     {isMobile ? (
+                        <>
+                            <Tooltip title="Neu">
+                                <Chip
+                                    size="small"
+                                    onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')}
+                                    sx={{ 
+                                        bgcolor: filterMode === 'new' ? 'primary.main' : 'action.hover',
+                                        color: filterMode === 'new' ? 'primary.contrastText' : 'text.primary',
+                                        '& .MuiChip-avatar': { color: 'inherit !important' }
+                                    }}
+                                    avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', color: 'inherit', bgcolor: 'transparent' }}>{counts.new}</Avatar>}
+                                />
+                            </Tooltip>
+                             <Tooltip title="Ungelesen">
+                                <Chip
+                                    size="small"
+                                    onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')}
+                                     sx={{ 
+                                        bgcolor: filterMode === 'unread' ? 'secondary.main' : 'action.hover',
+                                        color: filterMode === 'unread' ? 'secondary.contrastText' : 'text.primary',
+                                        '& .MuiChip-avatar': { color: 'inherit !important' }
+                                    }}
+                                    avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', color: 'inherit', bgcolor: 'transparent' }}>{counts.unread}</Avatar>}
+                                />
+                            </Tooltip>
+                        </>
+                    ) : (
+                         <>
+                            <Chip
+                                label="Neu"
+                                size="small"
+                                variant={filterMode === 'new' ? 'filled' : 'outlined'}
+                                color="primary"
+                                clickable
+                                onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')}
+                                avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'primary.main', color: 'primary.contrastText' }}>{counts.new}</Avatar>}
+                            />
+                            <Chip
+                                label="Ungelesen"
+                                size="small"
+                                variant={filterMode === 'unread' ? 'filled' : 'outlined'}
+                                color="secondary"
+                                clickable
+                                onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')}
+                                avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{counts.unread}</Avatar>}
+                            />
+                        </>
+                    )}
                     <Box sx={{ flexGrow: 1 }} />
-                    <AnimatedSearchBar onSearch={setSearchTerm} />
-                    {user?.regions && user.regions.length > 0 && (
-                        <TextField
-                            select value={selectedRegion?.id || ''}
-                            onChange={(e) => {
-                                const region = user?.regions?.find(r => r.id === e.target.value);
-                                setSelectedRegion(region || null);
-                            }}
-                            size="small" variant="outlined" sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '24px' } }}
-                        >
-                            {user?.regions?.map((region) => <MenuItem key={region.id} value={region.id}><Tooltip title={region.name} placement="right"><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} /></Tooltip></MenuItem>)}
-                        </TextField>
+                    {isMobile ? (
+                        <>
+                            <IconButton onClick={handleOpenFilterMenu} size="small">
+                                <TuneIcon />
+                            </IconButton>
+                            <Popover
+                                open={Boolean(filterAnchorEl)}
+                                anchorEl={filterAnchorEl}
+                                onClose={handleCloseFilterMenu}
+                                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                            >
+                                <Stack spacing={1.5} sx={{ p: 1 }}>
+                                    {renderFilterControls(true)}
+                                </Stack>
+                            </Popover>
+                        </>
+                    ) : (
+                        <>
+                           <AnimatedSearchBar onSearch={setSearchTerm} />
+                           {renderFilterControls(false)}
+                        </>
                     )}
                 </Box>
             }
@@ -366,7 +457,7 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
                         <AccordionDetails sx={{ p: 1, pt: 0 }}>
                             <Grid container spacing={2}>
                                 {relevantRules.length > 1 && <Grid item xs={12}><TextField select fullWidth label="Analyse-Typ für Ihr Abo" value={selectedRuleId} onChange={(e) => setSelectedRuleId(e.target.value)} size="small"><MenuItem value=""><em>Bitte Analyse wählen</em></MenuItem>{relevantRules.map(rule => (<MenuItem key={rule.id} value={rule.id}>{rule.name}</MenuItem>))}</TextField></Grid>}
-                                <Grid item xs={12}><Autocomplete multiple freeSolo options={[]} value={keywords} onChange={(e, val) => setKeywords(val)} renderTags={(val, props) => val.map((opt, i) => <Chip label={opt} {...props({ index: i })} />)} renderInput={(params) => <TextField {...params} label={`Meine Hot Topics in ${selectedRegion?.name || ''}`} size="small" />}/></Grid>
+                                <Grid item xs={12}><Autocomplete multiple freeSolo options={[]} value={keywords} onChange={(_e, val) => setKeywords(val)} renderTags={(val, props) => val.map((opt, i) => <Chip label={opt} {...props({ index: i })} />)} renderInput={(params) => <TextField {...params} label={`Meine Hot Topics in ${selectedRegion?.name || ''}`} size="small" />}/></Grid>
                             </Grid>
                             <Button variant="contained" size="small" sx={{ mt: 2 }} startIcon={isSubmitting ? <CircularProgress size={20} color="inherit" /> : <SendIcon />} onClick={handleSubmitSubscription} disabled={isSubmitting || !selectedRuleId || !selectedRegion || keywords.length === 0}>Thema abonnieren</Button>
                             {submitSuccess && <Alert severity="success" sx={{ mt: 1, p: '0 16px' }}>{submitSuccess}</Alert>}

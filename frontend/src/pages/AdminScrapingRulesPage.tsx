@@ -44,6 +44,7 @@ interface ScrapingRule {
     scrape_after_date: string | null;
     rule_type: 'content' | 'funding';
     use_headless_browser: boolean;
+    scraping_strategy: string | null;
 }
 
 interface Category {
@@ -85,6 +86,7 @@ const initialFormState: Omit<ScrapingRule, 'id' | 'created_at' | 'updated_at' | 
     scrape_after_date: '',
     rule_type: 'content',
     use_headless_browser: false,
+    scraping_strategy: 'standard',
 };
 
 const commonDateFormats = [
@@ -99,6 +101,13 @@ const commonDateFormats = [
 
 const europeanCountries = ["EU", "Albanien", "Andorra", "Belgien", "Bosnien und Herzegowina", "Bulgarien", "Dänemark", "Deutschland", "Estland", "Finnland", "Frankreich", "Griechenland", "Irland", "Island", "Italien", "Kosovo", "Kroatien", "Lettland", "Liechtenstein", "Litauen", "Luxemburg", "Malta", "Moldau", "Monaco", "Montenegro", "Niederlande", "Nordmazedonien", "Norwegen", "Österreich", "Polen", "Portugal", "Rumänien", "San Marino", "Schweden", "Schweiz", "Serbien", "Slowakei", "Slowenien", "Spanien", "Tschechien", "Ukraine", "Ungarn", "Vatikanstadt", "Vereinigtes Königreich", "Weißrussland", "Zypern"];
 
+const scrapingStrategies = [
+    { value: 'standard', label: 'Standard (HTML/XML/Headless)' },
+    { value: 'html_embedded_json', label: 'Spezial: JSON aus HTML-Skript' },
+    { value: 'youtube_channel', label: 'YouTube: Kanal-Feed' },
+    { value: 'youtube_podcast', label: 'YouTube: Podcast-Tab' },
+    { value: 'youtube_music', label: 'YouTube: Music Playlist' },
+];
 
 const AdminScrapingRulesPage: React.FC = () => {
     const location = useLocation();
@@ -193,6 +202,7 @@ const AdminScrapingRulesPage: React.FC = () => {
             scrape_after_date: rule.scrape_after_date ? rule.scrape_after_date.split('T')[0] : '',
             rule_type: rule.rule_type || 'content',
             use_headless_browser: rule.use_headless_browser || false,
+            scraping_strategy: rule.scraping_strategy || 'standard',
         });
         setOpenDialog(true);
         setSuggestionAlert(null);
@@ -336,23 +346,30 @@ const AdminScrapingRulesPage: React.FC = () => {
                                 <TableHead>
                                     <TableRow>
                                         <TableCell sortDirection={orderBy === 'name' ? order : false}><TableSortLabel active={orderBy === 'name'} direction={order} onClick={() => handleSortRequest('name')}>Name</TableSortLabel></TableCell>
-                                        <TableCell>Typ</TableCell>
+                                        <TableCell sortDirection={orderBy === 'rule_type' ? order : false}><TableSortLabel active={orderBy === 'rule_type'} direction={order} onClick={() => handleSortRequest('rule_type')}>Typ</TableSortLabel></TableCell>
                                         <TableCell sortDirection={orderBy === 'region' ? order : false}><TableSortLabel active={orderBy === 'region'} direction={order} onClick={() => handleSortRequest('region')}>Region</TableSortLabel></TableCell>
-                                        <TableCell>URL</TableCell>
-                                        <TableCell align="center">Einträge</TableCell>
+                                        <TableCell sortDirection={orderBy === 'url_pattern' ? order : false}><TableSortLabel active={orderBy === 'url_pattern'} direction={order} onClick={() => handleSortRequest('url_pattern')}>URL</TableSortLabel></TableCell>
+                                        <TableCell align="center" sortDirection={orderBy === 'current_entry_count' ? order : false}><TableSortLabel active={orderBy === 'current_entry_count'} direction={order} onClick={() => handleSortRequest('current_entry_count')}>Einträge</TableSortLabel></TableCell>
                                         <TableCell sortDirection={orderBy === 'last_scraped_at' ? order : false}><TableSortLabel active={orderBy === 'last_scraped_at'} direction={order} onClick={() => handleSortRequest('last_scraped_at')}>Zuletzt gescrapt</TableSortLabel></TableCell>
                                         <TableCell>Aktionen</TableCell>
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
                                     {sortedAndFilteredRules.map((rule) => {
-                                        const linkTarget = rule.rule_type === 'funding'
-                                            ? '/admin/funding'
-                                            : `/admin/scraped-content?source_identifier=${rule.source_identifier}`;
+                                            const linkTarget = rule.rule_type === 'funding'
+                                                ? `/admin/funding?sourceRuleId=${rule.id}`
+                                                : `/admin/scraped-content?source_identifier=${rule.source_identifier}`;
 
                                         return (
                                             <TableRow key={rule.id} hover>
-                                                <TableCell sx={{ fontWeight: 'bold' }}>{rule.name || '-'}</TableCell>
+                                                <TableCell sx={{ fontWeight: 'bold' }}>
+                                                    {rule.name || '-'}
+                                                    {rule.scraping_strategy && rule.scraping_strategy !== 'standard' && (
+                                                        <MuiTooltip title={`Strategie: ${rule.scraping_strategy}`}>
+                                                            <Chip label="Spezial" size="small" variant="outlined" color="info" sx={{ ml: 1 }} />
+                                                        </MuiTooltip>
+                                                    )}
+                                                </TableCell>
                                                 <TableCell><Chip label={rule.rule_type || 'content'} size="small" color={rule.rule_type === 'funding' ? 'secondary' : 'default'} /></TableCell>
                                                 <TableCell>{rule.region || '-'}</TableCell>
                                                 <TableCell sx={{ wordBreak: 'break-all', maxWidth: 200 }}>
@@ -389,12 +406,12 @@ const AdminScrapingRulesPage: React.FC = () => {
                                 {suggestionAlert && <Alert severity="info" sx={{ mb: 2 }}>{suggestionAlert}</Alert>}
                             </Grid>
                             <Grid item xs={12} sm={6}><TextField name="name" label="Name der Regel" fullWidth value={formState.name} onChange={handleFormChange} margin="dense" /></Grid>
-                            <Grid item xs={12} sm={3}><TextField name="source_identifier" label="Source Identifier" fullWidth value={formState.source_identifier} onChange={handleFormChange} margin="dense" required disabled={!!editingRule} /></Grid>
-                            <Grid item xs={12} sm={3}>
+                            <Grid item xs={12} sm={6}><TextField name="source_identifier" label="Source Identifier" fullWidth value={formState.source_identifier} onChange={handleFormChange} margin="dense" required disabled={!!editingRule} /></Grid>
+                            <Grid item xs={12} sm={6}>
                                 <TextField
                                     select
                                     name="rule_type"
-                                    label="Regel-Typ"
+                                    label="Regel-Typ (Was wird gescraped?)"
                                     fullWidth
                                     value={formState.rule_type}
                                     onChange={handleFormChange}
@@ -402,6 +419,13 @@ const AdminScrapingRulesPage: React.FC = () => {
                                 >
                                     <MenuItem value="content">Standard-Inhalt</MenuItem>
                                     <MenuItem value="funding">Förderung</MenuItem>
+                                </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField select name="scraping_strategy" label="Scraping-Strategie (Wie wird gescraped?)" fullWidth value={formState.scraping_strategy} onChange={handleFormChange} margin="dense">
+                                    {scrapingStrategies.map((strategy) => (
+                                        <MenuItem key={strategy.value} value={strategy.value}>{strategy.label}</MenuItem>
+                                    ))}
                                 </TextField>
                             </Grid>
                             <Grid item xs={12}>
@@ -417,12 +441,12 @@ const AdminScrapingRulesPage: React.FC = () => {
                                     }}
                                 />
                             </Grid>
-                            <Grid item xs={12}><Typography variant="subtitle2" sx={{ mt: 1 }}>HTML-Selektoren</Typography></Grid>
+                            <Grid item xs={12}><Typography variant="subtitle2" sx={{ mt: 1 }}>HTML-Selektoren (für 'Standard'-Strategie)</Typography></Grid>
                             <Grid item xs={12}>
-                                <TextField name="content_container_selector" label="Container Selektor (für jeden einzelnen Eintrag)" fullWidth value={formState.content_container_selector} onChange={handleFormChange} margin="dense" helperText="Notwendig für 'Standard-Inhalt' und 'Förderung' bei HTML-Listen."/>
+                                <TextField name="content_container_selector" label="Container Selektor (für jeden einzelnen Eintrag)" fullWidth value={formState.content_container_selector} onChange={handleFormChange} margin="dense" />
                             </Grid>
                             <Grid item xs={12}>
-                                <TextField name="link_selector" label="Link Selektor (relativ zum Container)" fullWidth value={formState.link_selector} onChange={handleFormChange} margin="dense" helperText="Notwendig für 'Standard-Inhalt' und 'Förderung' bei HTML-Listen."/>
+                                <TextField name="link_selector" label="Link Selektor (relativ zum Container)" fullWidth value={formState.link_selector} onChange={handleFormChange} margin="dense" />
                             </Grid>
                             {formState.rule_type === 'content' && (
                                 <>
@@ -439,7 +463,7 @@ const AdminScrapingRulesPage: React.FC = () => {
                                         getOptionLabel={(option) => { const found = commonDateFormats.find(o => o.value === option); return found ? `${found.label} (${found.value})` : option; }}
                                         value={formState.date_format || ''}
                                         onInputChange={(_event, newValue) => { setFormState(prev => ({ ...prev, date_format: newValue })); }}
-                                        renderInput={(params) => (<TextField {...params} label="Datum Format (optional)" margin="dense" helperText="Wird nur für 'Standard-Inhalt' benötigt."/>)}
+                                        renderInput={(params) => (<TextField {...params} label="Datum Format (optional)" margin="dense" />)}
                                     />
                                 </Grid>
                             )}

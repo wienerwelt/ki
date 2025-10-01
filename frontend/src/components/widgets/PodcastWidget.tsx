@@ -9,7 +9,7 @@ import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt';
-import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
+import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt'; 
 import CloseIcon from '@mui/icons-material/Close';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
@@ -30,6 +30,10 @@ interface PodcastItem {
   is_trusted_source: boolean;
 }
 
+interface ActiveFilters {
+  tags: string[];
+}
+
 interface PodcastWidgetProps extends BaseWidgetProps {
   icon?: React.ReactNode;
   title: string;
@@ -41,6 +45,19 @@ const getDomain = (url: string | null | undefined): string | null => {
   if (!url) return null;
   try { return new URL(url).hostname.replace(/^www\./, ''); }
   catch { return null; }
+};
+
+// NEUE HELPER-FUNKTION: Prüft, ob eine URL direkt abspielbar ist.
+const isDirectAudioUrl = (url: string): boolean => {
+  if (!url) return false;
+  const validAudioExtensions = ['.mp3', '.m4a', '.aac', '.ogg', '.wav'];
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    // Prüft, ob der Pfad mit einer Audio-Endung aufhört (ignoriert Query-Parameter)
+    return validAudioExtensions.some(ext => pathname.endsWith(ext));
+  } catch {
+    return false;
+  }
 };
 
 const VoteComponent: React.FC<{ item: PodcastItem; onVote: (vote: 1 | -1) => void; size?: 'small' | 'medium' }>
@@ -59,7 +76,7 @@ const VoteComponent: React.FC<{ item: PodcastItem; onVote: (vote: 1 | -1) => voi
       </Typography>
       <Tooltip title="Nicht hilfreich">
         <IconButton size={size} onClick={(e) => handleVote(e, -1)} sx={{ p: 0.5 }}>
-          {item.user_vote === -1 ? <ThumbDownIcon color="error" fontSize={size} /> : <ThumbUpOffAltIcon color="action" fontSize={size} />}
+          {item.user_vote === -1 ? <ThumbDownIcon color="error" fontSize={size} /> : <ThumbDownOffAltIcon color="action" fontSize={size} />}
         </IconButton>
       </Tooltip>
     </Box>
@@ -79,6 +96,8 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
 
   const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
   const [filterMode, setFilterMode] = useState<'all' | 'new' | 'unread'>('all');
+  
+  const [activeFilters, setActiveFilters] = useState<ActiveFilters | null>(null);
 
   const [activeTrack, setActiveTrack] = useState<PodcastItem | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -88,9 +107,8 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
-    // This effect runs only when the user context changes
     if (user?.regions && user.regions.length > 0) {
-      const defaultRegion = user.regions.find(r => !!r.is_default) || null; // Null as default for "Alle"
+      const defaultRegion = user.regions.find(r => !!r.is_default) || null;
       setSelectedRegion(defaultRegion);
     }
   }, [user]);
@@ -112,28 +130,20 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
         category,
         limit: '5',
         sortBy: 'date',
-        // KORREKTUR: Sende immer den Namen der Region, nicht den Code
         region: region ? region.name : 'all',
         page: String(currentPage)
       });
       if (filter !== 'all') params.append('filter', filter);
 
       const response = await apiClient.get(`/api/data/scraped-content?${params.toString()}`, { headers: { 'x-auth-token': token } });
-
-      const validAudioExtensions = ['.mp3', '.m4a', '.aac', '.ogg', '.wav'];
-      const validItems: PodcastItem[] = (response.data?.data || []).filter((item: PodcastItem) => {
-        if (!item.original_url) return false;
-        try {
-          const pathname = new URL(item.original_url).pathname.toLowerCase();
-          return validAudioExtensions.some(ext => pathname.endsWith(ext));
-        } catch {
-          return item.original_url.toLowerCase().includes('proxy');
-        }
-      });
-
-      setItems(prev => loadMore ? [...prev, ...validItems] : validItems);
+      
+      // KORREKTUR 2: Der redundante Frontend-Filter wurde entfernt. Das Backend liefert die korrekte Liste.
+      const newItems: PodcastItem[] = response.data?.data || [];
+      setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
+      
       setCounts(response.data?.counts || { unread: 0, new: 0 });
       setTotalPages(response.data?.totalPages || 0);
+      setActiveFilters(response.data?.activeFilters || null);
 
     } catch (err: any) {
       setError(err.response?.data?.message || 'Inhalte konnten nicht geladen werden.');
@@ -144,7 +154,6 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
   }, [category]);
 
   useEffect(() => {
-    // This effect runs when filters change, triggering a new fetch
     setPage(1);
     fetchData(1, selectedRegion, filterMode);
   }, [selectedRegion, filterMode, fetchData]);
@@ -157,9 +166,16 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
   };
 
   const handlePlayPause = (item: PodcastItem) => {
+    // KORREKTUR 1: Logik zum Stoppen überlappender Audiospuren
     if (activeTrack?.id === item.id) {
+      // Bestehenden Track anhalten/fortsetzen
       setIsPlaying(!isPlaying);
     } else {
+      // Wenn ein anderer Track lief, stoppe ihn zuerst
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      // Neuen Track starten
       setProgress(0);
       setDuration(0);
       setActiveTrack(item);
@@ -195,7 +211,7 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
   const handleClosePlayer = () => {
     if (audioRef.current) {
       audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+      audioRef.current.src = ''; // Quelle leeren, um den Download zu stoppen
     }
     setIsPlaying(false);
     setActiveTrack(null);
@@ -241,42 +257,77 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
   const renderContent = () => {
     if (isLoading) return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', p: 2 }}><CircularProgress /></Box>;
     if (error) return <Alert severity="error" sx={{ m: 2 }}>{error}</Alert>;
-    if (items.length === 0) return <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>Keine Beiträge für Ihre Auswahl gefunden.</Typography>;
+    
+    if (items.length === 0) {
+      if (activeFilters && activeFilters.tags && activeFilters.tags.length > 0) {
+        return (
+          <Box sx={{ p: 2, textAlign: 'center' }}>
+            <Typography variant="body2" color="text.secondary">
+              Keine Beiträge für Ihre Auswahl gefunden.
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+              Aktiver Filter: Tag '{activeFilters.tags.join(', ')}'
+            </Typography>
+          </Box>
+        );
+      } else {
+        return (
+          <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
+            Keine Beiträge für Ihre Auswahl gefunden.
+          </Typography>
+        );
+      }
+    }
 
     return (
       <Stack spacing={1.5} sx={{ p: 1.5 }}>
-        {items.map((item) => (
-          <Card key={item.id} variant="outlined"
-            sx={{
-              bgcolor: activeTrack?.id === item.id ? 'action.selected' : 'background.default',
-              borderColor: activeTrack?.id === item.id ? 'primary.main' : 'divider',
-              transition: 'background-color 0.3s'
-            }}>
-            <CardContent sx={{ p: '12px !important' }}>
-              <Stack direction="row" spacing={1.5} alignItems="center">
-                <Tooltip title={isPlaying && activeTrack?.id === item.id ? 'Pause' : 'Abspielen'}>
-                  <IconButton onClick={() => handlePlayPause(item)} size="large" sx={{ bgcolor: 'primary.main', color: 'primary.contrastText', '&:hover': { bgcolor: 'primary.dark' } }}>
-                    {isPlaying && activeTrack?.id === item.id ? <PauseIcon /> : <PlayArrowIcon />}
-                  </IconButton>
-                </Tooltip>
-                <Box flexGrow={1}>
-                  <Typography variant="body2" sx={{ fontWeight: item.is_read ? 500 : 700, mb: 0.5 }}>{item.title}</Typography>
-                  <Stack direction="row" spacing={1.5} alignItems="center" color="text.secondary">
-                    <Typography variant="caption">
-                      {format(new Date(item.published_date), 'd. MMM yyyy', { locale: de })}
-                    </Typography>
-                    <Divider orientation="vertical" flexItem />
-                    <MuiLink href={item.original_url} target="_blank" rel="noopener noreferrer" variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }} onClick={(e) => e.stopPropagation()}>
-                      {getDomain(item.original_url)}
-                      {item.is_trusted_source && <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />}
-                    </MuiLink>
-                  </Stack>
-                </Box>
-                <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
-              </Stack>
-            </CardContent>
-          </Card>
-        ))}
+        {items.map((item) => {
+          const isPlayable = isDirectAudioUrl(item.original_url);
+          return (
+            <Card key={item.id} variant="outlined"
+              sx={{
+                bgcolor: activeTrack?.id === item.id ? 'action.selected' : 'background.default',
+                borderColor: activeTrack?.id === item.id ? 'primary.main' : 'divider',
+                transition: 'background-color 0.3s'
+              }}>
+              <CardContent sx={{ p: '12px !important' }}>
+                <Stack direction="row" spacing={1.5} alignItems="center">
+                  <Tooltip title={!isPlayable ? "Keine direkte Audio-Datei" : (isPlaying && activeTrack?.id === item.id ? 'Pause' : 'Abspielen')}>
+                    {/* Play-Button wird für nicht abspielbare URLs deaktiviert */}
+                    <span>
+                      <IconButton
+                        onClick={() => isPlayable && handlePlayPause(item)}
+                        disabled={!isPlayable}
+                        size="large"
+                        sx={{
+                          bgcolor: isPlayable ? 'primary.main' : 'action.disabledBackground',
+                          color: 'primary.contrastText',
+                          '&:hover': { bgcolor: isPlayable ? 'primary.dark' : 'action.disabledBackground' }
+                        }}
+                      >
+                        {isPlaying && activeTrack?.id === item.id ? <PauseIcon /> : <PlayArrowIcon />}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Box flexGrow={1}>
+                    <Typography variant="body2" sx={{ fontWeight: item.is_read ? 500 : 700, mb: 0.5 }}>{item.title}</Typography>
+                    <Stack direction="row" spacing={1.5} alignItems="center" color="text.secondary">
+                      <Typography variant="caption">
+                        {format(new Date(item.published_date), 'd. MMM yyyy', { locale: de })}
+                      </Typography>
+                      <Divider orientation="vertical" flexItem />
+                      <MuiLink href={item.original_url} target="_blank" rel="noopener noreferrer" variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }} onClick={(e) => e.stopPropagation()}>
+                        {getDomain(item.original_url)}
+                        {item.is_trusted_source && <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />}
+                      </MuiLink>
+                    </Stack>
+                  </Box>
+                  <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
+                </Stack>
+              </CardContent>
+            </Card>
+          );
+        })}
         {page < totalPages && (
           <Button onClick={handleLoadMore} disabled={isLoadingMore}>
             {isLoadingMore ? <CircularProgress size={24} /> : 'Mehr laden'}
@@ -290,8 +341,8 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
     <WidgetPaper
       title={
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 1.5 }}>
-          {/* Linke Gruppe: Titel und Filter */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, overflow: 'hidden' }}>
+          {/* ... (Header-Code bleibt unverändert) ... */}
+           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, overflow: 'hidden' }}>
             {icon}
             <Typography variant="h6" noWrap>{title}</Typography>
             <Chip
@@ -313,8 +364,6 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
               avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{counts.unread}</Avatar>}
             />
           </Box>
-
-          {/* Rechte Gruppe: Regionen-Auswahl */}
           <Box>
             {user?.regions && user.regions.length > 1 && (
               <TextField
@@ -381,6 +430,7 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
 
         {activeTrack && (
           <Paper sx={{ p: 2, borderTop: 1, borderColor: 'divider', mt: 'auto' }} elevation={4}>
+            {/* Das audio-Element wird nun nur einmal gerendert und seine Quelle dynamisch geändert */}
             <audio ref={audioRef} src={activeTrack.original_url} preload="metadata" />
             <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>
               <Typography variant="subtitle2" noWrap sx={{ fontWeight: 'bold' }}>{activeTrack.title}</Typography>

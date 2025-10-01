@@ -223,7 +223,7 @@ const FileManagementPage: React.FC = () => {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom>Dateiverzeichnis</Typography>
+      <Typography variant="h4" gutterBottom>Datencloud</Typography>
 
       {isUploader && businessPartner && (
         <Paper sx={{ p: 2, mb: 3 }}>

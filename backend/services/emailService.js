@@ -103,7 +103,6 @@ function buildSearchUrl(searchCriteria) {
     return `${getBaseUrl()}/funding-search?${params.toString()}`;
 }
 
-// ...
 
 // NEUE High-Level Funktion einfügen
 async function sendNewOpportunitiesNotification({ to, username, searchName, newOpportunities, searchCriteria }) {

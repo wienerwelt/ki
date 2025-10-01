@@ -1316,6 +1316,8 @@ exports.getScrapedContent = async (req, res) => {
     } = req.query;
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
+    console.log('[DEBUG] getScrapedContent: Anfrage erhalten mit Parametern:', { category, region, filter, page, limit });
+
     try {
         const userSettingsResult = await db.query(
             'SELECT article_score_min, article_score_max FROM users WHERE id = $1',
@@ -1352,6 +1354,12 @@ exports.getScrapedContent = async (req, res) => {
                 whereClauses.push(`sc.category = $${paramIndex++}`);
                 queryParams.push(category);
             }
+        }
+        
+        console.log(`[DEBUG] Prüfe, ob Kategorie '${category}' der Podcast-Kategorie entspricht.`);
+        if (category === 'fleet_podcasts') { 
+            console.log('[DEBUG] Podcast-Kategorie erkannt! Füge Audio-URL-Filter hinzu.');
+            whereClauses.push(`sc.original_url ~* '\\.(mp3|m4a|aac|ogg|wav)(\\?|$)'`);
         }
 
         if (region && region !== 'all') {
@@ -1404,6 +1412,9 @@ exports.getScrapedContent = async (req, res) => {
             paramIndex++;
         }
 
+        console.log('[DEBUG] Finale WHERE-Klauseln:', whereClauses);
+        console.log('[DEBUG] Finale Query-Parameter:', queryParams);
+
         const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
         const baseQuery = `FROM scraped_content sc LEFT JOIN sources s ON sc.original_url = s.url ${whereString}`;
 
@@ -1411,6 +1422,8 @@ exports.getScrapedContent = async (req, res) => {
         const totalResult = await db.query(countQuery, queryParams);
         const totalItems = parseInt(totalResult.rows[0].total_items, 10);
         const totalPages = Math.ceil(totalItems / limit);
+        
+        console.log(`[DEBUG] Gesamtzahl gefundener Einträge (totalItems): ${totalItems}`);
 
         const countsQuery = `
             WITH filtered_content AS (
@@ -1427,7 +1440,9 @@ exports.getScrapedContent = async (req, res) => {
             unread: parseInt(countsResult.rows[0].unread_count, 10) || 0,
             new: parseInt(countsResult.rows[0].new_count, 10) || 0,
         };
-
+        
+        console.log('[DEBUG] Berechnete Counts (im Chip angezeigt):', counts);
+        
         let orderByClause = 'ORDER BY sc.published_date DESC, sc.scraped_at DESC';
         if (sortBy === 'relevance') {
             orderByClause = 'ORDER BY sc.relevance_score DESC, sc.published_date DESC';
@@ -1454,6 +1469,8 @@ exports.getScrapedContent = async (req, res) => {
 
         const finalParams = [...queryParams, userId, parseInt(limit, 10), offset];
         const result = await db.query(dataQuery, finalParams);
+        
+        console.log(`[DEBUG] Anzahl der an das Frontend gesendeten Einträge: ${result.rows.length}`);
 
         res.json({
             source: 'Scraped Content Feed',
@@ -1462,6 +1479,7 @@ exports.getScrapedContent = async (req, res) => {
             totalPages: totalPages,
             currentPage: parseInt(page, 10),
             counts: counts,
+            activeFilters: { tags: userSavedTags } 
         });
 
     } catch (err) {
@@ -1484,6 +1502,99 @@ exports.markScrapedContentAsRead = async (req, res) => {
         res.status(500).send('Server error');
     }
 };
+
+
+
+exports.getEconomicStatistics = async (req, res) => {
+    const { statisticType, countryCode = 'AT' } = req.query;
+
+    if (!statisticType) {
+        return res.status(400).json({ ok: false, message: 'Ein "statisticType" ist erforderlich.' });
+    }
+
+    try {
+        const startDate = new Date(new Date().setFullYear(new Date().getFullYear() - 10));
+
+        const query = `
+            SELECT 
+                time_period, 
+                statistic_subtype, 
+                value, 
+                unit, 
+                source_name, 
+                source_url
+            FROM economic_statistics
+            WHERE
+                statistic_type = $1 AND
+                country_code = $2 AND
+                time_period >= $3
+            ORDER BY time_period ASC, statistic_subtype ASC;
+        `;
+        const queryParams = [statisticType, countryCode, startDate];
+        
+        const { rows } = await db.query(query, queryParams);
+
+        if (rows.length === 0) {
+            return res.json({ ok: true, data: [], subtypes: [], source: null });
+        }
+
+        // --- NEUE DATENVERARBEITUNG (PIVOTING) ---
+        // Die Daten werden von einem langen in ein breites Format umgewandelt.
+        // Bsp: Aus mehreren Zeilen pro Datum wird eine Zeile mit mehreren Spalten (Benzin, Diesel etc.)
+        const pivotedData = rows.reduce((acc, row) => {
+            const date = new Date(row.time_period).toISOString().split('T')[0];
+            if (!acc[date]) {
+                acc[date] = { date };
+            }
+            // Der Wert wird der Spalte des entsprechenden Subtyps zugeordnet
+            acc[date][row.statistic_subtype] = parseFloat(row.value);
+            return acc;
+        }, {});
+
+        const chartData = Object.values(pivotedData);
+        
+        // Eine Liste aller einzigartigen Subtypen wird für die Filter-Buttons im Frontend erstellt.
+        const subtypes = [...new Set(rows.map(r => r.statistic_subtype))];
+        const latestSourceInfo = rows[rows.length - 1];
+
+        res.json({
+            ok: true,
+            data: chartData,      // Die umgewandelten Daten für das Diagramm
+            subtypes: subtypes,   // Die Liste der gefundenen Subtypen
+            source: {
+                name: latestSourceInfo.source_name,
+                url: latestSourceInfo.source_url
+            }
+        });
+
+    } catch (error) {
+        console.error('Fehler beim Abrufen der Wirtschaftsstatistiken:', error);
+        res.status(500).json({ ok: false, message: 'Serverfehler beim Abrufen der Statistikdaten.' });
+    }
+};
+
+
+exports.getUniqueStatCountries = async (req, res) => {
+    const { statisticType } = req.query;
+    if (!statisticType) {
+        return res.status(400).json({ message: 'A statisticType is required.' });
+    }
+    try {
+        const query = `
+            SELECT DISTINCT es.country_code as code, r.name
+            FROM economic_statistics es
+            JOIN regions r ON es.country_code = r.code
+            WHERE es.statistic_type = $1
+            ORDER BY r.name ASC;
+        `;
+        const result = await db.query(query, [statisticType]);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching unique statistic countries:', err.message);
+        res.status(500).json({ message: 'Serverfehler beim Abrufen der Länderliste.' });
+    }
+};
+
 
 exports.getActiveAdvertisement = async (req, res) => {
     const { business_partner_id } = req.user;

@@ -3,15 +3,11 @@ const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 const sanitizeHtml = require('sanitize-html');
-const dns = require('dns'); // Node.js DNS-Modul importieren
-const util = require('util'); // Node.js Utility-Modul importieren
-
-// dns.lookup in eine Promise-basierte Funktion umwandeln für async/await
+const dns = require('dns');
+const util = require('util');
 const dnsLookup = util.promisify(dns.lookup);
 
-// @desc    Alle genehmigten Quellen abrufen
-// @route   GET /api/sources
-// @access  Public
+
 exports.getAllApprovedSources = async (req, res) => {
     const { category, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
@@ -28,10 +24,20 @@ exports.getAllApprovedSources = async (req, res) => {
         `;
         const queryParams = [];
 
-        if (category && isValidUUID(category)) {
-            queryParams.push(category);
-            query += ` AND s.category_id = $${queryParams.length}`;
+        // --- KORREKTUR START ---
+        // Die Logik wird erweitert, um sowohl UUIDs als auch Kategorienamen zu akzeptieren.
+        if (category) {
+            if (isValidUUID(category)) {
+                // Fall 1: Eine technische UUID wird übergeben (z.B. für interne Links)
+                queryParams.push(category);
+                query += ` AND s.category_id = $${queryParams.length}`;
+            } else {
+                // Fall 2: Ein Kategoriename wird übergeben (der Normalfall vom Frontend-Filter)
+                queryParams.push(category);
+                query += ` AND c.name ILIKE $${queryParams.length}`; // ILIKE für Groß-/Kleinschreibung-unabhängigen Vergleich
+            }
         }
+        // --- KORREKTUR ENDE ---
 
         query += ` ORDER BY s.average_rating DESC, s.vote_count DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
         queryParams.push(limit, offset);
@@ -156,9 +162,8 @@ exports.createSource = async (req, res) => {
     }
 };
 
-// @desc    Für eine Quelle abstimmen
-// @route   POST /api/sources/:id/vote
-// @access  Private (auth)
+
+
 exports.voteOnSource = async (req, res) => {
     const { id: sourceId } = req.params;
     if (!isValidUUID(sourceId)) return res.status(400).json({ message: 'Invalid source ID format.' });
@@ -174,33 +179,40 @@ exports.voteOnSource = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // 1. Stimme einfügen (Constraint verhindert doppelte Stimmen)
+        // NEU: Den Namen (URL) der Quelle für die Beschreibung abrufen
+        const sourceRes = await client.query('SELECT url FROM sources WHERE id = $1', [sourceId]);
+        if (sourceRes.rows.length === 0) {
+            return res.status(404).json({ message: 'Source not found.' });
+        }
+        const sourceName = sourceRes.rows[0].url;
+        const description = `Punkte für Abstimmung über "${sourceName}" erhalten`;
+
+        // Log-Eintrag in die neue Tabelle einfügen
         await client.query(
-            'INSERT INTO source_votes (id, source_id, user_id, rating, comment) VALUES ($1, $2, $3, $4, $5)',
-            [uuidv4(), sourceId, userId, rating, comment || null]
+            `INSERT INTO user_score_logs (id, reference_id, user_id, rating, comment, points_change, action_type, description) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [uuidv4(), sourceId, userId, rating, comment || null, 1, 'SOURCE_VOTE', description] // NEU: Dynamische Beschreibung
         );
 
-        // 2. Dem abstimmenden Nutzer +1 Punkt geben
+        // Dem abstimmenden Nutzer +1 Punkt geben
         await client.query('UPDATE users SET contribution_score = contribution_score + 1 WHERE id = $1', [userId]);
 
-        // 3. average_rating (gewichtet) und vote_count in der 'sources' Tabelle aktualisieren
+        // average_rating und vote_count in der 'sources' Tabelle aktualisieren
         await client.query(
             `UPDATE sources s
              SET
-                vote_count = (SELECT COUNT(*) FROM source_votes WHERE source_id = s.id),
+                vote_count = (SELECT COUNT(*) FROM user_score_logs WHERE reference_id = s.id),
                 average_rating = (
                     SELECT
-                        -- Berechne die Summe von (Bewertung * Gewicht)
-                        SUM(sv.rating * (1 + u.contribution_score / 100.0))
+                        SUM(usl.rating * (1 + u.contribution_score / 100.0))
                         /
-                        -- Teile sie durch die Summe der Gewichte
                         SUM(1 + u.contribution_score / 100.0)
                     FROM
-                        source_votes sv
+                        user_score_logs usl
                     JOIN
-                        users u ON sv.user_id = u.id
+                        users u ON usl.user_id = u.id
                     WHERE
-                        sv.source_id = s.id
+                        usl.reference_id = s.id
                 )
              WHERE
                 s.id = $1`,
@@ -213,10 +225,10 @@ exports.voteOnSource = async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error voting on source:', err.message);
-        if (err.code === '23505') { // unique_user_vote_per_source
+        if (err.code === '23505') { 
             return res.status(409).json({ message: 'You have already voted on this source.' });
         }
-         if (err.code === '23503') { // source_id not found
+         if (err.code === '23503') { 
             return res.status(404).json({ message: 'Source not found.' });
         }
         res.status(500).send('Server error');
@@ -226,9 +238,6 @@ exports.voteOnSource = async (req, res) => {
 };
 
 
-// @desc    Eine Quelle melden
-// @route   POST /api/sources/:id/report
-// @access  Private (auth)
 exports.reportSource = async (req, res) => {
     const { id: sourceId } = req.params;
     if (!isValidUUID(sourceId)) return res.status(400).json({ message: 'Invalid source ID format.' });

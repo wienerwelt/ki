@@ -27,10 +27,16 @@ interface ServiceStatus {
     version?: string;
     error?: string;
 }
+
 interface HealthStatus {
     postgres: ServiceStatus;
     redis: ServiceStatus;
-    server: { uptime: string; memoryUsage: { rss: number } };
+    server: {
+        uptime: string;
+        memoryUsage: { rss: number };
+        currentTime?: string;
+        version?: string;
+    };
     workers: { [key: string]: ServiceStatus };
 }
 
@@ -170,12 +176,12 @@ const AdminMonitorPage: React.FC = () => {
     const sortedLogs = useMemo(() => { return [...logs].sort(getComparator(order, orderBy)); }, [logs, order, orderBy]);
     const formatDate = (dateString: string) => new Date(dateString).toLocaleString('de-AT', { dateStyle: 'short', timeStyle: 'medium' });
 
-    const handleOpenJobQueue = () => {
-        const apiUrl = import.meta.env.VITE_API_URL || ''; 
-        window.open(`${apiUrl}/api/admin/monitor/jobs-auth`, '_blank');
-    };
+const handleOpenJobQueue = () => {
+    const apiUrl = import.meta.env.VITE_API_URL || '';
+    window.open(`${apiUrl}/api/admin/monitor/jobs-auth`, '_blank');
+};
 
-    // --- HEALTH WIDGET RENDER-FUNKTION ---
+
     const renderHealthWidget = () => {
         if (isHealthLoading && !healthData) {
             return <Paper sx={{p: 2, mb: 3}}><CircularProgress size={20} /></Paper>;
@@ -201,21 +207,22 @@ const AdminMonitorPage: React.FC = () => {
                     <Grid container spacing={2} alignItems="center">
                         <Grid item xs={12} sm={4} md={3}><Typography component="span">PostgreSQL: <StatusChip service={healthData.postgres} /></Typography></Grid>
                         <Grid item xs={12} sm={4} md={3}><Typography component="span">Redis: <StatusChip service={healthData.redis} /></Typography></Grid>
-                        
-                        {/* KORREKTUR: Server Uptime und Memory wieder hinzugefügt */}
                         <Grid item xs={12} sm={4} md={3}><Typography>Server Uptime: {healthData.server.uptime}</Typography></Grid>
-                        <Grid item xs={12} sm={4} md={3}><Typography>Memory: {(healthData.server.memoryUsage.rss / 1024 / 1024).toFixed(2)} MB</Typography></Grid>
-                        
-                        {/* Dynamische Anzeige der Worker-Status */}
+                        <Grid item xs={12} sm={4} md={3}><Typography>Memory: {(healthData.server.memoryUsage.rss / 1024 / 1024).toFixed(2)} MB</Typography></Grid>                      
+                        {healthData.server.currentTime && (
+                            <Grid item xs={12} sm={4} md={3}>
+                                <Typography>Server-Zeit: {new Date(healthData.server.currentTime).toLocaleString('de-AT')}</Typography>
+                            </Grid>
+                        )}
                         {Object.entries(healthData.workers || {}).map(([name, status]) => (
-                             <Grid item xs={12} sm={4} md={3} key={name}><Typography component="span">{name}: <StatusChip service={status} /></Typography></Grid>
+                            <Grid item xs={12} sm={4} md={3} key={name}><Typography component="span">{name}: <StatusChip service={status} /></Typography></Grid>
                         ))}
                     </Grid>
                 )}
             </Paper>
         );
     };
-    // --- HEALTH WIDGET RENDER-FUNKTION ENDE ---
+
 
     return (
         <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>

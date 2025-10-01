@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Container, Typography, Box, TextField, Button, Grid, Paper, CircularProgress,
   Alert, Snackbar, Tooltip, ToggleButton, ToggleButtonGroup, FormControlLabel, Switch,
-  FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, Chip, Autocomplete
+  FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, Chip, Autocomplete, useTheme, useMediaQuery
 } from '@mui/material';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import apiClient from '../apiClient';
 import { useTranslation } from 'react-i18next';
 import posthog from 'posthog-js';
+import ContributionHistoryModal from '../components/ContributionHistoryModal';
 
 type ScoreFilter = 'all' | 'balanced' | 'positive';
 interface FundingCategory { id: number; name: string; }
@@ -18,11 +19,11 @@ interface FundingCategory { id: number; name: string; }
 const ProfilePage: React.FC = () => {
   const { t } = useTranslation();
   const { user, updateUser, themeMode, setThemeMode, language, setLanguage } = useAuth();
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
-
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [organizationName, setOrganizationName] = useState('');
@@ -30,14 +31,12 @@ const ProfilePage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [scoreFilter, setScoreFilter] = useState<ScoreFilter>('all');
-
   const [userTags, setUserTags] = useState<string[]>([]);
   const [allAvailableTags, setAllAvailableTags] = useState<string[]>([]);
   const [tagsLoading, setTagsLoading] = useState(true);
-  
   const [allFundingCategories, setAllFundingCategories] = useState<FundingCategory[]>([]);
   const [userFundingCategoryIds, setUserFundingCategoryIds] = useState<number[]>([]);
-
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [newsletterOptIn, setNewsletterOptIn] = useState<boolean>(false);
   const isDemoUser = user?.role === 'demo';
 
@@ -102,6 +101,7 @@ const ProfilePage: React.FC = () => {
       if (scoreFilter === 'positive') articleScoreMin = 1;
       else if (scoreFilter === 'balanced') articleScoreMin = 0;
 
+      // Das newsletter_opt_in wird hier bereits korrekt mitgesendet
       const profileData = {
         first_name: firstName, lastName, organization_name: organizationName, linkedin_url: linkedinUrl,
         password: password || undefined,
@@ -156,20 +156,9 @@ const ProfilePage: React.FC = () => {
     setLanguage(event.target.value as 'de' | 'en');
   };
 
-  const handleNewsletterToggle = async (_event: React.ChangeEvent<HTMLInputElement>, checked: boolean) => {
-    if (isDemoUser || !user?.email) return;
+  const handleNewsletterToggle = (_event: React.ChangeEvent<HTMLInputElement>, checked: boolean) => {
+    if (isDemoUser) return;
     setNewsletterOptIn(checked);
-    try {
-      if (checked) {
-        await apiClient.post('/api/newsletter/subscribe', { email: user.email });
-        setSnackbar({ open: true, message: t('profile.newsletterSubscribeSuccess') });
-      } else {
-        await apiClient.post('/api/newsletter/unsubscribe', { email: user.email });
-        setSnackbar({ open: true, message: t('profile.newsletterUnsubscribeSuccess') });
-      }
-    } catch (e: any) {
-      setSnackbar({ open: true, message: e?.response?.data?.message || t('profile.newsletterActionError')});
-    }
   };
 
   if (loading || !user) {
@@ -233,15 +222,37 @@ const ProfilePage: React.FC = () => {
                     />
                 )}
             </Grid>
-
-            {/* ... (restliche Grid-Items für Einstellungen, Passwort etc. bleiben unverändert) ... */}
             <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.dashboardSettings')}</Typography></Grid>
-            <Grid item xs={12}>
+<Grid item xs={12}>
               <Typography variant="body2" color="text.secondary" gutterBottom>{t('profile.articleQuality')}</Typography>
-              <ToggleButtonGroup value={scoreFilter} exclusive onChange={handleScoreFilterChange} aria-label="Artikel-Score Filter" disabled={isDemoUser}>
-                <ToggleButton value="all" aria-label="alles anzeigen"><Tooltip title={t('profile.tooltipAll')}><ThumbDownIcon sx={{ mr: 1 }} /></Tooltip>{t('profile.qualityAll')}</ToggleButton>
-                <ToggleButton value="balanced" aria-label="ausgeglichen und besser"><Tooltip title={t('profile.tooltipBalanced')}><RemoveCircleOutlineIcon sx={{ mr: 1 }} /></Tooltip>{t('profile.qualityBalanced')}</ToggleButton>
-                <ToggleButton value="positive" aria-label="nur positive"><Tooltip title={t('profile.tooltipHelpful')}><ThumbUpIcon sx={{ mr: 1 }} /></Tooltip>{t('profile.qualityHelpful')}</ToggleButton>
+              <ToggleButtonGroup
+                value={scoreFilter}
+                exclusive
+                onChange={handleScoreFilterChange}
+                aria-label="Artikel-Score Filter"
+                disabled={isDemoUser}
+                // NEU: Passt die Ausrichtung und Breite an die Bildschirmgröße an
+                orientation={isMobile ? 'vertical' : 'horizontal'}
+                fullWidth={isMobile}
+              >
+                <ToggleButton value="all" aria-label="alles anzeigen">
+                  <Tooltip title={t('profile.tooltipAll')}>
+                    <ThumbDownIcon sx={{ mr: 1 }} />
+                  </Tooltip>
+                  {t('profile.qualityAll')}
+                </ToggleButton>
+                <ToggleButton value="balanced" aria-label="ausgeglichen und besser">
+                  <Tooltip title={t('profile.tooltipBalanced')}>
+                    <RemoveCircleOutlineIcon sx={{ mr: 1 }} />
+                  </Tooltip>
+                  {t('profile.qualityBalanced')}
+                </ToggleButton>
+                <ToggleButton value="positive" aria-label="nur positive">
+                  <Tooltip title={t('profile.tooltipHelpful')}>
+                    <ThumbUpIcon sx={{ mr: 1 }} />
+                  </Tooltip>
+                  {t('profile.qualityHelpful')}
+                </ToggleButton>
               </ToggleButtonGroup>
             </Grid>
 
@@ -253,7 +264,15 @@ const ProfilePage: React.FC = () => {
             <Grid item xs={12} sm={6}><TextField label={t('profile.email')} fullWidth value={user.email} disabled /></Grid>
             <Grid item xs={12} sm={6}><TextField label={t('profile.role')} fullWidth value={user.role} disabled /></Grid>
             <Grid item xs={12} sm={6}><TextField label={t('profile.membershipLevel')} fullWidth value={user.membership_level || 'Kein Level'} disabled/></Grid>
-            <Grid item xs={12} sm={6}><TextField label={t('profile.communityPoints')} fullWidth value={user.contribution_score || 0} disabled/></Grid>
+      <Grid item xs={12} sm={6}>
+        <Paper variant="outlined" sx={{ p: '13.5px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+            <Box>
+                <Typography variant="caption" color="text.secondary">Community-Punkte</Typography>
+                <Typography variant="body1">{user.contribution_score || 0}</Typography>
+            </Box>
+            <Button size="small" onClick={() => setHistoryModalOpen(true)}>Verlauf</Button>
+        </Paper>
+      </Grid>
             <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.changePassword')}</Typography></Grid>
             <Grid item xs={12} sm={6}><TextField type="password" label={t('profile.newPassword')} fullWidth value={password} onChange={(e) => setPassword(e.target.value)} disabled={isDemoUser}/></Grid>
             <Grid item xs={12} sm={6}><TextField type="password" label={t('profile.confirmPassword')} fullWidth value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} disabled={isDemoUser}/></Grid>
@@ -263,6 +282,11 @@ const ProfilePage: React.FC = () => {
         </Box>
       </Paper>
       <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={() => setSnackbar({ ...snackbar, open: false })} message={snackbar.message} />
+      <ContributionHistoryModal 
+        open={historyModalOpen} 
+        onClose={() => setHistoryModalOpen(false)} 
+        currentUserScore={user.contribution_score || 0}
+      />        
     </Container>
   );
 };

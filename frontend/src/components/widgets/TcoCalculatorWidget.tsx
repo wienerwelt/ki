@@ -8,6 +8,12 @@ import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import PieChartIcon from '@mui/icons-material/PieChart';
+import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
+import EvStationIcon from '@mui/icons-material/EvStation';
+import PowerIcon from '@mui/icons-material/Power';
+import AirIcon from '@mui/icons-material/Air';
+import PropaneTankIcon from '@mui/icons-material/PropaneTank';
+import Tooltip from '@mui/material/Tooltip';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
@@ -23,6 +29,15 @@ interface VehicleInputState {
   annualMileage: string; residualValue: string; fuelConsumption: string; fuelPrice: string; electricConsumption: string;
   electricPrice: string; electricShare: number; insurance: string; taxes: string; maintenance: string;
 }
+
+const driveTypeIcons: { [key in DriveType]: { icon: React.ReactElement; tooltip: string } } = {
+  'Benzin': { icon: <LocalGasStationIcon />, tooltip: 'Benzin' },
+  'Diesel': { icon: <LocalGasStationIcon />, tooltip: 'Diesel' },
+  'Elektro': { icon: <EvStationIcon />, tooltip: 'Elektro' },
+  'Plugin Hybrid': { icon: <PowerIcon />, tooltip: 'Plugin Hybrid' },
+  'Wasserstoff': { icon: <AirIcon />, tooltip: 'Wasserstoff' },
+  'Gas': { icon: <PropaneTankIcon />, tooltip: 'Gas (LPG/CNG)' },
+};
 
 interface TcoResult {
   vehicleName: string; totalTco: number; costPerMonth: number; costPerKm: number;
@@ -258,11 +273,21 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
         {vehicles.map((vehicle, index) => (
           <Grid item xs={12} md={vehicles.length > 1 ? 6 : 12} key={vehicle.id}>
             <TextField label={`Bezeichnung`} value={vehicle.name} onChange={(e) => handleInputChange(index, 'name', e.target.value)} fullWidth size="small" />
-            <ToggleButtonGroup value={vehicle.driveType} exclusive fullWidth size="small" sx={{ mt: 2 }}
-              onChange={(_, val) => { if (val) handleInputChange(index, 'driveType', val); }}>
-              {['Benzin', 'Diesel', 'Elektro', 'Plugin Hybrid', 'Wasserstoff', 'Gas'].map(type =>
-                <ToggleButton key={type} value={type as DriveType}>{type}</ToggleButton>
-              )}
+            <ToggleButtonGroup
+              value={vehicle.driveType}
+              exclusive
+              fullWidth
+              size="small"
+              sx={{ mt: 2 }}
+              onChange={(_, val) => { if (val) handleInputChange(index, 'driveType', val); }}
+            >
+              {Object.entries(driveTypeIcons).map(([type, { icon, tooltip }]) => (
+                <Tooltip title={tooltip} key={type}>
+                  <ToggleButton value={type as DriveType}>
+                    {icon}
+                  </ToggleButton>
+                </Tooltip>
+              ))}
             </ToggleButtonGroup>
             <TextField label="Kaufpreis" type="number" value={vehicle.purchasePrice} onChange={(e) => handleInputChange(index, 'purchasePrice', e.target.value)} fullWidth margin="dense" size="small" InputProps={{ endAdornment: <InputAdornment position="end">€</InputAdornment> }} />
             <TextField label="Förderungen / Bonus" type="number" value={vehicle.subsidy} onChange={(e) => handleInputChange(index, 'subsidy', e.target.value)} fullWidth margin="dense" size="small" InputProps={{ endAdornment: <InputAdornment position="end">€</InputAdornment> }} />

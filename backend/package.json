@@ -50,9 +50,12 @@
     "papaparse": "^5.5.3",
     "pg": "^8.11.5",
     "puppeteer": "^24.22.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "rate-limit-redis": "^4.2.2",
     "sanitize-html": "^2.17.0",
     "uuid": "^11.1.0",
+    "xlsx": "^0.18.5",
     "xml2js": "^0.6.2",
     "zxcvbn": "^4.4.2"
   },

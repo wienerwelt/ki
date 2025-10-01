@@ -33,12 +33,14 @@ exports.getAllScrapingRules = async (req, res) => {
     }
 };
 
+
 exports.createScrapingRule = async (req, res) => {
     const {
         name, source_identifier, url_pattern, content_container_selector, title_selector,
         date_selector, description_selector, link_selector, thumbnail_selector,
         date_format, category_default, is_active, region, schedule, scrape_after_date,
-        rule_type // <-- HINZUGEFÜGT: rule_type aus dem Request-Body lesen
+        rule_type, use_headless_browser,
+        scraping_strategy // NEU
     } = req.body;
 
     if (!source_identifier || !url_pattern || !category_default) {
@@ -48,16 +50,19 @@ exports.createScrapingRule = async (req, res) => {
     try {
         const newRuleRes = await db.query(
             `INSERT INTO scraping_rules (
-                id, name, source_identifier, url_pattern, content_container_selector, title_selector, 
-                date_selector, description_selector, link_selector, thumbnail_selector, date_format, 
-                category_default, is_active, region, schedule, scrape_after_date, rule_type
+                id, name, source_identifier, url_pattern, content_container_selector, title_selector,
+                date_selector, description_selector, link_selector, thumbnail_selector, date_format,
+                category_default, is_active, region, schedule, scrape_after_date, rule_type, 
+                use_headless_browser, scraping_strategy
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`, // ANGEPASST
             [
                 uuidv4(), name, source_identifier, url_pattern, content_container_selector, title_selector,
                 date_selector, description_selector, link_selector, thumbnail_selector,
                 date_format, category_default, is_active, region, schedule, scrape_after_date,
-                rule_type || 'content' // <-- HINZUGEFÜGT: rule_type in die DB einfügen
+                rule_type || 'content',
+                use_headless_browser || false,
+                scraping_strategy || 'standard' // NEU
             ]
         );
         const newRule = newRuleRes.rows[0];
@@ -81,7 +86,8 @@ exports.updateScrapingRule = async (req, res) => {
         name, source_identifier, url_pattern, content_container_selector, title_selector,
         date_selector, description_selector, link_selector, thumbnail_selector,
         date_format, category_default, is_active, region, schedule, scrape_after_date,
-        rule_type // <-- HINZUGEFÜGT: rule_type aus dem Request-Body lesen
+        rule_type, use_headless_browser,
+        scraping_strategy // NEU
     } = req.body;
 
     try {
@@ -89,14 +95,17 @@ exports.updateScrapingRule = async (req, res) => {
             `UPDATE scraping_rules SET
              name = $1, source_identifier = $2, url_pattern = $3, content_container_selector = $4,
              title_selector = $5, date_selector = $6, description_selector = $7, link_selector = $8,
-             thumbnail_selector = $9, date_format = $10, category_default = $11, is_active = $12, 
-             region = $13, schedule = $14, scrape_after_date = $15, rule_type = $16, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $17 RETURNING *`,
+             thumbnail_selector = $9, date_format = $10, category_default = $11, is_active = $12,
+             region = $13, schedule = $14, scrape_after_date = $15, rule_type = $16,
+             use_headless_browser = $17, scraping_strategy = $18, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $19 RETURNING *`, // ANGEPASST
             [
                 name, source_identifier, url_pattern, content_container_selector, title_selector,
                 date_selector, description_selector, link_selector, thumbnail_selector,
                 date_format, category_default, is_active, region, schedule, scrape_after_date,
-                rule_type || 'content', // <-- HINZUGEFÜGT: rule_type in der DB aktualisieren
+                rule_type || 'content',
+                use_headless_browser || false,
+                scraping_strategy || 'standard', // NEU
                 id
             ]
         );
@@ -113,7 +122,7 @@ exports.updateScrapingRule = async (req, res) => {
     }
 };
 
-// ... (der Rest der Datei bleibt unverändert)
+
 
 exports.deleteScrapingRule = async (req, res) => {
     const { id } = req.params;
