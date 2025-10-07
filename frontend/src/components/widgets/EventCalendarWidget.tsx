@@ -15,6 +15,7 @@ import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import DownloadIcon from '@mui/icons-material/Download';
 import ShareIcon from '@mui/icons-material/Share';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
+import { useNavigate } from 'react-router-dom'; // HINZUGEFÜGT
 
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
@@ -65,6 +66,7 @@ interface EventData {
 interface ShareState { expanded: boolean; loading: boolean; error: string | null; success: string | null; recipientEmail: string; }
 
 const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey }) => {
+  const navigate = useNavigate(); // HINZUGEFÜGT
   const { user } = useAuth();
   const { showSnackbar } = useSnackbar();
   const [allEvents, setAllEvents] = useState<EventData[]>([]);
@@ -260,28 +262,56 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({ onDelete, wid
         ) : error ? ( <Alert severity="error">{error}</Alert>
         ) : Object.keys(filteredAndGrouped).length === 0 ? ( <Typography sx={{ textAlign: 'center', p: 3, color: 'text.secondary' }}>Keine Events für Ihre Auswahl gefunden.</Typography>
         ) : ( <Box sx={{ maxHeight: { xs: 'none', sm: 420 }, overflowY: { xs: 'visible', sm: 'auto' } }}><List sx={{ p: 0 }}>{Object.entries(filteredAndGrouped).map(([dateKey, events]) => (<Box key={dateKey} sx={{ mb: 2 }}>{events.map(e => { const d = new Date(e.date); const days = daysUntil(e.date); const dayString = d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: 'short' }); return ( <ListItem key={e.id} sx={{ display: 'block', p: 1.5, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }} onClick={() => handleSelectEvent(e)}><Stack spacing={1}><Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><Box sx={{ bgcolor: 'primary.main', color: 'primary.contrastText', px: 1, py: 0.5, borderRadius: 1 }}><Typography variant="body2" sx={{ fontWeight: 'bold' }}>{dayString}</Typography></Box><Typography variant="caption" color="text.secondary">{days > 0 ? `in ${days} Tagen` : days === 0 ? 'Heute' : `vor ${Math.abs(days)} Tagen`}</Typography></Box>
-                                <ListItemText primary={<Typography variant="body1" sx={{ fontWeight: e.is_read ? 'normal' : 'bold' }}>{e.title}</Typography>} secondaryTypographyProps={{ component: 'div' }} secondary={<Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 0.5 }}><ParticipantsBadges yes={e.participants} maybe={e.maybeParticipants} />{(e.url || e.full_text) && (<><Divider orientation="vertical" flexItem /><MuiLink href={e.url} target="_blank" rel="noopener" variant="caption" onClick={(ev) => ev.stopPropagation()} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary' }}>
-    {e.full_text || getDomainSafely(e.url)}
-    {e.is_trusted_source && (
-        <Tooltip title="Geprüfte Quelle">
-            <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
-        </Tooltip>
-    )}
-</MuiLink></>)}</Stack>} />
+                                <ListItemText primary={<Typography variant="body1" sx={{ fontWeight: e.is_read ? 'normal' : 'bold' }}>{e.title}</Typography>} secondaryTypographyProps={{ component: 'div' }} secondary={<Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 0.5 }}>
+                                    <ParticipantsBadges yes={e.participants} maybe={e.maybeParticipants} />
+                                    {(e.url || e.full_text) && (
+                                        <>
+                                            <Divider orientation="vertical" flexItem />
+                                            <MuiLink href={e.url} target="_blank" rel="noopener" variant="caption" onClick={(ev) => ev.stopPropagation()} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                                {e.full_text || getDomainSafely(e.url)}
+                                            </MuiLink>
+                                            {e.is_trusted_source && (
+                                                <Tooltip title="Info zu geprüften Quellen">
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={(ev) => {
+                                                            ev.stopPropagation();
+                                                            navigate('/trusted-sources');
+                                                        }}
+                                                        sx={{ p: 0 }}
+                                                    >
+                                                        <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                                                    </IconButton>
+                                                </Tooltip>
+                                            )}
+                                        </>
+                                    )}
+                                </Stack>} />
                         </Stack></ListItem> ); })}</Box>))}</List></Box> )}
       </Stack>
       <Modal open={!!selectedEvent} onClose={() => setSelectedEvent(null)}><Paper sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: { xs: '90%', sm: 500 }, display: 'flex', flexDirection: 'column', maxHeight: '90vh', outline: 'none', borderRadius: 2 }}><IconButton onClick={() => setSelectedEvent(null)} sx={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}><CloseIcon /></IconButton>
           <Box sx={{ p: 3, flexGrow: 1, overflowY: 'auto' }}>
             <Stack direction="row" spacing={2} alignItems="center" mb={2}><Box sx={{ textAlign: 'center', p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}><Typography variant="h4" component="div" sx={{ fontWeight: 'bold' }}>{selectedEvent && new Date(selectedEvent.date).toLocaleDateString('de-DE', { day: '2-digit' })}</Typography><Typography variant="body1" component="div">{selectedEvent && new Date(selectedEvent.date).toLocaleDateString('de-DE', { month: 'short' }).toUpperCase()}</Typography></Box><Box><Typography variant="h6" component="h2">{selectedEvent?.title}</Typography>{selectedEvent && (<Typography variant="body2" color="text.secondary">{(() => { const d = daysUntil(selectedEvent.date); return d > 0 ? `in ${d} Tagen` : d === 0 ? 'Heute' : 'Vergangen'; })()}</Typography>)}</Box></Stack>
             <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2, color: 'text.secondary' }}>{selectedEvent?.region && (<Tooltip title={selectedEvent.region}><span><Flag code={(availableRegions.find(r => r.name === selectedEvent.region)?.code) || 'EU'} alt={selectedEvent.region} size={24}/></span></Tooltip>)}<ParticipantsBadges yes={selectedEvent?.participants ?? 0} maybe={selectedEvent?.maybeParticipants} /></Stack>
-            {(selectedEvent?.full_text || selectedEvent?.url) && (<Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 2 }}>
-    Quelle: {selectedEvent.full_text || getDomainSafely(selectedEvent.url)}
-    {selectedEvent?.is_trusted_source && (
-        <Tooltip title="Geprüfte Quelle">
-            <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main', ml: 0.5 }} />
-        </Tooltip>
-    )}
-</Typography>)}
+            {(selectedEvent?.full_text || selectedEvent?.url) && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 2 }}>
+                Quelle: {selectedEvent.full_text || getDomainSafely(selectedEvent.url)}
+                {selectedEvent?.is_trusted_source && (
+                    <Tooltip title="Info zu geprüften Quellen">
+                        <IconButton
+                            size="small"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                navigate('/trusted-sources');
+                            }}
+                            sx={{ p: 0, ml: 0.5 }}
+                        >
+                            <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                        </IconButton>
+                    </Tooltip>
+                )}
+            </Typography>
+            )}
             {selectedEvent?.summary && (<Typography sx={{ my: 2, whiteSpace: 'pre-wrap' }}>{selectedEvent.summary}</Typography>)}
             {selectedEvent?.url && (<Button fullWidth size="small" startIcon={<OpenInNewIcon />} href={selectedEvent.url} target="_blank" rel="noopener" variant="outlined">Anmeldung & Infos</Button>)}
           </Box>

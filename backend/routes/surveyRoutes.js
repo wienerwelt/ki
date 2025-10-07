@@ -10,6 +10,7 @@ router.use(authMiddleware);
 // Routen für das Dashboard-Widget
 router.get('/active', surveyController.getActiveSurveysForWidget);
 router.post('/submit', surveyController.submitSurveyResponse);
+router.get('/archive', surveyController.getArchivedSurveysForUser);
 
 // Routen für den Admin-Bereich (erfordern Admin- oder Assistenz-Rolle)
 const isBpManager = (req, res, next) => {

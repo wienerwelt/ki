@@ -8,6 +8,7 @@ import {
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
@@ -18,6 +19,7 @@ import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import ScienceIcon from '@mui/icons-material/Science';
 import OpacityIcon from '@mui/icons-material/Opacity';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
@@ -42,12 +44,18 @@ interface StationData {
   last_e5?: number | string | null; last_e10?: number | string | null;
   last_status?: string | null; last_price_ts?: string | null;
   provider?: string | null;
+  is_trusted_source?: boolean;
 }
 
 const fuelTypeConfig: { [key in FuelType]: { color: 'primary' | 'success' | 'warning', icon: React.ElementType, label: string } } = {
   diesel: { color: 'primary', icon: LocalGasStationIcon, label: 'Diesel' },
   e5: { color: 'success', icon: OpacityIcon, label: 'Super E5' },
   e10: { color: 'warning', icon: ScienceIcon, label: 'Super E10' },
+};
+
+const providerUrls: { [key: string]: string } = {
+  'Tankerkönig': 'https://www.tankerkoenig.de/',
+  'E-Control Austria': 'https://www.e-control.at/spritpreise'
 };
 
 const getProviderByCountryCode = (code?: CountryCode | null): string => {
@@ -70,6 +78,7 @@ L.Icon.Default.mergeOptions({
 const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
   onDelete, widgetId, isRemovable, icon, title, widgetTypeKey
 }) => {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { showSnackbar } = useSnackbar();
 
@@ -129,7 +138,7 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
     
     stationsToShow.forEach((s) => {
         if (s.lat && s.lng) {
-            const priceRaw = s[`last_${fuelType}`];
+            const priceRaw = s[`last_${fuelType}`] ?? null;
             const price = typeof priceRaw === 'string' ? parseFloat(priceRaw) : priceRaw;
             const mapUrl = `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`;
             const priceString = typeof price === 'number' ? `<b>${price.toFixed(3)} €</b>` : 'N/A';
@@ -255,7 +264,7 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
   }, [isFavorite, widgetTypeKey, fetchFavoritesFromDB, showSnackbar, favorites.length]);
   
   const renderListItem = (station: StationData) => {
-    const priceRaw = station[`last_${fuelType}`];
+    const priceRaw = station[`last_${fuelType}`] ?? null;
     const price = typeof priceRaw === 'string' ? parseFloat(priceRaw) : priceRaw;
     const fullAddress = `${station.street || ''} ${station.house_no || ''}, ${station.post_code || ''} ${station.city || ''}`.trim().replace(/^,|,$/g, '');
     
@@ -298,14 +307,43 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
     );
   };
 
-  const getProviderAttribution = () => {
+  const renderProviderAttribution = () => {
+    let providerName: string | null = null;
+    let isTrusted = false;
+
     if (viewMode === 'search') {
-      return `Quelle: ${getProviderByCountryCode(selectedCountry)}`;
+        providerName = getProviderByCountryCode(selectedCountry);
+        isTrusted = allSearchResults.length > 0 ? !!allSearchResults[0].is_trusted_source : false;
+    } else if (favorites.length > 0) {
+        const uniqueProviders = [...new Set(favorites.map(f => f.provider).filter(Boolean))];
+        if (uniqueProviders.length === 1) {
+            providerName = uniqueProviders[0];
+            isTrusted = favorites.every(f => f.is_trusted_source);
+        } else if (uniqueProviders.length > 1) {
+            return <Typography variant="caption" color="text.secondary">Quellen: {uniqueProviders.join(', ')}</Typography>;
+        }
     }
-    if (favorites.length === 0) return '';
-    const uniqueProviders = [...new Set(favorites.map(f => f.provider).filter(Boolean))];
-    if (uniqueProviders.length === 0) return 'Quelle: Unbekannt';
-    return `Quellen: ${uniqueProviders.join(', ')}`;
+
+    if (!providerName) return null;
+    
+    const url = providerUrls[providerName];
+    if (!url) {
+        return <Typography variant="caption" color="text.secondary">Quelle: {providerName}</Typography>;
+    }
+
+    return (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+            Quelle:
+            <MuiLink href={url} target="_blank" rel="noopener noreferrer">{providerName}</MuiLink>
+            {isTrusted && (
+                <Tooltip title="Info zu geprüften Quellen">
+                    <IconButton size="small" sx={{p:0}} onClick={(e) => { e.stopPropagation(); navigate('/trusted-sources'); }}>
+                        <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                    </IconButton>
+                </Tooltip>
+            )}
+        </Typography>
+    );
   };
   
   return (
@@ -412,7 +450,7 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
         <Button size="small" startIcon={viewMode === 'favorites' ? <AddCircleOutlineIcon/> : <ArrowBackIcon />} onClick={() => { setAllSearchResults([]); setDisplayedResults([]); setSearchTerm(''); setViewMode(viewMode === 'favorites' ? 'search' : 'favorites'); }}>
           {viewMode === 'favorites' ? `Hinzufügen (${favorites.length}/${FAVORITES_LIMIT})` : 'Zurück'}
         </Button>
-        <Typography variant="caption" color="text.secondary">{getProviderAttribution()}</Typography>
+        {renderProviderAttribution()}
         <Stack direction="column" alignItems="flex-end" spacing={0}>
           {lastPriceUpdate && (
             <Typography variant="caption" color="text.secondary" sx={{fontSize: '0.65rem'}}>

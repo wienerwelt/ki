@@ -47,7 +47,7 @@ const parseDateString = (dateString, dateFormat, jobId) => {
 
 const sanitizeHtml = (htmlString) => {
     if (!htmlString) return null;
-    return cheerio.load(htmlString).text();
+    return cheerio.load(htmlString).text().trim();
 };
 
 const escapeRegex = (string) => {
@@ -84,7 +84,7 @@ const computeRelevanceScore = (publishedAt, tagCount) => {
 };
 
 
-async function _processYoutubeChannel(rule, jobId) {
+async function _processYoutubeChannel(rule, jobId, availableTags) {
     const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
     if (!YOUTUBE_API_KEY) {
         await logToDb(jobId, 'ERROR', 'YouTube API Key ist nicht in der .env-Datei konfiguriert.');
@@ -100,14 +100,7 @@ async function _processYoutubeChannel(rule, jobId) {
     await logToDb(jobId, 'INFO', `Starte YouTube API Abfrage für Kanal-ID: ${channelId}`);
     try {
         const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
-            params: {
-                key: YOUTUBE_API_KEY,
-                channelId: channelId,
-                part: 'snippet',
-                order: 'date',
-                maxResults: 20,
-                type: 'video'
-            }
+            params: { key: YOUTUBE_API_KEY, channelId: channelId, part: 'snippet', order: 'date', maxResults: 20, type: 'video' }
         });
         const videos = response.data.items;
         if (!videos || videos.length === 0) {
@@ -121,16 +114,35 @@ async function _processYoutubeChannel(rule, jobId) {
             const videoId = video.id.videoId;
             const snippet = video.snippet;
             const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+            const publishedAt = new Date(snippet.publishedAt);
+
+            // ERWEITERT: Tag-Extraktion und Relevanz-Score-Berechnung
+            const textForTags = `${snippet.title} ${snippet.description}`;
+            const foundTagIds = extractTags(textForTags, availableTags);
+            const relevanceScore = computeRelevanceScore(publishedAt, foundTagIds.length);
+
+            // ERWEITERT: INSERT-Statement enthält jetzt relevance_score
             const contentResult = await db.query(
-                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, category, region, thumbnail_url, full_text)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
+                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, category, region, thumbnail_url, full_text, relevance_score)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
                 [
-                    rule.source_identifier, videoUrl, snippet.title, snippet.description, new Date(snippet.publishedAt),
-                    rule.category_default, rule.region, snippet.thumbnails.high.url, channelTitle
+                    rule.source_identifier, videoUrl, snippet.title, snippet.description, publishedAt,
+                    rule.category_default, rule.region, snippet.thumbnails.high.url, channelTitle, relevanceScore
                 ]
             );
             if (contentResult.rowCount > 0) {
                 itemsInserted++;
+                // ERWEITERT: Speichern der gefundenen Tags
+                const scrapedContentId = contentResult.rows[0].id;
+                if (foundTagIds.length > 0) {
+                    for (const tagId of foundTagIds) {
+                        await db.query(
+                            `INSERT INTO scraped_content_tags (scraped_content_id, tag_id)
+                             VALUES ($1, $2) ON CONFLICT DO NOTHING;`,
+                            [scrapedContentId, tagId]
+                        );
+                    }
+                }
             }
         }
         return itemsInserted;
@@ -172,13 +184,18 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
     const { source_identifier: sourceIdentifier, region: ruleRegion, id: ruleId, date_format: dateFormat, category_default } = rule;
     const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
     const result = await parser.parseStringPromise(xmlContent);
+
+    const feedTitle = result.rss?.channel?.title || null;
+
     const items = result.rss?.channel?.item || result.feed?.entry || [];
     const feedItems = Array.isArray(items) ? items : [items];
     let itemsInserted = 0;
-    await logToDb(jobId, 'INFO', `Verarbeite ${feedItems.length} Einträge für Regel '${sourceIdentifier}'.`);
+    await logToDb(jobId, 'INFO', `Verarbeite ${feedItems.length} Einträge für Regel '${sourceIdentifier}'. Feed-Titel: ${feedTitle}`);
+
     for (const item of feedItems) {
         const title = item.title?._ || item.title || 'Kein Titel';
         const parsedDate = parseDateString(item.pubDate || item.updated, dateFormat, jobId);
+
         if (rule.scrape_after_date && parsedDate) {
             const cutoffDate = new Date(rule.scrape_after_date);
             cutoffDate.setUTCHours(0, 0, 0, 0);
@@ -198,8 +215,29 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
             );
             if (result.rowCount > 0) itemsInserted++;
         } else {
-            const articleUrl = item.enclosure?.$?.url || item.link?.href || item.link || null;
-            if (!articleUrl) continue;
+            // --- KORRIGIERTE, UNIVERSELLE ZUORDNUNGSLOGIK ---
+            let originalUrl, summary, fullText;
+            const audioUrl = (item.enclosure?.$?.url && item.enclosure.$.type?.startsWith('audio')) ? item.enclosure.$.url : null;
+
+            if (audioUrl) {
+                // SPEZIALFALL: Podcast-Feed-Logik anwenden
+                originalUrl = audioUrl;
+                summary = sanitizeHtml(item.description?._ || item.description || null);
+                fullText = feedTitle;
+            } else {
+                // STANDARD: Bisherige Logik für alle anderen RSS-Feeds
+                originalUrl = item.link?.href || item.link || null;
+                const descriptionHtml = item['content:encoded'] || item.description?._ || item.summary?._ || item.description || item.summary || null;
+                summary = sanitizeHtml(descriptionHtml);
+                fullText = null; // Kein spezifischer full_text für Standard-Feeds
+            }
+
+            if (!originalUrl) {
+                await logToDb(jobId, 'WARN', `Überspringe Eintrag "${title}", da keine URL gefunden wurde.`);
+                continue;
+            }
+            // --- ENDE DER KORRIGIERTEN LOGIK ---
+
             let thumbnailUrl = null;
             try {
                 if (item['media:content']?.$?.url && item['media:content']?.$?.medium === 'image') {
@@ -208,27 +246,35 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
                     thumbnailUrl = item.enclosure.$.url;
                 } else if (item['g:image_link']) {
                     thumbnailUrl = item['g:image_link'];
+                } else if (item['itunes:image']?.$?.href) {
+                    thumbnailUrl = item['itunes:image'].$.href;
                 } else {
-                    const descriptionHtml = item.description?._ || item.summary?._ || item.description || item.summary;
-                    if (descriptionHtml) {
-                        const $ = cheerio.load(descriptionHtml);
+                    const descHtmlForImg = item.description?._ || item.summary?._ || item.description || item.summary;
+                    if (descHtmlForImg) {
+                        const $ = cheerio.load(descHtmlForImg);
                         const firstImgSrc = $('img').first().attr('src');
-                        if (firstImgSrc) {
-                            thumbnailUrl = firstImgSrc;
-                        }
+                        if (firstImgSrc) thumbnailUrl = firstImgSrc;
                     }
                 }
             } catch (e) {
                 await logToDb(jobId, 'WARN', `Fehler bei der Thumbnail-Extraktion für "${title}": ${e.message}`);
             }
+
             const cleanTitle = sanitizeHtml(title);
-            const cleanDescription = sanitizeHtml(item.description?._ || item.summary?._ || item.description || item.summary || null);
-            const foundTagIds = extractTags(`${cleanTitle} ${cleanDescription}`, availableTags);
+            const foundTagIds = extractTags(`${cleanTitle} ${summary}`, availableTags);
+            const relevanceScore = computeRelevanceScore(parsedDate, foundTagIds.length);
+
             const contentResult = await db.query(
-                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, event_date, category, region, thumbnail_url)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
-                [sourceIdentifier, articleUrl, cleanTitle, cleanDescription, category_default === 'event' ? null : parsedDate, category_default === 'event' ? parsedDate : null, category_default, ruleRegion, thumbnailUrl]
+                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, event_date, category, region, thumbnail_url, full_text, relevance_score)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
+                [
+                    sourceIdentifier, originalUrl, cleanTitle, summary,
+                    category_default === 'event' ? null : parsedDate,
+                    category_default === 'event' ? parsedDate : null,
+                    category_default, ruleRegion, thumbnailUrl, fullText, relevanceScore
+                ]
             );
+            
             if (contentResult.rowCount > 0) {
                 itemsInserted++;
                 const scrapedContentId = contentResult.rows[0].id;
@@ -432,7 +478,6 @@ async function _scrapeWAWPrograms(rule, jobId) {
 
 
 
-// in scraperService.js
 
 async function triggerSingleRuleScrape(ruleId, jobId) {
     let itemsProcessed = 0;
@@ -451,7 +496,7 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
                 itemsProcessed = await _scrapeWAWPrograms(rule, jobId);
                 break;
             case 'youtube_channel':
-                itemsProcessed = await _processYoutubeChannel(rule, jobId);
+                itemsProcessed = await _processYoutubeChannel(rule, jobId, availableTags);
                 break;
             case 'youtube_podcast':
                 itemsProcessed = await _processYoutubePodcastsTab(rule, jobId, availableTags);
@@ -489,7 +534,6 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
                          itemsProcessed = await _processFundingXmlFeed(rawContent, rule, jobId);
                     }
                 } else { // rule_type 'content'
-                    // --- HIER IST DIE KORREKTUR ---
                     if (contentType.includes('html')) {
                         const $ = cheerio.load(rawContent);
                         const articleContainers = $(rule.content_container_selector);
@@ -509,11 +553,13 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
                             const fullText = `${title} ${summary}`;
                             const foundTagIds = extractTags(fullText, availableTags);
 
+                            const relevanceScore = computeRelevanceScore(publishedDate, foundTagIds.length);
+
                             const res = await db.query(
-                                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, category, region, thumbnail_url)
-                                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, category, region, thumbnail_url, relevance_score)
+                                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                                  ON CONFLICT (original_url) DO NOTHING RETURNING id`,
-                                [rule.source_identifier, link, title, summary, publishedDate, rule.category_default, rule.region, thumbnailUrl]
+                                [rule.source_identifier, link, title, summary, publishedDate, rule.category_default, rule.region, thumbnailUrl, relevanceScore]
                             );
                             if (res.rowCount > 0) {
                                 itemsProcessed++;

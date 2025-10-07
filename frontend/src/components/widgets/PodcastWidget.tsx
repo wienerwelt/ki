@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, ChangeEvent } from 'react';
+import React, { useState, useEffect, useCallback, useRef, ChangeEvent, useMemo } from 'react';
 import {
   Box, Typography, CircularProgress, Alert, Divider, Avatar,
   IconButton, Tooltip, Chip, Paper, Slider, TextField, MenuItem, Link as MuiLink, Button, Card, CardContent, Stack
@@ -25,6 +25,7 @@ interface PodcastItem {
   is_read: boolean;
   published_date: string;
   original_url: string;
+  full_text: string | null;
   relevance_score: number;
   user_vote: number;
   is_trusted_source: boolean;
@@ -39,6 +40,44 @@ interface PodcastWidgetProps extends BaseWidgetProps {
   title: string;
   category: string;
 }
+
+interface HighlightedTextProps {
+    text: string;
+    keywords: string[];
+}
+
+const HighlightedText: React.FC<HighlightedTextProps> = ({ text, keywords }) => {
+    const parts = useMemo(() => {
+        if (!keywords || keywords.length === 0 || !text) {
+            return [text];
+        }
+        const regex = new RegExp(`\\b(${keywords.join('|')})`, 'gi');
+        const matches = [...text.matchAll(regex)];
+        if (matches.length === 0) return [text];
+
+        const result: (string | JSX.Element)[] = [];
+        let lastIndex = 0;
+
+        matches.forEach((match, index) => {
+            const keyword = match[0];
+            const startIndex = match.index!;
+            
+            if (startIndex > lastIndex) {
+                result.push(text.substring(lastIndex, startIndex));
+            }
+            result.push(<mark key={index}>{keyword}</mark>);
+            lastIndex = startIndex + keyword.length;
+        });
+
+        if (lastIndex < text.length) {
+            result.push(text.substring(lastIndex));
+        }
+        
+        return result;
+    }, [text, keywords]);
+
+    return <span>{parts}</span>;
+};
 
 // --- Helpers ---
 const getDomain = (url: string | null | undefined): string | null => {
@@ -310,16 +349,21 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
                     </span>
                   </Tooltip>
                   <Box flexGrow={1}>
-                    <Typography variant="body2" sx={{ fontWeight: item.is_read ? 500 : 700, mb: 0.5 }}>{item.title}</Typography>
-                    <Stack direction="row" spacing={1.5} alignItems="center" color="text.secondary">
+                      <Typography variant="body2" sx={{ fontWeight: item.is_read ? 500 : 700, mb: 0.5 }}>
+                          <HighlightedText 
+                              text={item.title} 
+                              keywords={activeFilters?.tags || []} 
+                          />
+                      </Typography>
+                      <Stack direction="row" spacing={1.5} alignItems="center" color="text.secondary">
                       <Typography variant="caption">
                         {format(new Date(item.published_date), 'd. MMM yyyy', { locale: de })}
                       </Typography>
                       <Divider orientation="vertical" flexItem />
-                      <MuiLink href={item.original_url} target="_blank" rel="noopener noreferrer" variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }} onClick={(e) => e.stopPropagation()}>
-                        {getDomain(item.original_url)}
-                        {item.is_trusted_source && <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />}
-                      </MuiLink>
+                        <MuiLink href={item.original_url} target="_blank" rel="noopener noreferrer" variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }} onClick={(e) => e.stopPropagation()}>
+                          {item.full_text ? item.full_text : getDomain(item.original_url)}
+                          {item.is_trusted_source && <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />}
+                        </MuiLink>
                     </Stack>
                   </Box>
                   <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />

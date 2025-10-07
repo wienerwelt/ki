@@ -5,32 +5,28 @@ const { v4: uuidv4 } = require('uuid');
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
 exports.getAllScrapedContent = async (req, res) => {
-    // NEU: Parameter für Filter und Paginierung auslesen
-    const { source_identifier, startDate, endDate, limit = 50, offset = 0 } = req.query;
+    // 1. Der neue 'region'-Parameter wird aus der Anfrage ausgelesen
+    const { source_identifier, startDate, endDate, region, limit = 50, offset = 0 } = req.query;
     try {
-        // Basis-Query bleibt unverändert
         const baseQuery = `
             SELECT 
                 sc.id, sc.source_identifier, sr.name as rule_name, sc.title, sc.original_url, sc.category,
-                sc.published_date, sc.event_date, sc.region, sc.scraped_at, sc.relevance_score,
-                sc.thumbnail_url, -- <-- ADDED
-                'content' as data_type,
+                sc.summary, sc.published_date, sc.event_date, sc.region, sc.scraped_at, sc.relevance_score,
+                sc.thumbnail_url, 'content' as data_type,
                 (SELECT array_agg(t.name) FROM tags t JOIN scraped_content_tags sct ON t.id = sct.tag_id WHERE sct.scraped_content_id = sc.id) as tags
             FROM scraped_content sc
             LEFT JOIN scraping_rules sr ON sc.source_identifier = sr.source_identifier
             UNION ALL
             SELECT 
                 ti.id, ti.source_identifier, sr.name as rule_name, ti.title, ti.link as original_url,
-                ti.type as category, ti.published_at as published_date, null as event_date,
+                ti.type as category, null as summary, ti.published_at as published_date, null as event_date,
                 ti.region, ti.published_at as scraped_at, 0 as relevance_score,
-                null as thumbnail_url, -- <-- ADDED
-                'traffic' as data_type,
+                null as thumbnail_url, 'traffic' as data_type,
                 (SELECT array_agg(t.name) FROM tags t JOIN traffic_incidents_tags tit ON t.id = tit.tag_id WHERE tit.traffic_incident_id = ti.id) as tags
             FROM traffic_incidents ti
             LEFT JOIN scraping_rules sr ON ti.source_identifier = sr.source_identifier
         `;
 
-        // NEU: Dynamischer Aufbau der Query
         const queryParams = [];
         let whereClauses = [];
         let paramIndex = 1;
@@ -44,12 +40,23 @@ exports.getAllScrapedContent = async (req, res) => {
             queryParams.push(startDate);
         }
         if (endDate) {
-            // Add 1 day to endDate to include the entire day
             const nextDay = new Date(endDate);
             nextDay.setDate(nextDay.getDate() + 1);
             whereClauses.push(`combined_data.published_date < $${paramIndex++}`);
             queryParams.push(nextDay.toISOString().split('T')[0]);
         }
+        // 2. Die WHERE-Klausel wird dynamisch um den Regionsfilter erweitert
+        if (region) {
+            whereClauses.push(`combined_data.region = $${paramIndex++}`);
+            queryParams.push(region);
+        }
+
+        let countQuery = `SELECT COUNT(*) AS total FROM (${baseQuery}) AS combined_data`;
+        if (whereClauses.length > 0) {
+            countQuery += ` WHERE ${whereClauses.join(' AND ')}`;
+        }
+        const totalResult = await db.query(countQuery, queryParams);
+        const totalCount = parseInt(totalResult.rows[0].total, 10);
 
         let finalQuery = `SELECT * FROM (${baseQuery}) AS combined_data`;
         if (whereClauses.length > 0) {
@@ -61,7 +68,11 @@ exports.getAllScrapedContent = async (req, res) => {
         queryParams.push(parseInt(offset, 10));
 
         const result = await db.query(finalQuery, queryParams);
-        res.json(result.rows);
+        
+        res.json({
+            data: result.rows,
+            total: totalCount
+        });
     } catch (err) {
         console.error('Error fetching all scraped content:', err.message);
         res.status(500).send('Server error');

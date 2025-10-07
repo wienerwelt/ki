@@ -43,5 +43,6 @@ router.get('/all-tags', dataController.getAllTags);
 router.get('/events', authMiddleware, dataController.getEvents);
 router.get('/economic-statistics', dataController.getEconomicStatistics);
 router.get('/economic-statistics/countries', dataController.getUniqueStatCountries);
+router.post('/generate-draft-from-content', dataController.generateDraftFromContent);
 
 module.exports = router;

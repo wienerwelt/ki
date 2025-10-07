@@ -3,6 +3,7 @@ const axios = require('axios');
 const db = require('../config/db');
 const { sendEmail } = require('../services/emailService');
 const { renderLayout } = require('../services/emailTemplates');
+const { generateAIContent } = require('../services/aiExecutionService'); 
 const TANKERKOENIG_API_KEY = process.env.TANKERKOENIG_API_KEY;
 const ECONTROL_API_KEY     = process.env.ECONTROL_API_KEY;
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
@@ -523,10 +524,13 @@ exports.getCommodityPrices = async (req, res) => {
 
         for (const indicator of indicators) {
             const latestPriceQuery = `
-                SELECT value, unit, data_timestamp, source, country_code 
-                FROM economic_indicators
-                WHERE indicator_name = $1
-                ORDER BY data_timestamp DESC
+                SELECT
+                    ei.value, ei.unit, ei.data_timestamp, ei.source, ei.country_code,
+                    s.status = 'approved' AS is_trusted_source
+                FROM economic_indicators ei
+                LEFT JOIN sources s ON ei.source = s.url
+                WHERE ei.indicator_name = $1
+                ORDER BY ei.data_timestamp DESC
                 LIMIT 1;
             `;
             const latestPriceResult = await db.query(latestPriceQuery, [indicator]);
@@ -574,6 +578,7 @@ exports.getCommodityPrices = async (req, res) => {
                 unit: latest.unit,
                 lastUpdate: latest.data_timestamp,
                 source: latest.source,
+                is_trusted_source: !!latest.is_trusted_source,
                 countryCode: latest.country_code,
                 trend: trend,
                 historical: {
@@ -750,6 +755,8 @@ exports.getBpScrapedContent = async (req, res) => {
     }
 };
 
+// backend/controllers/dataController.js
+
 exports.getVignettePrices = async (req, res) => {
     const { country } = req.query;
 
@@ -761,11 +768,16 @@ exports.getVignettePrices = async (req, res) => {
     const previousYear = currentYear - 1;
 
     try {
+        // ERWEITERT: Die Abfrage prüft nun auch die 'sources'-Tabelle
         const query = `
-            SELECT country_name, year, price, currency_code, vignette_requirement_car, toll_system_truck, provider_url
-            FROM vignette_prices
-            WHERE country_code = $1 AND (year IN ($2, $3) OR year = 2025)
-            ORDER BY year ASC
+            SELECT 
+                vp.country_name, vp.year, vp.price, vp.currency_code, 
+                vp.vignette_requirement_car, vp.toll_system_truck, vp.provider_url,
+                s.status = 'approved' AS is_trusted_source
+            FROM vignette_prices vp
+            LEFT JOIN sources s ON vp.provider_url LIKE s.url || '%'
+            WHERE vp.country_code = $1 AND (vp.year IN ($2, $3) OR vp.year = 2025)
+            ORDER BY vp.year ASC
         `;
 
         const result = await db.query(query, [country, currentYear, previousYear]);
@@ -782,6 +794,7 @@ exports.getVignettePrices = async (req, res) => {
             vignette_system_car: infoRow.vignette_requirement_car,
             toll_system_truck: infoRow.toll_system_truck,
             provider_url: infoRow.provider_url,
+            is_trusted_source: !!infoRow.is_trusted_source, // HINZUGEFÜGT
             chart_data: rows
                 .filter(row => row.price !== null)
                 .map(row => ({
@@ -1157,6 +1170,7 @@ exports.getAllRegions = async (req, res) => {
     }
 };
 
+
 exports.evStationSearch = async (req, res) => {
     const { country, lat: latStr, lng: lngStr, query } = req.query;
     const targetCountry = (country || 'DE').toString().toUpperCase();
@@ -1179,6 +1193,13 @@ exports.evStationSearch = async (req, res) => {
         } else if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
              return res.status(400).json({ ok: false, message: 'Koordinaten oder Suchbegriff erforderlich.' });
         }
+
+        const approvedSourcesRes = await db.query("SELECT url FROM sources WHERE status = 'approved'");
+        const approvedDomains = new Set(approvedSourcesRes.rows.map(r => r.url));
+        const providerDomainMap = {
+            'E-Control': 'e-control.at',
+            'OpenChargeMap': 'openchargemap.org'
+        };
 
         let stations = [];
         if (targetCountry === 'AT') {
@@ -1203,7 +1224,17 @@ exports.evStationSearch = async (req, res) => {
             });
             stations = (response.data || []).map(normalizeOcmStation).filter(Boolean);
         }
-        res.json({ ok: true, stations });
+        
+        const finalStations = stations.map(station => {
+            const providerKey = station.provider;
+            const domain = providerKey ? providerDomainMap[providerKey] : null;
+            return {
+                ...station,
+                is_trusted_source: domain ? approvedDomains.has(domain) : false
+            };
+        });
+
+        res.json({ ok: true, stations: finalStations });
     } catch (err) {
         const message = err.response?.data?.message || err.message || 'Fehler bei der Stationssuche.';
         console.error(`[EV Search Error for ${targetCountry}]:`, message, `Status: ${err.response?.status}`);
@@ -1246,6 +1277,7 @@ exports.getEVStations = async (req, res) => {
             stations: paged,
             totalCount: filtered.length,
         });
+
     } catch (err) {
         console.error('OCM API error:', err?.response?.data || err.message);
         res.status(502).json({ message: 'Fehler bei OCM API', error: err?.response?.data || err.message });
@@ -1452,7 +1484,8 @@ exports.getScrapedContent = async (req, res) => {
             SELECT
                 sc.id, sc.title, sc.summary, sc.original_url, sc.published_date,
                 sc.event_date, sc.category, sc.scraped_at, sc.relevance_score, sc.region,
-                sc.thumbnail_url, 
+                sc.thumbnail_url,
+                sc.full_text, -- DIESE ZEILE WURDE HINZUGEFÜGT
                 s.status = 'approved' AS is_trusted_source,
                 EXISTS (
                     SELECT 1 FROM user_read_scraped_content ursc
@@ -1460,7 +1493,7 @@ exports.getScrapedContent = async (req, res) => {
                 ) as is_read,
                 COALESCE(crv.vote, 0) as user_vote
             FROM scraped_content sc
-            LEFT JOIN sources s ON sc.original_url = s.url
+            LEFT JOIN sources s ON sc.original_url LIKE s.url || '%'
             LEFT JOIN content_relevance_votes crv ON crv.content_id = sc.id AND crv.user_id = $${paramIndex}
             ${whereString}
             ${orderByClause}
@@ -1517,18 +1550,20 @@ exports.getEconomicStatistics = async (req, res) => {
 
         const query = `
             SELECT 
-                time_period, 
-                statistic_subtype, 
-                value, 
-                unit, 
-                source_name, 
-                source_url
-            FROM economic_statistics
+                es.time_period, 
+                es.statistic_subtype, 
+                es.value, 
+                es.unit, 
+                es.source_name, 
+                es.source_url,
+                s.status = 'approved' AS is_trusted_source
+            FROM economic_statistics es
+            LEFT JOIN sources s ON es.source_url LIKE s.url || '%'
             WHERE
-                statistic_type = $1 AND
-                country_code = $2 AND
-                time_period >= $3
-            ORDER BY time_period ASC, statistic_subtype ASC;
+                es.statistic_type = $1 AND
+                es.country_code = $2 AND
+                es.time_period >= $3
+            ORDER BY es.time_period ASC, es.statistic_subtype ASC;
         `;
         const queryParams = [statisticType, countryCode, startDate];
         
@@ -1538,32 +1573,27 @@ exports.getEconomicStatistics = async (req, res) => {
             return res.json({ ok: true, data: [], subtypes: [], source: null });
         }
 
-        // --- NEUE DATENVERARBEITUNG (PIVOTING) ---
-        // Die Daten werden von einem langen in ein breites Format umgewandelt.
-        // Bsp: Aus mehreren Zeilen pro Datum wird eine Zeile mit mehreren Spalten (Benzin, Diesel etc.)
         const pivotedData = rows.reduce((acc, row) => {
             const date = new Date(row.time_period).toISOString().split('T')[0];
             if (!acc[date]) {
                 acc[date] = { date };
             }
-            // Der Wert wird der Spalte des entsprechenden Subtyps zugeordnet
             acc[date][row.statistic_subtype] = parseFloat(row.value);
             return acc;
         }, {});
 
         const chartData = Object.values(pivotedData);
-        
-        // Eine Liste aller einzigartigen Subtypen wird für die Filter-Buttons im Frontend erstellt.
         const subtypes = [...new Set(rows.map(r => r.statistic_subtype))];
         const latestSourceInfo = rows[rows.length - 1];
 
         res.json({
             ok: true,
-            data: chartData,      // Die umgewandelten Daten für das Diagramm
-            subtypes: subtypes,   // Die Liste der gefundenen Subtypen
+            data: chartData,
+            subtypes: subtypes,
             source: {
                 name: latestSourceInfo.source_name,
-                url: latestSourceInfo.source_url
+                url: latestSourceInfo.source_url,
+                is_trusted: !!latestSourceInfo.is_trusted_source
             }
         });
 
@@ -1827,7 +1857,8 @@ exports.getDashboardConfig = async (req, res) => {
         bp.dashboard_title, bp.url_businesspartner,
         bp.level_1_name, bp.level_2_name, bp.level_3_name,
         cs.id as cs_id, cs.name as cs_name,
-        cs.primary_color, cs.secondary_color,
+        cs.primary_color, cs.primary_text_color,
+        cs.secondary_color,
         cs.text_color_light, cs.background_color_light, cs.paper_color_light,
         cs.text_color_dark, cs.background_color_dark, cs.paper_color_dark
       FROM users u
@@ -1847,6 +1878,7 @@ exports.getDashboardConfig = async (req, res) => {
       id: r.cs_id,
       name: r.cs_name,
       primary_color: r.primary_color,
+      primary_text_color: r.primary_text_color,
       secondary_color: r.secondary_color,
       text_color_light: r.text_color_light,
       background_color_light: r.background_color_light,
@@ -1961,6 +1993,73 @@ exports.globalSearch = async (req, res) => {
         res.status(500).json({ message: 'Serverfehler bei der Suche.' });
     }
 };
+
+
+exports.generateDraftFromContent = async (req, res) => {
+    const { contentId } = req.body; // Das Frontend sendet die ID des Artikels
+    const { id: userId } = req.user;
+
+    if (!contentId) {
+        return res.status(400).json({ message: 'Content-ID fehlt.' });
+    }
+
+    let jobId;
+
+    try {
+        // Schritt 1: Den Inhalt des Artikels aus der Datenbank laden
+        const contentRes = await db.query(
+            'SELECT title, summary FROM scraped_content WHERE id = $1',
+            [contentId]
+        );
+
+        if (contentRes.rows.length === 0) {
+            return res.status(404).json({ message: 'Inhalt nicht gefunden.' });
+        }
+        const content = contentRes.rows[0];
+
+        // Hier könnte man wie im Funding-Controller optional noch Gamification-Logik einbauen (Punkte abziehen, etc.)
+
+        // Schritt 2: AI-Job für die Nachverfolgung erstellen
+        const jobResult = await db.query(
+            `INSERT INTO ai_jobs (status, is_automated) VALUES ('running', false) RETURNING id`
+        );
+        jobId = jobResult.rows[0].id;
+
+        // Schritt 3: Prompt für die KI erstellen und KI-Service aufrufen
+        const promptTemplate = `
+            Du bist ein Experte für interne Kommunikation. Formuliere basierend auf dem folgenden Artikel einen
+            kurzen, informativen und ansprechenden Text für einen internen Newsletter an Mitarbeiter oder Fahrer eines Fuhrparks.
+            Hebe die wichtigsten Kernaussagen hervor.
+            Antworte ausschließlich mit dem finalen Text, ohne einleitende Sätze wie "Hier ist der Entwurf".
+            {{data}}
+        `;
+        const inputText = `
+            Original-Titel: "${content.title}"
+            Zusammenfassung des Artikels: "${content.summary}"
+        `;
+
+        const { aiResultString } = await generateAIContent({
+            promptTemplate, 
+            inputText, 
+            ai_provider: 'OpenAI GPT-4o', // oder was auch immer konfiguriert ist
+            jobId, 
+            userId
+        });
+
+        // Schritt 4: Job als erfolgreich markieren und Ergebnis zurücksenden
+        await db.query(`UPDATE ai_jobs SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);
+
+        res.json({ draft: aiResultString });
+
+    } catch (err) {
+        if (jobId) {
+            await db.query(`UPDATE ai_jobs SET status = 'failed' WHERE id = $1`, [jobId]);
+        }
+        console.error('Error in generateDraftFromContent:', err.message);
+        res.status(500).send('Ein interner Serverfehler ist aufgetreten.');
+    }
+};
+
 
 exports.getRelevantAction = async (req, res) => {
     const { category, region } = req.query;

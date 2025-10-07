@@ -18,7 +18,6 @@ router.post('/generate-draft', fundingController.generateApplicationDraft);
 router.get('/saved-searches', fundingController.getSavedSearches);
 router.post('/saved-searches', fundingController.saveSearch);
 router.delete('/saved-searches/:id', fundingController.deleteSearch);
-router.post('/generate-draft', fundingController.generateApplicationDraft);
 router.get('/:id', fundingController.getFundingDetailById);
 router.put('/saved-searches/:id/toggle-notifications', fundingController.toggleSearchNotifications);
 router.get('/:id', fundingController.getFundingDetailById);

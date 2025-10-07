@@ -207,7 +207,7 @@ const ProfilePage: React.FC = () => {
             </Grid>
 
             <Grid item xs={12}>
-                <Typography variant="h6" sx={{ mt: 2 }}>Meine Themen / Tags</Typography>
+                <Typography id="my-tags" variant="h6" sx={{ mt: 2 }}>Meine Themen / Tags</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                     Fügen Sie Themen hinzu, um Ihre Inhalte zu personalisieren. Bestehende Tags werden als Vorschlag geladen.
                 </Typography>
@@ -222,6 +222,7 @@ const ProfilePage: React.FC = () => {
                     />
                 )}
             </Grid>
+
             <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.dashboardSettings')}</Typography></Grid>
 <Grid item xs={12}>
               <Typography variant="body2" color="text.secondary" gutterBottom>{t('profile.articleQuality')}</Typography>

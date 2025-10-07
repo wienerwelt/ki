@@ -54,7 +54,8 @@ function coerceConfig(raw: any): DashboardSavedConfig {
 }
 
 const DashboardPage: React.FC = () => {
-  const { user, businessPartner } = useAuth();
+  const { user, businessPartner, dashboardRefreshKey } = useAuth();
+  console.log('BusinessPartner-Daten in DashboardPage:', businessPartner);
   const [dashboardConfig, setDashboardConfig] = useState<DashboardSavedConfig>(emptyConfig());
   const [availableWidgetTypes, setAvailableWidgetTypes] = useState<WidgetTypeMeta[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,7 +116,9 @@ const DashboardPage: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+    useEffect(() => { 
+    fetchAll(); 
+  }, [fetchAll, dashboardRefreshKey]);
 
   const onLayoutChange = (_: Layout[], allLayouts: Layouts) => {
       setDashboardConfig((prev) => ({ ...prev, layouts: allLayouts }));
@@ -282,12 +285,12 @@ const DashboardPage: React.FC = () => {
                 Widget hinzufügen
                 </Button>
                 <Button
-                id="save-layout-button"
-                variant="contained"
-                onClick={handleSaveConfig}
-                sx={{ backgroundColor: businessPartner?.color_scheme?.primary_color || 'primary.main', '&:hover': { backgroundColor: businessPartner?.color_scheme?.secondary_color || 'primary.dark' } }}
+                    id="save-layout-button"
+                    variant="contained"
+                    color="primary"
+                    onClick={handleSaveConfig}
                 >
-                Layout speichern
+                    Layout speichern
                 </Button>
             </Box>
         )}

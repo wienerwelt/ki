@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Typography, CircularProgress, Alert, FormControl, Select, MenuItem, SelectChangeEvent, Link as MuiLink, Paper, Stack, Divider, Tooltip } from '@mui/material';
+import { Box, Typography, CircularProgress, Alert, FormControl, Select, MenuItem, SelectChangeEvent, Link as MuiLink, Paper, Stack, Divider, Tooltip, IconButton } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
 import apiClient from '../../apiClient';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
@@ -9,6 +10,7 @@ import PublicIcon from '@mui/icons-material/Public';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import TrendingFlatIcon from '@mui/icons-material/TrendingFlat';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 
 interface Region {
     code: string;
@@ -28,11 +30,13 @@ const getCurrencySymbol = (currencyCode: string | null): string => {
 };
 
 const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, widgetTypeKey }) => {
+    const navigate = useNavigate();
     const [availableCountries, setAvailableCountries] = useState<Region[]>([]);
     const [selectedCountry, setSelectedCountry] = useState('AT');
     const [rawData, setRawData] = useState<any[]>([]);
     const [systemInfo, setSystemInfo] = useState({ car: '', truck: '' });
     const [providerUrl, setProviderUrl] = useState<string>('#');
+    const [isTrusted, setIsTrusted] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -61,11 +65,13 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
                 setRawData(response.data.chart_data || []);
                 setSystemInfo({ car: response.data.vignette_system_car || 'N/A', truck: response.data.toll_system_truck || 'N/A' });
                 setProviderUrl(response.data.provider_url || '#');
+                setIsTrusted(response.data.is_trusted_source || false);
             } catch (err: any) {
                 setError(err.response?.data?.message || 'Daten konnten nicht geladen werden.');
                 setRawData([]);
                 setSystemInfo({ car: '-', truck: '-' });
                 setProviderUrl('#');
+                setIsTrusted(false);
             } finally {
                 setIsLoading(false);
             }
@@ -199,12 +205,28 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
                             )}
                         </Box>
                         
-                        <Box sx={{ mt: 'auto', pt: 1, textAlign: 'right' }}>
-                             <MuiLink href={providerUrl} target="_blank" rel="noopener noreferrer" onMouseDown={(e) => e.stopPropagation()} variant="caption" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                                <PublicIcon sx={{ fontSize: '0.9rem' }} />
-                                Offizielle Quelle: {displayUrl}
-                            </MuiLink>
-                        </Box>
+<Box sx={{ mt: 'auto', pt: 1, textAlign: 'right' }}>
+    <Typography variant="caption" color="text.secondary" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+        Quelle:
+        <MuiLink href={providerUrl} target="_blank" rel="noopener noreferrer" onMouseDown={(e) => e.stopPropagation()}>
+            {displayUrl}
+        </MuiLink>
+        {isTrusted && (
+            <Tooltip title="Info zu geprüften Quellen">
+                <IconButton
+                    size="small"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        navigate('/trusted-sources');
+                    }}
+                    sx={{ p: 0, ml: 0.25 }}
+                >
+                    <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                </IconButton>
+            </Tooltip>
+        )}
+    </Typography>
+</Box>
                     </Box>
                 )}
             </Stack>

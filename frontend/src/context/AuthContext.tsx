@@ -17,6 +17,7 @@ interface ColorScheme {
   id: string;
   name: string;
   primary_color: string;
+  primary_text_color: string;
   secondary_color: string;
   text_color_light: string;
   background_color_light: string;
@@ -83,6 +84,8 @@ interface AuthContextType {
   setThemeMode: (mode: 'light' | 'dark') => void;
   language: 'de' | 'en';
   setLanguage: (lang: 'de' | 'en') => void;
+  dashboardRefreshKey: number;
+  triggerDashboardRefresh: () => void;  
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -132,6 +135,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [themeMode, setThemeModeState] = useState<'light' | 'dark'>('light');
   const [language, setLanguageState] = useState<'de' | 'en'>('de');
   const [configLoaded, setConfigLoaded] = useState(false);
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
+
+  const triggerDashboardRefresh = () => {
+    setDashboardRefreshKey(prevKey => prevKey + 1);
+  };  
 
   const updateUser = useCallback((newUserData: Partial<UserPayload>) => {
     setUser((prevUser) => {
@@ -265,6 +273,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setThemeMode,
     language,
     setLanguage,
+    dashboardRefreshKey,
+    triggerDashboardRefresh,    
   };
 
   return (

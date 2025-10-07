@@ -33,6 +33,7 @@ import NotificationsIcon from '@mui/icons-material/Notifications';
 import SearchIcon from '@mui/icons-material/Search';
 import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
 import PollIcon from '@mui/icons-material/Poll';
+import TuneIcon from '@mui/icons-material/Tune';
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -44,12 +45,13 @@ import GlobalSearchBar from '../components/GlobalSearchBar';
 import { useSnackbar } from '../context/SnackbarContext';
 import ContributionHistoryModal from '../components/ContributionHistoryModal';
 
+
 interface DashboardLayoutProps {
     children: React.ReactNode;
 }
 
 const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
-    const { user, businessPartner, logout, themeMode } = useAuth();
+    const { user, businessPartner, logout, themeMode, triggerDashboardRefresh } = useAuth();
     const { t } = useTranslation();
     const navigate = useNavigate();
     const { showSnackbar } = useSnackbar();
@@ -61,6 +63,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [tagsLoading, setTagsLoading] = useState(true);
     const [searchOpen, setSearchOpen] = useState(false);
     const [historyModalOpen, setHistoryModalOpen] = useState(false);
+    const [notificationCount, setNotificationCount] = useState(0);
     
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -141,6 +144,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         try {
             await apiClient.delete(`/api/users/tags/${encodeURIComponent(tagToRemove)}`);
             showSnackbar(`Thema "${tagToRemove}" entfernt.`, 'info');
+            triggerDashboardRefresh();
         } catch (err) {
             console.error("Fehler beim Entfernen des Tags:", err);
             showSnackbar('Fehler beim Entfernen des Themas.', 'error');
@@ -224,7 +228,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
     return (
         <Box sx={{ display: 'flex', minHeight: '100vh', backgroundColor: themeMode === 'dark' ? '#333' : '#f4f6f8' }}>
-            <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }} color="primary">
+            <AppBar
+                position="fixed"
+                sx={{
+                    zIndex: (theme) => theme.zIndex.drawer + 1,
+                    color: businessPartner?.color_scheme?.primary_text_color || '#fff'
+                }}
+                color="primary"
+            >
                 {isAdVisible && ad && (<AdvertisementBanner content={ad.content} onClose={handleCloseAd} />)}
                 <Toolbar>
                     <IconButton color="inherit" aria-label="open drawer" onClick={toggleDrawer(true)} edge="start" sx={{ mr: 2 }}><MenuIcon /></IconButton>
@@ -233,14 +244,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         <Typography variant="h6" noWrap component="div" sx={{ display: { xs: 'none', sm: 'block' } }}>{dashboardTitle}</Typography>
                     </RouterLink>
 
-                    <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: isMobile ? 'flex-end' : 'flex-start', alignItems: 'center', ml: { xs: 1, md: 3 }, mr: 2 }}>
+                    <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: isMobile ? 'flex-end' : 'center', alignItems: 'center', ml: { xs: 1, md: 3 }, mr: 2 }}>
                         {isMobile ? (
                             <IconButton color="inherit" onClick={handleSearchOpen}><SearchIcon /></IconButton>
                         ) : (
-                            <>
-                                <Box sx={{ width: '50%' }}><GlobalSearchBar /></Box>
+                            <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                                <Box sx={{ flexGrow: 1, maxWidth: '50%' }}><GlobalSearchBar /></Box>
                                 <Tooltip title={t('layout.tagsTooltip')}>
-                                    <Box sx={{ display: { xs: 'none', sm: 'flex' }, flexWrap: 'wrap', gap: 1, ml: 2 }}>
+                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, ml: 2 }}>
                                         {!tagsLoading && userTags.map(tag => (
                                             <Chip
                                                 key={tag}
@@ -254,7 +265,20 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                         ))}
                                     </Box>
                                 </Tooltip>
-                            </>
+                                {/* --- HIER IST DIE 1. ÄNDERUNG --- */}
+                                <Tooltip title="Meine Themen im Profil bearbeiten">
+                                    <IconButton
+                                        component={RouterLink}
+                                        to="/profile#my-tags"
+                                        color="inherit"
+                                        size="small"
+                                        sx={{ ml: 1 }}
+                                    >
+                                        <TuneIcon />
+                                    </IconButton>
+                                </Tooltip>
+                                {/* --- ENDE DER 1. ÄNDERUNG --- */}
+                            </Box>
                         )}
                     </Box>
                     
@@ -267,13 +291,21 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 <Chip
                                     icon={<StarsIcon sx={{ color: 'inherit !important' }} />}
                                     label={user.contribution_score ?? 0}
-                                    sx={{ color: 'inherit', mr: 1, cursor: 'pointer' }} // NEU: cursor: 'pointer'
+                                    sx={{ color: 'inherit', mr: 1, cursor: 'pointer' }}
                                     variant="outlined"
-                                    onClick={() => setHistoryModalOpen(true)} // NEU: onClick Handler
+                                    onClick={() => setHistoryModalOpen(true)}
                                 />
                             </Tooltip>
                             )}
-                            <IconButton size="large" aria-label="Benachrichtigungen" color="inherit"><Badge badgeContent={0} color="error"><NotificationsIcon /></Badge></IconButton>
+                            {/* --- HIER IST DIE 2. ÄNDERUNG --- */}
+                            {notificationCount > 0 && (
+                                <IconButton size="large" aria-label="Benachrichtigungen" color="inherit">
+                                    <Badge badgeContent={notificationCount} color="error">
+                                        <NotificationsIcon />
+                                    </Badge>
+                                </IconButton>
+                            )}
+                            {/* --- ENDE DER 2. ÄNDERUNG --- */}
                             <IconButton size="large" edge="end" aria-label="account of current user" aria-controls="menu-appbar" aria-haspopup="true" onClick={handleMenu} color="inherit"><AccountCircle /></IconButton>
                             <Menu
                                 id="menu-appbar"

@@ -518,7 +518,7 @@ exports.generateApplicationDraft = async (req, res) => {
         `;
 
         const { aiResultString } = await generateAIContent({
-            promptTemplate, inputText, ai_provider: 'Google Gemini', jobId, userId
+            promptTemplate, inputText, ai_provider: 'OpenAI GPT-4o', jobId, userId
         });
         
         await db.query(`UPDATE ai_jobs SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);

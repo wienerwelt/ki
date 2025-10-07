@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     Box, Typography, CircularProgress, Alert, ToggleButton,
     ToggleButtonGroup, Link as MuiLink, Tooltip, FormControl,
-    Select, MenuItem, SelectChangeEvent, Paper, Divider
+    Select, MenuItem, SelectChangeEvent, Paper, Divider, IconButton
 } from '@mui/material';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -10,17 +10,18 @@ import {
 } from 'recharts';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
+import { useNavigate } from 'react-router-dom';
 
 import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import EvStationIcon from '@mui/icons-material/EvStation';
 import PowerIcon from '@mui/icons-material/Power';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
-
-// --- TYPEN & KONFIGURATION ---
+import { useAuth } from '../../context/AuthContext';
 
 interface StatDataPoint {
   date: string;
@@ -30,6 +31,7 @@ interface StatDataPoint {
 interface StatSource {
   name: string;
   url: string;
+  is_trusted: boolean;
 }
 
 interface EconomicStatWidgetProps extends BaseWidgetProps {
@@ -53,8 +55,6 @@ const subtypeIcons: { [key: string]: { icon: React.ReactElement; tooltip: string
 const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#0088FE', '#00C49F'];
 const integerFormatter = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
 
-// --- HILFSKOMPONENTEN ---
-
 const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, alt, size = 20 }) => {
   if (!code) return null;
   const c = code.toUpperCase();
@@ -65,7 +65,6 @@ const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     const date = format(new Date(label), 'MMMM yyyy', { locale: de });
-    // KORRIGIERT: Explizite Typen für 'sum' und 'entry' hinzugefügt
     const total = payload.reduce((sum: number, entry: { value: number }) => sum + (entry.value || 0), 0);
 
     return (
@@ -85,7 +84,6 @@ const CustomTooltip = ({ active, payload, label }: any) => {
                 </Box>
             );
         })}
-        {/* KORRIGIERT: Divider ist jetzt korrekt importiert und wird ohne Fehler gerendert */}
         <Divider sx={{ my: 1 }} />
         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
             <Typography variant="body2">Gesamt:</Typography>
@@ -97,13 +95,12 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-
-// --- HAUPTKOMPONENTE ---
-
 const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
   widgetId, onDelete, isRemovable, icon, title, widgetTypeKey,
   category, countryCode = 'DE'
 }) => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [data, setData] = useState<StatDataPoint[]>([]);
   const [source, setSource] = useState<StatSource | null>(null);
   const [availableSubtypes, setAvailableSubtypes] = useState<string[]>([]);
@@ -111,59 +108,71 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  // State für den Länderfilter
   const [selectedCountry, setSelectedCountry] = useState(countryCode);
   const [availableCountries, setAvailableCountries] = useState<Region[]>([]);
+  const initialLoadDone = useRef(false);
 
-  const fetchCountries = useCallback(async () => {
-    if (!category) return;
-    try {
-      const response = await apiClient.get('/api/data/economic-statistics/countries', {
-        params: { statisticType: category }
-      });
-      setAvailableCountries(response.data);
-    } catch (err) {
-      console.error("Länder für Statistik-Widget konnten nicht geladen werden:", err);
-    }
+  useEffect(() => {
+    const fetchCountries = async () => {
+        if (!category) return;
+        try {
+            const response = await apiClient.get('/api/data/economic-statistics/countries', {
+                params: { statisticType: category }
+            });
+            setAvailableCountries(response.data);
+        } catch (err) {
+            console.error("Länder für Statistik-Widget konnten nicht geladen werden:", err);
+        }
+    };
+    fetchCountries();
   }, [category]);
 
-  const fetchData = useCallback(async () => {
-    if (!category) {
-        setError('Widget ist nicht korrekt konfiguriert (category fehlt).');
-        setLoading(false);
-        return;
+  useEffect(() => {
+    if (availableCountries.length > 0 && user?.regions && !initialLoadDone.current) {
+        const userDefaultRegion = user.regions.find(r => r.is_default);
+        const availableCountryCodes = availableCountries.map(c => c.code);
+
+        if (userDefaultRegion && availableCountryCodes.includes(userDefaultRegion.code)) {
+            setSelectedCountry(userDefaultRegion.code);
+            } else if (availableCountryCodes.length > 0) {
+                setSelectedCountry(availableCountryCodes[0]);
+            }
+        initialLoadDone.current = true;
     }
-    setLoading(true);
-    setError(null);
-    try {
-      const params = { statisticType: category, countryCode: selectedCountry };
-      const response = await apiClient.get('/api/data/economic-statistics', { params });
-      
-      if (response.data.ok) {
-        setData(response.data.data || []);
-        setSource(response.data.source || null);
-        const subtypes = response.data.subtypes || [];
-        setAvailableSubtypes(subtypes);
-        if(selectedSubtypes.length === 0) { // Nur beim ersten Laden setzen
-            setSelectedSubtypes(subtypes);
+  }, [availableCountries, user?.regions]);
+  
+  useEffect(() => {
+    const fetchData = async () => {
+        if (!category || !selectedCountry) {
+            return;
         }
-      } else {
-        throw new Error(response.data.message);
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Daten konnten nicht geladen werden.');
-    } finally {
-      setLoading(false);
-    }
-  }, [category, selectedCountry, selectedSubtypes.length]);
-
-  useEffect(() => {
-    fetchCountries();
-  }, [fetchCountries]);
-
-  useEffect(() => {
+        setLoading(true);
+        setError(null);
+        try {
+            const params = { statisticType: category, countryCode: selectedCountry };
+            const response = await apiClient.get('/api/data/economic-statistics', { params });
+            
+            if (response.data.ok) {
+                setData(response.data.data || []);
+                setSource(response.data.source || null);
+                const subtypes = response.data.subtypes || [];
+                setAvailableSubtypes(subtypes);
+                // Subtypen nur zurücksetzen, wenn sie leer sind oder wenn sich das Land geändert hat (wird im onChange gehandhabt)
+                if(selectedSubtypes.length === 0) {
+                    setSelectedSubtypes(subtypes);
+                }
+            } else {
+                throw new Error(response.data.message);
+            }
+        } catch (err: any) {
+            setError(err.response?.data?.message || 'Daten konnten nicht geladen werden.');
+            setData([]);
+        } finally {
+            setLoading(false);
+        }
+    };
     fetchData();
-  }, [fetchData]);
+  }, [category, selectedCountry]);
 
   const latestTotal = useMemo(() => {
     if (!data || data.length === 0) return 0;
@@ -174,7 +183,7 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
   const renderContent = () => {
     if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box>;
     if (error) return <Alert severity="error">{error}</Alert>;
-    if (data.length === 0) return <Typography sx={{ p: 2 }}>Keine Daten für das gewählte Land verfügbar.</Typography>;
+    if (data.length === 0) return <Typography sx={{ p: 2, textAlign: 'center' }} color="text.secondary">Keine Daten für das gewählte Land verfügbar.</Typography>;
 
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -218,8 +227,23 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
           </ResponsiveContainer>
         </Box>
         {source && (
-            <Typography variant="caption" sx={{ textAlign: 'center', p: 1, pt: 2, color: 'text.secondary' }}>
+            // ERWEITERT: Layout für Link und Icon angepasst
+            <Typography variant="caption" sx={{ textAlign: 'center', p: 1, pt: 2, color: 'text.secondary', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0.5 }}>
                 Quelle: <MuiLink href={source.url} target="_blank" rel="noopener">{source.name}</MuiLink>
+                {source.is_trusted && (
+                    <Tooltip title="Info zu geprüften Quellen">
+                        <IconButton
+                            size="small"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                navigate('/trusted-sources');
+                            }}
+                            sx={{ p: 0 }}
+                        >
+                            <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                        </IconButton>
+                    </Tooltip>
+                )}
             </Typography>
         )}
       </Box>
@@ -236,7 +260,7 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
                     value={selectedCountry}
                     onChange={(e: SelectChangeEvent) => {
                       setSelectedCountry(e.target.value);
-                      setSelectedSubtypes([]); // Subtypen zurücksetzen, damit sie für das neue Land neu geladen werden
+                      setSelectedSubtypes([]);
                     }}
                     renderValue={(value) => {
                         const country = availableCountries.find(c => c.code === value);

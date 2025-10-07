@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Box, Typography, CircularProgress, Alert, Divider, Link as MuiLink,
-    Stack, Tooltip, Paper, Button, ToggleButton, ToggleButtonGroup
+    Stack, Tooltip, Paper, Button, ToggleButton, ToggleButtonGroup, IconButton
 } from '@mui/material';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
@@ -10,6 +10,7 @@ import TrendingFlatIcon from '@mui/icons-material/TrendingFlat';
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import ViewModuleIcon from '@mui/icons-material/ViewModule';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
@@ -39,6 +40,7 @@ interface CommodityData {
     source: string;
     trend: 'up' | 'down' | 'stable';
     countryCode?: string | null;
+    is_trusted_source: boolean;
     historical: HistoricalData;
 }
 
@@ -63,7 +65,7 @@ const TrendIndicator: React.FC<{ trend: 'up' | 'down' | 'stable' }> = ({ trend }
 };
 
 const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = ({ indicatorKey, data }) => {
-    // Konfiguration aus der zentralen Datei verwenden
+    const navigate = useNavigate();
     const displayInfo = commoditiesConfig[indicatorKey] || { name: indicatorKey, formatOptions: { style: 'decimal' } };
     const sourceUrl = sourceUrls[data.source] || '#';
 
@@ -123,11 +125,28 @@ const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = (
                 )}
             </Stack>
 
-            <Box sx={{ mt: 2, pt: 1, borderTop: 1, borderColor: 'divider' }}>
-                <Typography variant="caption">
-                    Quelle: <MuiLink href={sourceUrl} target="_blank" rel="noopener">{data.source}</MuiLink> (Stand: {new Date(data.lastUpdate).toLocaleDateString('de-DE')})
-                </Typography>
-            </Box>
+<Box sx={{ textAlign: 'center' }}>
+    <Typography variant="caption" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+        Quelle: <MuiLink href={sourceUrl} target="_blank" rel="noopener">{data.source}</MuiLink>
+        {data.is_trusted_source && (
+            <Tooltip title="Info zu geprüften Quellen">
+                <IconButton
+                    size="small"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        navigate('/trusted-sources');
+                    }}
+                    sx={{ p: 0 }}
+                >
+                    <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                </IconButton>
+            </Tooltip>
+        )}
+    </Typography>
+    <Typography variant="caption" sx={{ display: 'block' }}>
+        (Stand: {new Date(data.lastUpdate).toLocaleDateString('de-DE')})
+    </Typography>
+</Box>
         </Paper>
     );
 };
@@ -277,7 +296,8 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
                     {isChartLoading && <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box>}
                     {!isChartLoading && !error && (
                         <CommodityChart 
-                            data={chartData} 
+                            historicalData={chartData} // Umbenannt für mehr Klarheit
+                            latestData={data}           // NEU: Die aktuellen Daten werden übergeben
                             timeframe={chartTimeframe}
                             setTimeframe={setChartTimeframe}
                         />

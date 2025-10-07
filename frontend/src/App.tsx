@@ -89,13 +89,14 @@ function App() {
 
   useEffect(() => {
     if (!isLoading) {
-      const scheme = businessPartner?.color_scheme; 
+      const scheme = businessPartner?.color_scheme;
 
       const newTheme = createTheme({
         palette: {
           mode: themeMode,
           primary: { 
-            main: scheme?.primary_color || '#2196f3' 
+            main: scheme?.primary_color || '#2196f3',
+            contrastText: scheme?.primary_text_color || '#fff' 
           },
           secondary: { 
             main: scheme?.secondary_color || '#ff9800' 

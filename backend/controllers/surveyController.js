@@ -24,6 +24,26 @@ exports.getSurveysForAdmin = async (req, res) => {
     }
 };
 
+exports.getArchivedSurveysForUser = async (req, res) => {
+    const { id: userId } = req.user;
+    try {
+        const query = `
+            SELECT s.id, s.title, s.description,
+                   (SELECT MAX(sr.created_at) FROM survey_responses sr WHERE sr.survey_id = s.id AND sr.user_id = $1) as completed_at
+            FROM surveys s
+            WHERE EXISTS (
+                SELECT 1 FROM survey_responses sr WHERE sr.survey_id = s.id AND sr.user_id = $1
+            )
+            ORDER BY completed_at DESC;
+        `;
+        const { rows } = await db.query(query, [userId]);
+        res.json(rows);
+    } catch (err) {
+        console.error('Fehler beim Laden des Umfrage-Archivs:', err.message);
+        res.status(500).send('Serverfehler');
+    }
+};
+
 exports.createSurvey = async (req, res) => {
     const { business_partner_id: user_bp_id, role } = req.user;
     const { title, description, questions, start_date, end_date, status, target_bp_id } = req.body;
@@ -165,12 +185,27 @@ exports.getSurveyResults = async (req, res) => {
                     [q.id]
                 );
                 questionResult = { ...q, results: counts };
-            } else {
+            } else { // 'free-text'
                 const { rows: texts } = await db.query(
                     'SELECT response_text FROM survey_responses WHERE question_id = $1',
                     [q.id]
                 );
-                questionResult = { ...q, results: texts };
+                // WORTWOLKEN-Logik: Zähle die Worthäufigkeiten
+                const wordCounts = texts.reduce((acc, { response_text }) => {
+                    if (!response_text) return acc;
+                    // Einfache Normalisierung: Kleinschreibung, Satzzeichen entfernen, unwichtige Wörter filtern
+                    const stopWords = new Set(['und', 'oder', 'der', 'die', 'das', 'ein', 'eine', 'ist', 'sind', 'ich', 'wir', 'es', 'nicht', 'mit', 'zu', 'im']);
+                    const words = response_text.toLowerCase().replace(/[.,!?;:"()]/g, '').split(/\s+/);
+                    words.forEach(word => {
+                        if (word && !stopWords.has(word) && word.length > 2) {
+                            acc[word] = (acc[word] || 0) + 1;
+                        }
+                    });
+                    return acc;
+                }, {});
+
+                const wordCloudData = Object.entries(wordCounts).map(([text, value]) => ({ text, value }));
+                questionResult = { ...q, results: wordCloudData };
             }
             results.push(questionResult);
         }

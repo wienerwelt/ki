@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
-    Box, Typography, CircularProgress, MenuItem, Alert, List, ListItem, ListItemText, Divider,
+    Box, Typography, CircularProgress, Modal, Fade, MenuItem, Alert, List, ListItem, ListItemText, Divider,
     Dialog, DialogTitle, DialogContent, Button, Stack, IconButton, Tooltip, Link as MuiLink,
     DialogActions, Select, FormControl, InputLabel, SelectChangeEvent, Avatar, Chip,
     TextField, InputAdornment, Paper, ListItemAvatar, useTheme, useMediaQuery, Popover, Card, CardMedia, CardContent, CardActionArea
@@ -14,20 +14,22 @@ import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt';
 import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
 import ShareIcon from '@mui/icons-material/Share';
-import DynamicFeedIcon from '@mui/icons-material/DynamicFeed';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import LinkIcon from '@mui/icons-material/Link';
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import NewspaperIcon from '@mui/icons-material/Newspaper';
 import TuneIcon from '@mui/icons-material/Tune';
+import ClickAwayListener from '@mui/material/ClickAwayListener';
+import FullscreenIcon from '@mui/icons-material/Fullscreen';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import CheckIcon from '@mui/icons-material/Check';
+
 import { useNavigate } from 'react-router-dom';
 import posthog from 'posthog-js';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
-import ClickAwayListener from '@mui/material/ClickAwayListener';
 
 // --- Interfaces und Hilfs-Komponenten (unverändert) ---
 interface ScrapedContentItem {
@@ -50,6 +52,10 @@ interface ScrapedContentItem {
 interface Tag {
     name: string;
     count: number;
+}
+interface HighlightedTextProps {
+    text: string;
+    keywords: string[];
 }
 interface RelevantAction {
     id: string;
@@ -81,6 +87,12 @@ interface ShareState {
     success: string | null;
     recipientEmail: string;
 }
+interface AiDraftState {
+    open: boolean;
+    loading: boolean;
+    error: string | null;
+    content: string;
+}
 
 const ArticleBodyRenderer: React.FC<{ summary: string | null | undefined }> = ({ summary }) => {
     if (!summary) return <Typography>Kein Inhalt verfügbar.</Typography>;
@@ -90,6 +102,56 @@ const ArticleBodyRenderer: React.FC<{ summary: string | null | undefined }> = ({
         </Typography>
     );
 };
+
+const HighlightedText: React.FC<HighlightedTextProps> = ({ text, keywords }) => {
+    // --- DEBUGGING-CHECK: Bitte fügen Sie diese 3 Zeilen hinzu ---
+    console.log("--- Highlight Check ---");
+    console.log("Keywords zum Suchen:", keywords);
+    console.log("Text zum Durchsuchen:", text);
+
+    const parts = useMemo(() => {
+        if (!keywords || keywords.length === 0 || !text) {
+            return [text];
+        }
+
+        // --- KORREKTUR: Die Wortgrenze (\b) am Ende wurde entfernt ---
+        // Das sorgt dafür, dass auch "BEVs", "BEV-Modelle" etc. gefunden werden.
+        const regex = new RegExp(`\\b(${keywords.join('|')})`, 'gi');
+        
+        // Die .split() und .map() Logik funktioniert weiterhin, muss aber leicht angepasst werden,
+        // da nun auch Teile von Wörtern gefunden werden. Wir suchen jetzt nach dem Anfang eines Wortes.
+        const matches = [...text.matchAll(regex)];
+        if (matches.length === 0) return [text];
+
+        const result: (string | JSX.Element)[] = [];
+        let lastIndex = 0;
+
+        matches.forEach((match, index) => {
+            const keyword = match[0];
+            const startIndex = match.index!;
+            
+            // Text vor dem Match hinzufügen
+            if (startIndex > lastIndex) {
+                result.push(text.substring(lastIndex, startIndex));
+            }
+            // Das gefundene Keyword als <mark>-Element hinzufügen
+            result.push(<mark key={index}>{keyword}</mark>);
+            
+            lastIndex = startIndex + keyword.length;
+        });
+
+        // Den restlichen Text nach dem letzten Match hinzufügen
+        if (lastIndex < text.length) {
+            result.push(text.substring(lastIndex));
+        }
+        
+        return result;
+
+    }, [text, keywords]);
+
+    return <span>{parts}</span>;
+};
+
 const VoteComponent: React.FC<{ item: ScrapedContentItem; onVote: (vote: 1 | -1) => void; size?: 'small' | 'medium' }> = ({ item, onVote, size = 'small' }) => {
     const getScoreColor = (score: number) => score > 0 ? 'success.main' : score < 0 ? 'error.main' : 'text.secondary';
     const handleVote = (e: React.MouseEvent, vote: 1 | -1) => {
@@ -114,6 +176,7 @@ const VoteComponent: React.FC<{ item: ScrapedContentItem; onVote: (vote: 1 | -1)
         </Box>
     );
 };
+
 const getDomain = (url: string | null | undefined): string | null => {
     if (!url) return null;
     try {
@@ -122,7 +185,7 @@ const getDomain = (url: string | null | undefined): string | null => {
         return null;
     }
 };
-// Die kompakte Desktop-Suche
+
 const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onSearch }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -171,7 +234,6 @@ const AnimatedSearchBar: React.FC<{ onSearch: (term: string) => void }> = ({ onS
     );
 };
 
-
 const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, description, filterLabel, widgetTypeKey }) => {
     const { user } = useAuth();
     const navigate = useNavigate();
@@ -201,8 +263,11 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
     const [selectedTag, setSelectedTag] = useState('all');
     const [filterMode, setFilterMode] = useState<'all' | 'new' | 'unread'>('all');
     const [relevantAction, setRelevantAction] = useState<RelevantAction | null>(null);
+    const [isImageModalOpen, setImageModalOpen] = useState(false);
+    const [copySuccess, setCopySuccess] = useState(false);
+    const [aiDraftState, setAiDraftState] = useState<AiDraftState>({ open: false, loading: false, error: null, content: '' });
+    const [activeGlobalTags, setActiveGlobalTags] = useState<string[]>([]);
 
-    // ... (Logik-Hooks bleiben unverändert) ...
     useEffect(() => { const handler = setTimeout(() => { setDebouncedSearchTerm(searchTerm); }, 500); return () => { clearTimeout(handler); }; }, [searchTerm]);
     useEffect(() => { if (user?.regions && user.regions.length > 0) { const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0]; setSelectedRegion(defaultRegion); } }, [user?.regions]);
 
@@ -239,6 +304,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
             setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
             setTotalPages(contentRes.data?.totalPages || 0);
             setCounts(contentRes.data?.counts || { unread: 0, new: 0 });
+            setActiveGlobalTags(contentRes.data?.activeFilters?.tags || []);
             
             if (currentPage === 1) {
                 setAvailableTags(tagsRes.data || []);
@@ -260,7 +326,6 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
         }
      }, [sortBy, selectedRegion, debouncedSearchTerm, selectedTag, filterMode, fetchData, user?.regions]);
     
-     // ... (alle handle... Funktionen bleiben unverändert) ...
      const handleLoadMore = () => {
         const nextPage = page + 1;
         setPage(nextPage);
@@ -320,11 +385,14 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
             setTemplateState({ ...templateState, open: true, loading: false, error: err.response?.data?.message || 'Vorlage konnte nicht generiert werden.' });
         }
     };
+
     const handleOpenShareDialog = () => {
         if (!selectedArticle) return;
         setShareState({ open: true, loading: false, error: null, success: null, recipientEmail: '' });
     };
+
     const handleCloseShareDialog = () => setShareState({ ...shareState, open: false });
+
     const handleSendEmail = async () => {
         if (!selectedArticle || !shareState.recipientEmail) return;
         setShareState(prev => ({ ...prev, loading: true, error: null, success: null }));
@@ -341,11 +409,39 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
             setShareState(prev => ({ ...prev, loading: false, error: err.response?.data?.message || 'E-Mail konnte nicht gesendet werden.' }));
         }
     };
+
     const handleCloseDialog = () => setSelectedArticle(null);
+
     const handleCloseTemplateDialog = () => setTemplateState({ ...templateState, open: false });
+
     const handleCopyToClipboard = (text: string) => navigator.clipboard.writeText(text);
 
-    // Render-Funktion für die Filter-Steuerelemente
+    const handleSimpleCopy = () => {
+        if (!selectedArticle) return;
+        const textToCopy = `${selectedArticle.title}\n\n${selectedArticle.summary}`;
+        navigator.clipboard.writeText(textToCopy);
+        setCopySuccess(true);
+        setTimeout(() => setCopySuccess(false), 2000);
+    };    
+
+    const handleGenerateAiDraft = async () => {
+        if (!selectedArticle) return;
+        setAiDraftState({ ...aiDraftState, open: true, loading: true, error: null, content: '' });
+        try {
+            const token = localStorage.getItem('jwt_token');
+            // Annahme: API-Endpunkt ist analog zur Funding-Seite, aber für generischen Content
+            const response = await apiClient.post('/api/data/generate-draft-from-content', 
+                { contentId: selectedArticle.id }, 
+                { headers: { 'x-auth-token': token } }
+            );
+            setAiDraftState({ open: true, loading: false, error: null, content: response.data.draft });
+        } catch (err: any) {
+            setAiDraftState({ open: true, loading: false, error: err.response?.data?.message || 'Der KI-Entwurf konnte nicht erstellt werden.', content: '' });
+        }
+    };
+
+    const handleCloseAiDraftDialog = () => setAiDraftState({ ...aiDraftState, open: false });
+
     const renderFilterControls = (isMenu: boolean) => {
         const controlWrapper = (child: React.ReactNode) => isMenu 
             ? <Box sx={{ p: 1, width: 220 }}>{child}</Box> 
@@ -531,19 +627,34 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                                                     />
                                                     <CardContent>
                                                         <Typography gutterBottom variant="h6" component="div" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>
-                                                            {item.title}
+                                                            <HighlightedText text={item.title} keywords={activeGlobalTags} />
                                                         </Typography>
                                                         <Stack direction="row" justifyContent="space-between" alignItems="center" mt={1}>
                                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
                                                                 <Typography variant="caption" color="text.secondary">
                                                                     {new Date(displayDate).toLocaleDateString('de-AT')}
                                                                 </Typography>
-                                                                {domain && (
-                                                                    <MuiLink href={item.original_url!} target="_blank" rel="noopener noreferrer" variant="caption" color="text.secondary" onClick={(e) => e.stopPropagation()} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                                                                        ({domain})
-                                                                        {item.is_trusted_source && (<Tooltip title="Geprüfte Quelle"><VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main', ml: 0.5 }} /></Tooltip>)}
-                                                                    </MuiLink>
-                                                                )}
+        {domain && (
+            <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                <MuiLink href={item.original_url!} target="_blank" rel="noopener noreferrer" variant="caption" onClick={(e) => e.stopPropagation()}>
+                    {domain}
+                </MuiLink>
+                {item.is_trusted_source && (
+                    <Tooltip title="Info zu geprüften Quellen">
+                        <IconButton
+                            size="small"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                navigate('/trusted-sources');
+                            }}
+                            sx={{ p: 0, ml: 0.25 }}
+                        >
+                            <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                        </IconButton>
+                    </Tooltip>
+                )}
+            </Box>
+        )}
                                                             </Box>
                                                             <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
                                                         </Stack>
@@ -566,19 +677,38 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                                                     )}
                                                 </ListItemAvatar>
                                                 <ListItemText
-                                                    primary={<Typography variant="body2" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>{item.title}</Typography>}
+                                                    primary={
+                                                        <Typography variant="body2" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>
+                                                            <HighlightedText text={item.title} keywords={activeGlobalTags} />
+                                                        </Typography>
+                                                    }
                                                     secondaryTypographyProps={{ component: 'div' }}
                                                     secondary={
                                                         <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
                                                             <Typography variant="caption" color="text.secondary">
                                                                 {new Date(displayDate).toLocaleDateString('de-AT')}
                                                             </Typography>
-                                                            {domain && (
-                                                                <MuiLink href={item.original_url!} target="_blank" rel="noopener noreferrer" variant="caption" color="text.secondary" onClick={(e) => e.stopPropagation()} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                                                                    ({domain})
-                                                                    {item.is_trusted_source && (<Tooltip title="Geprüfte Quelle"><VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main', ml: 0.5 }} /></Tooltip>)}
-                                                                </MuiLink>
-                                                            )}
+    {domain && (
+        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+            <MuiLink href={item.original_url!} target="_blank" rel="noopener noreferrer" variant="caption" onClick={(e) => e.stopPropagation()}>
+                {domain}
+            </MuiLink>
+            {item.is_trusted_source && (
+                <Tooltip title="Info zu geprüften Quellen">
+                    <IconButton
+                        size="small"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            navigate('/trusted-sources');
+                        }}
+                        sx={{ p: 0, ml: 0.25 }}
+                    >
+                        <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                    </IconButton>
+                </Tooltip>
+            )}
+        </Box>
+    )}
                                                             <Box sx={{ flexGrow: 1 }} />
                                                             <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
                                                         </Box>
@@ -619,90 +749,164 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                 </Box>
             )}
             
-            <Dialog open={!!selectedArticle} onClose={handleCloseDialog} fullWidth maxWidth="md" PaperProps={{ sx: { height: '90vh' } }}>
-                <DialogTitle sx={{ m: 0, p: 2 }}>
-                    <Box display="flex" justifyContent="space-between" alignItems="center">
-                        <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>{selectedArticle?.title}</Typography>
-                        <IconButton aria-label="close" onClick={handleCloseDialog} sx={{ ml: 2 }}><CloseIcon /></IconButton>
-                    </Box>
-                </DialogTitle>
-                <DialogContent dividers sx={{ p: 2 }}>
-                    {selectedArticle?.thumbnail_url && (
-                        <Box
-                            component="img"
-                            src={selectedArticle.thumbnail_url}
-                            alt={selectedArticle.title}
-                            sx={{
-                                width: '100%',
-                                maxHeight: '300px',
-                                objectFit: 'cover',
-                                borderRadius: 1,
-                                mb: 2,
-                            }}
-                        />
-                    )}
-                     <Box sx={{ mb: 2, borderBottom: 1, borderColor: 'divider', pb: 2 }}>
-                        {selectedArticle?.published_date && (
-                            <Typography variant="caption" color="text.secondary" display="block">
-                                Veröffentlicht am: {new Date(selectedArticle.published_date).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-                            </Typography>
-                        )}
-                        {selectedArticle?.tags && selectedArticle.tags.length > 0 && (
-                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
-                                {selectedArticle.tags.map(tag => <Chip key={tag} label={tag} size="small" />)}
-                            </Box>
-                        )}
-                    </Box>
-
-                    <Box sx={{ flexGrow: 1, overflowY: 'auto', pr: 2 }}>
-                        <ArticleBodyRenderer summary={selectedArticle?.summary} />
-                        {selectedArticle?.original_url && (
-                            <Box sx={{ mt: 3, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                                <MuiLink
-                                    href={selectedArticle.original_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    variant="button"
-                                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}
-                                >
-                                    <LinkIcon fontSize="small" />
-                                    Weiterlesen bei der Quelle
-                                </MuiLink>
-                            </Box>
-                        )}
-                    </Box>
-                    <Paper 
-                        elevation={3} 
-                        sx={{ 
-                            position: 'sticky', bottom: 0, mt: 2, p: 1, alignSelf: 'center', 
-                            borderRadius: '50px', backdropFilter: 'blur(8px)', 
-                            backgroundColor: (theme) => alpha(theme.palette.background.paper, 0.8) 
+    <Dialog open={!!selectedArticle} onClose={handleCloseDialog} fullWidth maxWidth="md" PaperProps={{ sx: { height: '90vh' } }}>
+        <DialogTitle sx={{ m: 0, p: 2 }}>
+            <Box display="flex" justifyContent="space-between" alignItems="center">
+                <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+                    <HighlightedText
+                        text={selectedArticle?.title || ''}
+                        keywords={activeGlobalTags}
+                    />
+                </Typography>
+                <IconButton aria-label="close" onClick={handleCloseDialog} sx={{ ml: 2 }}><CloseIcon /></IconButton>
+            </Box>
+        </DialogTitle>
+        <DialogContent dividers sx={{ p: 2 }}>
+            {selectedArticle?.thumbnail_url && (
+                // --- ÄNDERUNG 2: Container für Bild mit Zoom-Funktion ---
+                <Box sx={{ position: 'relative', mb: 2 }}>
+                    <Box
+                        component="img"
+                        src={selectedArticle.thumbnail_url}
+                        alt={selectedArticle.title}
+                        sx={{
+                            width: '100%',
+                            maxHeight: '300px',
+                            objectFit: 'cover',
+                            borderRadius: 1,
+                        }}
+                    />
+                    <IconButton
+                        onClick={() => setImageModalOpen(true)}
+                        sx={{
+                            position: 'absolute',
+                            bottom: 8,
+                            right: 8,
+                            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                            color: 'white',
+                            '&:hover': {
+                                backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                            }
                         }}
                     >
-                        <Stack direction="row" spacing={1} alignItems="center">
-                            {selectedArticle && <VoteComponent item={selectedArticle} onVote={(vote) => handleVote(selectedArticle.id, vote)} size="medium" />}
-                            <Divider orientation="vertical" flexItem />
-                            <Tooltip title="Per E-Mail senden"><IconButton onClick={handleOpenShareDialog}><ShareIcon /></IconButton></Tooltip>
-                            <Tooltip title="Als Vorlage für Newsletter generieren"><IconButton onClick={handleGenerateTemplate}><DynamicFeedIcon /></IconButton></Tooltip>
-                        </Stack>
-                    </Paper>
-                </DialogContent>
-            </Dialog>
+                        <FullscreenIcon />
+                    </IconButton>
+                </Box>
+            )}
+            <Box sx={{ mb: 2, borderBottom: 1, borderColor: 'divider', pb: 2 }}>
+                {selectedArticle?.published_date && (
+                    <Typography variant="caption" color="text.secondary" display="block">
+                        Veröffentlicht am: {new Date(selectedArticle.published_date).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                    </Typography>
+                )}
+                {selectedArticle?.tags && selectedArticle.tags.length > 0 && (
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                        {selectedArticle.tags.map(tag => <Chip key={tag} label={tag} size="small" />)}
+                    </Box>
+                )}
+            </Box>
+            <Box sx={{ flexGrow: 1, overflowY: 'auto', pr: 1 }}>
+                    <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                        <HighlightedText
+                            text={selectedArticle?.summary || ''}
+                            keywords={activeGlobalTags}
+                        />
+                    </Typography>
+                {selectedArticle?.original_url && (
+                    <Box sx={{ mt: 2 }}>
+                        <MuiLink href={selectedArticle.original_url} target="_blank" rel="noopener noreferrer" variant="body2">
+                            Weiterlesen...
+                        </MuiLink>
+                    </Box>
+                )}
+            </Box>
+            {selectedArticle?.original_url && (
+                <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>
+<Typography variant="body2" color="text.secondary">
+    Quelle: <MuiLink href={selectedArticle.original_url} target="_blank" rel="noopener noreferrer" variant="body2">
+    {getDomain(selectedArticle.original_url) || 'Webseite'}
+    </MuiLink>
+    {selectedArticle.is_trusted_source && (
+        <Tooltip title="Info zu geprüften Quellen">
+            <IconButton
+                size="small"
+                onClick={(e) => {
+                    e.stopPropagation();
+                    navigate('/trusted-sources');
+                }}
+                sx={{ p: 0, ml: 0.5, verticalAlign: 'middle' }}
+            >
+                <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
+            </IconButton>
+        </Tooltip>
+    )}
+</Typography>
+                </Box>
+            )}
+            <Box sx={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
+                <Paper 
+                    elevation={3} 
+                    sx={{ 
+                        position: 'sticky', bottom: 0, mt: 2, p: 1, 
+                        borderRadius: '50px', backdropFilter: 'blur(8px)', 
+                        backgroundColor: (theme) => alpha(theme.palette.background.paper, 0.8) 
+                    }}
+                >
+                    <Stack direction="row" spacing={1} alignItems="center">
+                        {selectedArticle && <VoteComponent item={selectedArticle} onVote={(vote) => handleVote(selectedArticle.id, vote)} size="medium" />}
+                        <Divider orientation="vertical" flexItem />
+                        <Tooltip title="Per E-Mail senden"><IconButton onClick={handleOpenShareDialog}><ShareIcon /></IconButton></Tooltip>
+                        <Tooltip title={copySuccess ? "Kopiert!" : "Inhalt in Zwischenablage kopieren"}>
+                           <IconButton onClick={handleSimpleCopy}>
+                               {copySuccess ? <CheckIcon color="success" /> : <ContentCopyIcon />}
+                           </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Davon Newsletter Text mit KI entwerfen">
+                            <IconButton onClick={handleGenerateAiDraft}>
+                                <AutoAwesomeIcon />
+                            </IconButton>
+                        </Tooltip>
+                    </Stack>
+                </Paper>
+            </Box>
 
-            <Dialog open={templateState.open} onClose={handleCloseTemplateDialog} fullWidth maxWidth="md">
-                <DialogTitle>Newsletter-Vorlage</DialogTitle>
-                <DialogContent>
-                    {templateState.loading && <Box sx={{ display: 'flex', justifyContent: 'center', my: 5 }}><CircularProgress /></Box>}
-                    {templateState.error && <Alert severity="error">{templateState.error}</Alert>}
-                    {!templateState.loading && !templateState.error && (
-                        <Stack spacing={2} sx={{ mt: 1 }}>
-                            <TextField label="Generierter Text für Ihren Newsletter" fullWidth multiline rows={12} value={templateState.content} InputProps={{ readOnly: true }} />
-                            <Button onClick={() => handleCopyToClipboard(templateState.content)} startIcon={<ContentCopyIcon />}>Text kopieren</Button>
-                        </Stack>
-                    )}
-                </DialogContent>
-                <DialogActions><Button onClick={handleCloseTemplateDialog}>Schließen</Button></DialogActions>
-            </Dialog>
+        </DialogContent>
+    </Dialog>
+
+    <Modal open={isImageModalOpen} onClose={() => setImageModalOpen(false)} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Fade in={isImageModalOpen}>
+            <Box onClick={() => setImageModalOpen(false)} sx={{ outline: 'none', cursor: 'pointer' }}>
+                <img
+                    src={selectedArticle?.thumbnail_url || ''}
+                    alt={selectedArticle?.title}
+                    style={{ maxHeight: '90vh', maxWidth: '90vw', objectFit: 'contain' }}
+                />
+            </Box>
+        </Fade>
+    </Modal>
+    
+    <Dialog open={aiDraftState.open} onClose={handleCloseAiDraftDialog} fullWidth maxWidth="md">
+        <DialogTitle>KI-generierter Newsletter-Entwurf</DialogTitle>
+        <DialogContent>
+            {aiDraftState.loading && <Box sx={{ display: 'flex', justifyContent: 'center', my: 5 }}><CircularProgress /></Box>}
+            {aiDraftState.error && <Alert severity="error">{aiDraftState.error}</Alert>}
+            {!aiDraftState.loading && !aiDraftState.error && (
+                <Paper variant="outlined" sx={{ p: 2, mt: 2, maxHeight: '60vh', overflowY: 'auto' }}>
+                    <Typography sx={{ whiteSpace: 'pre-wrap' }}>{aiDraftState.content}</Typography>
+                </Paper>
+            )}
+        </DialogContent>
+        <DialogActions>
+            <Button onClick={handleCloseAiDraftDialog}>Schließen</Button>
+            <Button 
+                onClick={() => navigator.clipboard.writeText(aiDraftState.content)} 
+                startIcon={<ContentCopyIcon />} 
+                disabled={!aiDraftState.content}
+            >
+                Text kopieren
+            </Button>
+        </DialogActions>
+    </Dialog>
             
             <Dialog open={shareState.open} onClose={handleCloseShareDialog} fullWidth maxWidth="sm">
                 <DialogTitle>Inhalt per E-Mail senden</DialogTitle>

@@ -77,6 +77,7 @@ const PAGE_SIZE = 50;
 
 const AdminScrapedContentPage: React.FC = () => {
     const [content, setContent] = useState<UnifiedContent[]>([]);
+    const [totalCount, setTotalCount] = useState(0);
     const [sourceIdentifierOptions, setSourceIdentifierOptions] = useState<ScrapingRuleOption[]>([]);
     const [allCategories, setAllCategories] = useState<Category[]>([]);
     const [allTags, setAllTags] = useState<Tag[]>([]);
@@ -94,6 +95,7 @@ const AdminScrapedContentPage: React.FC = () => {
     const [hasMore, setHasMore] = useState(true);
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
+    const [regionFilter, setRegionFilter] = useState('');
     const query = useQuery();
     const sourceIdentifierFilter = query.get('source_identifier');
     const navigate = useNavigate();
@@ -129,11 +131,14 @@ const AdminScrapedContentPage: React.FC = () => {
             if (sourceIdentifierFilter) params.append('source_identifier', sourceIdentifierFilter);
             if (startDate) params.append('startDate', startDate);
             if (endDate) params.append('endDate', endDate);
+            if (regionFilter) params.append('region', regionFilter);
 
             const contentRes = await apiClient.get(`/api/admin/scraped-content?${params.toString()}`, { headers: { 'x-auth-token': token } });
-            
-            setContent(prev => replace ? contentRes.data : [...prev, ...contentRes.data]);
-            setHasMore(contentRes.data.length === PAGE_SIZE);
+            const { data, total } = contentRes.data;
+
+            setContent(prev => replace ? data : [...prev, ...data]);
+            setTotalCount(total);
+            setHasMore(data.length === PAGE_SIZE);
             setPage(currentPage);
 
         } catch (err: any) {
@@ -141,7 +146,7 @@ const AdminScrapedContentPage: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    }, [sourceIdentifierFilter, startDate, endDate]);
+    }, [sourceIdentifierFilter, startDate, endDate, regionFilter]);
 
     useEffect(() => {
         fetchStaticData();
@@ -325,7 +330,12 @@ const AdminScrapedContentPage: React.FC = () => {
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, flexWrap: 'wrap', gap: 2 }}>
                     <Box>
-                        <Typography variant="h4" component="h1">Alle Inhalte</Typography>
+                        <Typography variant="h4" component="h1">Alle Inhalte ({totalCount})</Typography>
+                        {content.length < totalCount && (
+                            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                                Zeigt {content.length} von {totalCount} Einträgen. Klicken Sie auf "Mehr laden", um alle Ergebnisse zu sehen.
+                            </Typography>
+                        )}                        
                         {sourceIdentifierFilter && <Chip label={`Filter: ${sourceIdentifierFilter}`} onDelete={handleClearFilter} sx={{ mt: 1 }} />}
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -339,10 +349,45 @@ const AdminScrapedContentPage: React.FC = () => {
                     </Box>
                 </Box>
                 
-                <Paper sx={{ p: 2, mb: 3, display: 'flex', gap: 2, alignItems: 'center' }}>
-                    <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), }} sx={{ flexGrow: 1 }} />
-                    <TextField label="Start-Datum" type="date" size="small" InputLabelProps={{ shrink: true }} value={startDate} onChange={e => setStartDate(e.target.value)} />
-                    <TextField label="End-Datum" type="date" size="small" InputLabelProps={{ shrink: true }} value={endDate} onChange={e => setEndDate(e.target.value)} />
+                <Paper sx={{ p: 2, mb: 3, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <TextField 
+                        variant="outlined" 
+                        size="small" 
+                        placeholder="Suchen..." 
+                        value={searchTerm} 
+                        onChange={(e) => setSearchTerm(e.target.value)} 
+                        InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), }} 
+                        sx={{ flexGrow: 1, minWidth: '200px' }} 
+                    />
+                    <TextField 
+                        select 
+                        label="Region" 
+                        size="small" 
+                        value={regionFilter} 
+                        onChange={e => setRegionFilter(e.target.value)} 
+                        sx={{ minWidth: 180 }}
+                    >
+                        <MenuItem value=""><em>Alle Regionen</em></MenuItem>
+                        {(allRegions || []).map((region) => (
+                            <MenuItem key={region.id} value={region.name}>{region.name}</MenuItem>
+                        ))}
+                    </TextField>
+                    <TextField 
+                        label="Start-Datum" 
+                        type="date" 
+                        size="small" 
+                        InputLabelProps={{ shrink: true }} 
+                        value={startDate} 
+                        onChange={e => setStartDate(e.target.value)} 
+                    />
+                    <TextField 
+                        label="End-Datum" 
+                        type="date" 
+                        size="small" 
+                        InputLabelProps={{ shrink: true }} 
+                        value={endDate} 
+                        onChange={e => setEndDate(e.target.value)} 
+                    />
                     <Button variant="contained" startIcon={<FilterListIcon />} onClick={handleApplyFilter}>Filtern</Button>
                 </Paper>
 

@@ -7,6 +7,7 @@ import {
 } from '@mui/material';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { useNavigate } from 'react-router-dom';
 
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
@@ -18,6 +19,7 @@ import PowerIcon from '@mui/icons-material/Power';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import CloseIcon from '@mui/icons-material/Close';
 import MapOutlinedIcon from '@mui/icons-material/MapOutlined';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
@@ -41,10 +43,16 @@ interface StationData {
   lat?: number | null; lng?: number | null; provider?: string | null;
   operator_name?: string | null; charge_point_count?: number | null;
   power_kw?: number | string | null; connector_types?: string[] | null;
+  is_trusted_source?: boolean; 
 }
 
 const FAVORITES_LIMIT = 10;
 const PAGE_SIZE = 10;
+
+const providerUrls: { [key: string]: string } = {
+  'E-Control': 'https://www.e-control.at/ladestellen',
+  'OpenChargeMap': 'https://openchargemap.org/site'
+};
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -56,6 +64,7 @@ L.Icon.Default.mergeOptions({
 const EVStationWidget: React.FC<EVStationWidgetProps> = ({
   onDelete, widgetId, isRemovable, icon, title, widgetTypeKey
 }) => {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { showSnackbar } = useSnackbar();
 
@@ -189,15 +198,31 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
     }
   }, [isFavorite, widgetTypeKey, fetchFavoritesFromDB, showSnackbar, favorites.length]);
   
-  const getProviderAttribution = () => {
+  const renderProviderAttribution = () => {
+    let providerName: string | null = null;
     if (viewMode === 'search' && selectedRegion) {
-      if (selectedRegion.code === 'AT') return 'Quelle: E-Control';
-      return 'Quelle: OpenChargeMap';
+        providerName = selectedRegion.code === 'AT' ? 'E-Control' : 'OpenChargeMap';
+    } else if (favorites.length > 0) {
+        const uniqueProviders = [...new Set(favorites.map(f => f.provider).filter(Boolean))];
+        if (uniqueProviders.length === 1) {
+            providerName = uniqueProviders[0];
+        } else if (uniqueProviders.length > 1) {
+            return <Typography variant="caption" color="text.secondary">Quellen: {uniqueProviders.join(', ')}</Typography>;
+        }
     }
-    if (favorites.length === 0) return '';
-    const uniqueProviders = [...new Set(favorites.map(f => f.provider).filter(Boolean))];
-    if (uniqueProviders.length === 0) return 'Quelle: Unbekannt';
-    return `Quellen: ${uniqueProviders.join(', ')}`;
+
+    if (!providerName) return null;
+    
+    const url = providerUrls[providerName];
+    if (!url) {
+        return <Typography variant="caption" color="text.secondary">Quelle: {providerName}</Typography>;
+    }
+
+    return (
+        <Typography variant="caption" color="text.secondary">
+            Quelle: <MuiLink href={url} target="_blank" rel="noopener noreferrer">{providerName}</MuiLink>
+        </Typography>
+    );
   };
 
   const renderListItem = (station: StationData) => {
@@ -217,7 +242,18 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
             {station.country_code && <img src={`https://flagcdn.com/w20/${station.country_code.toLowerCase()}.png`} alt={station.country_code} style={{flexShrink: 0, borderRadius: '2px'}} />}
         </ListItemIcon>
         <ListItemText
-          primary={<Typography variant="body2" sx={{ fontWeight: 'bold' }}>{station.name}</Typography>}
+          primary={
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="body2" sx={{ fontWeight: 'bold' }}>{station.name}</Typography>
+                {station.is_trusted_source && (
+                    <Tooltip title="Info zu geprüften Quellen">
+                        <IconButton size="small" sx={{p:0}} onClick={(e) => { e.stopPropagation(); navigate('/trusted-sources'); }}>
+                            <VerifiedUserIcon sx={{ fontSize: 16, color: 'success.main' }} />
+                        </IconButton>
+                    </Tooltip>
+                )}
+            </Box>
+          }
           secondary={fullAddress || "Keine Adressdaten"}
         />
         <Stack direction="column" alignItems="flex-end" spacing={0.5}>
@@ -307,7 +343,7 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
         <Button size="small" startIcon={viewMode === 'favorites' ? <AddCircleOutlineIcon/> : <ArrowBackIcon />} onClick={() => { setAllSearchResults([]); setDisplayedResults([]); setSearchTerm(''); setError(null); setViewMode(viewMode === 'favorites' ? 'search' : 'favorites'); }}>
           {viewMode === 'favorites' ? `Hinzufügen (${favorites.length}/${FAVORITES_LIMIT})` : 'Zurück'}
         </Button>
-        <Typography variant="caption" color="text.secondary">{getProviderAttribution()}</Typography>
+        {renderProviderAttribution()}
       </Stack>
 
       <Dialog open={!!selectedStation} onClose={() => setSelectedStation(null)} fullWidth maxWidth="sm">
@@ -323,7 +359,16 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
                 </Box>
                 <Box>
                     <Typography variant="overline" color="text.secondary">Betreiber</Typography>
-                    <Typography>{selectedStation?.operator_name}</Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography>{selectedStation?.operator_name}</Typography>
+                        {selectedStation?.is_trusted_source && (
+                          <Tooltip title="Info zu geprüften Quellen">
+                                <IconButton size="small" sx={{p:0}} onClick={(e) => { e.stopPropagation(); navigate('/trusted-sources'); }}>
+                                    <VerifiedUserIcon sx={{ fontSize: 16, color: 'success.main' }} />
+                                </IconButton>
+                            </Tooltip>
+                        )}
+                    </Box>
                 </Box>
                  <Stack direction="row" spacing={4}>
                     <Box>

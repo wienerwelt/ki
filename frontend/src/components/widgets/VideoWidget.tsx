@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     Box, Typography, CircularProgress, Alert, Divider,
     IconButton, Tooltip, Avatar, Chip, TextField, MenuItem, Link as MuiLink, Button, Card, CardContent, Stack
@@ -17,18 +17,22 @@ import { useAuth } from '../../context/AuthContext';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 
-// --- Interfaces ---
 interface VideoItem {
     id: string;
     title: string;
     is_read: boolean;
     published_date: string;
-    full_text: string | null; 
+    full_text: string | null;
     original_url: string;
     thumbnail_url?: string;
     relevance_score: number;
     user_vote: number;
     is_trusted_source: boolean;
+}
+
+interface HighlightedTextProps {
+    text: string;
+    keywords: string[];
 }
 
 interface VideoWidgetProps extends BaseWidgetProps {
@@ -37,8 +41,40 @@ interface VideoWidgetProps extends BaseWidgetProps {
     category: string;
 }
 
-// --- Hilfsfunktionen ---
-const defaultVideoThumbnail = '../public/logos/default-video.png';
+const HighlightedText: React.FC<HighlightedTextProps> = ({ text, keywords }) => {
+    const parts = useMemo(() => {
+        if (!keywords || keywords.length === 0 || !text) {
+            return [text];
+        }
+        const regex = new RegExp(`\\b(${keywords.join('|')})`, 'gi');
+        const matches = [...text.matchAll(regex)];
+        if (matches.length === 0) return [text];
+
+        const result: (string | JSX.Element)[] = [];
+        let lastIndex = 0;
+
+        matches.forEach((match, index) => {
+            const keyword = match[0];
+            const startIndex = match.index!;
+            
+            if (startIndex > lastIndex) {
+                result.push(text.substring(lastIndex, startIndex));
+            }
+            result.push(<mark key={index}>{keyword}</mark>);
+            lastIndex = startIndex + keyword.length;
+        });
+
+        if (lastIndex < text.length) {
+            result.push(text.substring(lastIndex));
+        }
+        
+        return result;
+    }, [text, keywords]);
+
+    return <span>{parts}</span>;
+};
+
+const defaultVideoThumbnail = '/logos/default-video.png';
 
 const decodeHtmlEntities = (text: string | null | undefined): string => {
     if (!text) return '';
@@ -53,34 +89,15 @@ const decodeHtmlEntities = (text: string | null | undefined): string => {
 
 const getYouTubeVideoId = (url: string | null | undefined): string | null => {
     if (!url) return null;
-    
-    // Beste Methode: Sucht nach dem letzten "v=" Parameter.
-    // Funktioniert für korrekte URLs (...?v=ID) und die fehlerhaften (...?v=VIDEO_ID?v=ID)
-    const urlParts = url.split('?v=');
-    if (urlParts.length > 1) {
-        // Nimmt den letzten Teil der URL nach der Aufteilung
-        const lastPart = urlParts[urlParts.length - 1];
-        // Extrahiert nur die Video-ID (ohne weitere Parameter wie &t=...)
-        const videoIdMatch = lastPart.match(/^([\w-]+)/); 
-        if (videoIdMatch && videoIdMatch[0]) {
-            return videoIdMatch[0];
-        }
-    }
-
-    // Fallback-Methode für andere YouTube-URL-Formate wie youtu.be/ID
     const patterns = [
-        /youtu\.be\/([\w-]+)/,
-        /\/embed\/([\w-]+)/,
+        /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/
     ];
-
     for (const pattern of patterns) {
         const match = url.match(pattern);
         if (match && match[1]) {
             return match[1];
         }
     }
-    
-    // Wenn nichts gefunden wird
     return null;
 };
 
@@ -103,7 +120,6 @@ const getDomain = (url: string | null | undefined): string | null => {
 };
 
 const VoteComponent: React.FC<{ item: VideoItem; onVote: (vote: 1 | -1) => void; }> = ({ item, onVote }) => {
-    // ... (Diese Komponente bleibt unverändert)
     const getScoreColor = (score: number) => score > 0 ? 'success.main' : score < 0 ? 'error.main' : 'text.secondary';
     const handleVote = (e: React.MouseEvent, vote: 1 | -1) => {
         e.stopPropagation();
@@ -118,7 +134,6 @@ const VoteComponent: React.FC<{ item: VideoItem; onVote: (vote: 1 | -1) => void;
     );
 };
 
-// --- Haupt-Widget-Komponente ---
 const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey }) => {
     const { user } = useAuth();
     const [items, setItems] = useState<VideoItem[]>([]);
@@ -128,22 +143,11 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
     const [counts, setCounts] = useState({ unread: 0, new: 0 });
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(0);
-
     const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
     const [filterMode, setFilterMode] = useState<'all' | 'new' | 'unread'>('all');
-    
-    // FIX: Status speichert das ganze Video-Objekt, nicht nur die ID
+    const [activeGlobalTags, setActiveGlobalTags] = useState<string[]>([]);
     const [activeVideo, setActiveVideo] = useState<VideoItem | null>(null);
     const playerRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (user?.regions && user.regions.length > 0) {
-            const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0];
-            setSelectedRegion(defaultRegion);
-        } else {
-            fetchData(1, null, 'all');
-        }
-    }, [user]);
 
     const fetchData = useCallback(async (currentPage: number, region: Region | null, filter: 'all' | 'new' | 'unread', loadMore = false) => {
         if (!category) {
@@ -174,10 +178,9 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
             setItems(prev => loadMore ? [...prev, ...fetchedItems] : fetchedItems);
             setCounts(response.data?.counts || { unread: 0, new: 0 });
             setTotalPages(response.data?.totalPages || 0);
+            setActiveGlobalTags(response.data?.activeFilters?.tags || []);
 
-            // WICHTIG: Diese Logik wurde entfernt, da sie den Player wieder geöffnet hat.
-            // Das erste Video wird nur noch beim allerersten Laden ausgewählt.
-            if (currentPage === 1 && !loadMore && fetchedItems.length > 0) {
+            if (currentPage === 1 && !loadMore && fetchedItems.length > 0 && !activeVideo) {
                 setActiveVideo(fetchedItems[0]);
             }
 
@@ -187,16 +190,20 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
             setIsLoading(false);
             setIsLoadingMore(false);
         }
-        // FIX: Abhängigkeit von activeVideo entfernt, um Re-Pop-Bug zu verhindern
-    }, [category]);
+    }, [category, activeVideo]);
+    
+    useEffect(() => {
+        if (user?.regions) {
+            const defaultRegion = user.regions.find(r => !!r.is_default) || null;
+            setSelectedRegion(defaultRegion);
+        }
+    }, [user?.regions]);
 
     useEffect(() => {
         setPage(1);
-        if (selectedRegion || (!user?.regions || user.regions.length === 0)) {
-            fetchData(1, selectedRegion, filterMode);
-        }
+        setActiveVideo(null); 
+        fetchData(1, selectedRegion, filterMode);
     }, [selectedRegion, filterMode]);
-
 
     const handleLoadMore = () => {
         const nextPage = page + 1;
@@ -211,7 +218,6 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
     };
 
     const markAsRead = async (itemId: string) => {
-        // ... (unverändert)
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.post(`/api/data/scraped-content/${itemId}/mark-as-read`, {}, { headers: { 'x-auth-token': token } });
@@ -221,7 +227,6 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
     };
 
     const handleVote = async (contentId: string, vote: 1 | -1) => {
-        // ... (unverändert)
         const token = localStorage.getItem('jwt_token');
         const currentItem = items.find(item => item.id === contentId);
         if (!currentItem) return;
@@ -231,6 +236,9 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
             const newScore = res.data.relevance_score;
             const updateItem = (item: VideoItem) => item.id === contentId ? { ...item, relevance_score: newScore, user_vote: newVote } : item;
             setItems(prev => prev.map(updateItem));
+            if (activeVideo?.id === contentId) {
+                setActiveVideo(prev => prev ? updateItem(prev) : null);
+            }
         } catch (err) { console.error("Fehler bei der Abstimmung:", err); }
     };
 
@@ -239,7 +247,6 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
     };
 
     const renderContent = () => {
-        // ... (unverändert)
         if (isLoading) return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', p: 2 }}><CircularProgress /></Box>;
         if (error) return <Alert severity="error" sx={{ m: 2 }}>{error}</Alert>;
         if (items.length === 0) return <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>Keine Videos für Ihre Auswahl gefunden.</Typography>;
@@ -247,115 +254,99 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
         const activeVideoId = getYouTubeVideoId(activeVideo?.original_url);
 
         return (
-            <Stack sx={{ p: 1.5, height: '100%', overflowY: 'auto' }}>
+            <Box sx={{ height: '100%', overflowY: 'auto' }}>
                 {activeVideo && activeVideoId && (
-                    <Box ref={playerRef} sx={{ mb: 2 }}>
-                        <Box sx={{ aspectRatio: '16/9', bgcolor: 'black', position: 'relative' }}>
-<iframe
-    key={activeVideoId}
-    width="100%"
-    height="100%"
-    src={`https://www.youtube-nocookie.com/embed/${activeVideoId}`}
-    title="YouTube video player"
-    frameBorder="0"
-    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-    allowFullScreen
-    referrerPolicy="strict-origin-when-cross-origin"
-></iframe>
+                    <Box ref={playerRef} sx={{ p: 1.5, pt: 0 }}>
+                        <Box sx={{ aspectRatio: '16/9', bgcolor: 'black', position: 'relative', borderRadius: 1, overflow: 'hidden' }}>
+                            <iframe
+                                key={activeVideoId}
+                                width="100%"
+                                height="100%"
+                                src={`https://www.youtube-nocookie.com/embed/${activeVideoId}`}
+                                title="YouTube video player"
+                                frameBorder="0"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                allowFullScreen
+                                referrerPolicy="strict-origin-when-cross-origin"
+                            ></iframe>
                             <Tooltip title="Player schließen">
                                 <IconButton onClick={handleClosePlayer} sx={{ position: 'absolute', top: 8, right: 8, bgcolor: 'rgba(0,0,0,0.5)', color: 'white', '&:hover': { bgcolor: 'rgba(0,0,0,0.7)' } }}>
                                     <CloseIcon fontSize="small" />
                                 </IconButton>
                             </Tooltip>
                         </Box>
-                        {/* NEU: Titel des aktiven Videos */}
-                        <Typography variant="h6" sx={{ mt: 1 }}>{decodeHtmlEntities(activeVideo.title)}</Typography>
+                        <Typography variant="h6" sx={{ mt: 1 }}>
+                            <HighlightedText
+                                text={decodeHtmlEntities(activeVideo.title)}
+                                keywords={activeGlobalTags}
+                            />
+                        </Typography>
+                        <Stack direction="row" spacing={1.5} alignItems="center" color="text.secondary" mt={0.5}>
+                            <Typography variant="caption">{decodeHtmlEntities(activeVideo.full_text)}</Typography>
+                            <Divider orientation="vertical" flexItem />
+                            <Typography variant="caption">{format(new Date(activeVideo.published_date), "d. MMMM yyyy", { locale: de })}</Typography>
+                        </Stack>
                     </Box>
                 )}
 
-                <Stack spacing={1.5}>
+                <Stack spacing={1.5} sx={{ p: 1.5, pt: activeVideo ? 0 : 1.5 }}>
                     {items.map((item) => {
                         const videoId = getYouTubeVideoId(item.original_url);
-                        if (!videoId) return null; // Video ohne gültige ID nicht rendern
+                        if (!videoId) return null;
                         
                         return (
-// Ersetze den Block von <Card> bis </Card>
-<Card
-    key={item.id}
-    variant="outlined"
-    onClick={() => handleSelectVideo(item)}
-    sx={{
-        cursor: 'pointer',
-        bgcolor: activeVideo?.id === item.id ? 'action.selected' : 'background.default',
-        borderColor: activeVideo?.id === item.id ? 'primary.main' : 'divider',
-        transition: 'background-color 0.3s'
-    }}
->
-    <CardContent sx={{ p: '12px !important' }}>
-        <Stack direction="row" spacing={1.5} alignItems="center">
-            <Box
-                sx={{
-                    position: 'relative',
-                    width: 100,
-                    height: 60,
-                    flexShrink: 0,
-                    borderRadius: 1,
-                    overflow: 'hidden',
-                }}
-            >
-                <img
-                    src={item.thumbnail_url || getYouTubeThumbnail(getYouTubeVideoId(item.original_url))}
-                    alt={decodeHtmlEntities(item.title)}
-                    onError={(e) => { (e.target as HTMLImageElement).src = defaultVideoThumbnail; }}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                />
-                <IconButton
-                    sx={{
-                        position: 'absolute',
-                        top: '50%',
-                        left: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        color: 'rgba(255,255,255,0.9)',
-                        bgcolor: 'rgba(0,0,0,0.6)',
-                        '&:hover': { bgcolor: 'rgba(0,0,0,0.8)' }
-                    }}
-                    size="small"
-                >
-                    <PlayCircleOutlineIcon fontSize="small" />
-                </IconButton>
-            </Box>
-            <Box flexGrow={1}>
-                <Typography variant="body2" sx={{ fontWeight: item.is_read ? 500 : 700, mb: 0.5 }}>
-                    {decodeHtmlEntities(item.title)}
-                </Typography>
-                <Stack direction="row" spacing={1.5} alignItems="center" color="text.secondary">
-                    <Typography variant="caption">
-                        {format(new Date(item.published_date), "d. MMM yyyy", { locale: de })}
-                    </Typography>
-                    <Divider orientation="vertical" flexItem />
-                    <MuiLink
-                        href={item.original_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        variant="caption"
-                        sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}
-                        onClick={(e) => e.stopPropagation()} // Verhindert, dass beim Klick auf den Link das Video wechselt
-                    >
-                        {/* NEU: Zeigt den Kanalnamen (aus full_text) oder die Domain an */}
-                        {item.full_text || getDomain(item.original_url)}
-                        {item.is_trusted_source && <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />}
-                    </MuiLink>
-                </Stack>
-            </Box>
-            <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
-        </Stack>
-    </CardContent>
-</Card>
+                            <Card
+                                key={item.id}
+                                variant="outlined"
+                                onClick={() => handleSelectVideo(item)}
+                                sx={{
+                                    cursor: 'pointer',
+                                    bgcolor: activeVideo?.id === item.id ? 'action.selected' : 'background.default',
+                                    borderColor: activeVideo?.id === item.id ? 'primary.main' : 'divider',
+                                    transition: 'background-color 0.3s'
+                                }}
+                            >
+                                <CardContent sx={{ p: '12px !important' }}>
+                                    <Stack direction="row" spacing={1.5} alignItems="center">
+                                        <Box
+                                            sx={{
+                                                position: 'relative',
+                                                width: 100,
+                                                height: 60,
+                                                flexShrink: 0,
+                                                borderRadius: 1,
+                                                overflow: 'hidden',
+                                            }}
+                                        >
+                                            <img
+                                                src={item.thumbnail_url || getYouTubeThumbnail(videoId)}
+                                                alt={decodeHtmlEntities(item.title)}
+                                                onError={(e) => { (e.target as HTMLImageElement).src = defaultVideoThumbnail; }}
+                                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                            />
+                                            <IconButton sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', color: 'rgba(255,255,255,0.9)', bgcolor: 'rgba(0,0,0,0.6)', '&:hover': { bgcolor: 'rgba(0,0,0,0.8)' } }} size="small">
+                                                <PlayCircleOutlineIcon fontSize="small" />
+                                            </IconButton>
+                                        </Box>
+                                        <Box flexGrow={1} sx={{ minWidth: 0 }}>
+                                            <Typography variant="body2" sx={{ fontWeight: item.is_read ? 500 : 700, mb: 0.5 }} noWrap>
+                                                <HighlightedText text={decodeHtmlEntities(item.title)} keywords={activeGlobalTags} />
+                                            </Typography>
+                                            <Stack direction="row" spacing={1.5} alignItems="center" color="text.secondary">
+                                                <Typography variant="caption">{decodeHtmlEntities(item.full_text)}</Typography>
+                                                <Divider orientation="vertical" flexItem />
+                                                <Typography variant="caption">{format(new Date(item.published_date), "d. MMM yy", { locale: de })}</Typography>
+                                            </Stack>
+                                        </Box>
+                                        <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
+                                    </Stack>
+                                </CardContent>
+                            </Card>
                         );
                     })}
                     {page < totalPages && <Button onClick={handleLoadMore} disabled={isLoadingMore}>{isLoadingMore ? <CircularProgress size={24} /> : 'Mehr laden'}</Button>}
                 </Stack>
-            </Stack>
+            </Box>
         );
     };
 
@@ -366,11 +357,47 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, overflow: 'hidden' }}>
                         {icon}
                         <Typography variant="h6" noWrap>{title}</Typography>
-                        <Chip label="Neu" size="small" variant={filterMode === 'new' ? 'filled' : 'outlined'} color="primary" clickable onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')} avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'primary.main', color: 'primary.contrastText' }}>{counts.new}</Avatar>} />
-                        <Chip label="Nicht gesehen" size="small" variant={filterMode === 'unread' ? 'filled' : 'outlined'} color="secondary" clickable onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')} avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{counts.unread}</Avatar>} />
+                        <Chip label="Neu" size="small" variant={filterMode === 'new' ? 'filled' : 'outlined'} color="primary" clickable onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')} avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem' }}>{counts.new}</Avatar>} />
+                        <Chip label="Nicht gesehen" size="small" variant={filterMode === 'unread' ? 'filled' : 'outlined'} color="secondary" clickable onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')} avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem' }}>{counts.unread}</Avatar>} />
                     </Box>
                     <Box>
-                        {user?.regions && user.regions.length > 1 && <TextField select value={selectedRegion?.id || ''} onChange={(e) => { const region = user?.regions?.find(r => r.id === e.target.value); setSelectedRegion(region || null); }} size="small" variant="outlined" sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '24px' } }}>{user.regions.map((region) => <MenuItem key={region.id} value={region.id}><Tooltip title={region.name} placement="right"><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} /></Tooltip></MenuItem>)}</TextField>}
+                        {user?.regions && user.regions.length > 0 && (
+                            <TextField 
+                                select 
+                                value={selectedRegion?.id || ''} 
+                                onChange={(e) => { 
+                                    const regionId = e.target.value;
+                                    const region = user?.regions?.find(r => r.id === regionId) || null; 
+                                    setSelectedRegion(region); 
+                                }} 
+                                size="small" 
+                                variant="outlined" 
+                                sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '32px !important' } }}
+                                SelectProps={{
+                                    renderValue: (selectedId) => {
+                                        const idAsString = selectedId as string;
+                                        if (idAsString === '') {
+                                            return <Tooltip title="Alle Regionen"><img src="https://flagcdn.com/w20/eu.png" width={20} alt="Alle Regionen" style={{ border: '1px solid #eee', verticalAlign: 'middle' }} /></Tooltip>;
+                                        }
+                                        const region = user?.regions?.find(r => r.id === idAsString);
+                                        return <Tooltip title={region?.name}><img src={`https://flagcdn.com/w20/${region?.code.toLowerCase()}.png`} width={20} alt={region?.name} style={{ border: '1px solid #eee', verticalAlign: 'middle' }} /></Tooltip>;
+                                    }
+                                }}
+                            >
+                                <MenuItem value="">
+                                    <Tooltip title="Alle Regionen" placement="right">
+                                        <img src="https://flagcdn.com/w20/eu.png" width="20" alt="Alle Regionen" style={{ border: '1px solid #eee' }} />
+                                    </Tooltip>
+                                </MenuItem>
+                                {user?.regions?.map((region) => (
+                                    <MenuItem key={region.id} value={region.id}>
+                                        <Tooltip title={region.name} placement="right">
+                                            <img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} />
+                                        </Tooltip>
+                                    </MenuItem>
+                                ))}
+                            </TextField>
+                        )}
                     </Box>
                 </Box>
             }
