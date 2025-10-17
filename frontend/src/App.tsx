@@ -50,6 +50,9 @@ import FileManagementPage from './pages/FileManagementPage';
 import AdminEventsPage from './pages/AdminEventsPage';
 import AdminSurveysPage from './pages/AdminSurveysPage';
 import AdminFundingPage from './pages/AdminFundingPage';
+import AdminBpAccountsPage from './pages/AdminBpAccountsPage';
+import AdminBpCompetitorsPage from './pages/AdminBpCompetitorsPage';
+import AdminBpTrackedArticlesPage from './pages/AdminBpTrackedArticlesPage';
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
@@ -170,6 +173,9 @@ function App() {
             <Route path="/admin" element={<AdminRoutes />}>
               <Route index element={<AdminDashboardPage />} />
               <Route path="business-partners" element={<AdminBusinessPartnersPage />} />
+              <Route path="business-partners/:bpId/accounts" element={<AdminBpAccountsPage />} />
+              <Route path="tracked-articles" element={<AdminBpTrackedArticlesPage />} />
+              <Route path="accounts/:accountId/competitors" element={<AdminBpCompetitorsPage />} />
               <Route path="widget-types" element={<AdminWidgetTypesPage />} />
               <Route path="bp-widget-access" element={<AdminBpWidgetAccessPage />} />
               <Route path="bp-widget-access/:bpId" element={<AdminBpWidgetAccessPage />} />

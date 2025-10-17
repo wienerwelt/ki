@@ -812,6 +812,60 @@ exports.getVignettePrices = async (req, res) => {
     }
 };
 
+
+
+exports.getAccountIntelligence = async (req, res) => {
+    const { business_partner_id: businessPartnerId } = req.user;
+
+    if (!businessPartnerId) {
+        // Wenn der Nutzer keinem Partner zugeordnet ist, gibt es nichts zu zeigen.
+        return res.json([]);
+    }
+
+    try {
+        // Diese Abfrage holt alle Daten in einem einzigen Datenbankaufruf
+        // und verwendet den korrekten Tabellennamen 'business_partner_tracked_articles'.
+        const query = `
+            SELECT
+                acc.id,
+                acc.name,
+                -- 1. Neueste Nachrichten zum Account selbst (wo competitor_name leer ist)
+                (
+                    SELECT COALESCE(json_agg(news.*), '[]'::json)
+                    FROM (
+                        SELECT article_title, article_url, source_name, published_at
+                        FROM business_partner_tracked_articles
+                        WHERE account_id = acc.id AND competitor_name IS NULL
+                        ORDER BY published_at DESC
+                        LIMIT 3
+                    ) as news
+                ) as account_news,
+                -- 2. Neueste Nachrichten zu den Wettbewerbern (wo competitor_name gesetzt ist)
+                (
+                    SELECT COALESCE(json_agg(comp_news.*), '[]'::json)
+                    FROM (
+                        SELECT competitor_name, article_title, article_url, source_name, published_at
+                        FROM business_partner_tracked_articles
+                        WHERE account_id = acc.id AND competitor_name IS NOT NULL
+                        ORDER BY published_at DESC
+                        LIMIT 5
+                    ) as comp_news
+                ) as competitor_news
+            FROM business_partner_accounts acc
+            WHERE acc.business_partner_id = $1
+            ORDER BY acc.name ASC;
+        `;
+        
+        const { rows } = await db.query(query, [businessPartnerId]);
+        res.json(rows);
+
+    } catch (err) {
+        console.error('Error fetching account intelligence data:', err.message);
+        res.status(500).send('Server error');
+    }
+};
+
+
 exports.voteOnContent = async (req, res) => {
     const { contentId } = req.params;
     const { id: userId } = req.user;
@@ -1941,6 +1995,7 @@ exports.getAllTags = async (req, res) => {
     }
 };
 
+
 exports.globalSearch = async (req, res) => {
     const { term } = req.query;
 
@@ -1954,31 +2009,39 @@ exports.globalSearch = async (req, res) => {
         const query = `
             SELECT id, title, summary, published_date, type, relevance
             FROM (
+                -- Bestehende Suche in scraped_content (unverändert)
                 SELECT
-                    id,
-                    title,
-                    summary,
-                    published_date,
+                    id, title, summary, published_date,
                     'scraped' as type,
                     ts_rank(to_tsvector('german', title || ' ' || summary), to_tsquery('german', $1)) as relevance
-                FROM
-                    scraped_content
-                WHERE
-                    to_tsvector('german', title || ' ' || summary) @@ to_tsquery('german', $1)
+                FROM scraped_content
+                WHERE to_tsvector('german', title || ' ' || summary) @@ to_tsquery('german', $1)
                 
                 UNION ALL
                 
+                -- Bestehende Suche in ai_generated_content (unverändert)
                 SELECT
-                    id,
-                    title,
-                    generated_output as summary,
-                    created_at as published_date,
+                    id, title, generated_output as summary, created_at as published_date,
                     'ai' as type,
                     ts_rank(to_tsvector('german', title || ' ' || generated_output), to_tsquery('german', $1)) as relevance
+                FROM ai_generated_content
+                WHERE to_tsvector('german', title || ' ' || generated_output) @@ to_tsquery('german', $1)
+
+                UNION ALL
+
+                -- NEU: Suche in business_partner_tracked_articles
+                SELECT
+                    id,
+                    article_title as title,
+                    summary,
+                    published_at as published_date,
+                    'tracked_account_news' as type,
+                    ts_rank(to_tsvector('german', article_title || ' ' || summary), to_tsquery('german', $1)) as relevance
                 FROM
-                    ai_generated_content
+                    business_partner_tracked_articles
                 WHERE
-                    to_tsvector('german', title || ' ' || generated_output) @@ to_tsquery('german', $1)
+                    to_tsvector('german', article_title || ' ' || summary) @@ to_tsquery('german', $1)
+
             ) as search_results
             ORDER BY
                 relevance DESC
@@ -2105,5 +2168,61 @@ exports.getRelevantAction = async (req, res) => {
     } catch (err) {
         console.error('Fehler beim Abrufen der relevanten Aktion:', err.message);
         res.status(500).json({ message: 'Serverfehler.' });
+    }
+};
+
+
+
+exports.getDailyBriefing = async (req, res) => {
+    const { business_partner_id: businessPartnerId } = req.user;
+    if (!businessPartnerId) {
+        return res.status(404).json({ message: "Benutzer ist keinem Business Partner zugeordnet." });
+    }
+
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Alle drei Abfragen werden parallel ausgeführt, um die Ladezeit zu optimieren
+        const [marketBriefingRes, salesTriggersRes, linkableNamesRes] = await Promise.all([
+            // 1. Markt-Briefing des Tages holen (unverändert)
+            db.query(
+                `SELECT headline, analysis_summary as summary, prognosis 
+                 FROM business_partner_intelligence_briefings
+                 WHERE business_partner_id = $1 AND briefing_type = 'market' AND created_at >= $2
+                 ORDER BY created_at DESC LIMIT 1`,
+                [businessPartnerId, today]
+            ),
+            // 2. Sales Trigger des Tages holen (unverändert)
+            db.query(
+                `SELECT brief.id, brief.account_id, brief.headline, brief.analysis_summary, 
+                        brief.talking_point, acc.name as account_name 
+                 FROM business_partner_intelligence_briefings brief
+                 JOIN business_partner_accounts acc ON brief.account_id = acc.id
+                 WHERE brief.business_partner_id = $1 AND brief.briefing_type = 'account_specific' AND brief.created_at >= $2
+                 ORDER BY brief.created_at DESC`,
+                [businessPartnerId, today]
+            ),
+            // 3. NEU: Eine vollständige Liste aller Accounts und Wettbewerber dieses Partners holen
+            db.query(
+                `(SELECT name FROM business_partner_accounts WHERE business_partner_id = $1)
+                 UNION
+                 (SELECT bpc.name FROM business_partner_competitors bpc
+                  JOIN business_partner_accounts bpa ON bpc.account_id = bpa.id
+                  WHERE bpa.business_partner_id = $1)`,
+                [businessPartnerId]
+            )
+        ]);
+
+        res.json({
+            market_briefing: marketBriefingRes.rows[0] || null,
+            sales_triggers: salesTriggersRes.rows,
+            // NEU: Die Liste der Namen wird an das Frontend gesendet
+            linkable_names: linkableNamesRes.rows.map(r => r.name)
+        });
+
+    } catch (err) {
+        console.error('Error fetching daily briefing:', err.message);
+        res.status(500).send('Server error');
     }
 };

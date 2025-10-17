@@ -1,3 +1,4 @@
+// backend/services/scraperService.js
 const axios = require('axios');
 const cheerio = require('cheerio');
 const xml2js = require('xml2js');
@@ -12,6 +13,7 @@ const db = require('../config/db');
 const { logActivity } = require('./auditLogService');
 const { callOpenAI } = require('./aiService');
 const { scrapeQueue, fundingQueue } = require('./queueService');
+const { searchGoogle } = require('./googleSearchService');
 
 const logToDb = async (jobId, level, message) => {
     if (!jobId) return;
@@ -180,7 +182,9 @@ async function _extractDataFromHtml(htmlContent, url) {
     }
 }
 
-async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
+
+
+async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags, allCategories) {
     const { source_identifier: sourceIdentifier, region: ruleRegion, id: ruleId, date_format: dateFormat, category_default } = rule;
     const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
     const result = await parser.parseStringPromise(xmlContent);
@@ -215,28 +219,24 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
             );
             if (result.rowCount > 0) itemsInserted++;
         } else {
-            // --- KORRIGIERTE, UNIVERSELLE ZUORDNUNGSLOGIK ---
             let originalUrl, summary, fullText;
             const audioUrl = (item.enclosure?.$?.url && item.enclosure.$.type?.startsWith('audio')) ? item.enclosure.$.url : null;
 
             if (audioUrl) {
-                // SPEZIALFALL: Podcast-Feed-Logik anwenden
                 originalUrl = audioUrl;
                 summary = sanitizeHtml(item.description?._ || item.description || null);
                 fullText = feedTitle;
             } else {
-                // STANDARD: Bisherige Logik für alle anderen RSS-Feeds
                 originalUrl = item.link?.href || item.link || null;
                 const descriptionHtml = item['content:encoded'] || item.description?._ || item.summary?._ || item.description || item.summary || null;
                 summary = sanitizeHtml(descriptionHtml);
-                fullText = null; // Kein spezifischer full_text für Standard-Feeds
+                fullText = null;
             }
 
             if (!originalUrl) {
                 await logToDb(jobId, 'WARN', `Überspringe Eintrag "${title}", da keine URL gefunden wurde.`);
                 continue;
             }
-            // --- ENDE DER KORRIGIERTEN LOGIK ---
 
             let thumbnailUrl = null;
             try {
@@ -248,30 +248,27 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags) {
                     thumbnailUrl = item['g:image_link'];
                 } else if (item['itunes:image']?.$?.href) {
                     thumbnailUrl = item['itunes:image'].$.href;
-                } else {
-                    const descHtmlForImg = item.description?._ || item.summary?._ || item.description || item.summary;
-                    if (descHtmlForImg) {
-                        const $ = cheerio.load(descHtmlForImg);
-                        const firstImgSrc = $('img').first().attr('src');
-                        if (firstImgSrc) thumbnailUrl = firstImgSrc;
-                    }
                 }
             } catch (e) {
                 await logToDb(jobId, 'WARN', `Fehler bei der Thumbnail-Extraktion für "${title}": ${e.message}`);
             }
 
             const cleanTitle = sanitizeHtml(title);
+            
+            const category = allCategories.find(c => c.name === rule.category_default);
+            const categoryId = category ? category.id : null;
+
             const foundTagIds = extractTags(`${cleanTitle} ${summary}`, availableTags);
             const relevanceScore = computeRelevanceScore(parsedDate, foundTagIds.length);
 
             const contentResult = await db.query(
-                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, event_date, category, region, thumbnail_url, full_text, relevance_score)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
+                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, event_date, category, category_id, region, thumbnail_url, full_text, relevance_score)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
                 [
                     sourceIdentifier, originalUrl, cleanTitle, summary,
                     category_default === 'event' ? null : parsedDate,
                     category_default === 'event' ? parsedDate : null,
-                    category_default, ruleRegion, thumbnailUrl, fullText, relevanceScore
+                    category_default, categoryId, ruleRegion, thumbnailUrl, fullText, relevanceScore
                 ]
             );
             
@@ -336,9 +333,6 @@ async function extractTextFromUrl(url) {
     }
 }
 
-
-
-// in scraperService.js
 
 async function _fetchContentWithPuppeteer(url, waitForSelector, jobId) {
     let browser = null;
@@ -478,7 +472,6 @@ async function _scrapeWAWPrograms(rule, jobId) {
 
 
 
-
 async function triggerSingleRuleScrape(ruleId, jobId) {
     let itemsProcessed = 0;
     try {
@@ -488,21 +481,26 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
         const ruleResult = await db.query('SELECT * FROM scraping_rules WHERE id = $1', [ruleId]);
         if (ruleResult.rows.length === 0) throw new Error(`Scraping-Regel mit ID ${ruleId} nicht gefunden.`);
         const rule = ruleResult.rows[0];
+
         const tagsResult = await db.query('SELECT id, name FROM tags');
         const availableTags = tagsResult.rows;
 
+        // KORREKTUR: Lädt alle Kategorien zu Beginn des Jobs
+        const categoriesResult = await db.query('SELECT id, name FROM categories');
+        const allCategories = categoriesResult.rows;
+
         switch (rule.scraping_strategy) {
-            case 'html_embedded_json':
-                itemsProcessed = await _scrapeWAWPrograms(rule, jobId);
-                break;
             case 'youtube_channel':
-                itemsProcessed = await _processYoutubeChannel(rule, jobId, availableTags);
+                itemsProcessed = await _processYoutubeChannel(rule, jobId, availableTags, allCategories);
                 break;
             case 'youtube_podcast':
-                itemsProcessed = await _processYoutubePodcastsTab(rule, jobId, availableTags);
+                itemsProcessed = await _processYoutubePodcastsTab(rule, jobId, availableTags, allCategories);
                 break;
             case 'youtube_music':
-                itemsProcessed = await _processYoutubeMusicPlaylist(rule, jobId, availableTags);
+                itemsProcessed = await _processYoutubeMusicPlaylist(rule, jobId, availableTags, allCategories);
+                break;
+            case 'html_embedded_json':
+                itemsProcessed = await _scrapeWAWPrograms(rule, jobId);
                 break;
             case 'standard':
             default:
@@ -550,16 +548,19 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
                             const publishedDate = parseDateString(dateString, rule.date_format, jobId);
                             const thumbnailSrc = element.find(rule.thumbnail_selector).attr('src');
                             const thumbnailUrl = thumbnailSrc ? new URL(thumbnailSrc, rule.url_pattern).href : null;
+                            
+                            const category = allCategories.find(c => c.name === rule.category_default);
+                            const categoryId = category ? category.id : null;
+
                             const fullText = `${title} ${summary}`;
                             const foundTagIds = extractTags(fullText, availableTags);
-
                             const relevanceScore = computeRelevanceScore(publishedDate, foundTagIds.length);
 
                             const res = await db.query(
-                                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, category, region, thumbnail_url, relevance_score)
-                                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, category, category_id, region, thumbnail_url, relevance_score)
+                                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                                  ON CONFLICT (original_url) DO NOTHING RETURNING id`,
-                                [rule.source_identifier, link, title, summary, publishedDate, rule.category_default, rule.region, thumbnailUrl, relevanceScore]
+                                [rule.source_identifier, link, title, summary, publishedDate, rule.category_default, categoryId, rule.region, thumbnailUrl, relevanceScore]
                             );
                             if (res.rowCount > 0) {
                                 itemsProcessed++;
@@ -570,7 +571,7 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
                             }
                         }
                     } else if (contentType.includes('xml') || contentType.includes('rss')) {
-                        itemsProcessed = await _processXmlFeedByRule(rawContent, rule, jobId, availableTags);
+                        itemsProcessed = await _processXmlFeedByRule(rawContent, rule, jobId, availableTags, allCategories);
                     } else {
                         throw new Error(`Nicht unterstützter Inhaltstyp für Regel-Typ 'content': ${contentType}.`);
                     }
@@ -589,7 +590,6 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
         await db.query(`UPDATE scraping_jobs SET status = 'failed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);
     }
 }
-
 
 
 async function startAllScrapingJobs() {
@@ -724,11 +724,9 @@ async function getScrapingRuleSuggestion(url, userId) {
 }
 
 
-// NEU: Hauptprozessor für YouTube Music Playlists
 async function _processYoutubeMusicPlaylist(rule, jobId, availableTags) {
     await logToDb(jobId, 'INFO', `Starte YouTube Music Playlist-Verarbeitung für: ${rule.url_pattern}`);
 
-    // Extrahiere die Playlist-ID aus der URL
     const playlistIdMatch = rule.url_pattern.match(/list=([a-zA-Z0-9_-]+)/);
     if (!playlistIdMatch || !playlistIdMatch[1]) {
         await logToDb(jobId, 'ERROR', `Konnte keine gültige Playlist-ID in der URL finden: ${rule.url_pattern}`);
@@ -1032,9 +1030,95 @@ async function _ytVideosListBulk(jobId, videoIds) {
 }
 
 
+async function processNewsKeywordSearch(jobData) {
+    const { search_term, account_id, competitor_name } = jobData;
+
+    if (!search_term || !account_id) {
+        console.error('[NewsSearch] Job übersprungen: search_term oder account_id fehlen.');
+        return 0;
+    }
+
+    console.log(`[NewsSearch] Starte Google-Suche für "${search_term}" im Kontext von Account ${account_id}`);
+    const searchResults = await searchGoogle(`"${search_term}"`, { sortByDate: true, language: 'lr=lang_de' });
+
+    if (!searchResults || searchResults.length === 0) {
+        console.log(`[NewsSearch] Keine neuen Google-Ergebnisse für "${search_term}" gefunden.`);
+        return 0;
+    }
+
+    let itemsInserted = 0;
+    for (const result of searchResults) {
+        try {
+            const articleText = await extractTextFromUrl(result.link);
+
+            // NEUE ÜBERPRÜFUNG: Nur fortfahren, wenn der Text existiert UND der Suchbegriff enthalten ist.
+            if (articleText && articleText.toLowerCase().includes(search_term.toLowerCase())) {
+                
+                let articleSummary = await getSummaryForArticle(articleText, result.link);
+
+                const insertResult = await db.query(
+                    `INSERT INTO business_partner_tracked_articles 
+                        (account_id, competitor_name, article_title, article_url, source_name, published_at, summary)
+                     VALUES ($1, $2, $3, $4, $5, NOW(), $6)
+                     ON CONFLICT (account_id, article_url) DO NOTHING`,
+                    [
+                        account_id,
+                        competitor_name || null,
+                        result.title,
+                        result.link,
+                        new URL(result.link).hostname,
+                        articleSummary
+                    ]
+                );
+
+                if (insertResult.rowCount > 0) {
+                    itemsInserted++;
+                }
+
+            } else {
+                console.log(`[Relevance Check] Artikel übersprungen: "${result.link}" enthält den Begriff "${search_term}" nicht.`);
+            }
+        } catch (dbError) {
+            console.error(`[NewsSearch] Fehler beim Verarbeiten des Artikels "${result.link}":`, dbError.message);
+        }
+    }
+
+    console.log(`[NewsSearch] ${itemsInserted} neue und verifizierte Artikel für "${search_term}" gespeichert.`);
+    return itemsInserted;
+}
+
+
+async function getSummaryForArticle(articleText, articleUrl) {
+    if (!process.env.OPENAI_API_KEY) {
+        console.warn('OPENAI_API_KEY nicht gesetzt. Simuliere Artikel-Zusammenfassung.');
+        return "Simulierte Stichpunkte: Wichtige Entwicklung, Neue Regelung, Auswirkungen auf die Branche.";
+    }
+    if (!articleText || articleText.length < 100) return '';
+
+    const prompt = `Fasse den folgenden Artikeltext in 3-5 prägnanten Stichpunkten auf Deutsch zusammen. Gib nur die Stichpunkte aus, ohne Einleitung oder Fazit. TEXT: """${articleText}"""`;
+
+    await logActivity({ actionType: 'AI_SUMMARIZATION_START', status: 'info', details: { url: articleUrl, model: 'gpt-3.5-turbo' }, username: 'System' });
+
+    try {
+        const { content: summary, usage, model } = await callOpenAI(prompt, 'gpt-3.5-turbo');
+        await logActivity({
+            actionType: 'AI_SUMMARIZATION_SUCCESS', status: 'success',
+            details: { url: articleUrl, model, tokenUsage: usage, summaryLength: summary.length },
+            username: 'System'
+        });
+        return summary;
+    } catch (error) {
+        console.error(`Fehler bei der Artikel-Zusammenfassung für ${articleUrl}:`, error.message);
+        await logActivity({ actionType: 'AI_SUMMARIZATION_FAILURE', status: 'failure', details: { url: articleUrl, model: 'gpt-3.5-turbo', error: error.message }, username: 'System' });
+        return '';
+    }
+}
+
+
 module.exports = {
     triggerSingleRuleScrape,
     startAllScrapingJobs,
     getScrapingRuleSuggestion,
     extractTextFromUrl,
+    processNewsKeywordSearch,
 };

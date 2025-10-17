@@ -25,6 +25,9 @@ import PollIcon from '@mui/icons-material/Poll';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
 import BarChartIcon from '@mui/icons-material/BarChart';
+import RadarIcon from '@mui/icons-material/Radar';
+import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
+import InsightsIcon from '@mui/icons-material/Insights';
 
 export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     SpaIcon: SpaIcon,
@@ -49,6 +52,9 @@ export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     CompareArrowsIcon: CompareArrowsIcon,
     ShoppingCartCheckoutIcon: ShoppingCartCheckoutIcon,
     BarChartIcon: BarChartIcon,
+    RadarIcon: RadarIcon,
+    SwitchAccountIcon: SwitchAccountIcon,
+    InsightsIcon: InsightsIcon
 };
 
 // === GEÄNDERT: Die Funktion ist jetzt ein einfacher, direkter Lookup ===

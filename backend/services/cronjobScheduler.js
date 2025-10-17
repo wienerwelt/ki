@@ -41,7 +41,15 @@ const runScheduledJobs = async () => {
                 if (job.recipient_group === 'data-update') {
                     console.log(`[CRON] Enqueueing Data Update Job: ${job.name}`);
                     dataUpdatesQueue.add(job.name, { jobId: job.id });
-                } else { // Alle anderen (z.B. 'daily-report', 'saved-searches') gehen an die emailQueue
+                } 
+                // NEUER ELSE-IF BLOCK
+                else if (job.recipient_group === 'scraping') {
+                    console.log(`[CRON] Enqueueing Scraping Trigger Job: ${job.name}`);
+                    // Wir geben dem Job einen eindeutigen Namen, damit der Worker ihn erkennt
+                    scrapeQueue.add('trigger-account-intelligence', { cronJobId: job.id })
+                        .catch(err => console.error(`[CRON] Error enqueueing account intelligence job ${job.id}:`, err.message));
+                }
+                else { // Alle anderen gehen an die emailQueue
                     console.log(`[CRON] Enqueueing Email/Notification Job: ${job.name} (ID: ${job.id})`);
                     emailQueue.add(job.name, { emailJobId: job.id })
                         .catch(err => console.error(`[CRON] Error enqueueing email job ${job.id}:`, err.message));

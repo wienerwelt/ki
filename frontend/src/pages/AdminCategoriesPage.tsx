@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
-    TextField, InputAdornment, TableSortLabel
+    TextField, InputAdornment, TableSortLabel, Chip, MenuItem
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -18,6 +18,7 @@ interface Category {
     name_lang: string | null;
     name_lang_en: string | null;
     description: string | null;
+    category_type: 'industry' | 'content';
     created_at: string;
     updated_at: string;
 }
@@ -49,7 +50,7 @@ const AdminCategoriesPage: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-    const [formState, setFormState] = useState({ name: '', name_lang: '', name_lang_en: '', description: '' });
+    const [formState, setFormState] = useState({ name: '', name_lang: '', name_lang_en: '', description: '', category_type: 'content' as 'industry' | 'content' });
     const [dialogError, setDialogError] = useState<string | null>(null);
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -81,10 +82,11 @@ const AdminCategoriesPage: React.FC = () => {
                 name: category.name, 
                 name_lang: category.name_lang || '',
                 name_lang_en: category.name_lang_en || '',
-                description: category.description || ''
+                description: category.description || '',
+                category_type: category.category_type || 'content'
             });
         } else {
-            setFormState({ name: '', name_lang: '', name_lang_en: '', description: '' });
+            setFormState({ name: '', name_lang: '', name_lang_en: '', description: '', category_type: 'content' });
         }
         setDialogError(null);
         setDialogOpen(true);
@@ -108,7 +110,8 @@ const AdminCategoriesPage: React.FC = () => {
             name: formState.name, 
             name_lang: formState.name_lang || null,
             name_lang_en: formState.name_lang_en || null,
-            description: formState.description || null
+            description: formState.description || null,
+            category_type: formState.category_type
         };
 
         try {
@@ -194,6 +197,9 @@ const AdminCategoriesPage: React.FC = () => {
                                             <TableCell sx={{ fontWeight: 'bold' }}>{category.name}</TableCell>
                                             <TableCell>{category.name_lang || '-'}</TableCell>
                                             <TableCell>{category.name_lang_en || '-'}</TableCell>
+                                            <TableCell>
+                                                <Chip label={category.category_type === 'industry' ? 'Branche' : 'Content'} size="small" color={category.category_type === 'industry' ? 'primary' : 'default'} />
+                                            </TableCell>                                            
                                             <TableCell>{category.description || '-'}</TableCell>
                                             <TableCell align="right">
                                                 <IconButton onClick={() => handleOpenDialog(category)}><EditIcon /></IconButton>
@@ -215,6 +221,10 @@ const AdminCategoriesPage: React.FC = () => {
                     <TextField autoFocus margin="dense" name="name" label="Name (Primär, Eindeutig)" type="text" fullWidth variant="outlined" value={formState.name} onChange={handleFormChange} sx={{ mt: 1 }} required />
                     <TextField margin="dense" name="name_lang" label="Name (Deutsch)" type="text" fullWidth variant="outlined" value={formState.name_lang} onChange={handleFormChange} />
                     <TextField margin="dense" name="name_lang_en" label="Name (Englisch)" type="text" fullWidth variant="outlined" value={formState.name_lang_en} onChange={handleFormChange} />
+                    <TextField select margin="dense" name="category_type" label="Kategorie-Typ" fullWidth value={formState.category_type} onChange={handleFormChange}>
+                        <MenuItem value="content">Content-Kategorie</MenuItem>
+                        <MenuItem value="industry">Branche (für Business Partner)</MenuItem>
+                    </TextField>                    
                     <TextField margin="dense" name="description" label="Beschreibung" type="text" fullWidth multiline rows={3} variant="outlined" value={formState.description} onChange={handleFormChange} />
                 </DialogContent>
                 <DialogActions>

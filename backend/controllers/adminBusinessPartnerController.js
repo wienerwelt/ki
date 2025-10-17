@@ -2,7 +2,10 @@
 const db = require('../config/db');
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
-// GET all business partners
+const { PutObjectCommand } = require("@aws-sdk/client-s3");
+const s3Client = require("../config/s3Client.js");
+const { v4: uuidv4 } = require('uuid');
+
 exports.getAllBusinessPartners = async (req, res) => {
     try {
         const result = await db.query(
@@ -12,18 +15,26 @@ exports.getAllBusinessPartners = async (req, res) => {
                 bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 bp.storage_tier, bp.storage_usage_bytes, bp.storage_limit_bytes,
-                bp.allow_automated_newsletter, -- NEU
-                cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
-                (SELECT COUNT(*) FROM users u WHERE u.business_partner_id = bp.id) AS user_count,
-                (SELECT COUNT(*) FROM business_partner_widget_access wa WHERE wa.business_partner_id = bp.id) AS widget_count,
-                (SELECT COUNT(*) FROM business_partner_files bpf WHERE bpf.business_partner_id = bp.id) AS file_count,
+                bp.allow_automated_newsletter, bp.dashboard_focus,
+                cs.name AS color_scheme_name,
+                (SELECT COUNT(*)::int FROM users u WHERE u.business_partner_id = bp.id) AS user_count,
+                (SELECT COUNT(*)::int FROM business_partner_widget_access wa WHERE wa.business_partner_id = bp.id) AS widget_count,
+                (SELECT COUNT(*)::int FROM business_partner_files bpf WHERE bpf.business_partner_id = bp.id) AS file_count,
+                (SELECT COUNT(*)::int FROM business_partner_accounts bpa WHERE bpa.business_partner_id = bp.id) as account_count,
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
                     ORDER BY bpr.is_default DESC, r.name ASC
                 ), '[]'::json)
                  FROM business_partner_regions bpr
                  JOIN regions r ON bpr.region_id = r.id
-                 WHERE bpr.business_partner_id = bp.id) AS regions
+                 WHERE bpr.business_partner_id = bp.id) AS regions,
+                (SELECT COALESCE(json_agg(
+                    jsonb_build_object('id', c.id, 'name', c.name)
+                    ORDER BY c.name ASC
+                ), '[]'::json)
+                 FROM business_partner_categories bpc
+                 JOIN categories c ON bpc.category_id = c.id
+                 WHERE bpc.business_partner_id = bp.id AND c.category_type = 'industry') AS industries
              FROM business_partners bp
              LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id
              ORDER BY bp.name ASC`
@@ -71,13 +82,13 @@ exports.getBusinessPartnerById = async (req, res) => {
     }
 };
 
-// CREATE new business partner
 exports.createBusinessPartner = async (req, res) => {
     const {
         name, address, logo_url, subscription_start_date, subscription_end_date,
         color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
-        default_region_id, email, allow_automated_newsletter // NEU
+        default_region_id, email, allow_automated_newsletter,
+        category_ids = [], dashboard_focus
     } = req.body;
 
     if (!name) return res.status(400).json({ message: 'Name is required.' });
@@ -90,14 +101,15 @@ exports.createBusinessPartner = async (req, res) => {
             `INSERT INTO business_partners (
                 name, address, logo_url, subscription_start_date, subscription_end_date,
                 color_scheme_id, is_active, url_businesspartner, dashboard_title,
-                level_1_name, level_2_name, level_3_name, email, allow_automated_newsletter
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+                level_1_name, level_2_name, level_3_name, email, allow_automated_newsletter,
+                dashboard_focus
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
             [
                 name, address || null, logo_url || null, subscription_start_date || null,
                 subscription_end_date || null, color_scheme_id || null, is_active,
                 url_businesspartner || null, dashboard_title || null, level_1_name || null,
                 level_2_name || null, level_3_name || null, email || null,
-                !!allow_automated_newsletter // NEU
+                !!allow_automated_newsletter, dashboard_focus || 'information'
             ]
         );
         const newBp = bpResult.rows[0];
@@ -108,6 +120,15 @@ exports.createBusinessPartner = async (req, res) => {
                 await client.query(
                     'INSERT INTO business_partner_regions (business_partner_id, region_id, is_default) VALUES ($1, $2, $3)',
                     [newBp.id, region_id, isDefault]
+                );
+            }
+        }
+
+        if (category_ids && category_ids.length > 0) {
+            for (const category_id of category_ids) {
+                await client.query(
+                    'INSERT INTO business_partner_categories (business_partner_id, category_id) VALUES ($1, $2)',
+                    [newBp.id, category_id]
                 );
             }
         }
@@ -127,7 +148,6 @@ exports.createBusinessPartner = async (req, res) => {
 };
 
 
-// UPDATE existing business partner
 exports.updateBusinessPartner = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
@@ -136,7 +156,9 @@ exports.updateBusinessPartner = async (req, res) => {
         name, address, logo_url, subscription_start_date, subscription_end_date,
         color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
-        default_region_id, email, storage_tier, allow_automated_newsletter // NEU
+        default_region_id, email, storage_tier, allow_automated_newsletter,
+        // NEUE FELDER HINZUGEFÜGT
+        category_ids = [], dashboard_focus 
     } = req.body;
 
     const validTiers = {
@@ -163,26 +185,34 @@ exports.updateBusinessPartner = async (req, res) => {
                 storage_tier = COALESCE($14, storage_tier), 
                 storage_limit_bytes = COALESCE($15, storage_limit_bytes), 
                 allow_automated_newsletter = $16,
+                dashboard_focus = $17, -- NEU
                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = $17 RETURNING *`,
+             WHERE id = $18 RETURNING *`, // Parameter-Index angepasst
             [
                 name, address || null, logo_url || null, subscription_start_date || null, subscription_end_date || null,
                 color_scheme_id || null, is_active, url_businesspartner || null, dashboard_title || null,
                 level_1_name || null, level_2_name || null, level_3_name || null, email || null,
-                storage_tier, newLimit, !!allow_automated_newsletter, id // NEU
+                storage_tier, newLimit, !!allow_automated_newsletter,
+                dashboard_focus || 'information', // NEU
+                id // Parameter-Index angepasst
             ]
         );
         if (updatedBpResult.rows.length === 0) throw new Error('Business Partner not found.');
 
+        // Regions-Logik bleibt unverändert
         await client.query('DELETE FROM business_partner_regions WHERE business_partner_id = $1', [id]);
-
         if (region_ids && region_ids.length > 0) {
             for (const region_id of region_ids) {
                 const isDefault = region_id === default_region_id;
-                await client.query(
-                    'INSERT INTO business_partner_regions (business_partner_id, region_id, is_default) VALUES ($1, $2, $3)',
-                    [id, region_id, isDefault]
-                );
+                await client.query('INSERT INTO business_partner_regions (business_partner_id, region_id, is_default) VALUES ($1, $2, $3)', [id, region_id, isDefault]);
+            }
+        }
+        
+        // NEUE LOGIK FÜR BRANCHEN/KATEGORIEN
+        await client.query('DELETE FROM business_partner_categories WHERE business_partner_id = $1', [id]);
+        if (category_ids && category_ids.length > 0) {
+            for (const category_id of category_ids) {
+                await client.query('INSERT INTO business_partner_categories (business_partner_id, category_id) VALUES ($1, $2)', [id, category_id]);
             }
         }
 
@@ -322,5 +352,42 @@ exports.updateBusinessPartnerTier = async (req, res) => {
     } catch (err) {
         console.error('Fehler beim Aktualisieren des Business Partner Tiers:', err.message);
         res.status(500).send('Serverfehler');
+    }
+};
+
+
+
+exports.uploadBusinessPartnerLogo = async (req, res) => {
+    const file = req.file;
+    if (!file) {
+        return res.status(400).json({ message: "Keine Datei hochgeladen." });
+    }
+
+    // Eindeutigen Dateinamen generieren, um Kollisionen zu vermeiden
+    const fileExtension = file.originalname.split('.').pop();
+    const uniqueFileName = `${uuidv4()}.${fileExtension}`;
+    const storagePath = `logos/${uniqueFileName}`; // Zielordner in S3
+
+    try {
+        const params = {
+            Bucket: process.env.AWS_S3_BUCKET_NAME,
+            Key: storagePath,
+            Body: file.buffer,
+            ContentType: file.mimetype
+        };
+
+        await s3Client.send(new PutObjectCommand(params));
+
+        // Die öffentliche URL der Datei konstruieren
+        const publicUrl = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_S3_REGION}.amazonaws.com/${storagePath}`;
+
+        return res.status(200).json({
+            message: "Logo erfolgreich hochgeladen.",
+            url: publicUrl
+        });
+
+    } catch (error) {
+        console.error("Fehler beim Logo-Upload:", error);
+        return res.status(500).json({ message: "Fehler beim Server während des Logo-Uploads." });
     }
 };

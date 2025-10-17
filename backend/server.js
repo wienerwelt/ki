@@ -39,6 +39,8 @@ const widgetRoutes = require('./routes/widgetRoutes');
 const adminBusinessPartnerRoutes = require('./routes/adminBusinessPartnerRoutes.js');
 const adminWidgetTypeRoutes = require('./routes/adminWidgetTypeRoutes.js');
 const adminBpWidgetAccessRoutes = require('./routes/adminBpWidgetAccessRoutes.js');
+const adminBpAccountsRoutes = require('./routes/adminBpAccountsRoutes.js');
+const adminBpCompetitorsRoutes = require('./routes/adminBpCompetitorsRoutes.js');
 const adminUserRoutes = require('./routes/adminUserRoutes.js');
 const adminScrapingRulesRoutes = require('./routes/adminScrapingRulesRoutes.js');
 const adminScrapedContentRoutes = require('./routes/adminScrapedContentRoutes.js');
@@ -63,6 +65,7 @@ const newsletterRoutes = require('./routes/newsletterRoutes');
 const surveyRoutes = require('./routes/surveyRoutes');
 const adminFundingRoutes = require('./routes/adminFundingRoutes'); 
 const fundingRoutes = require('./routes/fundingRoutes');
+
 
 // --- 2. INITIALISIERUNG & KONFIGURATION ---
 const app = express();
@@ -124,6 +127,8 @@ app.get('/api/data/active-advertisement', auth, dataController.getActiveAdvertis
 app.use('/api/admin/business-partners', adminBusinessPartnerRoutes);
 app.use('/api/admin/widget-types', adminWidgetTypeRoutes);
 app.use('/api/admin/bp-widget-access', adminBpWidgetAccessRoutes);
+app.use('/api/admin/accounts', adminBpAccountsRoutes); 
+app.use('/api/admin/competitors', adminBpCompetitorsRoutes);
 app.use('/api/admin/users', adminUserRoutes);
 app.use('/api/admin/scraped-content', adminScrapedContentRoutes);
 app.use('/api/admin/scraping-rules', adminScrapingRulesRoutes);
@@ -146,7 +151,6 @@ app.use('/api/newsletter', newsletterRoutes);
 app.use('/api/surveys', surveyRoutes);
 app.use('/api/funding', fundingRoutes);
 
-// ... (Debug-Routen und Frontend-Serving unverändert) ...
 // Debug
 app.get('/api/debug/db-inspector', async (req, res) => {
   try {
@@ -194,8 +198,11 @@ if (require.main === module) {
   db.query('SELECT 1')
     .then(() => {
       console.log('PostgreSQL verbunden.');
-      // Schedules nur hier synchronisieren (nicht in Workern)
+      // Schedules aus der DB synchronisieren
       jobManager.synchronizeSchedulesFromDB();
+      // NEU: Fest definierte System-Jobs einrichten
+      jobManager.setupAccountIntelligenceJob(); 
+      
       app.listen(PORT, () => {
         console.log(`Server läuft auf Port ${PORT}`);
       });

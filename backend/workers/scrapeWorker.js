@@ -8,28 +8,43 @@ const { Worker } = require('bullmq');
 const { connection: redisClient, heartbeatRedisClient } = require('../services/queueService');
 
 const db = require('../config/db');
-const { triggerSingleRuleScrape } = require('../services/scraperService');
+
+const { triggerSingleRuleScrape, processNewsKeywordSearch } = require('../services/scraperService');
+const { triggerNewsSearchForAll } = require('../services/accountIntelligenceService');
 
 console.log('[scrape] Worker-Prozess startet...');
+
 
 const worker = new Worker(
   'scrape-content-generation',
   async (job) => {
     console.log(`[scrape] Verarbeite Job ${job.id} (${job.name})`);
     try {
-      const { ruleId, jobId: providedJobId } = job.data;
-      let jobId = providedJobId;
-      if (!jobId) {
-        const { rows } = await db.query(
-          `INSERT INTO scraping_jobs (scraping_rule_id, status) VALUES ($1,'pending') RETURNING id`,
-          [ruleId]
-        );
-        jobId = rows[0].id;
-        console.log(`[scrape] DB-Job neu angelegt: ${jobId}`);
-      } else {
-        console.log(`[scrape] DB-Job vorgegeben: ${jobId}`);
+      // Wir verwenden ein switch-Statement für saubere Logik
+      switch (job.name) {
+        case 'news-keyword-search':
+          await processNewsKeywordSearch(job.data);
+          break;
+        
+        // NEUER CASE
+        case 'trigger-account-intelligence':
+          await triggerNewsSearchForAll();
+          break;
+
+        default:
+          // Bestehende Logik für regelbasiertes Scraping
+          const { ruleId, jobId: providedJobId } = job.data;
+          let jobId = providedJobId;
+          if (!jobId) {
+            const { rows } = await db.query(
+              `INSERT INTO scraping_jobs (scraping_rule_id, status) VALUES ($1,'pending') RETURNING id`,
+              [ruleId]
+            );
+            jobId = rows[0].id;
+          }
+          await triggerSingleRuleScrape(ruleId, jobId);
+          break;
       }
-      await triggerSingleRuleScrape(ruleId, jobId);
     } catch (err) {
       console.error(`[scrape] Fehler bei Job ${job.id} (${job.name}):`, err?.stack || err?.message || err);
       throw err;

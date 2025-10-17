@@ -5,9 +5,14 @@ const workerName = 'emailWorker';
 
 const { Worker } = require('bullmq');
 const { connection: redisClient, heartbeatRedisClient } = require('../services/queueService');
-const { generateAndSendDailyReport, generateAndSendWeeklyReport, generateAndSendMonthlyReport } = require('../services/reportingService');
+const { 
+    generateAndSendDailyReport, 
+    generateAndSendWeeklyReport, 
+    generateAndSendMonthlyReport,
+    generateAndSendBriefingNewsletters
+} = require('../services/reportingService');
 const { processSavedSearchNotifications } = require('../services/notificationService');
-const { sendEmail } = require('../services/emailService'); // Import für zukünftige Flexibilität hinzugefügt
+const { sendEmail } = require('../services/emailService');
 
 console.log('[mail] Worker-Prozess startet...');
 
@@ -16,19 +21,18 @@ const worker = new Worker('emails', async (job) => {
     
     try {
         switch (job.name) {
+            case 'daily-briefing':
+                console.log(`[mail] Starte generateAndSendBriefingNewsletters...`);
+                await generateAndSendBriefingNewsletters();
+                break;            
             case 'daily-report':
                 console.log(`[mail] Starte generateAndSendDailyReport...`);
                 await generateAndSendDailyReport();
                 break;
-            
-            // +++ PLATZHALTER FÜR WÖCHENTLICHEN REPORT +++
             case 'weekly-report':
                 console.log(`[mail] Starte generateAndSendWeeklyReport...`);
-                // HINWEIS: Du musst die Funktion generateAndSendWeeklyReport im reportingService erstellen.
                 await generateAndSendWeeklyReport();
                 break;
-            
-            // +++ PLATZHALTER FÜR MONATLICHEN REPORT +++
             case 'monthly-report':
                 console.log(`[mail] Starte generateAndSendMonthlyReport...`);
                 // HINWEIS: Du musst die Funktion generateAndSendMonthlyReport im reportingService erstellen.

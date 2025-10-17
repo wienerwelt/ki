@@ -1,5 +1,6 @@
 // backend/services/jobManagerService.js
 const { aiContentQueue, scrapeQueue, emailQueue, dataUpdatesQueue } = require('./queueService');
+const { triggerNewsSearchForAll } = require('./accountIntelligenceService');
 const db = require('../config/db');
 const cronParser = require('cron-parser');
 
@@ -326,6 +327,27 @@ async function synchronizeSchedulesFromDB() {
     }
 }
 
+
+async function setupAccountIntelligenceJob() {
+  const jobName = 'account-intelligence-search';
+  const jobId = `system:${jobName}`;
+  const cronPattern = '0 */4 * * *'; // Alle 4 Stunden
+
+  // Entfernt einen eventuell alten Job mit gleicher ID, um das Pattern zu aktualisieren
+  const repeatableJobs = await scrapeQueue.getRepeatableJobs();
+  const existingJob = repeatableJobs.find(job => job.id === jobId);
+  if (existingJob) {
+    await scrapeQueue.removeRepeatableByKey(existingJob.key);
+  }
+
+  // Fügt den neuen, wiederkehrenden Job hinzu
+  await scrapeQueue.add(jobName, {}, {
+    jobId,
+    repeat: { cron: cronPattern, tz: 'Europe/Vienna' },
+  });
+  console.log(`[JobManager] Scheduled system job '${jobName}' with pattern '${cronPattern}'.`);
+}
+
 // ========================================================================
 // == Exports
 // ========================================================================
@@ -348,4 +370,6 @@ module.exports = {
   getEmailJobs,
   // Sync
   synchronizeSchedulesFromDB,
+  // NEUER EXPORT:
+  setupAccountIntelligenceJob,
 };

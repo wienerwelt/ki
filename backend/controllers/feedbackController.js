@@ -5,12 +5,11 @@ const db = require('../config/db');
 exports.getFeedbackItems = async (req, res) => {
     const { id: userId } = req.user;
     try {
-        // KORREKTUR: Die Abfrage lädt jetzt auch den 'organization_name' des Autors mit.
         const query = `
             SELECT 
                 fi.*,
                 u.username AS author_username,
-                u.organization_name, -- NEU
+                u.organization_name,
                 (SELECT COUNT(*) FROM feedback_votes fv WHERE fv.feedback_item_id = fi.id) AS votes,
                 EXISTS(SELECT 1 FROM feedback_votes fv WHERE fv.feedback_item_id = fi.id AND fv.user_id = $1) AS has_voted
             FROM feedback_items fi
@@ -29,20 +28,53 @@ exports.getFeedbackItems = async (req, res) => {
 exports.createFeedbackItem = async (req, res) => {
     const { id: userId } = req.user;
     const { title, description, type, widget_type_key } = req.body;
+
     if (!title || !description || !type) {
         return res.status(400).json({ message: 'Title, description, and type are required.' });
     }
+
+    // Client für die Transaktion aus dem Pool holen
+    const client = await db.connect();
+
     try {
-        const query = `
+        // Transaktion starten
+        await client.query('BEGIN');
+
+        // 1. Feedback-Eintrag erstellen und das neue Objekt zurückgeben lassen
+        const insertFeedbackQuery = `
             INSERT INTO feedback_items (user_id, title, description, type, widget_type_key)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING *;
         `;
-        const result = await db.query(query, [userId, title, description, type, widget_type_key]);
-        res.status(201).json(result.rows[0]);
+        const feedbackResult = await client.query(insertFeedbackQuery, [userId, title, description, type, widget_type_key]);
+        const newFeedbackItem = feedbackResult.rows[0];
+
+        // 2. Gamification: Dem Nutzer 5 Punkte gutschreiben
+        await client.query(
+            'UPDATE users SET contribution_score = contribution_score + 5 WHERE id = $1',
+            [userId]
+        );
+
+        // 3. Log-Eintrag für die Punkteänderung erstellen
+        const logDescription = `Punkte für neue Meldung: "${newFeedbackItem.title}"`;
+        await client.query(
+            'INSERT INTO user_score_logs (user_id, points_change, action_type, description, reference_id) VALUES ($1, 5, \'FEEDBACK_SUBMITTED\', $2, $3)',
+            [userId, logDescription, newFeedbackItem.id]
+        );
+
+        // Transaktion erfolgreich abschließen
+        await client.query('COMMIT');
+
+        res.status(201).json(newFeedbackItem);
+
     } catch (err) {
-        console.error('Error creating feedback item:', err.message);
+        // Bei einem Fehler die Transaktion zurückrollen
+        await client.query('ROLLBACK');
+        console.error('Error creating feedback item with gamification:', err.message);
         res.status(500).send('Server error');
+    } finally {
+        // WICHTIG: Den Client wieder für den Pool freigeben
+        client.release();
     }
 };
 

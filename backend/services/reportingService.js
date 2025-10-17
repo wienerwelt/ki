@@ -1,6 +1,7 @@
 // backend/services/reportingService.js
 const db = require('../config/db');
 const { sendEmail } = require('./emailService');
+const { renderBriefingEmail } = require('./emailTemplates');
 
 // Function to get daily statistics from the database
 async function getDailyStats() {
@@ -45,6 +46,66 @@ function formatReportAsHtml(stats) {
     `;
 }
 
+
+async function generateAndSendBriefingNewsletters() {
+    console.log('[Reporting] Starte Versand der täglichen Briefing-Newsletter...');
+    const client = await db.connect();
+    try {
+        const { rows: partners } = await client.query(
+            `SELECT id, name, dashboard_title, logo_url FROM business_partners WHERE is_active = TRUE`
+        );
+
+        for (const partner of partners) {
+            const { rows: subscribers } = await client.query(
+                `SELECT email FROM users WHERE business_partner_id = $1 AND newsletter_opt_in = TRUE AND is_active = TRUE`,
+                [partner.id]
+            );
+
+            if (subscribers.length === 0) {
+                console.log(`[Reporting] Kein Newsletter-Abonnent für Partner "${partner.name}". Überspringe.`);
+                continue;
+            }
+
+            // Hole die Briefing-Daten für diesen Partner
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const briefingRes = await client.query(
+                `SELECT * FROM business_partner_intelligence_briefings 
+                 WHERE business_partner_id = $1 AND created_at >= $2 
+                 ORDER BY briefing_type ASC`, // 'market' kommt zuerst
+                [partner.id, today]
+            );
+
+            if (briefingRes.rows.length === 0) {
+                console.log(`[Reporting] Kein heutiges Briefing für Partner "${partner.name}" gefunden. Überspringe.`);
+                continue;
+            }
+
+            // Strukturiere die Daten für die E-Mail-Vorlage
+            const briefingData = {
+                market_briefing: briefingRes.rows.find(r => r.briefing_type === 'market'),
+                sales_triggers: briefingRes.rows.filter(r => r.briefing_type === 'account_specific')
+            };
+
+            const html = renderBriefingEmail({ briefing: briefingData, brandLogoUrl: partner.logo_url });
+            const subject = `Ihr Tägliches Briefing: ${briefingData.market_briefing?.headline || new Date().toLocaleDateString('de-DE')}`;
+            const recipientEmails = subscribers.map(s => s.email);
+
+            await sendEmail({
+                to: recipientEmails,
+                subject: subject,
+                html: html,
+                fromName: partner.dashboard_title || 'Ihr KI-Dashboard'
+            });
+            console.log(`[Reporting] Briefing an ${recipientEmails.length} Empfänger für "${partner.name}" versendet.`);
+        }
+    } catch (err) {
+        console.error('[Reporting] Fehler beim Erstellen und Senden der Briefing-Newsletter:', err);
+    } finally {
+        client.release();
+    }
+}
+
 // Main function to be called by the controller
 exports.generateAndSendDailyReport = async () => {
     try {
@@ -61,3 +122,5 @@ exports.generateAndSendDailyReport = async () => {
         console.error('Fehler beim Senden des täglichen Admin-Reports:', error);
     }
 };
+
+exports.generateAndSendBriefingNewsletters = generateAndSendBriefingNewsletters;

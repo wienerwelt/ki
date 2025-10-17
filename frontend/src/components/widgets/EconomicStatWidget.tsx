@@ -157,7 +157,6 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
                 setSource(response.data.source || null);
                 const subtypes = response.data.subtypes || [];
                 setAvailableSubtypes(subtypes);
-                // Subtypen nur zurücksetzen, wenn sie leer sind oder wenn sich das Land geändert hat (wird im onChange gehandhabt)
                 if(selectedSubtypes.length === 0) {
                     setSelectedSubtypes(subtypes);
                 }
@@ -194,17 +193,31 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
           </Typography>
         </Box>
 
+        {/* --- START DER ÄNDERUNG --- */}
         <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
             <ToggleButtonGroup value={selectedSubtypes} onChange={(_, newSubtypes) => setSelectedSubtypes(newSubtypes)} aria-label="Statistik-Subtypen">
-                {availableSubtypes.map(subtype => (
-                    <Tooltip title={subtype} key={subtype}>
-                        <ToggleButton value={subtype} aria-label={subtype}>
-                            {(subtypeIcons[subtype] || subtypeIcons.default).icon}
-                        </ToggleButton>
-                    </Tooltip>
-                ))}
+                {availableSubtypes.map((subtype, index) => {
+                    const color = COLORS[index % COLORS.length];
+                    return (
+                        <Tooltip title={subtype} key={subtype}>
+                            <ToggleButton
+                                value={subtype}
+                                aria-label={subtype}
+                                sx={{
+                                    color: color, // Setzt die Farbe für das Icon
+                                    '&.Mui-selected, &.Mui-selected:hover': {
+                                        color: color, // Stellt sicher, dass die Farbe auch im ausgewählten Zustand bleibt
+                                    },
+                                }}
+                            >
+                                {(subtypeIcons[subtype] || subtypeIcons.default).icon}
+                            </ToggleButton>
+                        </Tooltip>
+                    );
+                })}
             </ToggleButtonGroup>
         </Box>
+        {/* --- ENDE DER ÄNDERUNG --- */}
 
         <Box sx={{ flexGrow: 1, height: 300 }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -227,7 +240,6 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
           </ResponsiveContainer>
         </Box>
         {source && (
-            // ERWEITERT: Layout für Link und Icon angepasst
             <Typography variant="caption" sx={{ textAlign: 'center', p: 1, pt: 2, color: 'text.secondary', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0.5 }}>
                 Quelle: <MuiLink href={source.url} target="_blank" rel="noopener">{source.name}</MuiLink>
                 {source.is_trusted && (

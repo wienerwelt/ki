@@ -5,8 +5,11 @@ const db = require('../config/db');
  * Ruft Aktivitätsprotokolle mit Paginierung und Filterung ab.
  */
 exports.getActivityLogs = async (req, res) => {
-    const { page = 1, limit = 20, actionType, username, startDate, endDate } = req.query;
+    const { page = 1, limit = 20, actionType, username, startDate, endDate, sortBy = 'timestamp', sortOrder = 'desc' } = req.query;
     const offset = (page - 1) * limit;
+    const allowedSortColumns = ['timestamp', 'username', 'action_type', 'status', 'ip_address'];
+    const safeSortBy = allowedSortColumns.includes(sortBy) ? sortBy : 'timestamp';
+    const safeSortOrder = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';    
 
     try {
         let countQuery = 'SELECT COUNT(*) FROM activity_log';
@@ -41,7 +44,7 @@ exports.getActivityLogs = async (req, res) => {
             dataQuery += whereString;
         }
 
-        dataQuery += ` ORDER BY timestamp DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+        dataQuery += ` ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
         const dataParams = [...queryParams, limit, offset];
 
         const totalResult = await db.query(countQuery, queryParams);

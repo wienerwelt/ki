@@ -44,5 +44,7 @@ router.get('/events', authMiddleware, dataController.getEvents);
 router.get('/economic-statistics', dataController.getEconomicStatistics);
 router.get('/economic-statistics/countries', dataController.getUniqueStatCountries);
 router.post('/generate-draft-from-content', dataController.generateDraftFromContent);
+router.get('/account-intelligence', dataController.getAccountIntelligence);
+router.get('/daily-briefing', dataController.getDailyBriefing);
 
 module.exports = router;

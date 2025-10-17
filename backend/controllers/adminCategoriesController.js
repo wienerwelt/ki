@@ -8,11 +8,21 @@ const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F
 // GET all categories
 exports.getAllCategories = async (req, res) => {
     try {
-        // KORREKTUR: Wählt die neuen Spalten aus und sortiert nach dem Hauptnamen 'name'
-        const result = await db.query('SELECT id, name, name_lang, name_lang_en, description FROM categories ORDER BY name ASC');
+        const result = await db.query('SELECT id, name, name_lang, name_lang_en, description, category_type FROM categories ORDER BY name ASC');
         res.json(result.rows);
     } catch (err) {
         console.error('Error fetching categories:', err.message);
+        res.status(500).send('Server error');
+    }
+};
+
+// NEUE FUNKTION: Holt nur die Kategorien vom Typ 'industry'
+exports.getAllIndustries = async (req, res) => {
+    try {
+        const result = await db.query("SELECT id, name FROM categories WHERE category_type = 'industry' ORDER BY name ASC");
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching industries:', err.message);
         res.status(500).send('Server error');
     }
 };
@@ -36,23 +46,18 @@ exports.getCategoryById = async (req, res) => {
 
 // CREATE a new category
 exports.createCategory = async (req, res) => {
-    // KORREKTUR: Liest die neuen Spaltennamen aus dem Request-Body
-    const { name, name_lang, name_lang_en, description } = req.body;
-    if (!name) {
-        return res.status(400).json({ message: 'Name is required.' });
-    }
+    const { name, name_lang, name_lang_en, description, category_type } = req.body;
+    if (!name) return res.status(400).json({ message: 'Name is required.' });
+
     try {
-        // KORREKTUR: Fügt die neuen Spalten in die Datenbank ein
         const newCategory = await db.query(
-            'INSERT INTO categories (id, name, name_lang, name_lang_en, description) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-            [uuidv4(), name, name_lang || null, name_lang_en || null, description || null]
+            'INSERT INTO categories (id, name, name_lang, name_lang_en, description, category_type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [uuidv4(), name, name_lang || null, name_lang_en || null, description || null, category_type || 'content']
         );
         res.status(201).json(newCategory.rows[0]);
     } catch (err) {
         console.error('Error creating category:', err.message);
-        if (err.code === '23505') { // Unique violation
-            return res.status(409).json({ message: 'A category with this name already exists.' });
-        }
+        if (err.code === '23505') return res.status(409).json({ message: 'A category with this name already exists.' });
         res.status(500).send('Server error');
     }
 };
@@ -61,26 +66,20 @@ exports.createCategory = async (req, res) => {
 exports.updateCategory = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
-    // KORREKTUR: Liest die neuen Spaltennamen aus dem Request-Body
-    const { name, name_lang, name_lang_en, description } = req.body;
-    if (!name) {
-        return res.status(400).json({ message: 'Name is required.' });
-    }
+    
+    const { name, name_lang, name_lang_en, description, category_type } = req.body;
+    if (!name) return res.status(400).json({ message: 'Name is required.' });
+
     try {
-        // KORREKTUR: Aktualisiert die neuen Spalten in der Datenbank
         const updatedCategory = await db.query(
-            'UPDATE categories SET name = $1, name_lang = $2, name_lang_en = $3, description = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $5 RETURNING *',
-            [name, name_lang || null, name_lang_en || null, description || null, id]
+            'UPDATE categories SET name = $1, name_lang = $2, name_lang_en = $3, description = $4, category_type = $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING *',
+            [name, name_lang || null, name_lang_en || null, description || null, category_type || 'content', id]
         );
-        if (updatedCategory.rows.length === 0) {
-            return res.status(404).json({ message: 'Category not found.' });
-        }
+        if (updatedCategory.rows.length === 0) return res.status(404).json({ message: 'Category not found.' });
         res.json(updatedCategory.rows[0]);
     } catch (err) {
         console.error('Error updating category:', err.message);
-        if (err.code === '23505') {
-            return res.status(409).json({ message: 'A category with this name already exists.' });
-        }
+        if (err.code === '23505') return res.status(409).json({ message: 'A category with this name already exists.' });
         res.status(500).send('Server error');
     }
 };

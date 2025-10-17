@@ -111,26 +111,34 @@ const AdminMonitorPage: React.FC = () => {
     }, []);
     // --- HEALTH WIDGET LOGIK ENDE ---
 
-    const fetchLogs = useCallback(async (currentPage = 1) => {
-        setLoading(true);
-        setError(null);
-        try {
-            const token = localStorage.getItem('jwt_token');
-            const params = new URLSearchParams({ page: String(currentPage), limit: '20' });
-            if (filterUsername) params.append('username', filterUsername);
-            if (filterActionType) params.append('actionType', filterActionType);
-            if (filterStartDate) params.append('startDate', filterStartDate);
-            if (filterEndDate) params.append('endDate', filterEndDate);
-            const response = await apiClient.get(`/api/admin/monitor/activity?${params.toString()}`, { headers: { 'x-auth-token': token } });
-            setLogs(response.data.logs);
-            setTotalPages(response.data.totalPages);
-            setPage(response.data.currentPage);
-        } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Laden der Protokolle.');
-        } finally {
-            setLoading(false);
-        }
-    }, [filterUsername, filterActionType, filterStartDate, filterEndDate]);
+
+const fetchLogs = useCallback(async (currentPage = 1) => {
+    setLoading(true);
+    setError(null);
+    try {
+        const token = localStorage.getItem('jwt_token');
+        const params = new URLSearchParams({ 
+            page: String(currentPage), 
+            limit: '20',
+            sortBy: orderBy,
+            sortOrder: order
+        });
+        if (filterUsername) params.append('username', filterUsername);
+        if (filterActionType) params.append('actionType', filterActionType);
+        if (filterStartDate) params.append('startDate', filterStartDate);
+        if (filterEndDate) params.append('endDate', filterEndDate);
+        
+        const response = await apiClient.get(`/api/admin/monitor/activity?${params.toString()}`, { headers: { 'x-auth-token': token } });
+        setLogs(response.data.logs);
+        setTotalPages(response.data.totalPages);
+        setPage(response.data.currentPage);
+    } catch (err: any) {
+        setError(err.response?.data?.message || 'Fehler beim Laden der Protokolle.');
+    } finally {
+        setLoading(false);
+    }
+// KORREKTUR: Abhängigkeiten des useCallback-Hooks erweitern
+}, [filterUsername, filterActionType, filterStartDate, filterEndDate, order, orderBy]);
 
     useEffect(() => {
         fetchLogs(1);
@@ -173,7 +181,7 @@ const AdminMonitorPage: React.FC = () => {
     };
 
     const handleCloseSnackbar = () => setSnackbar({ ...snackbar, open: false });
-    const sortedLogs = useMemo(() => { return [...logs].sort(getComparator(order, orderBy)); }, [logs, order, orderBy]);
+    const sortedLogs = logs;
     const formatDate = (dateString: string) => new Date(dateString).toLocaleString('de-AT', { dateStyle: 'short', timeStyle: 'medium' });
 
 const handleOpenJobQueue = () => {

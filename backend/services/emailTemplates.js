@@ -223,11 +223,50 @@ function renderNewOpportunitiesEmail({ username, searchName, newOpportunities, s
   });
 }
 
+function renderBriefingEmail({ briefing, brandLogoUrl }) {
+  const title = `Ihr Tägliches Briefing für den ${new Date().toLocaleDateString('de-DE')}`;
+  
+  let contentHtml = '';
+  if (briefing.market_briefing) {
+    const mb = briefing.market_briefing;
+    contentHtml += `
+      <h2 style="font-size: 18px; margin-top: 0; padding-bottom: 5px; border-bottom: 1px solid #eee;">Markt-Briefing</h2>
+      <h3 style="font-size: 16px; margin-top: 15px; margin-bottom: 5px;">${escapeHtml(mb.headline)}</h3>
+      <p>${escapeHtml(mb.summary)}</p>
+      <p><strong>Prognose:</strong> <em>${escapeHtml(mb.prognosis)}</em></p>
+    `;
+  }
+
+  if (briefing.sales_triggers && briefing.sales_triggers.length > 0) {
+    contentHtml += `<hr style="border:none; border-top:1px solid #eee; margin: 25px 0;" />
+                    <h2 style="font-size: 18px; margin-top: 0; padding-bottom: 5px; border-bottom: 1px solid #eee;">Ihre Top-Gesprächsanlässe</h2>`;
+    briefing.sales_triggers.forEach(st => {
+      contentHtml += `
+        <div style="margin-top: 15px;">
+            <h4 style="margin:0 0 5px;">${escapeHtml(st.headline)}</h4>
+            <p style="margin:0 0 5px;"><strong>Analyse:</strong> ${escapeHtml(st.analysis)}</p>
+            <p style="margin:0; font-style:italic;"><strong>Gesprächsansatz:</strong> "${escapeHtml(st.talking_point)}"</p>
+        </div>
+      `;
+    });
+  }
+  
+  return renderLayout({
+    preheader: briefing.market_briefing?.headline || 'Ihr tägliches Briefing',
+    title,
+    contentHtml,
+    ctaLabel: 'Zum Dashboard',
+    ctaUrl: getBaseUrl(),
+    brandLogoUrl,
+  });
+}
+
 module.exports = {
   renderLayout,
   renderShareContentEmail,
   renderVerificationEmail,
   renderPasswordResetEmail,
   renderNewsletterOptInEmail,
-  renderNewOpportunitiesEmail,  
+  renderNewOpportunitiesEmail,
+  renderBriefingEmail, 
 };

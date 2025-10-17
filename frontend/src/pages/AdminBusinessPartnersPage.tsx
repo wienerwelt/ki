@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link as RouterLink } from 'react-router-dom';
 import {
-    Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
+    Autocomplete, Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
     TextField, MenuItem, Switch, FormControlLabel, Tooltip as MuiTooltip, TableSortLabel, InputAdornment, Chip,
     Tabs, Tab, Grid, Link as MuiLink, LinearProgress
@@ -14,9 +14,10 @@ import SearchIcon from '@mui/icons-material/Search';
 import WidgetsIcon from '@mui/icons-material/Widgets';
 import FolderZipIcon from '@mui/icons-material/FolderZip';
 import DashboardLayout from '../components/DashboardLayout';
+import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
+import UploadIcon from '@mui/icons-material/Upload';
 import apiClient from '../apiClient';
 
-// --- Interfaces ---
 interface Region {
     id: string;
     name: string;
@@ -47,8 +48,13 @@ interface BusinessPartner {
     storage_usage_bytes: string;
     storage_limit_bytes: string;
     file_count: string;
-    allow_automated_newsletter: boolean; // NEU
+    allow_automated_newsletter: boolean;
+    account_count: string;
+    industries: Category[];
+    dashboard_focus: 'information' | 'sales';
 }
+
+interface Category { id: string; name: string; }
 
 interface ColorScheme {
     id: string;
@@ -56,7 +62,6 @@ interface ColorScheme {
     primary_color: string;
 }
 
-// --- Helper Functions ---
 type Order = 'asc' | 'desc';
 
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
@@ -105,13 +110,14 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [openDialog, setOpenDialog] = useState(false);
     const [editingBp, setEditingBp] = useState<BusinessPartner | null>(null);
+    const [allIndustries, setAllIndustries] = useState<Category[]>([]);
 
     const [searchTerm, setSearchTerm] = useState('');
     const [order, setOrder] = useState<Order>('asc');
     const [orderBy, setOrderBy] = useState<keyof BusinessPartner>('name');
     const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+    const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
-    // Form states
     const [formName, setFormName] = useState('');
     const [formDashboardTitle, setFormDashboardTitle] = useState('');
     const [formAddress, setFormAddress] = useState('');
@@ -128,7 +134,9 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [formLevel2Name, setFormLevel2Name] = useState('');
     const [formLevel3Name, setFormLevel3Name] = useState('');
     const [formStorageTier, setFormStorageTier] = useState<'free' | 'standard' | 'premium'>('free');
-    const [formAllowNewsletter, setFormAllowNewsletter] = useState(false); // NEU
+    const [formAllowNewsletter, setFormAllowNewsletter] = useState(false);
+    const [formDashboardFocus, setFormDashboardFocus] = useState<'information' | 'sales'>('information');
+    const [formIndustryIds, setFormIndustryIds] = useState<string[]>([]);
 
     const navigate = useNavigate();
 
@@ -137,14 +145,16 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
-            const [bpRes, csRes, regRes] = await Promise.all([
+            const [bpRes, csRes, regRes, indRes] = await Promise.all([
                 apiClient.get('/api/admin/business-partners', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/admin/business-partners/colorschemes/all', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/admin/business-partners/regions', { headers: { 'x-auth-token': token } }),
+                apiClient.get('/api/admin/categories/industries', { headers: { 'x-auth-token': token } })
             ]);
             setBusinessPartners(bpRes.data);
             setColorSchemes(csRes.data);
             setRegions(regRes.data);
+            setAllIndustries(indRes.data);
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Laden der Daten.');
         } finally {
@@ -174,8 +184,10 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setFormLevel2Name('');
         setFormLevel3Name('');
         setFormStorageTier('free');
-        setFormAllowNewsletter(false); // NEU
+        setFormAllowNewsletter(false);
         setOpenDialog(true);
+        setFormDashboardFocus('information');
+        setFormIndustryIds([]);     
     };
 
     const handleOpenEditDialog = (bp: BusinessPartner) => {
@@ -197,14 +209,40 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setFormLevel2Name(bp.level_2_name || '');
         setFormLevel3Name(bp.level_3_name || '');
         setFormStorageTier(bp.storage_tier || 'free');
-        setFormAllowNewsletter(bp.allow_automated_newsletter); // NEU
+        setFormAllowNewsletter(bp.allow_automated_newsletter);
         setOpenDialog(true);
+        setFormDashboardFocus(bp.dashboard_focus || 'information');
+        setFormIndustryIds(bp.industries.map(ind => ind.id));        
     };
 
     const handleCloseDialog = () => {
         setOpenDialog(false);
         setEditingBp(null);
         setError(null);
+    };
+
+    const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        setIsUploadingLogo(true);
+        setError(null);
+        const formData = new FormData();
+        formData.append('logo', file);
+
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const response = await apiClient.post('/api/admin/business-partners/logo-upload', formData, {
+                headers: {
+                    'x-auth-token': token,
+                },
+            });
+            setFormLogoUrl(response.data.url);
+        } catch (err: any) {
+            setError(err.response?.data?.message || 'Fehler beim Logo-Upload.');
+        } finally {
+            setIsUploadingLogo(false);
+        }
     };
 
     const handleSubmit = async () => {
@@ -226,7 +264,9 @@ const AdminBusinessPartnersPage: React.FC = () => {
             level_2_name: formLevel2Name || null,
             level_3_name: formLevel3Name || null,
             storage_tier: formStorageTier,
-            allow_automated_newsletter: formAllowNewsletter, // NEU
+            allow_automated_newsletter: formAllowNewsletter,
+            category_ids: formIndustryIds,
+            dashboard_focus: formDashboardFocus           
         };
 
         try {
@@ -329,6 +369,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                         <TableCell sx={{ width: '20%' }}>Speicher</TableCell>
                                         <TableCell sortDirection={orderBy === 'subscription_end_date' ? order : false}><TableSortLabel active={orderBy === 'subscription_end_date'} direction={order} onClick={() => handleSortRequest('subscription_end_date')}>Abo</TableSortLabel></TableCell>
                                         <TableCell align="center" sortDirection={orderBy === 'user_count' ? order : false}><TableSortLabel active={orderBy === 'user_count'} direction={order} onClick={() => handleSortRequest('user_count')}>Nutzer</TableSortLabel></TableCell>
+                                        <TableCell align="center">Accounts</TableCell>
                                         <TableCell align="center" sortDirection={orderBy === 'widget_count' ? order : false}><TableSortLabel active={orderBy === 'widget_count'} direction={order} onClick={() => handleSortRequest('widget_count')}>Widgets</TableSortLabel></TableCell>
                                         <TableCell>Aktionen</TableCell>
                                     </TableRow>
@@ -405,6 +446,19 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                                     <MuiTooltip title="Benutzer verwalten"><span><IconButton color="info" onClick={() => handleViewUsers(bp.id, bp.name)} disabled={parseInt(bp.user_count) === 0}><GroupIcon /> {bp.user_count}</IconButton></span></MuiTooltip>
                                                 </TableCell>
                                                 <TableCell align="center">
+                                                    <MuiTooltip title="Accounts verwalten">
+                                                        <span>
+                                                            <IconButton
+                                                                color="primary"
+                                                                onClick={() => navigate(`/admin/business-partners/${bp.id}/accounts`)}
+                                                            >
+                                                                <SwitchAccountIcon />
+                                                                <Typography component="span" sx={{ ml: 1, fontWeight: 'bold' }}>{bp.account_count}</Typography>
+                                                            </IconButton>
+                                                        </span>
+                                                    </MuiTooltip>
+                                                </TableCell>                                                
+                                                <TableCell align="center">
                                                     <MuiTooltip title="Widget-Zugriff verwalten"><span><IconButton color="secondary" onClick={() => handleWidgetAccess(bp.id, bp.name)} disabled={parseInt(bp.widget_count) === 0}><WidgetsIcon /> {bp.widget_count}</IconButton></span></MuiTooltip>
                                                 </TableCell>
                                                 <TableCell>
@@ -439,11 +493,53 @@ const AdminBusinessPartnersPage: React.FC = () => {
                             <Grid item xs={12}><TextField label="Adresse" fullWidth value={formAddress} onChange={(e) => setFormAddress(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={6}><TextField label="E-Mail" type="email" fullWidth value={formEmail} onChange={(e) => setFormEmail(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={6}><TextField label="Homepage URL" type="url" fullWidth value={formUrlBusinessPartner} onChange={(e) => setFormUrlBusinessPartner(e.target.value)} /></Grid>
-                            <Grid item xs={12}><TextField label="Logo URL" fullWidth value={formLogoUrl} onChange={(e) => setFormLogoUrl(e.target.value)} /></Grid>
+                            <Grid item xs={12}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                    <TextField
+                                        label="Logo URL"
+                                        fullWidth
+                                        value={formLogoUrl}
+                                        onChange={(e) => setFormLogoUrl(e.target.value)}
+                                        InputProps={{
+                                            endAdornment: formLogoUrl && (
+                                                <InputAdornment position="end">
+                                                    <img src={formLogoUrl} alt="Logo Vorschau" style={{ height: '25px', borderRadius: '4px' }} />
+                                                </InputAdornment>
+                                            )
+                                        }}
+                                    />
+                                    <Button
+                                        component="label"
+                                        variant="outlined"
+                                        startIcon={isUploadingLogo ? <CircularProgress size={20} /> : <UploadIcon />}
+                                        disabled={isUploadingLogo}
+                                    >
+                                        Upload
+                                        <input type="file" hidden accept="image/*" onChange={handleLogoUpload} />
+                                    </Button>
+                                </Box>
+                            </Grid>
                             <Grid item xs={12}><Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>Mitgliedslevel-Bezeichnungen</Typography></Grid>
                             <Grid item xs={12} sm={4}><TextField label="Level 1 Name" fullWidth value={formLevel1Name} onChange={(e) => setFormLevel1Name(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={4}><TextField label="Level 2 Name" fullWidth value={formLevel2Name} onChange={(e) => setFormLevel2Name(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={4}><TextField label="Level 3 Name" fullWidth value={formLevel3Name} onChange={(e) => setFormLevel3Name(e.target.value)} /></Grid>
+                            <Grid item xs={12} sm={8}>
+                                <Autocomplete
+                                    multiple
+                                    options={allIndustries}
+                                    getOptionLabel={(option) => option.name}
+                                    value={allIndustries.filter(ind => formIndustryIds.includes(ind.id))}
+                                    onChange={(_, newValue) => { setFormIndustryIds(newValue.map(v => v.id)); }}
+                                    isOptionEqualToValue={(option, value) => option.id === value.id}
+                                    renderInput={(params) => <TextField {...params} label="Branchen" placeholder="Branchen auswählen" />}
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                                <TextField select label="Dashboard Fokus" fullWidth value={formDashboardFocus} onChange={(e) => setFormDashboardFocus(e.target.value as any)}>
+                                    <MenuItem value="information">Information</MenuItem>
+                                    <MenuItem value="sales">Sales</MenuItem>
+                                </TextField>
+                            </Grid>                            
                             <Grid item xs={12}><TextField select label="Regionen" fullWidth value={formRegionIds} onChange={(e) => setFormRegionIds(e.target.value as unknown as string[])} SelectProps={{ multiple: true, renderValue: (selected) => (<Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{(selected as string[]).map(id => <Chip key={id} size="small" label={regions.find(r => r.id === id)?.name} />)}</Box>) }} > {regions.map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))} </TextField></Grid>
                             <Grid item xs={12}><TextField select label="Standard-Region" fullWidth value={formDefaultRegionId || ''} onChange={(e) => setFormDefaultRegionId(e.target.value)} disabled={formRegionIds.length === 0} helperText="Diese Region wird als Voreinstellung in den Widgets verwendet." > <MenuItem value=""><em>Keine</em></MenuItem> {regions.filter(r => formRegionIds.includes(r.id)).map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))} </TextField></Grid>
                             <Grid item xs={12} sm={6}><TextField label="Abo Startdatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formSubscriptionStartDate} onChange={(e) => setFormSubscriptionStartDate(e.target.value)} /></Grid>

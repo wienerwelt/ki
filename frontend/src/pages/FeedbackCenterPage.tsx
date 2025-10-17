@@ -60,7 +60,7 @@ const getStatusChip = (status: FeedbackItem['status']) => {
 // --- Hauptkomponente ---
 
 const FeedbackCenterPage: React.FC = () => {
-    const { user } = useAuth();
+const { user, refreshUser } = useAuth();
     const isAdmin = user?.role === 'admin';
     const location = useLocation();
     const navigate = useNavigate();
@@ -138,9 +138,15 @@ const FeedbackCenterPage: React.FC = () => {
             await apiClient.post('/api/feedback', {
                 type: formType, title: formTitle, description: formDescription, widget_type_key: formWidgetKey
             }, { headers: { 'x-auth-token': token } });
+
+            // NEU: Nach dem erfolgreichen Senden stoßen wir die Aktualisierung an
+            await refreshUser();
+            
+            // Bisherige Aktionen nach Erfolg:
             setFormTitle(''); setFormDescription(''); setFormWidgetKey('');
             setTabIndex(0);
             fetchData();
+
         } catch (err) {
             alert('Fehler beim Senden des Feedbacks.');
         } finally {

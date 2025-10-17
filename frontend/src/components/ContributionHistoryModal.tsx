@@ -47,7 +47,6 @@ const ContributionHistoryModal: React.FC<ContributionHistoryModalProps> = ({ ope
 
     return (
         <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-            {/* KORRIGIERT: Titelbereich für prominentere Punktzahl angepasst */}
             <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Typography variant="h6">Mein Aktivitätsverlauf</Typography>
                 <Box sx={{ textAlign: 'center', p: 1, backgroundColor: 'action.hover', borderRadius: 2 }}>

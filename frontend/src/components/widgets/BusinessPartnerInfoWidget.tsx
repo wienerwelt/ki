@@ -254,15 +254,25 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
         <Card variant="outlined" sx={{ height: '100%', border: 'none', display: 'flex', flexDirection: 'column' }}>
           <CardContent sx={{ flexGrow: 1, overflowY: 'auto', pt: 2 }}>
             <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', px: 2, mb: 2 }}>
-              <Avatar
-                src={businessPartner.logo_url || undefined}
-                sx={{ width: 90, height: 60, bgcolor: primaryColor, mt: 0.5 }}
-                variant="rounded"
-              >
-                {typeof businessPartner.name === 'string' && businessPartner.name.length > 0
-                  ? businessPartner.name.charAt(0)
-                  : null}
-              </Avatar>
+<Avatar
+  src={businessPartner.logo_url || undefined}
+  variant="rounded"
+  sx={{
+    width: 90,
+    height: 60,
+    mt: 0.5,
+    '& img': {
+      objectFit: 'contain',
+      width: '100%',
+      height: '100%',
+      padding: 0.5, // = theme.spacing(0.5)
+    },
+  }}
+>
+  {typeof businessPartner.name === 'string' && businessPartner.name.length > 0
+    ? businessPartner.name.charAt(0)
+    : null}
+</Avatar>
               <Stack spacing={0.5} sx={{ flexGrow: 1 }}>
                 {businessPartner.url_businesspartner && (
                   <MuiLink

@@ -3,7 +3,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import {
     Box, Typography, CircularProgress, Alert, Paper, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Tooltip, Dialog, DialogTitle,
-    DialogContent, Button, DialogActions, Link as MuiLink, Snackbar, Checkbox,
+    DialogContent, Button, DialogActions, Snackbar, Checkbox,
     TableSortLabel, InputAdornment, TextField
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -15,106 +15,143 @@ import SearchIcon from '@mui/icons-material/Search';
 import AdminScheduleSelector from './AdminScheduleSelector';
 import apiClient from '../apiClient';
 
-interface ScheduledScrapingRule {
+// --- Interfaces ---
+interface UnifiedJob {
     id: string;
-    name: string | null;
-    source_identifier: string;
+    name: string;
     region: string | null;
     schedule: string | null;
-    last_scraped_at: string | null;
+    last_run_at: string | null;
     next_run_at: string | null;
-    rule_type: 'content' | 'funding';
+    type: 'rule' | 'system';
+    source_identifier?: string;
+    rule_type?: 'content' | 'funding';
 }
-type Order = 'asc' | 'desc';
-type RuleKey = keyof ScheduledScrapingRule;
 
+type Order = 'asc' | 'desc';
+type RuleKey = keyof UnifiedJob;
+
+// --- Helper Functions ---
 const formatTimestamp = (timestamp: string | null): string => {
     if (!timestamp) return 'Nie';
     return new Date(timestamp).toLocaleString('de-AT', { dateStyle: 'short', timeStyle: 'short' });
 };
-const formatCronToGerman = (cron: string | null): string => {
-    if (!cron) return "Nicht geplant";
-    try {
-        const parts = cron.split(' ');
-        if (parts.length !== 5) return "Ungültiges Format";
-        const [minute, hour, dayOfMonth, , dayOfWeek] = parts;
-        const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-        const weekDays = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
 
-        if (dayOfMonth !== '*' && dayOfWeek === '*') return `Jeden ${dayOfMonth}. des Monats um ${time} Uhr`;
-        if (dayOfWeek !== '*' && dayOfMonth === '*') return `Jeden ${weekDays[parseInt(dayOfWeek, 10)]} um ${time} Uhr`;
-        if (dayOfMonth === '*' && dayOfWeek === '*') return `Täglich um ${time} Uhr`;
-        return cron;
-    } catch { return "Ungültiges Format"; }
-};
-function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
+function descendingComparator(a: UnifiedJob, b: UnifiedJob, orderBy: RuleKey) {
     const valA = a[orderBy] ?? '';
     const valB = b[orderBy] ?? '';
     if (valB < valA) return -1;
     if (valB > valA) return 1;
     return 0;
 }
-function getComparator<Key extends RuleKey>(order: Order, orderBy: Key): (a: { [key in Key]: any }, b: { [key in Key]: any }) => number {
-    return order === 'desc' ? (a, b) => descendingComparator(a, b, orderBy) : (a, b) => -descendingComparator(a, b, orderBy);
+
+// KORREKTUR: Die Signatur dieser Funktion wurde angepasst, um den Typfehler zu beheben.
+function getComparator(order: Order, orderBy: RuleKey): (a: UnifiedJob, b: UnifiedJob) => number {
+    return order === 'desc' 
+        ? (a, b) => descendingComparator(a, b, orderBy) 
+        : (a, b) => -descendingComparator(a, b, orderBy);
 }
-const headCells: { id: RuleKey; label: string }[] = [
-    { id: 'name', label: 'Name der Regel' },
+
+const headCells: { id: RuleKey; label: string; }[] = [
+    { id: 'name', label: 'Name des Jobs' },
     { id: 'region', label: 'Region' },
     { id: 'schedule', label: 'Zeitplan' },
     { id: 'next_run_at', label: 'Nächste Ausführung' },
-    { id: 'last_scraped_at', label: 'Letzte Ausführung' },
+    { id: 'last_run_at', label: 'Letzte Ausführung' },
 ];
 
 const AdminScrapingTab: React.FC = () => {
-    const [rules, setRules] = useState<ScheduledScrapingRule[]>([]);
+    const [jobs, setJobs] = useState<UnifiedJob[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [openDialog, setOpenDialog] = useState(false);
-    const [editingRule, setEditingRule] = useState<ScheduledScrapingRule | null>(null);
+    const [editingRule, setEditingRule] = useState<UnifiedJob | null>(null);
     const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [order, setOrder] = useState<Order>('asc');
     const [orderBy, setOrderBy] = useState<RuleKey>('name');
     const [searchTerm, setSearchTerm] = useState('');
 
-    const fetchRules = useCallback(async () => {
+    const fetchJobs = useCallback(async () => {
         setLoading(true);
+        setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
-            const res = await apiClient.get('/api/admin/cronjobs/scraping-rules', { headers: { 'x-auth-token': token } });
-            setRules(res.data);
+            const headers = { 'x-auth-token': token };
+
+            const [rulesRes, cronjobsRes] = await Promise.all([
+                apiClient.get('/api/admin/cronjobs/scraping-rules', { headers }),
+                apiClient.get('/api/admin/cronjobs/scraping/cronjobs', { headers })
+            ]);
+
+            const ruleJobs: UnifiedJob[] = rulesRes.data.map((r: any) => ({
+                id: r.id,
+                name: r.name || r.source_identifier,
+                region: r.region,
+                schedule: r.schedule,
+                last_run_at: r.last_scraped_at,
+                next_run_at: r.next_run_at,
+                type: 'rule',
+                source_identifier: r.source_identifier,
+                rule_type: r.rule_type
+            }));
+
+            const systemJobs: UnifiedJob[] = cronjobsRes.data.map((j: any) => ({
+                id: j.id,
+                name: j.name,
+                region: 'Systemweit',
+                schedule: j.schedule,
+                last_run_at: j.last_run_at,
+                next_run_at: j.next_run_at,
+                type: 'system'
+            }));
+
+            setJobs([...ruleJobs, ...systemJobs]);
         } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Laden der geplanten Scraping-Jobs.');
+            setError(err.response?.data?.message || 'Fehler beim Laden der Scraping-Jobs.');
         } finally {
             setLoading(false);
         }
     }, []);
 
-    useEffect(() => { fetchRules(); }, [fetchRules]);
+    useEffect(() => { fetchJobs(); }, [fetchJobs]);
 
     const handleSaveSchedule = async () => {
         if (!editingRule) return;
         try {
             const token = localStorage.getItem('jwt_token');
-            await apiClient.put(`/api/admin/scraping-rules/${editingRule.id}/schedule`, { schedule: editingRule.schedule }, { headers: { 'x-auth-token': token } });
+            let endpoint = '';
+            let payload = { schedule: editingRule.schedule, is_active: true }; // Annahme für is_active
+
+            // NEU: Unterscheiden, welcher Endpunkt aufgerufen wird
+            if (editingRule.type === 'rule') {
+                endpoint = `/api/admin/scraping-rules/${editingRule.id}/schedule`;
+            } else if (editingRule.type === 'system') {
+                endpoint = `/api/admin/cronjobs/${editingRule.id}`;
+            }
+
+            if (!endpoint) return;
+
+            await apiClient.put(endpoint, payload, { headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: 'Zeitplan erfolgreich gespeichert.' });
-            fetchRules();
+            fetchJobs();
         } catch (err) {
             setSnackbar({ open: true, message: 'Fehler beim Speichern des Zeitplans.' });
         }
-        setOpenDialog(false);
+        setEditingRule(null);
     };
 
     const handleDelete = async () => {
-        if (selectedIds.length === 0 || !window.confirm(`Sind Sie sicher, dass Sie ${selectedIds.length} geplante Regel(n) deaktivieren möchten? (Der Zeitplan wird entfernt)`)) return;
+        const ruleIdsToDelete = selectedIds.filter(id => jobs.find(j => j.id === id)?.type === 'rule');
+        if (ruleIdsToDelete.length === 0 || !window.confirm(`Sind Sie sicher, dass Sie ${ruleIdsToDelete.length} geplante Regel(n) deaktivieren möchten? (Der Zeitplan wird entfernt)`)) return;
+        
         try {
             const token = localStorage.getItem('jwt_token');
-            await Promise.all(selectedIds.map(id => 
+            await Promise.all(ruleIdsToDelete.map(id => 
                 apiClient.put(`/api/admin/scraping-rules/${id}/schedule`, { schedule: null }, { headers: { 'x-auth-token': token } })
             ));
-            setSnackbar({ open: true, message: `${selectedIds.length} Job(s) deaktiviert.` });
+            setSnackbar({ open: true, message: `${ruleIdsToDelete.length} Job(s) deaktiviert.` });
             setSelectedIds([]);
-            fetchRules();
+            fetchJobs();
         } catch (err) {
             console.error("Error deactivating jobs:", err);
             setSnackbar({ open: true, message: 'Fehler beim Deaktivieren der Jobs.' });
@@ -129,7 +166,7 @@ const AdminScrapingTab: React.FC = () => {
 
     const handleSelectAllClick = (event: React.ChangeEvent<HTMLInputElement>) => {
         if (event.target.checked) {
-            setSelectedIds(sortedAndFilteredRules.map((n) => n.id));
+            setSelectedIds(sortedAndFilteredJobs.map((n) => n.id));
             return;
         }
         setSelectedIds([]);
@@ -145,30 +182,39 @@ const AdminScrapingTab: React.FC = () => {
         setSelectedIds(newSelected);
     };
 
-    const handleTrigger = async (id: string) => {
-        setSnackbar({ open: true, message: 'Job wird manuell gestartet...' });
+    const handleTrigger = async (job: UnifiedJob) => {
+        let endpoint = '';
+        if (job.type === 'rule') {
+            endpoint = `/api/admin/scraping-rules/${job.id}/trigger-scrape`;
+        } else if (job.type === 'system') {
+            endpoint = '/api/admin/cronjobs/scraping/trigger-account-intelligence';
+        }
+
+        if (!endpoint) return;
+
+        setSnackbar({ open: true, message: `Job '${job.name}' wird gestartet...` });
         try {
             const token = localStorage.getItem('jwt_token');
-            await apiClient.post(`/api/admin/scraping-rules/${id}/trigger-scrape`, {}, { headers: { 'x-auth-token': token } });
+            await apiClient.post(endpoint, {}, { headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: 'Job wurde erfolgreich zur Warteschlange hinzugefügt.' });
         } catch (err) {
              setSnackbar({ open: true, message: 'Fehler beim Starten des Jobs.' });
         }
     };
     
-    const sortedAndFilteredRules = useMemo(() => {
-        let filtered = rules.filter(rule =>
-            (rule.name || rule.source_identifier).toLowerCase().includes(searchTerm.toLowerCase())
+    const sortedAndFilteredJobs = useMemo(() => {
+        let filtered = jobs.filter(job =>
+            (job.name || '').toLowerCase().includes(searchTerm.toLowerCase())
         );
         return filtered.sort(getComparator(order, orderBy));
-    }, [rules, searchTerm, order, orderBy]);
+    }, [jobs, searchTerm, order, orderBy]);
 
     return (
         <>
             <Paper>
                 <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <Typography variant="h6">Geplante Scraping-Jobs ({rules.length})</Typography>
+                        <Typography variant="h6">Geplante Scraping-Jobs ({jobs.length})</Typography>
                         {selectedIds.length > 0 && (
                             <Button variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={handleDelete}>
                                 {selectedIds.length} Cronjob(s) deaktivieren
@@ -184,8 +230,8 @@ const AdminScrapingTab: React.FC = () => {
                                 <TableRow>
                                     <TableCell padding="checkbox">
                                         <Checkbox
-                                            indeterminate={selectedIds.length > 0 && selectedIds.length < rules.length}
-                                            checked={rules.length > 0 && selectedIds.length === rules.length}
+                                            indeterminate={selectedIds.length > 0 && selectedIds.length < jobs.length}
+                                            checked={jobs.length > 0 && selectedIds.length === jobs.length}
                                             onChange={handleSelectAllClick}
                                         />
                                     </TableCell>
@@ -200,38 +246,44 @@ const AdminScrapingTab: React.FC = () => {
                                 </TableRow>
                             </TableHead>
                             <TableBody>
-                                {sortedAndFilteredRules.map(rule => {
-                                    const isItemSelected = selectedIds.indexOf(rule.id) !== -1;
-                                    const viewContentLink = rule.rule_type === 'funding'
+                                {sortedAndFilteredJobs.map(job => {
+                                    const isItemSelected = selectedIds.indexOf(job.id) !== -1;
+                                    const viewContentLink = job.rule_type === 'funding'
                                         ? '/admin/funding'
-                                        : `/admin/scraped-content?source_identifier=${rule.source_identifier}`;
+                                        : `/admin/scraped-content?source_identifier=${job.source_identifier}`;
                                     
-                                    // HIER IST DIE KORREKTUR: Wir übergeben die ID der Regel für den Filter
-                                    const linkState = rule.rule_type === 'funding'
-                                        ? { prefillSource: rule.id }
+                                    const linkState = job.rule_type === 'funding'
+                                        ? { prefillSource: job.id }
                                         : {};                                    
                                     
                                     return (
-                                        <TableRow key={rule.id} hover selected={isItemSelected}>
-                                            <TableCell padding="checkbox"><Checkbox checked={isItemSelected} onChange={() => handleSelectClick(rule.id)} /></TableCell>
-                                            <TableCell>{rule.name || rule.source_identifier}</TableCell>
-                                            <TableCell>{rule.region || '-'}</TableCell>
+                                        <TableRow key={job.id} hover selected={isItemSelected}>
+                                            <TableCell padding="checkbox"><Checkbox checked={isItemSelected} onChange={() => handleSelectClick(job.id)} /></TableCell>
+                                            <TableCell>{job.name}</TableCell>
+                                            <TableCell>{job.region || '-'}</TableCell>
+                                            <TableCell><code>{job.schedule}</code></TableCell>
+                                            <TableCell>{formatTimestamp(job.next_run_at)}</TableCell>
+                                            <TableCell>{formatTimestamp(job.last_run_at)}</TableCell>
                                             <TableCell>
-                                                <Tooltip title={formatCronToGerman(rule.schedule)}>
-                                                    <span>{rule.schedule}</span>
-                                                </Tooltip>
-                                            </TableCell>
-                                            <TableCell>{formatTimestamp(rule.next_run_at)}</TableCell>
-                                            <TableCell>{formatTimestamp(rule.last_scraped_at)}</TableCell>
-                                            <TableCell>
-                                                <Tooltip title="Zeitplan bearbeiten"><IconButton onClick={() => setEditingRule(rule)}><EditIcon /></IconButton></Tooltip>
-                                                <Tooltip title="Jetzt ausführen"><IconButton onClick={() => handleTrigger(rule.id)}><PlayArrowIcon /></IconButton></Tooltip>
-                                                <Tooltip title="Gefundene Inhalte anzeigen">
-                                                    <IconButton component={RouterLink} to={viewContentLink} state={linkState}>
-                                                        <PageviewIcon />
-                                                    </IconButton>
-                                                </Tooltip>
-                                                <Tooltip title="Komplette Regel bearbeiten"><IconButton component={RouterLink} to={`/admin/scraping-rules`} state={{ prefillSearch: rule.name || rule.source_identifier }}><SettingsIcon /></IconButton></Tooltip>
+                                                <Tooltip title="Jetzt ausführen"><IconButton onClick={() => handleTrigger(job)}><PlayArrowIcon /></IconButton></Tooltip>
+                                                
+                                                {/* KORREKTUR: Bearbeiten-Button für beide Typen verfügbar */}
+                                                <Tooltip title="Zeitplan bearbeiten"><IconButton onClick={() => setEditingRule(job)}><EditIcon /></IconButton></Tooltip>
+
+                                                {job.type === 'rule' ? (
+                                                    <>
+                                                        <Tooltip title="Gefundene Inhalte anzeigen (Regel)">
+                                                            <IconButton component={RouterLink} to={viewContentLink} state={linkState}><PageviewIcon /></IconButton>
+                                                        </Tooltip>
+                                                        <Tooltip title="Komplette Regel bearbeiten">
+                                                          <IconButton component={RouterLink} to={`/admin/scraping-rules`} state={{ prefillSearch: job.name }}><SettingsIcon /></IconButton>
+                                                        </Tooltip>
+                                                    </>
+                                                ) : (
+                                                    <Tooltip title="Gefundene Inhalte anzeigen (System-Job)">
+                                                        <IconButton component={RouterLink} to="/admin/tracked-articles"><PageviewIcon /></IconButton>
+                                                    </Tooltip>
+                                                )}
                                             </TableCell>
                                         </TableRow>
                                     );
@@ -259,4 +311,5 @@ const AdminScrapingTab: React.FC = () => {
         </>
     );
 };
+
 export default AdminScrapingTab;

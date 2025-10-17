@@ -348,6 +348,6 @@ const processAllActiveSubscriptions = async () => {
 
 module.exports = {
     processSubscription,
-    processSystemSubscription, // NEUE FUNKTION EXPORTIEREN
+    processSystemSubscription,
     processAllActiveSubscriptions
 };

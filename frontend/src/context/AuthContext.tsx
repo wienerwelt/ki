@@ -85,7 +85,8 @@ interface AuthContextType {
   language: 'de' | 'en';
   setLanguage: (lang: 'de' | 'en') => void;
   dashboardRefreshKey: number;
-  triggerDashboardRefresh: () => void;  
+  triggerDashboardRefresh: () => void;
+  refreshUser: () => Promise<void>;  
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -200,6 +201,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, []);
 
+
+  const refreshUser = useCallback(async () => {
+        try {
+            const { data: refreshedUser } = await apiClient.get<UserPayload>('/api/users/me');
+            if (refreshedUser) {
+                updateUser(refreshedUser);
+            }
+        } catch (error) {
+            console.error("Fehler beim Aktualisieren der Benutzerdaten:", error);
+        }
+  }, [updateUser]);
+
+
   useEffect(() => {
     const bootstrap = async () => {
       setIsLoading(true);
@@ -275,6 +289,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setLanguage,
     dashboardRefreshKey,
     triggerDashboardRefresh,    
+    refreshUser, 
   };
 
   return (

@@ -239,10 +239,40 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 {isAdVisible && ad && (<AdvertisementBanner content={ad.content} onClose={handleCloseAd} />)}
                 <Toolbar>
                     <IconButton color="inherit" aria-label="open drawer" onClick={toggleDrawer(true)} edge="start" sx={{ mr: 2 }}><MenuIcon /></IconButton>
-                    <RouterLink to="/dashboard" style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center' }}>
-                        {businessPartner?.logo_url && (<Avatar alt={businessPartner.name} src={businessPartner.logo_url} sx={{ width: 60, height: 40, mr: 2 }} variant="rounded" />)}
-                        <Typography variant="h6" noWrap component="div" sx={{ display: { xs: 'none', sm: 'block' } }}>{dashboardTitle}</Typography>
-                    </RouterLink>
+<RouterLink
+  to="/dashboard"
+  style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center' }}
+>
+  {businessPartner?.logo_url && (
+<Box
+  sx={{
+    height: 40,
+    maxWidth: 160,            // optionales Breiten-Limit
+    mr: 2,
+    display: 'flex',
+    alignItems: 'center',
+    overflow: 'hidden',       // verhindert Überragen
+    lineHeight: 0,            // eliminiert baseline-gap
+  }}
+>
+  <Box
+    component="img"
+    src={businessPartner?.logo_url}
+    alt={businessPartner?.name ?? 'Logo'}
+    sx={{
+      height: '100%',         // fixiert die Höhe auf 40px
+      width: 'auto',          // flexible Breite
+      objectFit: 'contain',   // kein Cropping/keine Verzerrung
+      display: 'block',       // verhindert unteren Bildabstand
+    }}
+  />
+</Box>
+  )}
+
+  <Typography variant="h6" noWrap component="div" sx={{ display: { xs: 'none', sm: 'block' } }}>
+    {dashboardTitle}
+  </Typography>
+</RouterLink>
 
                     <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: isMobile ? 'flex-end' : 'center', alignItems: 'center', ml: { xs: 1, md: 3 }, mr: 2 }}>
                         {isMobile ? (

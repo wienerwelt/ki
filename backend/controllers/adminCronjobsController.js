@@ -1,10 +1,9 @@
 // backend/controllers/adminCronjobsController.js
 const db = require('../config/db');
 const cronParser = require('cron-parser');
-const { aiContentQueue, emailQueue } = require('../services/queueService');
+const { aiContentQueue, emailQueue, scrapeQueue, dataUpdatesQueue } = require('../services/queueService'); 
 const jobManager = require('../services/jobManagerService');
 const { generateAndSendDailyReport } = require('../services/reportingService');
-const { dataUpdatesQueue } = require('../services/queueService');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
@@ -218,7 +217,6 @@ exports.updateSystemSubscription = async (req, res) => {
     if (rows.length === 0) return res.status(404).json({ message: 'System subscription not found.' });
     
     const updatedSub = rows[0];
-    // Den Zeitplan in Redis aktualisieren
     await jobManager.setSystemSubscriptionSchedule(updatedSub.id, updatedSub.schedule);
     res.json(updatedSub);
   } catch (err) {
@@ -230,9 +228,7 @@ exports.updateSystemSubscription = async (req, res) => {
 exports.deleteSystemSubscription = async (req, res) => {
   const { id } = req.params;
   try {
-    // Zuerst den Job aus Redis entfernen
     await jobManager.removeSystemSubscriptionSchedule(id);
-    // Dann aus der Datenbank löschen
     const result = await db.query('DELETE FROM system_ai_content_subscriptions WHERE id = $1', [id]);
     if (result.rowCount === 0) return res.status(404).json({ message: 'System subscription not found.' });
     res.status(200).json({ message: 'System subscription deleted successfully.' });
@@ -245,10 +241,7 @@ exports.deleteSystemSubscription = async (req, res) => {
 
 exports.getAllDataUpdateJobs = async (req, res) => {
   try {
-    // KORREKTUR: Das Feld 'recipient_group' zur SELECT-Anweisung hinzugefügt
     const { rows } = await db.query("SELECT id, name, schedule, is_active, last_run_at, recipient_group FROM cronjobs WHERE recipient_group = 'data-update' ORDER BY name ASC");
-
-    // Berechne für jeden Job die nächste Ausführungszeit
     const jobsWithNextRun = rows.map(job => {
       let next_run_at = null;
       try {
@@ -275,7 +268,6 @@ exports.getAllDataUpdateJobs = async (req, res) => {
 
 exports.createDataUpdateJob = async (req, res) => {
   const { name, schedule, is_active } = req.body;
-  // Empfängergruppe ist hier fix
   const recipient_group = 'data-update';
 
   if (!name) {
@@ -334,10 +326,7 @@ exports.triggerDataUpdateJob = async (req, res) => {
 // --- Email Cronjob Functions ---
 exports.getAllEmailJobs = async (req, res) => {
   try {
-    // Query angepasst, um last_run_at explizit abzufragen
-    const { rows } = await db.query("SELECT id, name, recipient_group, schedule, is_active, last_run_at FROM cronjobs WHERE recipient_group <> 'data-update' ORDER BY name ASC");
-
-    // Berechne für jeden Job die nächste Ausführungszeit
+    const { rows } = await db.query("SELECT id, name, recipient_group, schedule, is_active, last_run_at FROM cronjobs WHERE recipient_group NOT IN ('data-update', 'scraping') ORDER BY name ASC")
     const jobsWithNextRun = rows.map(job => {
       let next_run_at = null;
       try {
@@ -436,6 +425,171 @@ exports.triggerEmailJob = async (req, res) => {
     console.error('Error enqueueing email job:', err.message);
     return res.status(400).json({ message: err.message || 'Enqueue failed' });
   }
+};
+
+
+exports.getScrapingCronjobs = async (req, res) => {
+  try {
+    const { rows } = await db.query("SELECT id, name, schedule, is_active, last_run_at FROM cronjobs WHERE recipient_group = 'scraping' ORDER BY name ASC");
+    const jobsWithNextRun = rows.map(job => {
+      let next_run_at = null;
+      try {
+        if (job.schedule) {
+          const interval = cronParser.parseExpression(job.schedule, {
+            currentDate: new Date(),
+            tz: 'Europe/Vienna'
+          });
+          next_run_at = interval.next().toISOString();
+        }
+      } catch (e) {
+        console.error(`Ungültiger Cron-String für Job ${job.id}: ${job.schedule}`);
+      }
+      return { ...job, next_run_at };
+    });
+
+    res.json(jobsWithNextRun);
+  } catch (err) {
+    console.error('Error fetching scraping cronjobs:', err.message);
+    res.status(500).send('Server error');
+  }
+};
+
+// NEUE FUNKTION: Stößt den Account Intelligence Job manuell an
+exports.triggerAccountIntelligenceJob = async (req, res) => {
+  try {
+    await scrapeQueue.add('trigger-account-intelligence', { triggeredManually: true });
+    await db.query("UPDATE cronjobs SET last_run_at = NOW() WHERE name = 'Account Intelligence Search'");
+    res.status(202).json({ message: 'Account Intelligence Job wurde manuell zur Warteschlange hinzugefügt.' });
+  } catch (err) {
+    console.error(`Error triggering Account Intelligence job:`, err.message);
+    res.status(500).send('Server error');
+  }
+};
+
+
+exports.updateCronjob = async (req, res) => {
+  const { id } = req.params;
+  const { schedule, is_active } = req.body;
+  
+  if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
+
+  try {
+    const { rows } = await db.query(
+      'UPDATE cronjobs SET schedule = $1, is_active = $2, updated_at = NOW() WHERE id = $3 RETURNING *',
+      [schedule, is_active, id]
+    );
+    if (rows.length === 0) return res.status(404).json({ message: 'Cronjob not found.' });
+    
+    // Wichtig: Auch den Job in der BullMQ-Queue neu planen
+    await jobManager.synchronizeSchedulesFromDB();
+    
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error updating cronjob:', err.message);
+    res.status(500).send('Server error');
+  }
+};
+
+
+// ERSETZEN Sie die alte 'getTrackedArticles'-Funktion mit dieser neuen Version
+exports.getTrackedArticles = async (req, res) => {
+    const { 
+        page = 1, limit = 25, sortBy = 'published_at', sortOrder = 'desc',
+        searchTerm, accountName, startDate, endDate 
+    } = req.query;
+
+    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
+    try {
+        const queryParams = [];
+        let paramIndex = 1;
+        let whereClauses = [];
+
+        if (searchTerm) {
+            whereClauses.push(`(bpta.article_title ILIKE $${paramIndex} OR bpta.competitor_name ILIKE $${paramIndex})`);
+            queryParams.push(`%${searchTerm}%`);
+            paramIndex++;
+        }
+        if (accountName) {
+            whereClauses.push(`bpa.name = $${paramIndex++}`);
+            queryParams.push(accountName);
+        }
+        if (startDate) {
+            whereClauses.push(`bpta.published_at >= $${paramIndex++}`);
+            queryParams.push(startDate);
+        }
+        if (endDate) {
+            whereClauses.push(`bpta.published_at <= $${paramIndex++}`);
+            queryParams.push(`${endDate}T23:59:59.999Z`);
+        }
+
+        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+        
+        const baseQuery = `
+            FROM business_partner_tracked_articles bpta
+            JOIN business_partner_accounts bpa ON bpta.account_id = bpa.id
+            ${whereString}
+        `;
+
+        const totalResult = await db.query(`SELECT COUNT(*) AS total ${baseQuery}`, queryParams);
+        const totalCount = parseInt(totalResult.rows[0].total, 10);
+
+        const allowedSortColumns = ['article_title', 'published_at', 'account_name', 'competitor_name'];
+        const safeSortBy = allowedSortColumns.includes(sortBy) ? sortBy : 'published_at';
+        const safeSortOrder = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+
+        const dataQuery = `
+            SELECT bpta.id, bpta.article_title, bpta.article_url, bpta.source_name, 
+                   bpta.published_at, bpa.name as account_name, bpta.competitor_name
+            ${baseQuery}
+            ORDER BY ${safeSortBy} ${safeSortOrder}
+            LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+        `;
+        const finalParams = [...queryParams, parseInt(limit, 10), offset];
+        
+        const { rows } = await db.query(dataQuery, finalParams);
+        
+        res.json({
+            articles: rows,
+            totalPages: Math.ceil(totalCount / limit),
+            currentPage: parseInt(page, 10),
+        });
+    } catch (err) {
+        console.error('Error fetching tracked articles:', err.message);
+        res.status(500).send('Server Error');
+    }
+};
+
+// NEUE FUNKTION: Löscht einen oder mehrere getrackte Artikel
+exports.deleteTrackedArticles = async (req, res) => {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: 'Eine Liste von IDs ist erforderlich.' });
+    }
+
+    try {
+        const result = await db.query('DELETE FROM business_partner_tracked_articles WHERE id = ANY($1::uuid[])', [ids]);
+        res.status(200).json({ message: `${result.rowCount} Artikel erfolgreich gelöscht.` });
+    } catch (err) {
+        console.error('Error deleting tracked articles:', err.message);
+        res.status(500).send('Server Error');
+    }
+};
+
+// NEUE FUNKTION: Holt alle einzigartigen Account-Namen für den Filter
+exports.getTrackedArticleAccounts = async (req, res) => {
+    try {
+        const { rows } = await db.query(`
+            SELECT DISTINCT bpa.name
+            FROM business_partner_tracked_articles bpta
+            JOIN business_partner_accounts bpa ON bpta.account_id = bpa.id
+            ORDER BY bpa.name ASC;
+        `);
+        res.json(rows.map(r => r.name));
+    } catch (err) {
+        console.error('Error fetching unique accounts for tracked articles:', err.message);
+        res.status(500).send('Server Error');
+    }
 };
 
 

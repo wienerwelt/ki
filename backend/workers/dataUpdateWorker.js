@@ -4,10 +4,9 @@ process.title = 'dataUpdateWorker';
 const workerName = 'dataUpdateWorker'; 
 
 const { Worker } = require('bullmq');
-// KORREKTUR: Nutze die zentrale Heartbeat-Verbindung aus dem queueService
 const { connection: redisClient, heartbeatRedisClient } = require('../services/queueService');
-
 const { updateDailyIndicators, updateMonthlyIndicators } = require('../services/updateCommodityPrices');
+const { generateBriefingsForAllPartners } = require('../services/marketBriefingService');
 
 console.log(`[${workerName}] Worker-Prozess startet...`);
 
@@ -16,6 +15,9 @@ const worker = new Worker('data-updates', async (job) => {
 
     try {
         switch (job.name) {
+            case 'daily-market-briefing':
+                await generateBriefingsForAllPartners();
+                break;            
             case 'daily-indicators':
                 await updateDailyIndicators();
                 break;
