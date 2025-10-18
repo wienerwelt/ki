@@ -7,6 +7,7 @@ router.use(authMiddleware);
 
 router.get('/relevant-action', dataController.getRelevantAction);
 router.get('/search', dataController.globalSearch);
+router.post('/ai-ask', dataController.handleAiQuestion);
 router.get('/fuel/search', dataController.fuelSearch);
 router.post('/fuel/prices-by-ids', dataController.getPricesByIds);
 router.get('/commodities', dataController.getCommodityPrices);
@@ -33,6 +34,7 @@ router.get('/vignette-countries', dataController.getVignetteCountries);
 router.get('/commodities/history', dataController.getCommodityHistory);
 router.get('/calendar-events', authMiddleware, dataController.getCalendarEvents);
 router.get('/enhanced-calendar-events', authMiddleware, dataController.getEnhancedCalendarEvents);
+router.get('/holidays', authMiddleware, dataController.getPublicHolidays);
 router.post('/events/:eventId/vote', authMiddleware, dataController.voteOnEventAttendance);
 router.post('/events/share', authMiddleware, dataController.shareEventByEmail);
 router.get('/dashboard/config', dataController.getDashboardConfig);
@@ -46,5 +48,6 @@ router.get('/economic-statistics/countries', dataController.getUniqueStatCountri
 router.post('/generate-draft-from-content', dataController.generateDraftFromContent);
 router.get('/account-intelligence', dataController.getAccountIntelligence);
 router.get('/daily-briefing', dataController.getDailyBriefing);
+router.get('/notifications/count', dataController.getNotificationCounts);
 
 module.exports = router;

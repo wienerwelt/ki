@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
     AppBar, Toolbar, Typography, Box, Drawer, List, ListItem, ListItemText,
-    IconButton, Avatar, Divider, Menu, MenuItem, Tooltip, Badge, Chip,
+    IconButton, Divider, Menu, MenuItem, Tooltip, Chip,
     useTheme, useMediaQuery, Dialog, DialogContent, DialogTitle
 } from '@mui/material';
 import AccountCircle from '@mui/icons-material/AccountCircle';
@@ -29,11 +29,12 @@ import FolderIcon from '@mui/icons-material/Folder';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import LogoutIcon from '@mui/icons-material/Logout';
-import NotificationsIcon from '@mui/icons-material/Notifications';
 import SearchIcon from '@mui/icons-material/Search';
 import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
 import PollIcon from '@mui/icons-material/Poll';
 import TuneIcon from '@mui/icons-material/Tune';
+import InsightsIcon from '@mui/icons-material/Insights';
+import CloseIcon from '@mui/icons-material/Close';
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -44,6 +45,7 @@ import apiClient from '../apiClient';
 import GlobalSearchBar from '../components/GlobalSearchBar';
 import { useSnackbar } from '../context/SnackbarContext';
 import ContributionHistoryModal from '../components/ContributionHistoryModal';
+import DailyBriefingContent from './DailyBriefingContent';
 
 
 interface DashboardLayoutProps {
@@ -51,7 +53,15 @@ interface DashboardLayoutProps {
 }
 
 const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
-    const { user, businessPartner, logout, themeMode, triggerDashboardRefresh } = useAuth();
+    const { 
+      user, 
+      businessPartner, 
+      logout, 
+      themeMode, 
+      triggerDashboardRefresh, 
+      userTags, 
+      refreshUserTags 
+    } = useAuth();
     const { t } = useTranslation();
     const navigate = useNavigate();
     const { showSnackbar } = useSnackbar();
@@ -59,33 +69,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
     const [ad, setAd] = useState<{ id: string; content: string } | null>(null);
     const [isAdVisible, setIsAdVisible] = useState(false);
-    const [userTags, setUserTags] = useState<string[]>([]);
-    const [tagsLoading, setTagsLoading] = useState(true);
     const [searchOpen, setSearchOpen] = useState(false);
     const [historyModalOpen, setHistoryModalOpen] = useState(false);
-    const [notificationCount, setNotificationCount] = useState(0);
+    const [briefingOpen, setBriefingOpen] = useState(false);
     
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
     const token = localStorage.getItem('jwt_token');
-
-    const fetchUserTags = useCallback(async () => {
-        if (!user) {
-            setUserTags([]);
-            setTagsLoading(false);
-            return;
-        }
-        setTagsLoading(true);
-        try {
-            const { data } = await apiClient.get('/api/users/tags');
-            setUserTags(data || []);
-        } catch (err) {
-            console.error("Fehler beim Laden der User-Tags für DashboardLayout:", err);
-        } finally {
-            setTagsLoading(false);
-        }
-    }, [user]);
 
     const fetchAd = useCallback(async () => {
         try {
@@ -102,9 +93,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     useEffect(() => {
         if (token) {
             fetchAd();
-            fetchUserTags();
         }
-    }, [token, user, fetchUserTags, fetchAd]);
+    }, [token, user, fetchAd]);
 
     const handleCloseAd = async () => {
         setIsAdVisible(false);
@@ -138,17 +128,15 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
     const handleRemoveTag = (tagToRemove: string) => async () => {
         if (user?.role === 'demo') return;
-        const oldTags = userTags;
-        setUserTags(userTags.filter(tag => tag !== tagToRemove));
-
         try {
             await apiClient.delete(`/api/users/tags/${encodeURIComponent(tagToRemove)}`);
             showSnackbar(`Thema "${tagToRemove}" entfernt.`, 'info');
+            refreshUserTags();
             triggerDashboardRefresh();
         } catch (err) {
             console.error("Fehler beim Entfernen des Tags:", err);
             showSnackbar('Fehler beim Entfernen des Themas.', 'error');
-            setUserTags(oldTags);
+            refreshUserTags();
         }
     };
     
@@ -158,6 +146,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
     const handleSearchClose = () => {
         setSearchOpen(false);
+    };
+
+    const handleBriefingOpen = () => {
+        setBriefingOpen(true);
+    };
+    const handleBriefingClose = () => {
+        setBriefingOpen(false);
     };
 
     const dashboardTitle = businessPartner?.dashboard_title || businessPartner?.name || 'Fleet KI-Dashboard';
@@ -189,7 +184,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     <>
                         <ListItem button component={RouterLink} to="/admin"><SettingsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.adminArea')} /></ListItem>
                         <List component="div" disablePadding sx={{ pl: 4 }}>
-                            {/* --- System & Verwaltung --- */}
                             <ListItem button component={RouterLink} to="/admin/funding"><ShoppingCartCheckoutIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.funding')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/cronjobs"><ScheduleIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.automatedTasks')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/business-partners"><BusinessIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.businessPartners')} /></ListItem>
@@ -197,12 +191,10 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItem button component={RouterLink} to="/admin/widget-types"><WidgetsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.widgetTypes')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/bp-widget-access"><SubscriptionsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.subscriptions')} /></ListItem>
                             
-                            {/* --- Angebote & Interaktion --- */}
                             <ListItem button component={RouterLink} to="/admin/actions"><StarsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.manageActions')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/advertisements"><CampaignIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.advertising')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/surveys"><PollIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.surveys')} /></ListItem>
 
-                            {/* --- Inhalte & KI --- */}
                             <ListItem button component={RouterLink} to="/admin/sources"><FactCheckIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.sourceManagement')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/events"><CalendarMonthIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.events')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/scraped-content"><DataObjectIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.scrapedContent')} /></ListItem>
@@ -210,11 +202,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItem button component={RouterLink} to="/admin/ai-content"><SmartToyIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.aiContent')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/ai-prompt-rules"><AutoAwesomeIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.aiPromptRules')} /></ListItem>
                             
-                            {/* --- Taxonomie --- */}
                             <ListItem button component={RouterLink} to="/admin/categories"><CategoryIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.categories')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/tags"><TagIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.tags')} /></ListItem>
 
-                            {/* --- Monitoring --- */}
                             <ListItem button component={RouterLink} to="/admin/statistics"><QueryStatsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.statistics')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/monitor"><MonitorIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.activityMonitor')} /></ListItem>
                         </List>
@@ -239,63 +229,82 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 {isAdVisible && ad && (<AdvertisementBanner content={ad.content} onClose={handleCloseAd} />)}
                 <Toolbar>
                     <IconButton color="inherit" aria-label="open drawer" onClick={toggleDrawer(true)} edge="start" sx={{ mr: 2 }}><MenuIcon /></IconButton>
-<RouterLink
-  to="/dashboard"
-  style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center' }}
->
-  {businessPartner?.logo_url && (
-<Box
-  sx={{
-    height: 40,
-    maxWidth: 160,            // optionales Breiten-Limit
-    mr: 2,
-    display: 'flex',
-    alignItems: 'center',
-    overflow: 'hidden',       // verhindert Überragen
-    lineHeight: 0,            // eliminiert baseline-gap
-  }}
->
-  <Box
-    component="img"
-    src={businessPartner?.logo_url}
-    alt={businessPartner?.name ?? 'Logo'}
-    sx={{
-      height: '100%',         // fixiert die Höhe auf 40px
-      width: 'auto',          // flexible Breite
-      objectFit: 'contain',   // kein Cropping/keine Verzerrung
-      display: 'block',       // verhindert unteren Bildabstand
-    }}
-  />
-</Box>
-  )}
+                    <RouterLink
+                      to="/dashboard"
+                      style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center' }}
+                    >
+                      {businessPartner?.logo_url && (
+                    <Box
+                      sx={{
+                        height: 40,
+                        maxWidth: 160,
+                        mr: 2,
+                        display: 'flex',
+                        alignItems: 'center',
+                        overflow: 'hidden',
+                        lineHeight: 0,
+                      }}
+                    >
+                      <Box
+                        component="img"
+                        src={businessPartner?.logo_url}
+                        alt={businessPartner?.name ?? 'Logo'}
+                        sx={{
+                          height: '100%',
+                          width: 'auto',
+                          objectFit: 'contain',
+                          display: 'block',
+                        }}
+                      />
+                    </Box>
+                      )}
 
-  <Typography variant="h6" noWrap component="div" sx={{ display: { xs: 'none', sm: 'block' } }}>
-    {dashboardTitle}
-  </Typography>
-</RouterLink>
+                      <Typography variant="h6" noWrap component="div" sx={{ display: { xs: 'none', sm: 'block' } }}>
+                        {dashboardTitle}
+                      </Typography>
+                    </RouterLink>
 
                     <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: isMobile ? 'flex-end' : 'center', alignItems: 'center', ml: { xs: 1, md: 3 }, mr: 2 }}>
                         {isMobile ? (
-                            <IconButton color="inherit" onClick={handleSearchOpen}><SearchIcon /></IconButton>
+                            <>
+                                <IconButton color="inherit" onClick={handleBriefingOpen}>
+                                    <InsightsIcon />
+                                </IconButton>
+                                <IconButton color="inherit" onClick={handleSearchOpen}><SearchIcon /></IconButton>
+                            </>
                         ) : (
                             <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
                                 <Box sx={{ flexGrow: 1, maxWidth: '50%' }}><GlobalSearchBar /></Box>
-                                <Tooltip title={t('layout.tagsTooltip')}>
-                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, ml: 2 }}>
-                                        {!tagsLoading && userTags.map(tag => (
-                                            <Chip
-                                                key={tag}
-                                                label={tag}
-                                                onDelete={user?.role !== 'demo' ? handleRemoveTag(tag) : undefined}
-                                                color="secondary"
-                                                size="small"
-                                                variant="outlined"
-                                                sx={{ color: 'inherit', borderColor: 'currentColor', '& .MuiChip-deleteIcon': { color: 'inherit', '&:hover': { color: 'white' } } }}
-                                            />
-                                        ))}
-                                    </Box>
+                                <Tooltip title="Tägliches Briefing anzeigen">
+                                    <IconButton
+                                        color="inherit"
+                                        onClick={handleBriefingOpen}
+                                        sx={{ ml: 2 }}
+                                    >
+                                        <InsightsIcon />
+                                    </IconButton>
                                 </Tooltip>
-                                {/* --- HIER IST DIE 1. ÄNDERUNG --- */}
+                                <Tooltip title={t('layout.tagsTooltip')}>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, ml: 2 }}>
+                                    {userTags.map(tag => (
+                                        <Chip
+                                            key={tag}
+                                            label={tag}
+                                            onDelete={user?.role !== 'demo' ? handleRemoveTag(tag) : undefined}
+                                            sx={{
+                                                color: 'inherit',
+                                                borderColor: 'inherit',
+                                                '& .MuiChip-deleteIcon': {
+                                                    color: 'inherit',
+                                                    opacity: 0.7,
+                                                    '&:hover': { opacity: 1 }
+                                                }
+                                            }}
+                                            variant="outlined"
+                                        />
+                                    ))}
+                                </Box>
+                                </Tooltip>
                                 <Tooltip title="Meine Themen im Profil bearbeiten">
                                     <IconButton
                                         component={RouterLink}
@@ -307,7 +316,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                         <TuneIcon />
                                     </IconButton>
                                 </Tooltip>
-                                {/* --- ENDE DER 1. ÄNDERUNG --- */}
                             </Box>
                         )}
                     </Box>
@@ -327,15 +335,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 />
                             </Tooltip>
                             )}
-                            {/* --- HIER IST DIE 2. ÄNDERUNG --- */}
-                            {notificationCount > 0 && (
-                                <IconButton size="large" aria-label="Benachrichtigungen" color="inherit">
-                                    <Badge badgeContent={notificationCount} color="error">
-                                        <NotificationsIcon />
-                                    </Badge>
-                                </IconButton>
-                            )}
-                            {/* --- ENDE DER 2. ÄNDERUNG --- */}
                             <IconButton size="large" edge="end" aria-label="account of current user" aria-controls="menu-appbar" aria-haspopup="true" onClick={handleMenu} color="inherit"><AccountCircle /></IconButton>
                             <Menu
                                 id="menu-appbar"
@@ -381,13 +380,37 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 maxWidth="md"
                 fullScreen={isMobile}
             >
-                <DialogTitle>Suchen</DialogTitle>
+                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    Suchen
+                    <IconButton onClick={handleSearchClose}>
+                        <CloseIcon />
+                    </IconButton>
+                </DialogTitle>
                 <DialogContent>
                     <Box sx={{ pt: 1 }}>
                         <GlobalSearchBar />
                     </Box>
                 </DialogContent>
             </Dialog>
+
+            <Dialog
+                open={briefingOpen}
+                onClose={handleBriefingClose}
+                fullWidth
+                maxWidth="md"
+                fullScreen={isMobile}
+            >
+                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    Tägliches Cockpit
+                    <IconButton onClick={handleBriefingClose}>
+                        <CloseIcon />
+                    </IconButton>
+                </DialogTitle>
+                <DialogContent dividers>
+                    <DailyBriefingContent />
+                </DialogContent>
+            </Dialog>
+
             <ContributionHistoryModal 
                 open={historyModalOpen} 
                 onClose={() => setHistoryModalOpen(false)} 

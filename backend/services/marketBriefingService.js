@@ -2,7 +2,6 @@
 const db = require('../config/db');
 const { generateAIContent, logToDb } = require('./aiExecutionService');
 const { sendEmail } = require('./emailService');
-// NEU: renderBriefingEmail wird direkt importiert, um Redundanz zu vermeiden
 const { renderBriefingEmail } = require('./emailTemplates');
 
 
@@ -27,10 +26,11 @@ function cleanAndParseJson(aiResponse) {
 
 async function aggregateDataForPartner(partner) {
     let dataBlocks = [];
+    let nextEvent = null; // NEU: Variable für das nächste Event
     const client = await db.connect();
     try {
         const industryNames = partner.industries.map(ind => ind.name);
-        if (industryNames.length === 0) return '';
+        if (industryNames.length === 0) return { dataBlocksString: '', nextEvent: null };
 
         const industryPatterns = industryNames.map(name => `${name}%`);
         const matchingCategoriesRes = await client.query(
@@ -41,7 +41,7 @@ async function aggregateDataForPartner(partner) {
 
         if (allRelevantCategoryIds.length === 0) {
             console.log(`[BriefingService] Keine passenden Content-Kategorien für die Branchen ${industryNames.join(', ')} gefunden.`);
-            return '';
+            return { dataBlocksString: '', nextEvent: null };
         }
 
         const indicatorsRes = await client.query(
@@ -66,14 +66,16 @@ async function aggregateDataForPartner(partner) {
         const partnerRegionsRes = await client.query('SELECT r.name FROM regions r JOIN business_partner_regions bpr ON r.id = bpr.region_id WHERE bpr.business_partner_id = $1', [partner.id]);
         const partnerRegions = partnerRegionsRes.rows.map(r => r.name);
         if (partnerRegions.length > 0) {
+            // ANGEPASST: original_url wird jetzt auch abgefragt
             const eventsRes = await client.query(
-                `SELECT title, event_date, region FROM scraped_content 
+                `SELECT title, event_date, region, original_url FROM scraped_content 
                  WHERE event_date > NOW() AND region = ANY($1::text[]) 
                  ORDER BY event_date ASC LIMIT 3`,
                 [partnerRegions]
             );
             if (eventsRes.rows.length > 0) {
                 dataBlocks.push('## Kommende Events:\n' + eventsRes.rows.map(r => `- ${new Date(r.event_date).toLocaleDateString('de-DE')}: ${r.title} (${r.region})`).join('\n'));
+                nextEvent = eventsRes.rows[0]; // NEU: Das erste Event speichern
             }
         }
 
@@ -95,7 +97,12 @@ async function aggregateDataForPartner(partner) {
     } finally {
         client.release();
     }
-    return dataBlocks.join('\n\n');
+    
+    // ANGEPASST: Objekt statt String zurückgeben
+    return {
+        dataBlocksString: dataBlocks.join('\n\n'),
+        nextEvent: nextEvent
+    };
 }
 
 function createMasterPrompt(aggregatedData, partner) {
@@ -177,14 +184,16 @@ async function generateBriefingsForAllPartners() {
 
                 await logToDb(jobId, 'INFO', `Starte Briefing-Generierung für Partner ${partner.id}.`);
 
-                const aggregatedData = await aggregateDataForPartner(partner);
-                if (!aggregatedData) {
+                // ANGEPASST: Destrukturierung des neuen Rückgabeobjekts
+                const { dataBlocksString, nextEvent } = await aggregateDataForPartner(partner);
+                
+                if (!dataBlocksString) {
                     await logToDb(jobId, 'SUCCESS', `Keine relevanten Daten für Partner ${partner.id} gefunden. Job beendet.`);
                     await client.query(`UPDATE ai_jobs SET status = 'completed_no_results' WHERE id = $1`, [jobId]);
                     continue;
                 }
 
-                const masterPrompt = createMasterPrompt(aggregatedData, partner);
+                const masterPrompt = createMasterPrompt(dataBlocksString, partner);
 
                 const { aiResultString } = await generateAIContent({
                     promptTemplate: masterPrompt,
@@ -235,12 +244,13 @@ async function generateBriefingsForAllPartners() {
                 if (subscribers.length > 0 && analysisResult.market_briefing) {
                     console.log(`[BriefingService] Versende ${subscribers.length} Briefing-E-Mails für Partner ${partner.id}`);
                     
-                    // VEREINHEITLICHUNG:
-                    // Die manuelle HTML-Erstellung wird entfernt. Stattdessen wird die zentrale
-                    // Template-Funktion `renderBriefingEmail` verwendet.
+                    // VEREINHEITLICHUNG (ANGEPASST):
+                    // Das nächste Event wird nun an die Template-Funktion übergeben.
                     const emailBody = renderBriefingEmail({
                         briefing: analysisResult,
-                        brandLogoUrl: partner.logo_url
+                        brandLogoUrl: partner.logo_url,
+                        dashboardTitle: partner.dashboard_title,
+                        nextEvent: nextEvent // <-- HINZUGEFÜGT
                     });
 
                     for (const subscriber of subscribers) {

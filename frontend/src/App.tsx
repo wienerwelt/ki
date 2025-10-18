@@ -27,6 +27,7 @@ import FundingDetailPage from './pages/FundingDetailPage';
 import DashboardPage from './pages/DashboardPage';
 import ProfilePage from './pages/ProfilePage';
 import SearchResultsPage from './pages/SearchResultsPage';
+import AiAskPage from './pages/AiAskPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import AdminBusinessPartnersPage from './pages/AdminBusinessPartnersPage';
 import AdminUserManagementPage from './pages/AdminUserManagementPage';
@@ -155,6 +156,7 @@ function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/search" element={<SearchResultsPage />} />
+            <Route path="/ask" element={<AiAskPage />} />
             <Route path="/trusted-sources" element={<TrustedSourcesPage />} />
             <Route path="/feedback" element={<FeedbackCenterPage />} />
             <Route path="/files" element={<FileManagementPage />} />

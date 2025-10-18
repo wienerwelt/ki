@@ -265,12 +265,13 @@ const upsertStatistic = async (client, statistic) => {
 
 const fetchAndStoreCarRegistrationsDE = async () => {
     console.log('[data-update] Starte Abruf der KFZ-Neuzulassungen für Deutschland (KBA)...');
-    
+
     const today = new Date();
+    // Target the previous month consistently
     const targetDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
     const year = targetDate.getFullYear();
     const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
-    
+
     const csvUrl = `https://www.kba.de/DE/Statistik/Fahrzeuge/Umwelt/Diagramme/Monatliche_NZL/${year}${month}_NZL_Pkw_KREN_csv.html?nn=852372&view=kbawebdiagramcsvexport`;
     console.log(`[data-update] Dynamisch erstellte KBA-URL: ${csvUrl}`);
 
@@ -288,28 +289,32 @@ const fetchAndStoreCarRegistrationsDE = async () => {
 
         let upsertCount = 0;
         await client.query('BEGIN');
-        
-        // KORREKTUR 2: Die Datums-Logik wurde robuster gemacht, um Fehler abzufangen.
+
         const parseMonth = (monthStr) => {
             if (!monthStr || typeof monthStr !== 'string') return null;
             const parts = monthStr.split('. ');
             if (parts.length !== 2) return null;
-            
-            const [mon, year] = parts;
+
+            const [mon, yearPart] = parts;
             const monthMap = { 'Jan': 0, 'Feb': 1, 'Mär': 2, 'Apr': 3, 'Mai': 4, 'Jun': 5, 'Jul': 6, 'Aug': 7, 'Sep': 8, 'Okt': 9, 'Nov': 10, 'Dez': 11 };
             const monthIndex = monthMap[mon];
+            const fullYear = parseInt(`20${yearPart}`, 10); // Assume 21st century
 
-            if (monthIndex === undefined || !year) return null;
+            if (monthIndex === undefined || isNaN(fullYear)) return null;
 
-            return new Date(`20${year}`, monthIndex, 1);
+            // --- KORREKTUR: Verwende die gleiche Logik wie in der AT-Funktion ---
+            // Erstellt ein Datum für den LETZTEN Tag des Monats in UTC
+            return new Date(Date.UTC(fullYear, monthIndex + 1, 0));
         };
-        
+
         for (const row of parsedData.data) {
             const monthString = row['Berichtsmonat'];
             const time_period = parseMonth(monthString);
 
-            // Überspringe Zeilen, bei denen das Datum nicht geparst werden konnte
-            if (!time_period) continue;
+            if (!time_period) {
+                console.warn(`[data-update] Konnte Datum nicht parsen: "${monthString}". Überspringe Zeile.`);
+                continue;
+            }
 
             for (const driveType in row) {
                 if (driveType === 'Berichtsmonat' || !row[driveType]) continue;
@@ -327,12 +332,12 @@ const fetchAndStoreCarRegistrationsDE = async () => {
                     source_name: 'Kraftfahrt-Bundesamt (KBA)',
                     source_url: 'https://www.kba.de/'
                 };
-                
+
                 await upsertStatistic(client, statistic);
                 upsertCount++;
             }
         }
-        
+
         await client.query('COMMIT');
         console.log(`[data-update] ${upsertCount} Einträge für KFZ-Neuzulassungen (DE) erfolgreich gespeichert/aktualisiert.`);
 
@@ -342,6 +347,8 @@ const fetchAndStoreCarRegistrationsDE = async () => {
             console.warn(`[data-update] KBA-Daten für ${year}-${month} noch nicht verfügbar (404). Überspringe...`);
             return;
         }
+        // Log the actual error for better debugging
+        console.error(`[data-update] Fehler beim Verarbeiten der KBA-Daten für ${year}-${month}:`, error);
         throw new Error(`Update der KFZ-Neuzulassungen (DE) fehlgeschlagen: ${error.message}`);
     } finally {
         client.release();

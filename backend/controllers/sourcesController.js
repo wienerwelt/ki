@@ -101,9 +101,6 @@ exports.getSourceById = async (req, res) => {
 };
 
 
-// @desc    Eine neue Quelle vorschlagen
-// @route   POST /api/sources
-// @access  Private (auth)
 exports.createSource = async (req, res) => {
     let { url, description, category_id } = req.body;
     const userId = req.user.id;
@@ -112,10 +109,8 @@ exports.createSource = async (req, res) => {
         return res.status(400).json({ message: 'URL ist ein Pflichtfeld.' });
     }
 
-    // --- ERWEITERTE VALIDIERUNG ---
-
+    // --- ERWEITERTE VALIDIERUNG (bleibt unverändert) ---
     let validatedUrl;
-    // 1. Syntaktische URL-Prüfung
     try {
         validatedUrl = new URL(url);
         if (!['http:', 'https:'].includes(validatedUrl.protocol)) {
@@ -125,41 +120,62 @@ exports.createSource = async (req, res) => {
         return res.status(400).json({ message: 'Ungültiges URL-Format.' });
     }
 
-    // 2. DNS-Prüfung auf Existenz der Domain
     try {
         await dnsLookup(validatedUrl.hostname);
     } catch (error) {
-        // Dieser Fehler (ENOTFOUND) tritt auf, wenn die Domain nicht existiert
         if (error.code === 'ENOTFOUND') {
             return res.status(400).json({ message: 'Die Domain der angegebenen URL konnte nicht gefunden werden.' });
         }
-        // Fallback für andere DNS- oder Netzwerkfehler
         return res.status(500).json({ message: 'Die URL konnte nicht verifiziert werden.' });
     }
     
-    // 3. Beschreibung bereinigen (Sanitization)
     if (description) {
-        description = sanitizeHtml(description, {
-            allowedTags: [],
-            allowedAttributes: {}
-        });
+        description = sanitizeHtml(description, { allowedTags: [], allowedAttributes: {} });
     }
-
     // --- Ende der Validierung ---
 
+    // --- NEU: Transaktion starten ---
+    const client = await db.connect();
+    const newSourceId = uuidv4(); // ID vorab generieren
+    const pointsChange = 5; // +5 Punkte für einen Vorschlag
+
     try {
-        const newSource = await db.query(
+        await client.query('BEGIN');
+
+        // 1. Quelle eintragen
+        const newSource = await client.query(
             'INSERT INTO sources (id, url, description, category_id, suggested_by_user_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-            [uuidv4(), url, description || null, category_id || null, userId]
+            [newSourceId, url, description || null, category_id || null, userId]
         );
+
+        // 2. Benutzer-Score aktualisieren
+        await client.query(
+            'UPDATE users SET contribution_score = contribution_score + $1 WHERE id = $2',
+            [pointsChange, userId]
+        );
+
+        // 3. Log-Eintrag für Gamification erstellen
+        const descriptionLog = `Punkte für Quellenvorschlag erhalten: "${url}"`;
+        await client.query(
+            `INSERT INTO user_score_logs (reference_id, user_id, points_change, action_type, description) 
+             VALUES ($1, $2, $3, $4, $5)`,
+            [newSourceId, userId, pointsChange, 'SOURCE_SUGGESTION', descriptionLog]
+        );
+
+        await client.query('COMMIT');
         res.status(201).json(newSource.rows[0]);
+
     } catch (err) {
-        console.error('Error creating source:', err.message);
+        await client.query('ROLLBACK');
+        console.error('Error creating source with transaction:', err.message);
         if (err.code === '23505') {
             return res.status(409).json({ message: 'Diese URL wurde bereits vorgeschlagen.' });
         }
         res.status(500).send('Server error');
+    } finally {
+        client.release();
     }
+    // --- ENDE: Transaktion ---
 };
 
 

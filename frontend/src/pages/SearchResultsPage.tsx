@@ -1,12 +1,13 @@
 // src/pages/SearchResultsPage.tsx
 import React, { useState, useEffect } from 'react';
-import { useSearchParams, Link as RouterLink } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import {
   Container, Typography, Box, CircularProgress, Alert, List, ListItem, ListItemText,
   Paper, Divider, Chip
 } from '@mui/material';
 import ArticleIcon from '@mui/icons-material/Article';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import BusinessIcon from '@mui/icons-material/Business'; // <-- NEU
 import apiClient from '../apiClient';
 
 interface SearchResult {
@@ -14,8 +15,9 @@ interface SearchResult {
   title: string;
   summary: string | null;
   published_date: string;
-  type: 'scraped' | 'ai';
+  type: 'scraped' | 'ai' | 'tracked_account_news'; // <-- ERWEITERT
   relevance: number;
+  url: string | null; // <-- NEU
 }
 
 const SearchResultsPage: React.FC = () => {
@@ -46,10 +48,26 @@ const SearchResultsPage: React.FC = () => {
     }
   }, [term]);
 
-  const renderIcon = (type: 'scraped' | 'ai') => {
-    return type === 'scraped'
-      ? <ArticleIcon sx={{ mr: 2, color: 'text.secondary' }} />
-      : <SmartToyIcon sx={{ mr: 2, color: 'secondary.main' }} />;
+  const renderIcon = (type: SearchResult['type']) => {
+    if (type === 'ai') {
+      return <SmartToyIcon sx={{ mr: 2, color: 'secondary.main' }} />;
+    }
+    if (type === 'tracked_account_news') {
+      return <BusinessIcon sx={{ mr: 2, color: 'primary.main' }} />;
+    }
+    return <ArticleIcon sx={{ mr: 2, color: 'text.secondary' }} />;
+  };
+
+  const getChipLabel = (type: SearchResult['type']) => {
+    if (type === 'ai') return 'KI-Analyse';
+    if (type === 'tracked_account_news') return 'Account-News';
+    return 'Artikel';
+  };
+
+  const getChipColor = (type: SearchResult['type']): "primary" | "secondary" | "default" => {
+    if (type === 'ai') return 'secondary';
+    if (type === 'tracked_account_news') return 'primary';
+    return 'default';
   };
 
   return (
@@ -77,7 +95,17 @@ const SearchResultsPage: React.FC = () => {
           <List>
             {results.map((result, index) => (
               <React.Fragment key={result.id}>
-                <ListItem alignItems="flex-start">
+                <ListItem
+                  alignItems="flex-start"
+                  // --- KLICKBAR MACHEN ---
+                  button
+                  component="a"
+                  href={result.url || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  disabled={!result.url}
+                  // --- ENDE ---
+                >
                   {renderIcon(result.type)}
                   <ListItemText
                     primary={result.title}
@@ -91,10 +119,10 @@ const SearchResultsPage: React.FC = () => {
                         >
                           {new Date(result.published_date).toLocaleDateString('de-DE')} - 
                           <Chip 
-                            label={result.type === 'scraped' ? 'Artikel' : 'KI-Analyse'} 
+                            label={getChipLabel(result.type)} 
                             size="small" 
                             sx={{ mx: 1 }}
-                            color={result.type === 'scraped' ? 'primary' : 'secondary'}
+                            color={getChipColor(result.type)}
                             variant="outlined"
                           />
                         </Typography>

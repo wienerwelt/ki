@@ -18,7 +18,16 @@ interface FundingCategory { id: number; name: string; }
 
 const ProfilePage: React.FC = () => {
   const { t } = useTranslation();
-  const { user, updateUser, themeMode, setThemeMode, language, setLanguage } = useAuth();
+  const { 
+    user, 
+    updateUser, 
+    themeMode, 
+    setThemeMode, 
+    language, 
+    setLanguage, 
+    userTags, 
+    refreshUserTags 
+  } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
@@ -31,7 +40,6 @@ const ProfilePage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [scoreFilter, setScoreFilter] = useState<ScoreFilter>('all');
-  const [userTags, setUserTags] = useState<string[]>([]);
   const [allAvailableTags, setAllAvailableTags] = useState<string[]>([]);
   const [tagsLoading, setTagsLoading] = useState(true);
   const [allFundingCategories, setAllFundingCategories] = useState<FundingCategory[]>([]);
@@ -47,14 +55,12 @@ const ProfilePage: React.FC = () => {
         const token = localStorage.getItem('jwt_token');
         const headers = { headers: { 'x-auth-token': token } };
         
-        const [tagsRes, allTagsRes, allCatsRes, userCatsRes] = await Promise.all([
-            apiClient.get('/api/users/tags', headers),
+        const [allTagsRes, allCatsRes, userCatsRes] = await Promise.all([
             apiClient.get('/api/data/all-tags', headers),
             apiClient.get('/api/funding/categories', headers),
             apiClient.get('/api/funding/user-categories', headers)
         ]);
 
-        setUserTags(tagsRes.data || []);
         setAllAvailableTags(allTagsRes.data || []);
         setAllFundingCategories(allCatsRes.data || []);
         setUserFundingCategoryIds(userCatsRes.data || []);
@@ -101,7 +107,6 @@ const ProfilePage: React.FC = () => {
       if (scoreFilter === 'positive') articleScoreMin = 1;
       else if (scoreFilter === 'balanced') articleScoreMin = 0;
 
-      // Das newsletter_opt_in wird hier bereits korrekt mitgesendet
       const profileData = {
         first_name: firstName, lastName, organization_name: organizationName, linkedin_url: linkedinUrl,
         password: password || undefined,
@@ -131,16 +136,16 @@ const ProfilePage: React.FC = () => {
   const handleTagsChange = async (_event: React.SyntheticEvent, newTags: string[]) => {
     if (isDemoUser) return;
     const oldTags = userTags;
-    setUserTags(newTags);
     const tagsToAdd = newTags.filter(tag => !oldTags.includes(tag));
     const tagsToRemove = oldTags.filter(tag => !newTags.includes(tag));
     try {
         if (tagsToAdd.length > 0) await Promise.all(tagsToAdd.map(tag => apiClient.post('/api/users/tags', { tagName: tag })));
         if (tagsToRemove.length > 0) await Promise.all(tagsToRemove.map(tag => apiClient.delete(`/api/users/tags/${encodeURIComponent(tag)}`)));
         setSnackbar({ open: true, message: 'Themen aktualisiert.'});
+        refreshUserTags();
     } catch (err) {
         setSnackbar({ open: true, message: 'Fehler beim Aktualisieren der Themen.' });
-        setUserTags(oldTags);
+        refreshUserTags();
     }
   };
   
@@ -177,7 +182,6 @@ const ProfilePage: React.FC = () => {
             <Grid item xs={12}><TextField label={t('profile.organization')} fullWidth value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} disabled={isDemoUser}/></Grid>
             <Grid item xs={12}><TextField label={t('profile.linkedinUrl')} fullWidth value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} disabled={isDemoUser}/></Grid>
             
-            {/* --- NEUER ABSCHNITT FÜR FÖRDER-INTERESSEN --- */}
             <Grid item xs={12}>
                 <Typography variant="h6" sx={{ mt: 2 }}>Meine Förder-Interessen</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -213,12 +217,15 @@ const ProfilePage: React.FC = () => {
                 </Typography>
                 {tagsLoading ? <CircularProgress size={24} /> : (
                     <Autocomplete
-                        multiple freeSolo options={allAvailableTags} value={userTags}
-                        onChange={handleTagsChange} disabled={isDemoUser}
+                        multiple
+                        options={allAvailableTags}
+                        value={userTags}
+                        onChange={handleTagsChange}
+                        disabled={isDemoUser}
                         renderTags={(value: readonly string[], getTagProps) =>
                             value.map((option: string, index: number) => (<Chip variant="outlined" label={option} {...getTagProps({ index })} />))
                         }
-                        renderInput={(params) => (<TextField {...params} variant="outlined" label="Themen hinzufügen..." placeholder="Tippen oder auswählen"/>)}
+                        renderInput={(params) => (<TextField {...params} variant="outlined" label="Meine Themen" placeholder="Themen auswählen"/>)}
                     />
                 )}
             </Grid>
@@ -232,7 +239,6 @@ const ProfilePage: React.FC = () => {
                 onChange={handleScoreFilterChange}
                 aria-label="Artikel-Score Filter"
                 disabled={isDemoUser}
-                // NEU: Passt die Ausrichtung und Breite an die Bildschirmgröße an
                 orientation={isMobile ? 'vertical' : 'horizontal'}
                 fullWidth={isMobile}
               >

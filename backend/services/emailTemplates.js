@@ -2,7 +2,7 @@
 
 // Zentrales Branding
 const BRAND = {
-  product: 'KI-Dashboard',
+  product: 'KI-Dashboard', // Fallback-Titel
   company: 'Mobiliti',
   supportEmail: 'hello@mobiliti.at',
 };
@@ -37,12 +37,15 @@ function resolveLogoRef(brandLogoUrl) {
 /**
  * Einfache, robuste Layout-Funktion für alle Mails
  * - brandLogoUrl (optional): absolute oder relative URL eines BP-Logos
+ * - dashboardTitle (optional): Spezifischer Titel des Partners (z.B. "Mobiliti Dashboard")
  */
-function renderLayout({ preheader = '', title = '', contentHtml = '', ctaLabel, ctaUrl, footerText, brandLogoUrl }) {
+function renderLayout({ preheader = '', title = '', contentHtml = '', ctaLabel, ctaUrl, footerText, brandLogoUrl, dashboardTitle }) {
   const logo = resolveLogoRef(brandLogoUrl);
+  
+  // ANGEPASST: Logo-Styling mit max. Höhe 40px
   const logoImg = logo.type === 'cid'
-    ? `<img src="cid:${logo.id}" alt="Logo" width="120" height="auto" style="display:block;border:0;outline:none;text-decoration:none;"/>`
-    : `<img src="${logo.url}" alt="Logo" width="120" height="auto" style="display:block;border:0;outline:none;text-decoration:none;"/>`;
+    ? `<img src="cid:${logo.id}" alt="Logo" height="40" width="auto" style="display:block;border:0;outline:none;text-decoration:none;max-height:40px;width:auto;"/>`
+    : `<img src="${logo.url}" alt="Logo" height="40" width="auto" style="display:block;border:0;outline:none;text-decoration:none;max-height:40px;width:auto;"/>`;
 
   const button = ctaLabel && ctaUrl ? `
     <tr>
@@ -89,7 +92,7 @@ function renderLayout({ preheader = '', title = '', contentHtml = '', ctaLabel, 
             <td align="left" style="padding:0 0 16px;">
               <a href="${getBaseUrl()}" target="_blank" style="text-decoration:none;color:#111;font-weight:700;font-size:18px;display:inline-flex;align-items:center;gap:10px">
                 ${logoImg}
-                <span>${escapeHtml(BRAND.product)}</span>
+                <span>${escapeHtml(dashboardTitle || BRAND.product)}</span>
               </a>
             </td>
           </tr>
@@ -118,8 +121,9 @@ function renderLayout({ preheader = '', title = '', contentHtml = '', ctaLabel, 
 }
 
 // --- Spezifische Templates ---
+// Alle Templates wurden um dashboardTitle erweitert
 
-function renderShareContentEmail({ senderName, fromName, title, summary, source, brandLogoUrl }) {
+function renderShareContentEmail({ senderName, fromName, title, summary, source, brandLogoUrl, dashboardTitle }) {
   const contentHtml = `
     <p>Hallo,</p>
     <p><strong>${escapeHtml(senderName || '')}</strong> hat folgende Information mit Ihnen geteilt:</p>
@@ -136,10 +140,11 @@ function renderShareContentEmail({ senderName, fromName, title, summary, source,
     ctaUrl: source || undefined,
     footerText: `Gesendet von ${fromName || 'KI-Dashboard'}.`,
     brandLogoUrl,
+    dashboardTitle, // Weitergeleitet
   });
 }
 
-function renderVerificationEmail({ username, verifyUrl, brandLogoUrl }) {
+function renderVerificationEmail({ username, verifyUrl, brandLogoUrl, dashboardTitle }) {
   const title = 'Bitte E-Mail-Adresse bestätigen';
   const contentHtml = `
     <p>Hallo ${escapeHtml(username || '')},</p>
@@ -153,10 +158,11 @@ function renderVerificationEmail({ username, verifyUrl, brandLogoUrl }) {
     ctaLabel: 'E-Mail jetzt bestätigen',
     ctaUrl: verifyUrl,
     brandLogoUrl,
+    dashboardTitle, // Weitergeleitet
   });
 }
 
-function renderPasswordResetEmail({ username, resetUrl, brandLogoUrl }) {
+function renderPasswordResetEmail({ username, resetUrl, brandLogoUrl, dashboardTitle }) {
   const title = 'Passwort zurücksetzen';
   const contentHtml = `
     <p>Hallo ${escapeHtml(username || '')},</p>
@@ -170,10 +176,11 @@ function renderPasswordResetEmail({ username, resetUrl, brandLogoUrl }) {
     ctaLabel: 'Passwort zurücksetzen',
     ctaUrl: resetUrl,
     brandLogoUrl,
+    dashboardTitle, // Weitergeleitet
   });
 }
 
-function renderNewsletterOptInEmail({ username, confirmUrl, unsubscribeUrl, brandLogoUrl }) {
+function renderNewsletterOptInEmail({ username, confirmUrl, unsubscribeUrl, brandLogoUrl, dashboardTitle }) {
   const title = 'Newsletter-Anmeldung bestätigen';
   const contentHtml = `
     <p>Hallo ${escapeHtml(username || '')},</p>
@@ -189,11 +196,12 @@ function renderNewsletterOptInEmail({ username, confirmUrl, unsubscribeUrl, bran
     ctaUrl: confirmUrl,
     footerText: unsubscribeUrl ? `Abmelden: ${escapeHtml(unsubscribeUrl)}` : undefined,
     brandLogoUrl,
+    dashboardTitle, // Weitergeleitet
   });
 }
 
 
-function renderNewOpportunitiesEmail({ username, searchName, newOpportunities, searchUrl, brandLogoUrl }) {
+function renderNewOpportunitiesEmail({ username, searchName, newOpportunities, searchUrl, brandLogoUrl, dashboardTitle }) {
   const title = `Neue Förderungen für Ihre Suche: "${escapeHtml(searchName)}"`;
   
   const opportunitiesHtml = newOpportunities.map(opp => 
@@ -220,10 +228,12 @@ function renderNewOpportunitiesEmail({ username, searchName, newOpportunities, s
     ctaLabel: 'Alle Treffer anzeigen',
     ctaUrl: searchUrl,
     brandLogoUrl,
+    dashboardTitle, // Weitergeleitet
   });
 }
 
-function renderBriefingEmail({ briefing, brandLogoUrl }) {
+// ANGEPASST: Akzeptiert jetzt `nextEvent`
+function renderBriefingEmail({ briefing, brandLogoUrl, dashboardTitle, nextEvent }) {
   const title = `Ihr Tägliches Briefing für den ${new Date().toLocaleDateString('de-DE')}`;
   
   let contentHtml = '';
@@ -251,6 +261,24 @@ function renderBriefingEmail({ briefing, brandLogoUrl }) {
     });
   }
   
+  // NEU: Nächstes Event am Ende hinzufügen
+  if (nextEvent && nextEvent.title) {
+    const eventDate = new Date(nextEvent.event_date).toLocaleDateString('de-DE');
+    contentHtml += `
+        <hr style="border:none; border-top:1px solid #eee; margin: 25px 0;" />
+        <h2 style="font-size: 18px; margin-top: 0; padding-bottom: 5px; border-bottom: 1px solid #eee;">Nächstes Branchen-Event</h2>
+        <div style="margin-top: 15px;">
+            <p style="margin:0 0 5px; font-size: 15px;"><strong>${escapeHtml(nextEvent.title)}</strong></p>
+            <p style="margin:0 0 12px; color: #333;">Datum: ${eventDate}</p>
+            <a href="${nextEvent.original_url}" target="_blank" rel="noopener"
+               style="display:inline-block;padding:8px 16px;text-decoration:none;border-radius:6px;
+                      background:#f4f4f5;color:#111;font-weight:600;font-size:14px;">
+              Details & Anmeldung
+            </a>
+        </div>
+    `;
+  }
+
   return renderLayout({
     preheader: briefing.market_briefing?.headline || 'Ihr tägliches Briefing',
     title,
@@ -258,6 +286,7 @@ function renderBriefingEmail({ briefing, brandLogoUrl }) {
     ctaLabel: 'Zum Dashboard',
     ctaUrl: getBaseUrl(),
     brandLogoUrl,
+    dashboardTitle, // Weitergeleitet
   });
 }
 

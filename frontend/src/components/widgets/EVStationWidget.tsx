@@ -50,7 +50,7 @@ const FAVORITES_LIMIT = 10;
 const PAGE_SIZE = 10;
 
 const providerUrls: { [key: string]: string } = {
-  'E-Control': 'https://www.e-control.at/ladestellen',
+  'E-Control': 'https://www.e-control.at/ladestellen', // Behalten wir für alte Favoriten
   'OpenChargeMap': 'https://openchargemap.org/site'
 };
 
@@ -135,7 +135,7 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
     
     stationsToShow.forEach((s) => {
         if (s.lat && s.lng) {
-            const mapUrl = `https://www.google.com/maps?q=${s.lat},${s.lng}`;
+            const mapUrl = `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`;
             const popupContent = `<b>${s.name}</b><br/>Betreiber: ${s.operator_name || 'N/A'}<br/><a href="${mapUrl}" target="_blank" rel="noopener noreferrer">Auf Google Maps ansehen</a>`;
             L.marker([s.lat, s.lng]).bindPopup(popupContent).addTo(markersRef.current);
         }
@@ -198,23 +198,40 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
     }
   }, [isFavorite, widgetTypeKey, fetchFavoritesFromDB, showSnackbar, favorites.length]);
   
+
+  // --- START: KORRIGIERTER BLOCK ---
+  // Diese Funktion wurde überarbeitet, um die E-Control-Logik zu entfernen
+  // und den TypeScript-Fehler zu beheben.
   const renderProviderAttribution = () => {
     let providerName: string | null = null;
-    if (viewMode === 'search' && selectedRegion) {
-        providerName = selectedRegion.code === 'AT' ? 'E-Control' : 'OpenChargeMap';
-    } else if (favorites.length > 0) {
-        const uniqueProviders = [...new Set(favorites.map(f => f.provider).filter(Boolean))];
+    const stationsToShow = viewMode === 'favorites' ? favorites : displayedResults;
+
+    if (stationsToShow.length > 0) {
+        // KORREKTUR: Wir leiten die Anbieter aus den *Daten* ab, nicht aus der Region.
+        // Wir beheben den TS-Fehler, indem wir explizit nach Strings filtern.
+        const uniqueProviders = [...new Set(
+            stationsToShow.map(f => f.provider).filter((p): p is string => !!p)
+        )];
+        
         if (uniqueProviders.length === 1) {
-            providerName = uniqueProviders[0];
+            providerName = uniqueProviders[0]; // z.B. "OpenChargeMap"
         } else if (uniqueProviders.length > 1) {
+            // Zeigt "Quellen: OpenChargeMap, E-Control" an, falls alte Favoriten vorhanden sind
             return <Typography variant="caption" color="text.secondary">Quellen: {uniqueProviders.join(', ')}</Typography>;
         }
     }
 
-    if (!providerName) return null;
+    // Fallback: Wenn die Daten keinen Anbieter haben, aber wir im Suchmodus sind,
+    // wissen wir, dass es OCM sein muss (gemäß unserem Backend).
+    if (viewMode === 'search' && !providerName && displayedResults.length > 0) {
+        providerName = 'OpenChargeMap';
+    }
+
+    if (!providerName) return null; // Nichts anzeigen, wenn keine Daten da sind
     
     const url = providerUrls[providerName];
     if (!url) {
+        // Fallback, falls der Name (z.B. von alten Favoriten) nicht in unserer URL-Liste ist
         return <Typography variant="caption" color="text.secondary">Quelle: {providerName}</Typography>;
     }
 
@@ -224,6 +241,8 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
         </Typography>
     );
   };
+  // --- ENDE: KORRIGIERTER BLOCK ---
+
 
   const renderListItem = (station: StationData) => {
     const fullAddress = `${station.street || ''}, ${station.post_code || ''} ${station.city || ''}`.trim().replace(/^,|,$/g, '');

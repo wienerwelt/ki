@@ -3,7 +3,8 @@ const axios = require('axios');
 const db = require('../config/db');
 const { sendEmail } = require('../services/emailService');
 const { renderLayout } = require('../services/emailTemplates');
-const { generateAIContent } = require('../services/aiExecutionService'); 
+const { generateAIContent } = require('../services/aiExecutionService');
+const { logToDb } = require('../services/aiExecutionService'); 
 const TANKERKOENIG_API_KEY = process.env.TANKERKOENIG_API_KEY;
 const ECONTROL_API_KEY     = process.env.ECONTROL_API_KEY;
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
@@ -249,7 +250,9 @@ exports.fuelSearch = async (req, res) => {
 };
 
 exports.getPricesByIds = async (req, res) => {
-    const { country, ids, userId } = req.body || {};
+    const { country, ids } = req.body || {}; // userId entfernt
+    const { id: userId } = req.user; // <-- NEU: userId sicher aus dem Token holen
+
     try {
         if (!country || !Array.isArray(ids) || ids.length === 0) {
             return res.status(400).json({ ok: false, message: 'Land und eine Liste von IDs sind erforderlich.' });
@@ -318,6 +321,12 @@ let fuelPriceCache = {
     ttl: 5 * 60 * 1000
 };
 
+let holidayCache = {
+    data: null,
+    timestamp: 0,
+    ttl: 6 * 60 * 60 * 1000 // 6 Stunden
+};
+
 exports.getFuelPrices = async (req, res) => {
     if (fuelPriceCache.data && (Date.now() - fuelPriceCache.timestamp < fuelPriceCache.ttl)) {
         console.log('Serving fuel prices from cache.');
@@ -379,6 +388,94 @@ exports.getFuelPrices = async (req, res) => {
         });
     }
 };
+
+
+const normalizeNagerHoliday = (holiday, countryCode) => {
+    let regionName = null;
+    if (countryCode === 'AT') regionName = 'Österreich';
+    if (countryCode === 'DE') regionName = 'Deutschland';
+
+    // Wir ignorieren regionale Feiertage in DE (z.B. nur in "BY"),
+    // um die Filterlogik einfach zu halten. 'global: true' bedeutet landesweit.
+    // if (!holiday.global) {
+    //     return null; // Optional: Nur landesweite Feiertage anzeigen
+    // }
+
+    return {
+        id: `holiday-${countryCode}-${holiday.date}-${holiday.localName.replace(/\s/g, '-')}`,
+        title: holiday.localName, // Wir nehmen den lokalen (deutschen) Namen
+        date: holiday.date,
+        region: regionName,
+        summary: holiday.name, // Englischer Name als "Summary"
+        url: null,
+        participants: 0,
+        maybeParticipants: 0,
+        userVote: null,
+        full_text: null,
+        is_trusted_source: true,
+        is_read: true,
+        type: 'holiday'
+    };
+};
+
+// NEUE getPublicHolidays Funktion für nager.at
+exports.getPublicHolidays = async (req, res) => {
+    if (holidayCache.data && (Date.now() - holidayCache.timestamp < holidayCache.ttl)) {
+        console.log('Serving holidays from nager.at cache.');
+        return res.json(holidayCache.data);
+    }
+
+    try {
+        const year = new Date().getFullYear();
+        // KORREKTUR: Wir verwenden jetzt die nager.at API
+        const baseUrl = 'https://date.nager.at/api/v3';
+        
+        console.log(`[Holiday-API] Fetching fresh holidays from nager.at for ${year}...`);
+
+        // Feiertage für AT und DE parallel abrufen
+        const [atHolidaysRes, deHolidaysRes] = await Promise.all([
+            axios.get(`${baseUrl}/PublicHolidays/${year}/AT`, { timeout: 7000 }),
+            axios.get(`${baseUrl}/PublicHolidays/${year}/DE`, { timeout: 7000 })
+        ]);
+
+        console.log('[Holiday-API] nager.at data received successfully.');
+
+        // Wichtig: .filter(Boolean), falls normalizeNagerHoliday null zurückgibt
+        const normalizedAT = (atHolidaysRes.data || []).map(h => normalizeNagerHoliday(h, 'AT')).filter(Boolean);
+        const normalizedDE = (deHolidaysRes.data || []).map(h => normalizeNagerHoliday(h, 'DE')).filter(Boolean);
+
+        const allHolidays = [...normalizedAT, ...normalizedDE];
+
+        // Im Cache speichern
+        holidayCache.data = allHolidays;
+        holidayCache.timestamp = Date.now();
+
+        res.json(allHolidays);
+
+    } catch (err) {
+        // Detailliertes Logging, falls es wieder fehlschlägt
+        console.error('--- SCHWERWIEGENDER FEHLER: getPublicHolidays (nager.at) ---');
+        if (axios.isAxiosError(err)) {
+            console.error('Angefragte URL:', err.config.url);
+            if (err.response) {
+                console.error('HTTP-Status:', err.response.status);
+                console.error('API-Antwort:', JSON.stringify(err.response.data, null, 2));
+            } else {
+                console.error('Fehler:', err.message);
+            }
+        } else {
+            console.error('Interner Fehler:', err.message);
+        }
+        console.error('--- ENDE: Detailliertes Logging ---');
+
+        if (holidayCache.data) {
+            console.warn('Serving stale holiday cache due to API error.');
+            return res.json(holidayCache.data);
+        }
+        res.status(502).json({ message: 'Fehler beim Abrufen der Feiertage von nager.at.' });
+    }
+};
+
 
 exports.getVignetteCountries = async (req, res) => {
     try {
@@ -1227,16 +1324,19 @@ exports.getAllRegions = async (req, res) => {
 
 exports.evStationSearch = async (req, res) => {
     const { country, lat: latStr, lng: lngStr, query } = req.query;
-    const targetCountry = (country || 'DE').toString().toUpperCase();
+    // targetCountry wird nur noch für die Geocodierung verwendet, nicht mehr für die API-Auswahl
+    const targetCountry = (country || 'DE').toString().toUpperCase(); 
     let lat = Number(latStr);
     let lng = Number(lngStr);
     const searchTerm = query ? query.toString().trim() : '';
 
     try {
+        // --- Schritt 1: Geocodierung (falls nötig) ---
         if (searchTerm && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
+            console.log(`[EV Search] Geocoding: "${searchTerm}" in ${targetCountry}`);
             const geocodeResp = await axios.get('https://nominatim.openstreetmap.org/search', {
                 params: { q: searchTerm, countrycodes: targetCountry.toLowerCase(), format: 'json', limit: 1 },
-                headers: { 'User-Agent': 'MobilitiDashboard/1.0 (Ihre-Email@domain.de)' }
+                headers: { 'User-Agent': 'MobilitiDashboard/1.0 (deine-email@domain.de)' }
             });
             if (geocodeResp.data && geocodeResp.data.length > 0) {
                 lat = parseFloat(geocodeResp.data[0].lat);
@@ -1248,37 +1348,42 @@ exports.evStationSearch = async (req, res) => {
              return res.status(400).json({ ok: false, message: 'Koordinaten oder Suchbegriff erforderlich.' });
         }
 
+        // --- Schritt 2: Datenquellen für Vertrauensstatus holen ---
         const approvedSourcesRes = await db.query("SELECT url FROM sources WHERE status = 'approved'");
         const approvedDomains = new Set(approvedSourcesRes.rows.map(r => r.url));
+        // E-Control bleibt hier drin, falls OCM Daten von dort spiegelt
         const providerDomainMap = {
             'E-Control': 'e-control.at',
             'OpenChargeMap': 'openchargemap.org'
         };
 
-        let stations = [];
-        if (targetCountry === 'AT') {
-            const apiKey = process.env.LADESTELLEN_AT_KEY;
-            if (!apiKey) throw new Error('API-Key für E-Control Ladestellen fehlt.');
-            
-            const response = await axios.get('https://api.e-control.at/charge/1.0/stations/by-proximity', {
-                params: { latitude: lat, longitude: lng, radius: 25000 },
-                headers: { 'X-Api-Key': apiKey }
-            });
-            stations = (response.data || []).map(normalizeEControlStation).filter(Boolean);
-
-        } else {
-            const apiKey = process.env.OPENCHARGEMAP_API_KEY;
-            if (!apiKey) throw new Error('API-Key für OpenChargeMap fehlt.');
-
-            const response = await axios.get('https://api.openchargemap.io/v3/poi', {
-                params: {
-                    output: 'json', latitude: lat, longitude: lng,
-                    distance: 25, distanceunit: 'km', maxresults: 100, key: apiKey
-                }
-            });
-            stations = (response.data || []).map(normalizeOcmStation).filter(Boolean);
+        // --- Schritt 3: IMMER OpenChargeMap abfragen (KORRIGIERT) ---
+        console.log(`[EV Search] Querying OpenChargeMap (OCM) for lat=${lat}, lng=${lng}`);
+        const apiKey = process.env.OPENCHARGEMAP_API_KEY;
+        if (!apiKey) {
+            console.error("[EV Search] OPENCHARGEMAP_API_KEY fehlt!");
+            throw new Error('API-Key für OpenChargeMap fehlt.');
         }
+
+        // Wir entfernen die "if (targetCountry === 'AT')" Logik
+        const response = await axios.get('https://api.openchargemap.io/v3/poi', {
+            params: {
+                output: 'json', 
+                latitude: lat, 
+                longitude: lng,
+                distance: 25, // 25km Radius
+                distanceunit: 'km', 
+                maxresults: 100, // Max. 100 Ergebnisse
+                key: apiKey,
+                // Optional: Wir können die Suche auf das Land einschränken,
+                // das der Benutzer ausgewählt hat, um die Relevanz zu erhöhen.
+                countrycode: targetCountry 
+            }
+        });
         
+        const stations = (response.data || []).map(normalizeOcmStation).filter(Boolean);
+        
+        // --- Schritt 4: Vertrauensstatus hinzufügen und Antwort senden ---
         const finalStations = stations.map(station => {
             const providerKey = station.provider;
             const domain = providerKey ? providerDomainMap[providerKey] : null;
@@ -1289,6 +1394,7 @@ exports.evStationSearch = async (req, res) => {
         });
 
         res.json({ ok: true, stations: finalStations });
+
     } catch (err) {
         const message = err.response?.data?.message || err.message || 'Fehler bei der Stationssuche.';
         console.error(`[EV Search Error for ${targetCountry}]:`, message, `Status: ${err.response?.status}`);
@@ -2007,35 +2113,38 @@ exports.globalSearch = async (req, res) => {
 
     try {
         const query = `
-            SELECT id, title, summary, published_date, type, relevance
+            SELECT id, title, summary, published_date, type, relevance, url
             FROM (
-                -- Bestehende Suche in scraped_content (unverändert)
+                -- Bestehende Suche in scraped_content (modifiziert)
                 SELECT
                     id, title, summary, published_date,
                     'scraped' as type,
+                    original_url as url, -- <--- HINZUGEFÜGT
                     ts_rank(to_tsvector('german', title || ' ' || summary), to_tsquery('german', $1)) as relevance
                 FROM scraped_content
                 WHERE to_tsvector('german', title || ' ' || summary) @@ to_tsquery('german', $1)
                 
                 UNION ALL
                 
-                -- Bestehende Suche in ai_generated_content (unverändert)
+                -- Bestehende Suche in ai_generated_content (modifiziert)
                 SELECT
                     id, title, generated_output as summary, created_at as published_date,
                     'ai' as type,
+                    source_reference as url, -- <--- HINZUGEFÜGT
                     ts_rank(to_tsvector('german', title || ' ' || generated_output), to_tsquery('german', $1)) as relevance
                 FROM ai_generated_content
                 WHERE to_tsvector('german', title || ' ' || generated_output) @@ to_tsquery('german', $1)
 
                 UNION ALL
 
-                -- NEU: Suche in business_partner_tracked_articles
+                -- Bestehende Suche in business_partner_tracked_articles (modifiziert)
                 SELECT
                     id,
                     article_title as title,
                     summary,
                     published_at as published_date,
                     'tracked_account_news' as type,
+                    article_url as url, -- <--- HINZUGEFÜGT
                     ts_rank(to_tsvector('german', article_title || ' ' || summary), to_tsquery('german', $1)) as relevance
                 FROM
                     business_partner_tracked_articles
@@ -2224,5 +2333,253 @@ exports.getDailyBriefing = async (req, res) => {
     } catch (err) {
         console.error('Error fetching daily briefing:', err.message);
         res.status(500).send('Server error');
+    }
+};
+
+
+async function retrieveInternalDocuments(searchTerm) {
+    if (!searchTerm || searchTerm.trim().length < 3) {
+        return [];
+    }
+    const formattedTerm = searchTerm.trim().split(/\s+/).join(' & ');
+
+    try {
+        const query = `
+            SELECT id, title, summary, published_date, type, url, relevance
+            FROM (
+                SELECT
+                    id, title, summary, published_date, 'scraped' as type,
+                    original_url as url,
+                    ts_rank(to_tsvector('german', title || ' ' || summary), to_tsquery('german', $1)) as relevance
+                FROM scraped_content
+                WHERE to_tsvector('german', title || ' ' || summary) @@ to_tsquery('german', $1)
+                
+                UNION ALL
+                
+                SELECT
+                    id, title, generated_output as summary, created_at as published_date, 'ai' as type,
+                    source_reference as url,
+                    ts_rank(to_tsvector('german', title || ' ' || generated_output), to_tsquery('german', $1)) as relevance
+                FROM ai_generated_content
+                WHERE to_tsvector('german', title || ' ' || generated_output) @@ to_tsquery('german', $1)
+
+                UNION ALL
+
+                SELECT
+                    id, article_title as title, summary, published_at as published_date,
+                    'tracked_account_news' as type,
+                    article_url as url,
+                    ts_rank(to_tsvector('german', article_title || ' ' || summary), to_tsquery('german', $1)) as relevance
+                FROM business_partner_tracked_articles
+                WHERE to_tsvector('german', article_title || ' ' || summary) @@ to_tsquery('german', $1)
+
+            ) as search_results
+            ORDER BY relevance DESC
+            LIMIT 5; -- Wir nehmen die Top 5 relevantesten Dokumente
+        `;
+        const { rows } = await db.query(query, [formattedTerm]);
+        return rows;
+    } catch (err) {
+        console.error('Fehler beim Abrufen interner Dokumente (RAG-Retrieval):', err.message);
+        return [];
+    }
+}
+
+// Der neue Controller für die KI-Anfrage
+// AKTUALISIERTER Controller für die KI-Anfrage (mit korrigierter Transaktion)
+exports.handleAiQuestion = async (req, res) => {
+    const { question } = req.body;
+    const { id: userId, business_partner_id: businessPartnerId } = req.user;
+
+    if (!question) {
+        return res.status(400).json({ message: 'Eine Frage (question) ist erforderlich.' });
+    }
+    if (!businessPartnerId) {
+        return res.status(403).json({ message: 'Benutzer ist keinem Business Partner zugeordnet.' });
+    }
+
+    let jobId;
+    const client = await db.connect();
+    try {
+        // --- START Transaktion 1: Job-Erstellung & Gamification ---
+        await client.query('BEGIN');
+
+        // Schritt 1: Job für Logging erstellen
+        const jobResult = await client.query(`INSERT INTO ai_jobs (status, is_automated) VALUES ('running', false) RETURNING id`);
+        jobId = jobResult.rows[0].id;
+        
+        await logToDb(jobId, 'INFO', `Starte RAG-Anfrage für User ${userId}. Frage: "${question}"`);
+
+        // Schritt 2: Gamification (Punkteabzug)
+        const pointsChange = -2;
+        await client.query(
+            'UPDATE users SET contribution_score = contribution_score + $1 WHERE id = $2',
+            [pointsChange, userId]
+        );
+
+        // Schritt 3: Punkteabzug protokollieren
+        const description = `Punkte für KI-Anfrage erhalten: "${question.substring(0, 100)}..."`;
+        await client.query(
+            `INSERT INTO user_score_logs (reference_id, user_id, points_change, action_type, description) 
+             VALUES ($1, $2, $3, $4, $5)`,
+            [jobId, userId, pointsChange, 'AI_QUERY', description]
+        );
+
+        // --- COMMIT Transaktion 1 ---
+        // Der Job ist jetzt für alle anderen Verbindungen (wie aiExecutionService) sichtbar.
+        await client.query('COMMIT');
+        // --- ENDE Transaktion 1 ---
+
+        // Schritt 4: Branchenspezifische Daten abrufen (außerhalb der Transaktion)
+        const partnerRes = await client.query(
+            `SELECT 
+                bp.dashboard_focus,
+                (
+                    SELECT COALESCE(json_agg(c.name), '[]'::json)
+                    FROM business_partner_categories bpc
+                    JOIN categories c ON bpc.category_id = c.id
+                    WHERE bpc.business_partner_id = bp.id AND c.category_type = 'industry'
+                ) as industries
+             FROM business_partners bp
+             WHERE bp.id = $1;`,
+            [businessPartnerId]
+        );
+
+        if (partnerRes.rows.length === 0) {
+            throw new Error('Business Partner nicht gefunden.');
+        }
+
+        const partner = partnerRes.rows[0];
+        const industryNames = partner.industries.length > 0 
+            ? partner.industries.join(', ') 
+            : 'allgemeine Mobilität und Fuhrparkmanagement';
+        
+        await logToDb(jobId, 'INFO', `Partner-Fokus: ${partner.dashboard_focus}. Branchen: ${industryNames}`);
+
+        // Schritt 5: Interne Dokumente abrufen (Retrieval)
+        const documents = await retrieveInternalDocuments(question);
+        let context = 'Keine relevanten internen Dokumente gefunden.';
+        if (documents.length > 0) {
+            context = documents.map(doc => 
+                `--- DOKUMENT (ID: ${doc.id}, Typ: ${doc.type}) ---\nTITEL: ${doc.title}\nINHALT: ${doc.summary || ''}\nQUELLE: ${doc.url || 'Intern'}\n---`
+            ).join('\n\n');
+        }
+        await logToDb(jobId, 'INFO', `${documents.length} interne Dokumente gefunden.`);
+
+        // Schritt 6: Dynamischen, branchenspezifischen Prompt erstellen (Augment)
+        const promptTemplate = `
+          Du bist ein hochqualifizierter KI-Assistent, spezialisiert auf die Branchen: ${industryNames}.
+          ${partner.dashboard_focus === 'sales' ? 'Deine Antworten sollten besonders auf Vertriebschancen (Sales Trigger) und Geschäftsmöglichkeiten achten.' : 'Deine Antworten sollten informativ, präzise und neutral sein.'}
+          BEANTWORTE DIE FRAGE DES BENUTZERS: "${question}"
+          BASIERE DEINE ANTWORT AUF DEINEM ALLGEMEINEN WISSEN UND DEN FOLGENDEN INTERNEN DOKUMENTEN.
+          BEZIEHE DICH WO IMMER MÖGLICH AUF DIESE DOKUMENTE, ABER ERWÄHNE NICHT DIE "DOKUMENT-ID".
+          Formatiere deine Antwort als klares, lesbares Markdown.
+          --- INTERNE DOKUMENTE ALS KONTEXT ---
+          {{data}}
+          --- ENDE DES KONTEXTES ---
+        `;
+
+        // Schritt 7: KI-Anfrage ausführen (Generate)
+        // Diese Funktion kann jetzt sicher in ai_logs/ai_usage_logs schreiben,
+        // da jobId committet ist.
+        const { aiResultString } = await generateAIContent({
+            promptTemplate,
+            inputText: context,
+            ai_provider: 'OpenAI GPT-4o',
+            jobId: jobId,
+            userId: userId
+        });
+
+        await logToDb(jobId, 'SUCCESS', 'RAG-Antwort erfolgreich generiert.');
+        
+        // Schritt 8: Job-Status aktualisieren (in einer neuen, kleinen Transaktion)
+        await client.query(`UPDATE ai_jobs SET status = 'completed' WHERE id = $1`, [jobId]);
+
+        // Schritt 9: Antwort an Frontend senden
+        res.json({
+            answer: aiResultString,
+            sources: documents.map(doc => ({
+                id: doc.id,
+                title: doc.title,
+                type: doc.type,
+                url: doc.url || `/search?term=${encodeURIComponent(doc.title)}`
+            }))
+        });
+
+    } catch (err) {
+        // --- Rollback ist nur nötig, wenn der Fehler VOR dem Commit passiert ist ---
+        // (Ein Rollback einer bereits committeten Transaktion ist nicht möglich,
+        //  aber wir fangen den Fehler der KI-Ausführung ab)
+        console.error('Fehler in handleAiQuestion:', err.message);
+        
+        if (jobId) {
+            await logToDb(jobId, 'ERROR', `RAG-Job fehlgeschlagen: ${err.message}`);
+            // Setze den Job-Status auf 'failed'
+            try {
+                await client.query(`UPDATE ai_jobs SET status = 'failed' WHERE id = $1`, [jobId]);
+            } catch (updateErr) {
+                console.error('Konnte Job-Status nach Fehler nicht auf FAILED setzen:', updateErr);
+            }
+        }
+        res.status(500).json({ message: 'Fehler bei der Verarbeitung der KI-Anfrage.' });
+    } finally {
+        client.release();
+    }
+};
+
+
+exports.getNotificationCounts = async (req, res) => {
+    const { id: userId, business_partner_id: businessPartnerId } = req.user;
+
+    if (!userId) {
+        return res.status(401).json({ message: 'Authentifizierung erforderlich.' });
+    }
+
+    try {
+        const userRes = await db.query('SELECT last_login_at FROM users WHERE id = $1', [userId]);
+        const lastLogin = userRes.rows[0]?.last_login_at || new Date(0);
+
+        // Wir führen die Zählungen parallel aus
+        const [scrapedNew, aiNew, actionsNew] = await Promise.all([
+            
+            // --- KORREKTUR ---
+            // 1. Zählt 'scraped_content', das NEUER als der letzte Login ist
+            db.query(
+                `SELECT COUNT(sc.id) 
+                 FROM scraped_content sc 
+                 WHERE sc.created_at > $1`, // Statt "NOT EXISTS"
+                [lastLogin]
+            ),
+            
+            // --- KORREKTUR ---
+            // 2. Zählt 'ai_content', das NEUER als der letzte Login ist
+            db.query(
+                `SELECT COUNT(ac.id) 
+                 FROM ai_generated_content ac 
+                 WHERE ac.created_at > $1`, // Statt "NOT EXISTS"
+                [lastLogin]
+            ),
+
+            // 3. Neue 'business_partner_actions' (Diese Logik war bereits korrekt)
+            isValidUUID(businessPartnerId)
+                ? db.query(
+                    `SELECT COUNT(bpa.id) 
+                     FROM business_partner_actions bpa 
+                     WHERE bpa.business_partner_id = $1 AND bpa.created_at > $2`,
+                    [businessPartnerId, lastLogin]
+                  )
+                : Promise.resolve({ rows: [{ count: 0 }] })
+        ]);
+
+        const totalCount = 
+            parseInt(scrapedNew.rows[0].count, 10) +
+            parseInt(aiNew.rows[0].count, 10) +
+            parseInt(actionsNew.rows[0].count, 10);
+
+        res.json({ totalCount: totalCount });
+
+    } catch (err) {
+        console.error('Fehler beim Abrufen der Benachrichtigungszählungen:', err.message);
+        res.status(500).json({ message: 'Serverfehler.' });
     }
 };

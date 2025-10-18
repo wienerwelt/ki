@@ -87,6 +87,8 @@ interface AuthContextType {
   dashboardRefreshKey: number;
   triggerDashboardRefresh: () => void;
   refreshUser: () => Promise<void>;  
+  userTags: string[];
+  refreshUserTags: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -137,6 +139,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [language, setLanguageState] = useState<'de' | 'en'>('de');
   const [configLoaded, setConfigLoaded] = useState(false);
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
+  const [userTags, setUserTags] = useState<string[]>([]);
 
   const triggerDashboardRefresh = () => {
     setDashboardRefreshKey(prevKey => prevKey + 1);
@@ -157,6 +160,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return updatedUser;
     });
   }, []);
+
+const refreshUserTags = useCallback(async () => {
+    if (!user) {
+       setUserTags([]);
+       return;
+    }
+    try {
+        const { data } = await apiClient.get('/api/users/tags');
+        setUserTags(data || []);
+    } catch (error) {
+        console.error('Fehler beim Laden der globalen User-Tags:', error);
+        setUserTags([]);
+    }
+  }, [user]); // Abhängig von `user`  
 
   const fetchBusinessPartnerData = useCallback(async () => {
     if (!user) return;
@@ -214,28 +231,46 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [updateUser]);
 
 
-  useEffect(() => {
+useEffect(() => {
     const bootstrap = async () => {
       setIsLoading(true);
       setConfigLoaded(false);
+      setUserTags([]); // Sicherstellen, dass Tags leer sind
       const token = getStoredToken();
       if (token) {
+        // Schritt 1: User *initial* aus Token laden (wie bisher)
         await initializeFromToken(token);
+        
+        // --- NEU: Schritt 2: Sofort aktuelle Daten holen ---
+        // Ruft /api/users/me auf, um den Score und andere Daten zu aktualisieren
+        // bevor die App als "geladen" gilt.
+        if (getStoredToken()) { // Nur wenn Token noch gültig ist
+             try {
+                 await refreshUser(); // Holt frische User-Daten inkl. Score
+             } catch (refreshError) {
+                  console.error("Fehler beim initialen User-Refresh:", refreshError);
+                  // Optional: Bei Fehler hier ausloggen? logout();
+             }
+        }
+        // --- ENDE NEU ---
+
       }
-      setIsLoading(false);
+      setIsLoading(false); 
     };
     bootstrap();
-  }, [initializeFromToken]);
-  
+  }, [initializeFromToken, refreshUser]); // <-- refreshUser als Abhängigkeit hinzugefügt
+
   useEffect(() => {
-    if (user && !isLoading && !configLoaded) {
-      fetchBusinessPartnerData().then(() => {
-        setConfigLoaded(true);
-      });
-    } else if (!user && !isLoading) {
-      setBusinessPartner(null);
-    }
-  }, [user, isLoading, configLoaded, fetchBusinessPartnerData]);
+     if (user && !isLoading && !configLoaded) {
+       // Lädt BP-Daten und Tags NACHDEM der User (inkl. aktuellem Score) geladen ist
+       Promise.all([fetchBusinessPartnerData(), refreshUserTags()]).then(() => {
+         setConfigLoaded(true);
+       });
+     } else if (!user && !isLoading) {
+       setBusinessPartner(null);
+       setUserTags([]); 
+     }
+  }, [user, isLoading, configLoaded, fetchBusinessPartnerData, refreshUserTags]);
 
   const login = useCallback((token: string, userData: UserPayload) => {
     setStoredToken(token);
@@ -257,6 +292,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setBusinessPartner(null);
     setTokenExp(null);
     setConfigLoaded(false);
+    setUserTags([]);
     posthog.reset();
   };
   
@@ -290,6 +326,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     dashboardRefreshKey,
     triggerDashboardRefresh,    
     refreshUser, 
+    userTags,
+    refreshUserTags,   
   };
 
   return (
