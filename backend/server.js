@@ -1,3 +1,5 @@
+// /var/www/vhosts/mobiliti.at/httpdocs/dashboard/backend/server.js
+
 // Nur laden, wenn die Umgebung NICHT 'production' ist
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
@@ -5,6 +7,10 @@ if (process.env.NODE_ENV !== 'production') {
 
 // --- 1. IMPORTE ---
 const express = require('express');
+const app = express();
+app.set('trust proxy', 1); // <--- Diese Zeile ist von der vorherigen Lösung (wichtig!)
+const PORT = process.env.PORT || 5000;
+
 const cors = require('cors');
 const path = require('path');
 const cookieParser = require('cookie-parser');
@@ -19,6 +25,7 @@ const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
 const { ExpressAdapter } = require('@bull-board/express');
 
 // KORREKTUR 1: Importiere ALLE benötigten Queues direkt aus dem Service
+// (Dieser Teil war bei dir schon korrekt)
 const { 
   aiContentQueue, 
   scrapeQueue, 
@@ -28,7 +35,6 @@ const {
 } = require('./services/queueService');
 
 // Routen (unverändert)
-// ... (alle Ihre Routen-Imports) ...
 const authRoutes = require('./routes/authRoutes');
 const sessionRoutes = require('./routes/sessionRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
@@ -67,21 +73,16 @@ const adminFundingRoutes = require('./routes/adminFundingRoutes');
 const fundingRoutes = require('./routes/fundingRoutes');
 
 
-// --- 2. INITIALISIERUNG & KONFIGURATION ---
-const app = express();
-const PORT = process.env.PORT || 5000;
-
 // Bull Board Adapter Setup
 const serverAdapter = new ExpressAdapter();
 serverAdapter.setBasePath('/api/admin/jobs');
 
-// KORREKTUR 2: Diese lokalen Deklarationen werden entfernt, da wir die Queues jetzt importieren
-// const qAi     = new Queue('ai-content-generation',     { connection });
-// const qScrape = new Queue('scrape-content-generation', { connection });
-// const qEmails = new Queue('emails',                    { connection });
+// KORREKTUR 2: (war bei dir schon korrekt)
+// Lokale Deklarationen entfernt, da wir importierte Queues nutzen.
 
 createBullBoard({
-  // KORREKTUR 3: Verwende die direkt importierten Queue-Instanzen
+  // KORREKTUR 3: (war bei dir schon korrekt)
+  // Verwende die direkt importierten Queue-Instanzen
   queues: [
     new BullMQAdapter(aiContentQueue),
     new BullMQAdapter(scrapeQueue),
@@ -94,7 +95,7 @@ createBullBoard({
 
 
 // --- 3. MIDDLEWARE ---
-// ... (Middleware-Code unverändert) ...
+// (Middleware-Code unverändert)
 const allowedOrigins = ['http://localhost:5173', 'https://dashboard.mobiliti.at'];
 app.use(cors({
   origin: allowedOrigins,
@@ -108,12 +109,11 @@ app.use((req, res, next) => { console.log(`[${req.method}] ${req.originalUrl}`);
 
 
 // --- 4. ROUTEN ---
-// ... (Routen-Code unverändert) ...
+// (Routen-Code unverändert)
 app.use('/api/admin/jobs', bullAuth);
 app.use('/api/admin/jobs', serverAdapter.getRouter());
 
-
-// REST-API
+// ... (alle deine app.use(...) Routen) ...
 app.use('/api/auth', authRoutes);
 app.use('/api/session', sessionRoutes);
 app.use('/api/users', userRoutes);
@@ -151,7 +151,7 @@ app.use('/api/newsletter', newsletterRoutes);
 app.use('/api/surveys', surveyRoutes);
 app.use('/api/funding', fundingRoutes);
 
-// Debug
+// Debug (unverändert)
 app.get('/api/debug/db-inspector', async (req, res) => {
   try {
     const dbNameResult = await db.query('SELECT current_database();');
@@ -167,7 +167,6 @@ app.get('/api/debug/db-inspector', async (req, res) => {
     res.status(500).json({ error: "Fehler im DB-Inspektor", message: err.message });
   }
 });
-
 app.get('/api/debug/users', async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM users');
@@ -179,35 +178,83 @@ app.get('/api/debug/users', async (req, res) => {
 
 
 // --- 5. FRONTEND & FEHLERBEHANDLUNG ---
+// (Unverändert)
 app.use('/api/*', (req, res) => { res.status(404).json({ error: 'API Endpoint Not Found' }); });
 
 const frontendDistPath = path.resolve(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(frontendDistPath));
 app.get('*', (req, res) => { res.sendFile(path.join(frontendDistPath, 'index.html')); });
 
-// Fehler-Handler (letzte Middleware)
 app.use((err, req, res, next) => {
   console.error('UNHANDLED ERROR:', err);
   res.status(500).json({ message: err.message, stack: err.stack, error: err });
 });
 
 
-// --- 6. SERVERSTART ---
-// ... (Serverstart-Logik unverändert) ...
+// --- 6. SERVERSTART (MODIFIZIERT) ---
+
+// KORREKTUR 4: Neue Funktion zum Leeren aller Queues
+/**
+ * Löscht alle Jobs (wartend, aktiv, fehlgeschlagen, etc.)
+ * aus allen Queues. BullMQ 'obliterate()' ist der gründlichste Weg,
+ * um "Job-Leichen" zu entfernen.
+ */
+async function clearAllQueuesOnStartup() {
+  console.log('[JobManager] Lösche alle alten Jobs aus den Queues vor dem Neustart...');
+  
+  // Wir verwenden die bereits oben importierten Queues
+  const allQueues = [
+    aiContentQueue,
+    scrapeQueue,
+    emailQueue,
+    dataUpdatesQueue,
+    fundingQueue,
+  ];
+
+  try {
+    // Führe 'obliterate' für alle Queues parallel aus
+    const promises = allQueues.map(queue => 
+      queue.obliterate({ force: true })
+    );
+    await Promise.all(promises);
+    
+    console.log('[JobManager] Alle Queues erfolgreich geleert.');
+  } catch (err) {
+    console.error('[JobManager] Kritisches Problem beim Leeren der Queues:', err);
+    // Wir stoppen hier nicht, aber loggen den Fehler deutlich
+  }
+}
+
+// KORREKTUR 5: Die Startlogik wird 'async', um auf das Leeren zu warten
+async function startServer() {
+  try {
+    // 1. Mit DB verbinden
+    await db.query('SELECT 1');
+    console.log('PostgreSQL verbunden.');
+
+    // 2. ZUERST alle alten Redis-Jobs löschen
+    await clearAllQueuesOnStartup();
+
+    // 3. DANACH die sauberen Jobs aus der DB neu synchronisieren
+    console.log('[JobManager] Starte Synchronisierung der DB-Schedules mit den (jetzt leeren) Queues...');
+    // (Diese Funktionen müssen nicht unbedingt async sein, aber wir warten zur Sicherheit)
+    await jobManager.synchronizeSchedulesFromDB();
+    await jobManager.setupAccountIntelligenceJob(); 
+    
+    // 4. Den Express-Server starten
+    app.listen(PORT, () => {
+      console.log(`Server läuft auf Port ${PORT}`);
+    });
+
+  } catch (err) {
+    console.error('Kritischer Fehler beim Serverstart (PostgreSQL oder Job-Sync):', err);
+    process.exit(1); // Bei kritischem Startfehler beenden
+  }
+}
+
 if (require.main === module) {
-  db.query('SELECT 1')
-    .then(() => {
-      console.log('PostgreSQL verbunden.');
-      // Schedules aus der DB synchronisieren
-      jobManager.synchronizeSchedulesFromDB();
-      // NEU: Fest definierte System-Jobs einrichten
-      jobManager.setupAccountIntelligenceJob(); 
-      
-      app.listen(PORT, () => {
-        console.log(`Server läuft auf Port ${PORT}`);
-      });
-    })
-    .catch(err => console.error('Fehler bei der PostgreSQL-Verbindung:', err));
+  // Starte die neue async-Startfunktion
+  startServer();
 }
 
 module.exports = app;

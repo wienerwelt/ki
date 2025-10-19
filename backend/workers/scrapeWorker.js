@@ -1,5 +1,7 @@
 // backend/workers/scrapeWorker.js
-require('dotenv').config();
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 process.title = 'scrapeWorker';
 const workerName = 'scrapeWorker'; 
 

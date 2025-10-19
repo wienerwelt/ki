@@ -1,5 +1,11 @@
 // backend/workers/emailWorker.js
-require('dotenv').config();
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
+
+console.log('[DEBUG emailWorker] REDIS_PORT ist:', process.env.REDIS_PORT);
+console.log('[DEBUG emailWorker] NODE_ENV ist:', process.env.NODE_ENV);
+
 process.title = 'emailWorker';
 const workerName = 'emailWorker';
 

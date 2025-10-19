@@ -1,4 +1,7 @@
-require('dotenv').config();
+// backend/workers/aiWorker.js
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 process.title = 'aiWorker';
 const workerName = 'aiWorker'; 
 

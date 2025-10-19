@@ -11,7 +11,7 @@ import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import CloseIcon from '@mui/icons-material/Close';
 import { useSnackbar } from '../context/SnackbarContext';
-import zxcvbn from 'zxcvbn'; // Passwort-Stärke-Checker
+import zxcvbn from 'zxcvbn';
 
 const TermsPage = React.lazy(() => import('./TermsPage'));
 const PrivacyPage = React.lazy(() => import('./PrivacyPage'));
@@ -404,15 +404,16 @@ const LoginPage: React.FC<LoginPageProps> = ({ isRegister = false }) => {
               {loading ? <CircularProgress size={24} color="inherit" /> : (isRegister ? 'Konto erstellen' : 'Anmelden')}
             </Button>
 
-            {/* Login-Extras */}
+            {/* Login-Extras (KORRIGIERTES, HARMONISIERTES LAYOUT) */}
             {!isRegister && (
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', mt: 1, gap: 0.5 }}>
                 <Link component={RouterLink} to="/forgot-password" variant="body2">
                   Passwort vergessen?
                 </Link>
-                <Button variant="text" size="small" onClick={() => { setResendEmail(''); setResendOpen(true); }}>
+                {/* Button wurde durch Link ersetzt für konsistentes Aussehen */}
+                <Link component="button" type="button" variant="body2" onClick={() => { setResendEmail(''); setResendOpen(true); }} sx={{ textAlign: 'left', cursor: 'pointer' }}>
                   Bestätigungs-Mail erneut senden
-                </Button>
+                </Link>
               </Box>
             )}
 
@@ -423,9 +424,15 @@ const LoginPage: React.FC<LoginPageProps> = ({ isRegister = false }) => {
             >
               {isRegister ? 'Bereits ein Konto? Anmelden' : 'Noch kein Konto? Registrieren'}
             </Button>
-          </Box>
+          </Box>       
         </Box>
+          <Typography variant="body2" align="center" sx={{ mt: 4 }}>
+            <Link href="https://www.mobiliti.at" target="_blank" rel="noopener noreferrer" underline="hover">
+              mobiliti.at
+            </Link> Ihr smarter Überblick.
+          </Typography>           
       </Container>
+      
 
       {/* Rechtetexte-Dialog */}
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} scroll="paper" fullWidth maxWidth="md">
