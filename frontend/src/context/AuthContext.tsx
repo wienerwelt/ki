@@ -175,27 +175,29 @@ const refreshUserTags = useCallback(async () => {
     }
   }, [user]); // Abhängig von `user`  
 
-  const fetchBusinessPartnerData = useCallback(async () => {
+const fetchBusinessPartnerData = useCallback(async () => {
     if (!user) return;
 
     try {
+      // ALT: const { businessPartner: bp, user: freshUserData } = response.data;
+      // NEU: 'freshUserData' wird nicht mehr deklariert
       const response = await apiClient.get('/api/data/dashboard/config');
-      const { businessPartner: bp, user: freshUserData } = response.data;
+      const { businessPartner: bp } = response.data; // Nur 'bp' extrahieren
       
       setBusinessPartner(bp || null);
 
+      // Der problematische Block (der die Warnung auslöste) bleibt auskommentiert/entfernt
+      /*
       if (freshUserData) {
-        updateUser({
-          regions: freshUserData.regions || [],
-          preferred_theme: freshUserData.preferred_theme,
-          preferred_language: freshUserData.preferred_language,
-        });
+        updateUser({ ... });
       }
+      */
+
     } catch (error) {
       console.error('Fehler beim Laden der Dashboard-Konfiguration:', error);
       setBusinessPartner(null);
     }
-  }, [user, updateUser]);
+  }, [user, updateUser]); // 'updateUser' kann hier bleiben, es ist in Ordnung
 
 
   const initializeFromToken = useCallback(async (token: string) => {

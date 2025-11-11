@@ -82,9 +82,14 @@ const fetchAndStoreOilPrice = async () => {
 };
 
 
+/**
+ * === KORRIGIERTE FUNKTION ===
+ * Zurück auf MONATLICHE Daten (FM.M...), da der tägliche Endpunkt (FM.D...) 
+ * einen 404-Fehler verursacht.
+ */
 const fetchAndStoreEuriborRate = async () => {
     try {
-        // Zurück zur stabilen, monatlichen API der EZB
+        // Stabile, monatliche API der EZB
         const url = `https://data-api.ecb.europa.eu/service/data/FM/M.U2.EUR.RT.MM.EURIBOR3MD_.HSTA?lastNObservations=1&detail=dataonly&format=jsondata`;
         
         const response = await axios.get(url, { headers: { 'Accept': 'application/json' } });
@@ -110,14 +115,23 @@ const fetchAndStoreEuriborRate = async () => {
         const lastObservationValue = series.observations[lastObservationIndex][0];
 
         const dateDimension = response.data.structure.dimensions.observation.find(dim => dim.id === 'TIME_PERIOD');
-        const lastDate = dateDimension.values[lastObservationIndex].name; // z.B. "2025-08"
+        // KORREKTUR: Wir verwenden .name (z.B. "2025-08") für monatliche Daten
+        const lastDateStr = dateDimension.values[lastObservationIndex].name; 
+
+        // KORREKTUR: Parsen des Monatsdatums (z.B. "2025-08")
+        const [year, month] = lastDateStr.split('-').map(Number);
+        // Wir setzen den Timestamp auf den letzten Tag des Monats (UTC)
+        const timestamp = new Date(Date.UTC(year, month, 0)); 
+
+        if (isNaN(timestamp.getTime())) {
+            throw new Error(`Ungültiges Datumsformat von der EZB erhalten: ${lastDateStr}`);
+        }
 
         await upsertIndicator({
             name: 'EURIBOR_3M',
             value: lastObservationValue,
             unit: '%',
-            // Wir nehmen den ersten Tag des Monats für den Zeitstempel
-            timestamp: new Date(lastDate), 
+            timestamp: timestamp, // Monats-Timestamp
             source: 'ecb.europa.eu'
         });
 
@@ -146,8 +160,6 @@ const fetchAndStoreKVLPI = async () => {
             throw new Error('Der "KVLPI gesamt" Indikator-Block konnte auf der Webseite nicht gefunden werden.');
         }
 
-        // KORREKTUR 1: Genauerer Selektor, um wirklich nur den EINEN korrekten Block zu finden.
-        // Wir nehmen ".key-indicators__item" als eindeutigen Wrapper für einen einzelnen Indikator.
         const indicatorBlock = headlineSpan.closest('.key-indicators__item');
 
         if (indicatorBlock.length === 0) {
@@ -163,13 +175,17 @@ const fetchAndStoreKVLPI = async () => {
             'Jänner': 0, 'Februar': 1, 'März': 2, 'April': 3, 'Mai': 4, 'Juni': 5,
             'Juli': 6, 'August': 7, 'September': 8, 'Oktober': 9, 'November': 10, 'Dezember': 11
         };
-        const [monthName, year] = dateStr.split(' ');
-        const monthIndex = monthMap[monthName];
+        const [monthName, yearStr] = dateStr.split(' ');
+        const monthIndex = monthMap[monthName]; // 0-basiert (z.B. Jänner = 0)
+        const year = parseInt(yearStr, 10);
 
-        if (monthIndex === undefined || !year) {
+
+        if (monthIndex === undefined || isNaN(year)) {
              throw new Error(`Datum "${dateStr}" konnte nicht verarbeitet werden.`);
         }
-        const timestamp = new Date(year, monthIndex, 1);
+        
+        // Letzten Tag des Monats (UTC) ermitteln
+        const timestamp = new Date(Date.UTC(year, monthIndex + 1, 0));
 
         if (isNaN(value)) {
             throw new Error(`Gelesener KVLPI-Wert "${valueStr}" ist keine gültige Zahl.`);
@@ -178,9 +194,8 @@ const fetchAndStoreKVLPI = async () => {
         await upsertIndicator({
             name: 'KVLPI_GESAMT',
             value: value,
-            // KORREKTUR 2: Den 'unit'-Text kürzen, damit er in die DB-Spalte (varchar(20)) passt.
             unit: 'Index (Statistik.at)',
-            timestamp: timestamp,
+            timestamp: timestamp, 
             source: 'statistik.at',
             countryCode: 'AT'
         });
@@ -195,20 +210,15 @@ const fetchAndStoreCO2Price = async () => {
     try {
         const url = 'https://tradingeconomics.com/commodity/carbon';
 
-        // 1. Lade den HTML-Inhalt der Webseite
         const { data: html } = await axios.get(url, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36'
             }
         });
 
-        // 2. Parse das HTML mit Cheerio
         const $ = cheerio.load(html);
 
-        // 3. Finde den Preis und die Einheit im HTML
-        // Der Preis steht in einem Element mit der ID "p"
         const priceStr = $('#p').text().trim();
-        // Die Einheit steht direkt daneben im Element mit der ID "unit"
         const unitStr = $('#unit').text().trim();
 
         const price = parseFloat(priceStr);
@@ -217,14 +227,13 @@ const fetchAndStoreCO2Price = async () => {
             throw new Error(`Gelesener CO2-Preis "${priceStr}" von TradingEconomics ist keine gültige Zahl.`);
         }
 
-        // 4. Speichere die Daten
         await upsertIndicator({
             name: 'CO2_PRICE',
             value: price,
-            unit: unitStr || 'EUR/tCO2', // Nutze die gelesene Einheit oder einen Fallback
-            timestamp: new Date(), // Wir nehmen das aktuelle Datum
-            source: 'tradingeconomics.com', // Die neue Quelle!
-            countryCode: null // EU-weiter Preis
+            unit: unitStr || 'EUR/tCO2',
+            timestamp: new Date(),
+            source: 'tradingeconomics.com',
+            countryCode: null
         });
 
     } catch (error) {
@@ -233,7 +242,7 @@ const fetchAndStoreCO2Price = async () => {
 };
 
 
-// Neue Hilfsfunktion, um Statistiken zu speichern (ähnlich wie upsertIndicator)
+// Die 'upsertStatistic' Funktion bleibt unverändert
 const upsertStatistic = async (client, statistic) => {
     const {
         country_code, statistic_type, statistic_subtype, time_period,
@@ -267,7 +276,6 @@ const fetchAndStoreCarRegistrationsDE = async () => {
     console.log('[data-update] Starte Abruf der KFZ-Neuzulassungen für Deutschland (KBA)...');
 
     const today = new Date();
-    // Target the previous month consistently
     const targetDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
     const year = targetDate.getFullYear();
     const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
@@ -298,11 +306,10 @@ const fetchAndStoreCarRegistrationsDE = async () => {
             const [mon, yearPart] = parts;
             const monthMap = { 'Jan': 0, 'Feb': 1, 'Mär': 2, 'Apr': 3, 'Mai': 4, 'Jun': 5, 'Jul': 6, 'Aug': 7, 'Sep': 8, 'Okt': 9, 'Nov': 10, 'Dez': 11 };
             const monthIndex = monthMap[mon];
-            const fullYear = parseInt(`20${yearPart}`, 10); // Assume 21st century
+            const fullYear = parseInt(`20${yearPart}`, 10);
 
             if (monthIndex === undefined || isNaN(fullYear)) return null;
 
-            // --- KORREKTUR: Verwende die gleiche Logik wie in der AT-Funktion ---
             // Erstellt ein Datum für den LETZTEN Tag des Monats in UTC
             return new Date(Date.UTC(fullYear, monthIndex + 1, 0));
         };
@@ -347,7 +354,6 @@ const fetchAndStoreCarRegistrationsDE = async () => {
             console.warn(`[data-update] KBA-Daten für ${year}-${month} noch nicht verfügbar (404). Überspringe...`);
             return;
         }
-        // Log the actual error for better debugging
         console.error(`[data-update] Fehler beim Verarbeiten der KBA-Daten für ${year}-${month}:`, error);
         throw new Error(`Update der KFZ-Neuzulassungen (DE) fehlgeschlagen: ${error.message}`);
     } finally {
@@ -357,7 +363,6 @@ const fetchAndStoreCarRegistrationsDE = async () => {
 
 
 
-// ERSETZEN Sie die alte 'fetchAndStoreCarRegistrations'-Funktion komplett mit dieser neuen Version:
 const fetchAndStoreCarRegistrations = async () => {
     console.log('[data-update] Starte Abruf der KFZ-Neuzulassungen für Österreich (Statistik Austria ODS)...');
     
@@ -386,8 +391,7 @@ const fetchAndStoreCarRegistrations = async () => {
                 continue;
             }
 
-            // KORREKTUR: Erstellt ein timezone-sicheres Datum für den LETZTEN Tag des Monats.
-            // new Date(Date.UTC(year, monthIndex + 1, 0)) ist die korrekte Methode hierfür.
+            // Erstellt ein timezone-sicheres Datum für den LETZTEN Tag des Monats.
             const time_period = new Date(Date.UTC(year, monthIndex + 1, 0));
             console.log(`[data-update] Verarbeite Tabellenblatt "${sheetName}" für den Zeitraum ${time_period.toISOString().split('T')[0]}`);
 
@@ -460,12 +464,15 @@ const fetchAndStoreCarRegistrations = async () => {
 };
 
 
+// KORREKTUR: Euribor-Funktion (fetchAndStoreEuriborRate) 
+//            wurde aus den täglichen Jobs entfernt.
 const updateDailyIndicators = async () => {
     console.log('[data-update] Starte die Aktualisierung der TÄGLICHEN Wirtschaftsdaten...');
     const results = await Promise.allSettled([
         fetchAndStoreCurrencyRates(),
         fetchAndStoreOilPrice(),
-        fetchAndStoreCO2Price(),
+        // fetchAndStoreCO2Price(),
+        // fetchAndStoreEuriborRate(), // Entfernt
     ]);
 
     const failures = results.filter(result => result.status === 'rejected');
@@ -475,7 +482,6 @@ const updateDailyIndicators = async () => {
     }
     console.log('[data-update] Aktualisierung der täglichen Wirtschaftsdaten erfolgreich abgeschlossen.');
 };
-
 
 const updateMonthlyIndicators = async () => {
     console.log('[data-update] Starte die Aktualisierung der MONATLICHEN Wirtschaftsdaten...');

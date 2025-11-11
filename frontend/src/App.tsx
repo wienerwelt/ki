@@ -55,6 +55,9 @@ import AdminBpAccountsPage from './pages/AdminBpAccountsPage';
 import AdminBpCompetitorsPage from './pages/AdminBpCompetitorsPage';
 import AdminBpTrackedArticlesPage from './pages/AdminBpTrackedArticlesPage';
 
+// Import der neuen Seite
+import AdminLegalMonitorPage from './pages/AdminLegalMonitorPage';
+
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
   const { user, isLoading } = useAuth();
@@ -169,6 +172,9 @@ function App() {
               <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
               <Route path="/admin/actions" element={<AdminBpActionsPage />} />
               <Route path="/admin/surveys" element={<AdminSurveysPage />} />
+              
+              {/* ✅ HIERHIN VERSCHOBEN */}
+              <Route path="admin/legal-monitor" element={<AdminLegalMonitorPage />} />
             </Route>
 
             {/* Routen nur für Admins */}
@@ -188,6 +194,11 @@ function App() {
               <Route path="categories" element={<AdminCategoriesPage />} />
               <Route path="tags" element={<AdminTagsPage />} />
               <Route path="monitor" element={<AdminMonitorPage />} />
+              
+              {/* 🛑 VON HIER ENTFERNT
+              <Route path="legal-monitor" element={<AdminLegalMonitorPage />} />
+              */}
+
               <Route path="statistics" element={<AdminStatisticsPage />} />
               <Route path="advertisements" element={<AdminAdvertisementsPage />} />
               <Route path="cronjobs" element={<AdminCronjobsPage />} />

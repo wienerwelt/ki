@@ -35,6 +35,7 @@ import PollIcon from '@mui/icons-material/Poll';
 import TuneIcon from '@mui/icons-material/Tune';
 import InsightsIcon from '@mui/icons-material/Insights';
 import CloseIcon from '@mui/icons-material/Close';
+import GavelIcon from '@mui/icons-material/Gavel'; // ✅ NEU: Icon importiert
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -53,6 +54,7 @@ interface DashboardLayoutProps {
 }
 
 const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
+    // ... (Hooks und States bleiben unverändert)
     const { 
       user, 
       businessPartner, 
@@ -78,6 +80,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
     const token = localStorage.getItem('jwt_token');
 
+    // ... (Alle Handler: fetchAd, handleCloseAd, handleMenu, handleClose, handleProfile, toggleDrawer, handleLogout, handleRemoveTag, handleSearchOpen/Close, handleBriefingOpen/Close, dashboardTitle bleiben unverändert)
     const fetchAd = useCallback(async () => {
         try {
             const { data } = await apiClient.get('/api/data/active-advertisement');
@@ -157,6 +160,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
     const dashboardTitle = businessPartner?.dashboard_title || businessPartner?.name || 'Fleet KI-Dashboard';
 
+
     const drawerContent = (
         <Box
             sx={{ width: 250 }}
@@ -191,6 +195,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItem button component={RouterLink} to="/admin/widget-types"><WidgetsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.widgetTypes')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/bp-widget-access"><SubscriptionsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.subscriptions')} /></ListItem>
                             
+                            {/* ✅ NEUER MENÜPUNKT HINZUGEFÜGT */}
+                            <ListItem button component={RouterLink} to="/admin/legal-monitor"><GavelIcon sx={{ mr: 2 }} /><ListItemText primary="Monitor-Verwaltung" /></ListItem>
+
                             <ListItem button component={RouterLink} to="/admin/actions"><StarsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.manageActions')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/advertisements"><CampaignIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.advertising')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/surveys"><PollIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.surveys')} /></ListItem>
@@ -226,6 +233,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 }}
                 color="primary"
             >
+                {/* ... (Rest der AppBar: AdBanner, Toolbar, Logo, Titel, SearchBar, UserMenu etc. bleibt unverändert) ... */}
                 {isAdVisible && ad && (<AdvertisementBanner content={ad.content} onClose={handleCloseAd} />)}
                 <Toolbar>
                     <IconButton color="inherit" aria-label="open drawer" onClick={toggleDrawer(true)} edge="start" sx={{ mr: 2 }}><MenuIcon /></IconButton>
@@ -373,6 +381,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 {children}
             </Box>
 
+            {/* ... (Alle Dialogs: Search, Briefing, HistoryModal bleiben unverändert) ... */}
             <Dialog
                 open={searchOpen}
                 onClose={handleSearchClose}

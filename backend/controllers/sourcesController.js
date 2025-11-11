@@ -73,6 +73,26 @@ exports.getPendingSourcesForVote = async (req, res) => {
     }
 };
 
+
+exports.getSourceCategories = async (req, res) => {
+    try {
+        const query = `
+            SELECT DISTINCT 
+                c.id, c.name, c.name_lang
+            FROM categories c
+            JOIN sources s ON c.id = s.category_id
+            WHERE s.status = 'approved'
+            ORDER BY c.name_lang ASC, c.name ASC;
+        `;
+        const result = await db.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching source categories:', err.message);
+        res.status(500).send('Server error');
+    }
+};
+
+
 // @desc    Eine einzelne Quelle anhand der ID abrufen
 // @route   GET /api/sources/:id
 // @access  Public

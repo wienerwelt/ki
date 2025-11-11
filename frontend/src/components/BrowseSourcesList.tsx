@@ -35,15 +35,14 @@ export const BrowseSourcesList: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
 
-    useEffect(() => {
+useEffect(() => {
         const fetchData = async () => {
             setLoading(true);
             setError(null);
             try {
-                const token = localStorage.getItem('jwt_token');
                 const [sourcesRes, categoriesRes] = await Promise.all([
-                    apiClient.get('/api/sources', { headers: { 'x-auth-token': token } }),
-                    apiClient.get('/api/admin/categories', { headers: { 'x-auth-token': token } })
+                    apiClient.get('/api/sources'),
+                    apiClient.get('/api/sources/categories')
                 ]);
                 setSources(sourcesRes.data);
                 setAllCategories(categoriesRes.data);

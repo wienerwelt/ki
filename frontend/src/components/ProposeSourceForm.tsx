@@ -26,8 +26,9 @@ export const ProposeSourceForm: React.FC<ProposeSourceFormProps> = ({ onSuccess 
     useEffect(() => {
         const fetchCategories = async () => {
             try {
-                const token = localStorage.getItem('jwt_token');
-                const response = await apiClient.get('/api/admin/categories', { headers: { 'x-auth-token': token } });
+                // ✅ KORREKTUR: Der Endpunkt wurde von '/api/admin/categories' geändert
+                // und der unnötige 'x-auth-token' Header wurde entfernt.
+                const response = await apiClient.get('/api/sources/categories');
                 setAllCategories(response.data);
             } catch (err) {
                 console.error("Fehler beim Laden der Kategorien:", err);
@@ -43,7 +44,9 @@ export const ProposeSourceForm: React.FC<ProposeSourceFormProps> = ({ onSuccess 
         setSuccess(null);
 
         try {
-            const token = localStorage.getItem('jwt_token');
+            // Der 'token'-Header ist hier (bei der POST-Anfrage) korrekt, 
+            // da die Route /api/sources (POST) Auth erfordert
+            const token = localStorage.getItem('jwt_token'); 
             const payload = {
                 url,
                 description,

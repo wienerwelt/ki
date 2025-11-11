@@ -7,7 +7,7 @@ const {
     getAllAIContent, 
     updateAIContent, 
     deleteAIContent,
-    deleteMultipleAIContent // NEU: Controller importieren
+    deleteMultipleAIContent // Controller bleibt derselbe
 } = require('../controllers/adminAIContentController');
 
 router.use(adminAuth);
@@ -15,8 +15,6 @@ router.use(adminAuth);
 router.get('/', getAllAIContent);
 router.put('/:id', updateAIContent);
 router.delete('/:id', deleteAIContent);
-
-// NEU: Route für die Mehrfach-Löschung
-router.delete('/', deleteMultipleAIContent);
+router.post('/delete-multiple', deleteMultipleAIContent);
 
 module.exports = router;

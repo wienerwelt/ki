@@ -71,6 +71,7 @@ const newsletterRoutes = require('./routes/newsletterRoutes');
 const surveyRoutes = require('./routes/surveyRoutes');
 const adminFundingRoutes = require('./routes/adminFundingRoutes'); 
 const fundingRoutes = require('./routes/fundingRoutes');
+const adminLegalMonitorRoutes = require('./routes/adminLegalMonitorRoutes');
 
 
 // Bull Board Adapter Setup
@@ -150,6 +151,7 @@ app.use('/api/files', fileRoutes);
 app.use('/api/newsletter', newsletterRoutes);
 app.use('/api/surveys', surveyRoutes);
 app.use('/api/funding', fundingRoutes);
+app.use('/api/admin/legal-monitor', adminLegalMonitorRoutes);
 
 // Debug (unverändert)
 app.get('/api/debug/db-inspector', async (req, res) => {

@@ -1,3 +1,5 @@
+// frontend/src/widgets/BusinessPartnerInfoWidget.tsx
+
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
@@ -21,6 +23,8 @@ import {
 import { BusinessPartnerInfoWidgetProps as BaseWidgetProps } from '../../types/dashboard.types';
 import WidgetPaper from './WidgetPaper';
 import apiClient from '../../apiClient';
+// ✅ NEU: useAuth importieren, um die Benutzerrolle abzurufen
+import { useAuth } from '../../context/AuthContext'; 
 
 import LanguageIcon from '@mui/icons-material/Language';
 import EmailIcon from '@mui/icons-material/Email';
@@ -134,6 +138,15 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
   const [loadingContent, setLoadingContent] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
 
+  // ✅ NEU: Benutzerdaten (inkl. Rolle) aus dem AuthContext holen
+  const { user } = useAuth();
+  const userRole = user?.role;
+  const canViewAdminInfo = userRole === 'admin' || userRole === 'assistent';
+
+  // ✅ NEU: Heutiges Datum (ohne Uhrzeit) für den Vergangenheits-Check
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   const bpId = businessPartner?.id;
 
   const qs = (params: Record<string, string>) =>
@@ -146,27 +159,39 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
     try {
       const newsUrl   = `/api/data/bp-scraped-content${qs({ businessPartnerId: bpId, category: 'news' })}`;
       const eventsUrl = `/api/data/bp-scraped-content${qs({ businessPartnerId: bpId, category: 'events' })}`;
+      
+      // ✅ NEU: Stats-URL nur aufrufen, wenn der User die Berechtigung hat
       const statsUrl  = `/api/data/user-stats/${encodeURIComponent(bpId)}`;
-
-      const [newsRes, eventsRes, statsRes] = await Promise.all([
+      
+      const promises = [
         apiClient.get(newsUrl),
         apiClient.get(eventsUrl),
-        apiClient.get(statsUrl),
-      ]);
+      ];
+
+      if (canViewAdminInfo) {
+          promises.push(apiClient.get(statsUrl));
+      }
+
+      const [newsRes, eventsRes, statsRes] = await Promise.all(promises);
 
       const newsData = (newsRes as any)?.data?.data ?? [];
       const eventsData = (eventsRes as any)?.data?.data ?? [];
+      // ✅ NEU: Stats-Daten nur setzen, wenn sie abgefragt wurden
       const statsData = (statsRes as any)?.data ?? null;
 
       setBpNews(Array.isArray(newsData) ? newsData : []);
       setBpEvents(Array.isArray(eventsData) ? eventsData : []);
-      setUserStats(statsData);
+      if (statsData) {
+        setUserStats(statsData);
+      }
+      
     } catch (err: any) {
       setContentError(err?.response?.data?.message || 'Fehler beim Laden der Widget-Inhalte.');
     } finally {
       setLoadingContent(false);
     }
-  }, [bpId]);
+  // ✅ NEU: canViewAdminInfo als Abhängigkeit hinzugefügt
+  }, [bpId, canViewAdminInfo]); 
 
   useEffect(() => {
     if (bpId) fetchWidgetData();
@@ -375,35 +400,45 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                 </Typography>
                 <List dense>
                   {bpEvents.length > 0 ? (
-                    bpEvents.map((item, index) => (
-                      <React.Fragment key={item.id}>
-                        <ListItem>
-                          <Box sx={{ mr: 2, display: 'flex', alignItems: 'center' }}>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              href={item.original_url}
-                              target="_blank"
-                              onMouseDown={(e) => e.stopPropagation()}
-                            >
-                              Anmelden
-                            </Button>
-                          </Box>
-                          <ListItemText
-                            primary={<Typography variant="body2">{item.title}</Typography>}
-                            secondaryTypographyProps={{ component: 'div' }}
-                            secondary={
-                              <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
-                                <Typography variant="caption" color="text.secondary">
-                                  {formatDate(item.event_date)}
-                                </Typography>
-                              </Box>
-                            }
-                          />
-                        </ListItem>
-                        {index < bpEvents.length - 1 && <Divider component="li" variant="inset" />}
-                      </React.Fragment>
-                    ))
+                    bpEvents.map((item, index) => {
+                      // ✅ NEU: Prüfen, ob das Event in der Vergangenheit liegt
+                      const eventDate = item.event_date ? new Date(item.event_date) : null;
+                      const isPast = eventDate ? eventDate < today : false;
+                    
+                      return (
+                        <React.Fragment key={item.id}>
+                          <ListItem>
+                            <Box sx={{ mr: 2, display: 'flex', alignItems: 'center' }}>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                href={item.original_url}
+                                target="_blank"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                // ✅ NEU: Button für vergangene Events deaktivieren
+                                disabled={isPast}
+                              >
+                                Anmelden
+                              </Button>
+                            </Box>
+                            <ListItemText
+                              // ✅ NEU: Styling anwenden, wenn Event vergangen ist
+                              sx={isPast ? { color: 'text.disabled' } : undefined}
+                              primary={<Typography variant="body2">{item.title}</Typography>}
+                              secondaryTypographyProps={{ component: 'div' }}
+                              secondary={
+                                <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
+                                  <Typography variant="caption" color="inherit">
+                                    {formatDate(item.event_date)}
+                                  </Typography>
+                                </Box>
+                              }
+                            />
+                          </ListItem>
+                          {index < bpEvents.length - 1 && <Divider component="li" variant="inset" />}
+                        </React.Fragment>
+                      );
+                    })
                   ) : (
                     <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>
                       Keine Events gefunden.
@@ -413,32 +448,35 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
               </>
             )}
 
-            <Box sx={{ p: 2, pt: 2 }}>
-              <Divider sx={{ mb: 2 }} />
-              <Box display="flex" alignItems="center" mb={1}>
-                <DateRangeIcon color="action" sx={{ mr: 1.5, fontSize: '1rem' }} />
-                <Typography variant="caption">Abo bis: {formatDate(businessPartner.subscription_end_date)}</Typography>
-              </Box>
-              {userStats && (
+            {/* ✅ NEU: Den gesamten Block nur für Admin/Assistent anzeigen */}
+            {canViewAdminInfo && (
+              <Box sx={{ p: 2, pt: 2 }}>
+                <Divider sx={{ mb: 2 }} />
                 <Box display="flex" alignItems="center" mb={1}>
-                  <GroupIcon color="action" sx={{ mr: 1.5, fontSize: '1rem' }} />
-                  <Typography variant="caption">
-                    Nutzer: <strong>{userStats.active}</strong> aktiv / <strong>{userStats.inactive}</strong> inaktiv
-                  </Typography>
+                  <DateRangeIcon color="action" sx={{ mr: 1.5, fontSize: '1rem' }} />
+                  <Typography variant="caption">Abo bis: {formatDate(businessPartner.subscription_end_date)}</Typography>
                 </Box>
-              )}
-              {memberLevels && (
-                <Box display="flex" alignItems="center" mb={1}>
-                  <Groups3Icon color="action" sx={{ mr: 1.5, fontSize: '1rem' }} />
-                  <Typography variant="caption">Nutzergruppe: {memberLevels}</Typography>
+                {userStats && (
+                  <Box display="flex" alignItems="center" mb={1}>
+                    <GroupIcon color="action" sx={{ mr: 1.5, fontSize: '1rem' }} />
+                    <Typography variant="caption">
+                      Nutzer: <strong>{userStats.active}</strong> aktiv / <strong>{userStats.inactive}</strong> inaktiv
+                    </Typography>
+                  </Box>
+                )}
+                {memberLevels && (
+                  <Box display="flex" alignItems="center" mb={1}>
+                    <Groups3Icon color="action" sx={{ mr: 1.5, fontSize: '1rem' }} />
+                    <Typography variant="caption">Nutzergruppe: {memberLevels}</Typography>
+                  </Box>
+                )}
+                <Box display="flex" alignItems="center">
+                  <PaletteIcon color="action" sx={{ mr: 1.5, fontSize: '1rem' }} />
+                  <Chip size="small" label="Primär" sx={{ bgcolor: primaryColor, color: '#fff', mr: 1 }} />
+                  <Chip size="small" label="Sekundär" sx={{ bgcolor: secondaryColor, color: '#fff' }} />
                 </Box>
-              )}
-              <Box display="flex" alignItems="center">
-                <PaletteIcon color="action" sx={{ mr: 1.5, fontSize: '1rem' }} />
-                <Chip size="small" label="Primär" sx={{ bgcolor: primaryColor, color: '#fff', mr: 1 }} />
-                <Chip size="small" label="Sekundär" sx={{ bgcolor: secondaryColor, color: '#fff' }} />
               </Box>
-            </Box>
+            )}
           </CardContent>
         </Card>
       )}

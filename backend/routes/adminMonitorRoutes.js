@@ -9,10 +9,7 @@ const authorize = require('../middleware/authorize');
 const jwt = require('jsonwebtoken');
 
 
-// ✅ KORREKTE REIHENFOLGE
-
-// 1. Zuerst die spezielle Route mit ihrer eigenen Berechtigungs-Middleware definieren.
-// Diese Route wird nun NICHT MEHR von dem folgenden router.use(adminAuth) beeinflusst.
+// --- Spezielle Route (Bull Board Auth) ---
 router.get('/jobs-auth', authorize(['admin', 'assistenz']), (req, res) => {
   try {
     const token = req.cookies.token || req.header('x-auth-token') || req.headers.authorization?.split(' ')[1];
@@ -37,12 +34,15 @@ router.get('/jobs-auth', authorize(['admin', 'assistenz']), (req, res) => {
 });
 
 
-// 2. DANACH die allgemeine Middleware für alle restlichen Routen in dieser Datei setzen.
+// --- Allgemeine Admin-Authentifizierung ---
 router.use(adminAuth);
 
-// 3. Alle folgenden Routen sind jetzt automatisch durch adminAuth geschützt.
+// --- Bestehende Monitor/Status-Routen ---
 router.get('/activity', adminMonitorController.getActivityLogs);
 router.delete('/logs', adminMonitorController.deleteLogs);
 router.get('/status', adminStatusController.getSystemHealth);
+
+// --- ENTFERNT ---
+// Die Routen für /templates und /entries wurden in adminLegalMonitorRoutes.js verschoben.
 
 module.exports = router;

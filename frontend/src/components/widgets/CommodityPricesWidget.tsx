@@ -293,13 +293,17 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
             
             {viewMode === 'chart' && (
                 <>
-                    {isChartLoading && <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box>}
-                    {!isChartLoading && !error && (
+                    {/* KORREKTUR: Die Lade-Logik (CircularProgress) wird entfernt 
+                      und an die CommodityChart-Komponente übergeben, 
+                      die jetzt ein Skeleton anzeigt.
+                    */}
+                    {!error && (
                         <CommodityChart 
-                            historicalData={chartData} // Umbenannt für mehr Klarheit
-                            latestData={data}           // NEU: Die aktuellen Daten werden übergeben
+                            historicalData={chartData} 
+                            latestData={data}
                             timeframe={chartTimeframe}
                             setTimeframe={setChartTimeframe}
+                            isLoading={isChartLoading} // NEU: isLoading-Prop übergeben
                         />
                     )}
                 </>

@@ -7,6 +7,12 @@ const { logActivity } = require('../services/auditLogService');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
+const sanitizeFilename = (name) => {
+    if (!name) return '';
+    // Ersetzt alle ungültigen Zeichen (alles außer A-Z, 0-9) durch einen Unterstrich
+    return name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+};
+
 // Helper function to get BP name
 const getBusinessPartnerName = async (bpId) => {
     if (!bpId) return null;
@@ -283,7 +289,10 @@ exports.deleteUser = async (req, res) => {
     }
 };
 
-// IMPORT Users from CSV
+
+// backend/controllers/adminUserController.js
+
+// IMPORT Users from CSV (VERSION MIT "INSERT ONLY", KEIN UPDATE)
 exports.importUsersFromCSV = async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ message: 'Keine Datei hochgeladen.' });
@@ -302,26 +311,31 @@ exports.importUsersFromCSV = async (req, res) => {
             skipEmptyLines: true,
             complete: async (results) => {
                 for (const [index, row] of results.data.entries()) {
-                    const { 
-                        username, email, password, role, first_name, last_name, 
-                        organization_name, linkedin_url, membership_level, business_partner_name 
+                    const {
+                        username,
+                        email, password, role, first_name, last_name,
+                        organization_name, linkedin_url, membership_level, business_partner_name
                     } = row;
 
-                    if (!username || !email || !password || !role) {
+                    // E-Mail und Rolle sind immer erforderlich
+                    if (!email || !role) {
                         report.errorCount++;
-                        report.errors.push(`Zeile ${index + 2}: Fehlende Pflichtfelder (username, email, password, role).`);
+                        report.errors.push(`Zeile ${index + 2}: Fehlende Pflichtfelder (email, role).`);
                         continue;
                     }
 
+                    // --- START: Rechteprüfung (unverändert) ---
                     if (requester.role === 'assistenz' && role === 'admin') {
                         report.errorCount++;
-                        report.errors.push(`Zeile ${index + 2}: Assistenten dürfen keine Admin-Benutzer erstellen.`);
-                        await logActivity({ userId: requester.id, username: requester.username, actionType: 'USER_IMPORT_DENIED', status: 'failure', details: { reason: 'Assistant tried to import admin', attemptedUsername: username }, ipAddress: req.ip });
+                        report.errors.push(`Zeile ${index + 2} (${email}): Assistenten dürfen keine Admin-Benutzer erstellen.`);
+                        await logActivity({ userId: requester.id, username: requester.username, actionType: 'USER_IMPORT_DENIED', status: 'failure', details: { reason: 'Assistant tried to import admin', attemptedEmail: email }, ipAddress: req.ip });
                         continue;
                     }
+                    // --- ENDE: Rechteprüfung ---
 
+                    // --- START: Business Partner ID auflösen (unverändert) ---
+                    let business_partner_id = null;
                     try {
-                        let business_partner_id = null;
                         if (requester.role === 'assistenz') {
                             business_partner_id = requester.business_partner_id;
                         } else if (requester.role === 'admin' && business_partner_name) {
@@ -330,38 +344,123 @@ exports.importUsersFromCSV = async (req, res) => {
                                 business_partner_id = bpResult.rows[0].id;
                             } else {
                                 report.errorCount++;
-                                report.errors.push(`Zeile ${index + 2}: Business Partner "${business_partner_name}" nicht gefunden.`);
+                                report.errors.push(`Zeile ${index + 2} (${email}): Business Partner "${business_partner_name}" nicht gefunden.`);
                                 continue;
                             }
                         }
+                    } catch (bpErr) {
+                        report.errorCount++;
+                        report.errors.push(`Zeile ${index + 2} (${email}): DB-Fehler beim Suchen des Business Partners. ${bpErr.message}`);
+                        continue;
+                    }
+                    // --- ENDE: Business Partner ID auflösen ---
+
+                    // --- START: "INSERT"-LOGIK (KEIN UPDATE) ---
+                    try {
+                        // ===== PRÜFUNG: BENUTZER EXISTIERT BEREITS (SKIP) =====
+                        const userCheck = await db.query('SELECT 1 FROM users WHERE email = $1', [email]);
+                        if (userCheck.rows.length > 0) {
+                            report.errorCount++;
+                            report.errors.push(`Zeile ${index + 2} (${email}): E-Mail existiert bereits. Übersprungen.`);
+                            continue; // Nächste Zeile
+                        }
+
+                        // ===== FALL: NEUER BENUTZER (INSERT) =====
+                        
+                        // Passwort ist für NEUE Benutzer ein Pflichtfeld
+                        if (!password || password.trim() === '') {
+                            report.errorCount++;
+                            report.errors.push(`Zeile ${index + 2} (${email}): Passwort ist für neue Benutzer erforderlich.`);
+                            continue;
+                        }
+
+                        // --- Hybride Benutzernamen-Logik (unverändert) ---
+                        let finalUsername = null;
+                        let isUnique = false;
+                        let attempt = 0;
+                        let usernameCheckError = null;
+
+                        // 1. Prüfe, ob ein gültiger, freier Username in der CSV-Datei steht
+                        if (username && typeof username === 'string' && username.trim() !== '') {
+                            const cleanUsername = username.trim();
+                            try {
+                                const userCheck = await db.query('SELECT 1 FROM users WHERE username = $1', [cleanUsername]);
+                                if (userCheck.rows.length === 0) {
+                                    finalUsername = cleanUsername;
+                                    isUnique = true;
+                                }
+                            } catch (dbErr) {
+                                usernameCheckError = dbErr.message;
+                            }
+                        }
+
+                        // 2. Fallback: Generiere Username aus E-Mail
+                        let generatedUsernameBase = '';
+                        if (!isUnique && !usernameCheckError) {
+                            generatedUsernameBase = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '');
+                            if (generatedUsernameBase.length < 3) generatedUsernameBase = 'user';
+                            
+                            let currentAttemptUsername = generatedUsernameBase;
+
+                            while (!isUnique && attempt < 10) {
+                                try {
+                                    const userCheck = await db.query('SELECT 1 FROM users WHERE username = $1', [currentAttemptUsername]);
+                                    if (userCheck.rows.length === 0) {
+                                        finalUsername = currentAttemptUsername;
+                                        isUnique = true;
+                                    } else {
+                                        attempt++;
+                                        currentAttemptUsername = `${generatedUsernameBase}_${Math.floor(100 + Math.random() * 900)}`;
+                                    }
+                                } catch (dbErr) {
+                                    usernameCheckError = dbErr.message;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 3. Finale Prüfung (unverändert)
+                        if (!isUnique) {
+                            report.errorCount++;
+                            let reason = `Konnte keinen eindeutigen Benutzernamen finden.`;
+                            if (usernameCheckError) {
+                                reason = `DB-Fehler (${usernameCheckError}).`;
+                            } else if (username && username.trim() !== '') {
+                                reason = `Der angegebene Username "${username.trim()}" ist bereits vergeben und es konnte kein Fallback generiert werden.`;
+                            } else {
+                                reason = `Konnte keinen eindeutigen Benutzernamen aus der E-Mail generieren (Basis: ${generatedUsernameBase}).`;
+                            }
+                            report.errors.push(`Zeile ${index + 2} (${email}): ${reason}`);
+                            continue;
+                        }
+                        // --- ENDE: Hybride Benutzernamen-Logik ---
 
                         const password_hash = await bcrypt.hash(password, salt);
 
                         const newUserResult = await db.query(
                             `INSERT INTO users (username, email, password_hash, first_name, last_name, organization_name, linkedin_url, membership_level, role, business_partner_id, is_active)
                              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-                            [username, email, password_hash, first_name || null, last_name || null, organization_name || null, linkedin_url || null, membership_level || null, role, business_partner_id, true]
+                            [finalUsername, email, password_hash, first_name || null, last_name || null, organization_name || null, linkedin_url || null, membership_level || null, role, business_partner_id, true]
                         );
-                        const newUserId = newUserResult.rows[0].id;
                         
                         report.successCount++;
                         const bpNameForLog = await getBusinessPartnerName(business_partner_id);
-                        await logActivity({ 
-                            userId: requester.id, 
-                            username: requester.username, 
-                            actionType: 'USER_IMPORT', 
-                            status: 'success', 
-                            targetId: newUserId, 
-                            targetType: 'user', 
-                            details: { importedUsername: username, source: 'csv', businessPartnerName: bpNameForLog }, 
-                            ipAddress: req.ip 
+                        await logActivity({
+                            userId: requester.id, username: requester.username,
+                            actionType: 'USER_IMPORT', status: 'success',
+                            targetId: newUserResult.rows[0].id, targetType: 'user',
+                            details: { importedUsername: finalUsername, source: 'csv', businessPartnerName: bpNameForLog },
+                            ipAddress: req.ip
                         });
+
+                    // --- ENDE: "INSERT"-LOGIK ---
 
                     } catch (dbErr) {
                         report.errorCount++;
-                        const errorMessage = dbErr.code === '23505' ? 'Benutzername oder E-Mail existiert bereits.' : dbErr.message;
-                        report.errors.push(`Zeile ${index + 2} (${username}): ${errorMessage}`);
-                        await logActivity({ userId: requester.id, username: requester.username, actionType: 'USER_IMPORT', status: 'failure', details: { error: errorMessage, username: username, source: 'csv' }, ipAddress: req.ip });
+                        // HINWEIS: Dieser Fehler fängt jetzt nur noch den INSERT-Fehler ab (z.B. falls der (seltene) Fall eintritt, dass der Username *genau* zwischen Check und Insert erstellt wurde)
+                        const errorMessage = dbErr.code === '23505' ? 'E-Mail (oder Benutzername) existiert bereits (Timing-Fehler).' : dbErr.message;
+                        report.errors.push(`Zeile ${index + 2} (${email}): ${errorMessage}`);
+                        await logActivity({ userId: requester.id, username: requester.username, actionType: 'USER_IMPORT', status: 'failure', details: { error: errorMessage, email: email, source: 'csv' }, ipAddress: req.ip });
                     }
                 }
                 res.status(200).json(report);
@@ -376,9 +475,13 @@ exports.importUsersFromCSV = async (req, res) => {
     }
 };
 
-// EXPORT Users to CSV
+
 exports.exportUsersToCSV = async (req, res) => {
     const { role: requesterRole, business_partner_id: requesterBpId } = req.user;
+    
+    // WICHTIG: Wir müssen auch den Query-Parameter prüfen,
+    // falls ein Admin nach einem Partner filtert.
+    const { business_partner_id: adminFilterBpId } = req.query;
 
     try {
         const query = `
@@ -399,11 +502,21 @@ exports.exportUsersToCSV = async (req, res) => {
         
         let finalQuery = query;
         const queryParams = [];
+        let businessPartnerIdForFilename = null;
         
         if (requesterRole === 'assistenz') {
+            // REGEL 3: Assistent ist immer auf eigenen BP gefiltert
             finalQuery += ` WHERE u.business_partner_id = $1 AND u.role != 'admin'`;
             queryParams.push(requesterBpId);
+            businessPartnerIdForFilename = requesterBpId; // Für Dateinamen verwenden
+
+        } else if (requesterRole === 'admin' && adminFilterBpId && isValidUUID(adminFilterBpId)) {
+            // REGEL 2: Admin filtert nach einem bestimmten BP
+            finalQuery += ` WHERE u.business_partner_id = $1`;
+            queryParams.push(adminFilterBpId);
+            businessPartnerIdForFilename = adminFilterBpId; // Für Dateinamen verwenden
         }
+        // REGEL 1: Admin exportiert alle (keine WHERE-Klausel, businessPartnerIdForFilename bleibt null)
         
         finalQuery += ` ORDER BY u.last_name ASC, u.first_name ASC`;
 
@@ -413,8 +526,23 @@ exports.exportUsersToCSV = async (req, res) => {
             return res.status(404).json({ message: 'Keine Benutzer zum Exportieren gefunden.' });
         }
         
-        const timestamp = getFormattedTimestamp();
-        const filename = `Export-Benutzer-${timestamp}.csv`;
+        const timestamp = getFormattedTimestamp(); // Holt 'YYYY-MM-DD_HH-mm-ss'
+        let partnerNameForFile = '';
+
+        // Wenn eine ID (Regel 2 oder 3) gesetzt ist, holen wir den Namen
+        if (businessPartnerIdForFilename) {
+            try {
+                const bpName = await getBusinessPartnerName(businessPartnerIdForFilename);
+                if (bpName) {
+                    partnerNameForFile = `${sanitizeFilename(bpName)}-`; // z.B. "mein_partner-"
+                }
+            } catch (e) {
+                console.warn("Konnte BP-Namen für Export-Dateinamen nicht abrufen:", e.message);
+            }
+        }
+        
+        // Dateinamen dynamisch zusammensetzen
+        const filename = `Export-Benutzer-${partnerNameForFile}${timestamp}.csv`;
 
         const csv = Papa.unparse(rows, {
             // Ensure header order matches the template
@@ -435,16 +563,24 @@ exports.exportUsersToCSV = async (req, res) => {
     }
 };
 
-// GET CSV Template for Import
+
 exports.getImportTemplate = async (req, res) => {
     const { role: requesterRole, business_partner_id: requesterBpId } = req.user;
     
     try {
         const headers = [
-            "username", "email", "password", "role", "first_name", 
-            "last_name", "organization_name", "linkedin_url", 
-            "membership_level", "business_partner_name"
+            "username", // <-- WIEDER HINZUGEFÜGT (optional, wird aber beim Export befüllt)
+            "email", 
+            "password", 
+            "role", 
+            "first_name", 
+            "last_name", 
+            "organization_name", 
+            "linkedin_url", 
+            "membership_level", 
+            "business_partner_name"
         ];
+        
         
         let filename = 'Vorlage-Benutzerimport.csv';
         if (requesterRole === 'assistenz') {

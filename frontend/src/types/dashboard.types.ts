@@ -68,3 +68,38 @@ export interface WidgetTypeMeta {
   default_min_width?: number;
   default_min_height?: number;
 }
+
+// --- NEUE TYPEN HINZUGEFÜGT ---
+
+/**
+ * Definiert ein einzelnes Feld in einer Monitor-Vorlage.
+ */
+export interface MonitorField {
+    name: string; // z.B. "title", "summary"
+    label: string; // z.B. "Titel", "Zusammenfassung"
+    type: 'text' | 'textarea' | 'date';
+}
+
+/**
+ * Definiert die Struktur einer Monitor-Vorlage.
+ */
+export interface MonitorTemplate {
+    id: string;
+    business_partner_id: string;
+    template_name: string;
+    industry?: string;
+    fields_definition: MonitorField[];
+}
+
+/**
+ * Definiert einen einzelnen Monitor-Eintrag (z.B. ein Gesetz).
+ */
+export interface MonitorEntry {
+    id: string;
+    template_id: string;
+    business_partner_id: string;
+    is_published: boolean;
+    content_data: Record<string, any>; // Das JSON-Objekt mit den Daten
+    source_document_url: string | null; // Link zum Original-PDF
+    created_at: string;
+}

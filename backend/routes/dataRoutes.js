@@ -49,5 +49,6 @@ router.post('/generate-draft-from-content', dataController.generateDraftFromCont
 router.get('/account-intelligence', dataController.getAccountIntelligence);
 router.get('/daily-briefing', dataController.getDailyBriefing);
 router.get('/notifications/count', dataController.getNotificationCounts);
+router.get('/monitor-entries', dataController.getMonitorEntries);
 
 module.exports = router;

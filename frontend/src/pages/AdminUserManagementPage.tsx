@@ -449,7 +449,7 @@ const handleExport = async () => {
           <Paper>
             <TableContainer>
               <Table>
-                <TableHead>
+<TableHead>
                   <TableRow>
                     <TableCell sortDirection={orderBy === 'last_name' ? order : false}>
                       <TableSortLabel active={orderBy === 'last_name'} direction={order} onClick={() => handleSortRequest('last_name')}>
@@ -461,11 +461,27 @@ const handleExport = async () => {
                         Organisation
                       </TableSortLabel>
                     </TableCell>
-                    {isAdmin && <TableCell>Business Partner</TableCell>}
-                    <TableCell>E-Mail</TableCell>
+                    {isAdmin && (
+                      <TableCell sortDirection={orderBy === 'business_partner_name' ? order : false}>
+                        <TableSortLabel active={orderBy === 'business_partner_name'} direction={order} onClick={() => handleSortRequest('business_partner_name')}>
+                          Business Partner
+                        </TableSortLabel>
+                      </TableCell>
+                    )}
+                    <TableCell sortDirection={orderBy === 'email' ? order : false}>
+                      <TableSortLabel active={orderBy === 'email'} direction={order} onClick={() => handleSortRequest('email')}>
+                        E-Mail
+                      </TableSortLabel>
+                    </TableCell>
                     <TableCell sortDirection={orderBy === 'membership_level' ? order : false}>
                       <TableSortLabel active={orderBy === 'membership_level'} direction={order} onClick={() => handleSortRequest('membership_level')}>
                         Mitgliedslevel
+                      </TableSortLabel>
+                    </TableCell>
+                    {/* NEU: Spalte Rolle hinzugefügt */}
+                    <TableCell sortDirection={orderBy === 'role' ? order : false}>
+                      <TableSortLabel active={orderBy === 'role'} direction={order} onClick={() => handleSortRequest('role')}>
+                        Rolle
                       </TableSortLabel>
                     </TableCell>
                     <TableCell align="center" sortDirection={orderBy === 'login_count' ? order : false}>
@@ -476,7 +492,7 @@ const handleExport = async () => {
                     <TableCell>Aktionen</TableCell>
                   </TableRow>
                 </TableHead>
-                <TableBody>
+<TableBody>
                   {sortedAndFilteredUsers.map((user) => (
                     <TableRow key={user.id} hover sx={{ backgroundColor: user.is_active ? 'inherit' : '#fafafa' }}>
                       <TableCell>{user.first_name} {user.last_name}</TableCell>
@@ -484,6 +500,7 @@ const handleExport = async () => {
                       {isAdmin && <TableCell>{user.business_partner_name || '-'}</TableCell>}
                       <TableCell>{user.email}</TableCell>
                       <TableCell>{user.membership_level || '-'}</TableCell>
+                      <TableCell>{user.role}</TableCell>
                       <TableCell align="center">{user.login_count}</TableCell>
                       <TableCell>
                         {user.linkedin_url && (
@@ -618,17 +635,28 @@ const handleExport = async () => {
           </DialogActions>
         </Dialog>
         
-        <Dialog open={openImportDialog} onClose={() => setOpenImportDialog(false)} fullWidth maxWidth="sm">
+<Dialog open={openImportDialog} onClose={() => setOpenImportDialog(false)} fullWidth maxWidth="sm">
           <DialogTitle>Benutzer importieren</DialogTitle>
           <DialogContent>
             <Typography gutterBottom>
-              Wählen Sie eine CSV-Datei zum Hochladen aus. Erforderliche Spalten: <strong>username, email, password, role, first_name, last_name, organization_name, linkedin_url, membership_level</strong>.
+              Importieren (Aktualisieren oder Erstellen) von Benutzern per CSV.
+              <br />
+              - <strong>Bestehende Benutzer</strong> (Abgleich per <strong>E-Mail</strong>) werden aktualisiert. Das Passwort wird nur geändert, wenn es angegeben ist.
+              <br />
+              - <strong>Neue Benutzer</strong> werden erstellt.
             </Typography>
-    <Box sx={{ mt: 1 }}>
-        <Button onClick={handleDownloadTemplate} size="small">
-            Vorlage herunterladen
-        </Button>
-    </Box>        
+            <Typography gutterBottom variant="body2" sx={{ mt: 2 }}>
+              <strong>Pflichtfelder:</strong> <strong>email</strong>, <strong>role</strong>.
+              <br />
+              <strong>Pflichtfeld (nur für neue Benutzer):</strong> <strong>password</strong>.
+              <br />
+              <strong>Optionale Felder:</strong> <strong>username</strong> (wird sonst aus E-Mail generiert), <strong>first_name</strong>, <strong>last_name</strong>, <strong>organization_name</strong>, <strong>linkedin_url</strong>, <strong>membership_level</strong>, <strong>business_partner_name</strong>.
+            </Typography>
+            <Box sx={{ mt: 1 }}>
+                <Button onClick={handleDownloadTemplate} size="small">
+                    Vorlage herunterladen
+                </Button>
+            </Box>        
             <Button variant="contained" component="label" sx={{ mt: 2 }}>
               Datei auswählen
               <input type="file" hidden accept=".csv" onChange={handleFileChange} />

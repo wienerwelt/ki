@@ -96,6 +96,16 @@ exports.updateAction = async (req, res) => {
     try {
         // ... (Berechtigungsprüfung bleibt unverändert) ...
 
+        // ==================================================================
+        // HIER IST DIE FEHLENDE LOGIK:
+        const target_bp_id = (role === 'admin') ? form_bp_id : user_bp_id;
+        // ==================================================================
+        
+        // Diese Prüfung sollte auch hier stattfinden (wie in createAction)
+        if (!target_bp_id) {
+             return res.status(400).json({ message: 'Business Partner ID fehlt.' });
+        }
+
         const updatedAction = await pool.query(
             `UPDATE business_partner_actions SET 
                 business_partner_id = $1, layout_type = $2, title = $3, content_text = $4, 
@@ -105,7 +115,8 @@ exports.updateAction = async (req, res) => {
              WHERE id = $13 RETURNING *`,
             [
                 // ... (bestehende Parameter)
-                target_bp_id, layout_type, title, content_text, link_url, image_url, is_active, start_date, end_date,
+                target_bp_id, // Dieser Wert ist jetzt definiert
+                layout_type, title, content_text, link_url, image_url, is_active, start_date, end_date,
                 // NEUE PARAMETER
                 target_widget_category, target_region, is_click_tracking_enabled, 
                 id

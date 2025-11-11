@@ -6,6 +6,7 @@ const auth = require('../middleware/authMiddleware'); // Standard-Authentifizier
 const {
     getAllApprovedSources,
     getPendingSourcesForVote,
+    getSourceCategories,
     getSourceById,
     createSource,
     voteOnSource,
@@ -15,6 +16,7 @@ const {
 // Routen, die öffentlich sind (keine Anmeldung erforderlich)
 router.get('/', getAllApprovedSources);
 router.get('/pending', getPendingSourcesForVote);
+router.get('/categories', getSourceCategories);
 router.get('/:id', getSourceById);
 
 // Routen, die eine Anmeldung erfordern (auth Middleware)

@@ -40,12 +40,14 @@ const adminAuth = (req, res, next) => {
   const token = getTokenFromRequest(req);
 
   if (!token) {
+    console.warn('[adminAuth] Zugriff verweigert: Kein Token vorhanden.');
     return res.status(401).json({ message: 'No token, authorization denied' });
   }
 
   try {
     const secret = process.env.JWT_SECRET;
     if (!secret) {
+        console.error('[adminAuth] Server-Fehler: JWT_SECRET fehlt.');
       return res.status(500).json({ message: 'Server misconfigured: JWT_SECRET missing' });
     }
 
@@ -53,21 +55,25 @@ const adminAuth = (req, res, next) => {
     const user = extractUserFromPayload(decoded);
 
     if (!user || !user.role) {
+      console.warn('[adminAuth] Zugriff verweigert: Token ungültig (kein User/Rolle).');
       return res.status(401).json({ message: 'Token is not valid (no user/role)' });
     }
 
-    // erlaubte Rollen
-    const allowedRoles = ['admin', 'assistenz'];
+    // === KORREKTUR: Nur noch 'admin' erlauben ===
     const role = String(user.role).toLowerCase();
+    console.log(`[adminAuth] Prüfe Zugriff für Route: ${req.originalUrl}. User-Rolle: ${role}`); // NEUES LOG
 
-    if (!allowedRoles.includes(role)) {
-      return res.status(403).json({ message: 'Access denied. Admin or Assistant role required.' });
+    if (role !== 'admin') {
+      console.warn(`[adminAuth] Zugriff verweigert: ${role} ist kein 'admin'.`);
+      return res.status(403).json({ message: 'Access denied. Admin role required.' }); //
     }
+    // === Ende der Korrektur ===
 
-    // im Request verfügbar machen
+    console.log('[adminAuth] Zugriff ERLAUBT. User an Controller weitergeleitet.');
     req.user = user;
     return next();
   } catch (err) {
+    console.warn('[adminAuth] Zugriff verweigert: Token-Fehler.', err.message);
     return res.status(401).json({ message: 'Token is not valid' });
   }
 };

@@ -24,6 +24,7 @@ import FactCheckIcon from '@mui/icons-material/FactCheck';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import PollIcon from '@mui/icons-material/Poll';
 import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
+import GavelIcon from '@mui/icons-material/Gavel'; // ✅ NEU: Icon importiert
 
 
 const AdminDashboardPage: React.FC = () => {
@@ -38,6 +39,7 @@ const AdminDashboardPage: React.FC = () => {
                 </Typography>
 
                 <Grid container spacing={3}>
+                    {/* ... (Alle anderen Kacheln bleiben unverändert) ... */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <ShoppingCartCheckoutIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
@@ -118,7 +120,6 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/sources" variant="contained" color="success">Verwalten</Button>
                         </Paper>
                     </Grid>
-                    {/* --- NEUE KACHEL FÜR EVENT-KURATIERUNG --- */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <CalendarMonthIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
@@ -127,6 +128,17 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/events" variant="contained" color="primary">Verwalten</Button>
                         </Paper>
                     </Grid>
+
+                    {/* ✅ NEUE KACHEL HINZUGEFÜGT */}
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <GavelIcon sx={{ fontSize: 60, mb: 2 }} color="action" />
+                            <Typography variant="h6" component="h2" gutterBottom>Monitor-Verwaltung</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Skalierbare Inhalte (z.B. Rechtsmonitor) per PDF verwalten.</Typography>
+                            <Button component={Link} to="/admin/legal-monitor" variant="contained" color="secondary">Verwalten</Button>
+                        </Paper>
+                    </Grid>
+
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <DataObjectIcon sx={{ fontSize: 60, mb: 2 }} color="warning" />

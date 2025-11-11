@@ -616,7 +616,7 @@ exports.getFleetAssociationNews = async (req, res) => {
 
 exports.getCommodityPrices = async (req, res) => {
     try {
-        const indicators = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'KVLPI_GESAMT', 'CO2_PRICE']; 
+        const indicators = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'KVLPI_GESAMT']; 
         const results = {};
 
         for (const indicator of indicators) {
@@ -697,11 +697,25 @@ exports.getCommodityPrices = async (req, res) => {
 exports.getCommodityHistory = async (req, res) => {
     const { timeframe = '1Y' } = req.query; 
 
-    let startDate;
-    const now = new Date();
-    if (timeframe === '1M') startDate = new Date(now.setMonth(now.getMonth() - 1));
-    else if (timeframe === '6M') startDate = new Date(now.setMonth(now.getMonth() - 6));
-    else startDate = new Date(now.setFullYear(now.getFullYear() - 1));
+    let timeFilterClause = '';
+    const queryParams = [];
+    let paramIndex = 1;
+
+    // NEU: Logik für Zeiträume, "max" lässt die Klausel leer
+    if (timeframe === '1M') {
+        const startDate = new Date(new Date().setMonth(new Date().getMonth() - 1));
+        timeFilterClause = `WHERE data_timestamp >= $${paramIndex++}`;
+        queryParams.push(startDate);
+    } else if (timeframe === '6M') {
+        const startDate = new Date(new Date().setMonth(new Date().getMonth() - 6));
+        timeFilterClause = `WHERE data_timestamp >= $${paramIndex++}`;
+        queryParams.push(startDate);
+    } else if (timeframe === '1Y') {
+        const startDate = new Date(new Date().setFullYear(new Date().getFullYear() - 1));
+        timeFilterClause = `WHERE data_timestamp >= $${paramIndex++}`;
+        queryParams.push(startDate);
+    }
+    // Wenn timeframe === 'max', bleibt timeFilterClause leer.
 
     try {
         const query = `
@@ -712,14 +726,12 @@ exports.getCommodityHistory = async (req, res) => {
                 CAST(data_timestamp AS DATE) as date
             FROM
                 economic_indicators
-            WHERE
-                data_timestamp >= $1
+            ${timeFilterClause}
             ORDER BY
                 indicator_name, CAST(data_timestamp AS DATE), data_timestamp DESC;
         `;
 
-        const { rows } = await db.query(query, [startDate]);
-
+        const { rows } = await db.query(query, queryParams);
         const formattedData = rows.reduce((acc, row) => {
             const { indicator_name, date, value } = row;
             if (!acc[indicator_name]) {
@@ -734,6 +746,37 @@ exports.getCommodityHistory = async (req, res) => {
     } catch (error) {
         console.error('Fehler beim Abrufen der Rohstoff-Historie:', error);
         res.status(500).json({ ok: false, message: 'Serverfehler' });
+    }
+};
+
+exports.getMonitorEntries = async (req, res) => {
+    const { business_partner_id } = req.user;
+    const { limit = 5 } = req.query;
+
+    if (!business_partner_id) {
+        return res.json([]);
+    }
+
+    try {
+        // KORREKTUR: t.fields_definition wird jetzt mit abgerufen.
+        // Das behebt den Absturz des LegalMonitorWidget.
+        const query = `
+            SELECT
+                e.id, e.content_data, e.created_at, e.source_document_url,
+                t.template_name, t.fields_definition
+            FROM monitor_entries e
+            JOIN monitor_templates t ON e.template_id = t.id
+            WHERE e.business_partner_id = $1 AND e.is_published = TRUE
+            ORDER BY e.created_at DESC
+            LIMIT $2;
+        `;
+        
+        const { rows } = await db.query(query, [business_partner_id, limit]);
+        res.json(rows);
+
+    } catch (err) {
+        console.error('Fehler beim Abrufen der Monitor-Einträge:', err.message);
+        res.status(500).send('Serverfehler');
     }
 };
 

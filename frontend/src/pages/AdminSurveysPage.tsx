@@ -67,14 +67,17 @@ const AdminSurveysPage: React.FC = () => {
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
-            // KORREKTUR: API-URL für Assistenten angepasst
             const surveyUrl = isAssistant ? `/api/surveys/admin?business_partner_id=${user.business_partner_id}` : '/api/surveys/admin';
             const [surveysRes, bpRes] = await Promise.all([
                 apiClient.get(surveyUrl),
                 user?.role === 'admin' ? apiClient.get('/api/admin/business-partners') : Promise.resolve({ data: [] })
             ]);
             setSurveys(surveysRes.data);
-            setBusinessPartners(bpRes.data);
+            
+            // ✅ KORREKTUR: Stellt sicher, dass wir ein Array setzen,
+            // egal ob die API [...] oder { partners: [...] } zurückgibt.
+            setBusinessPartners(bpRes.data.partners || bpRes.data || []);
+            
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Laden der Daten.');
         } finally {
@@ -86,6 +89,7 @@ const AdminSurveysPage: React.FC = () => {
         fetchData();
     }, [fetchData]);
     
+    // ... (Rest der Datei bleibt unverändert) ...
     const handleOpenDialog = async (survey: Survey | null = null) => {
         if (survey) {
             setIsEditMode(true);

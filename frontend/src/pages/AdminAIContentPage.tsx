@@ -1,3 +1,4 @@
+// frontend/src/pages/AdminAIContentPage.tsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
@@ -80,7 +81,6 @@ const AdminAIContentPage: React.FC = () => {
                 search: filters.search,
                 region: filters.region,
             });
-            // KORRIGIERT: Ruft den korrekten Admin-Endpunkt auf
             const { data } = await apiClient.get(`/api/admin/ai-content?${params.toString()}`);
             setContent(data.data || []);
             setTotalItems(data.totalItems || 0);
@@ -180,27 +180,26 @@ const AdminAIContentPage: React.FC = () => {
             showSnackbar('Fehler beim Speichern.', 'error');
         }
     };
+    
+    const handleDeleteMultiple = async () => {
+        setDeleteDialogOpen(false);
+        try {
+            const response = await apiClient.post('/api/admin/ai-content/delete-multiple', { ids: selected });
 
-const handleDeleteMultiple = async () => {
-    setDeleteDialogOpen(false);
-    try {
-        // KORREKTUR: Wir verwenden wieder die korrekte .delete() Methode
-        // und fügen `as any` hinzu, um den fehlerhaften TypeScript-Check zu umgehen.
-        // Die Funktionalität bleibt exakt dieselbe.
-        const response = await apiClient.delete('/api/admin/ai-content', { data: { ids: selected } } as any);
-
-        showSnackbar(response.data.message, 'success');
-        fetchContent(); // oder fetchInitialData(), je nachdem, wie Ihre Funktion heißt
-        setSelected([]);
-    } catch (err) {
-        showSnackbar('Fehler beim Löschen der Inhalte.', 'error');
-    }
-};
+            showSnackbar(response.data.message, 'success');
+            fetchContent();
+            setSelected([]);
+        } catch (err) {
+            showSnackbar('Fehler beim Löschen der Inhalte.', 'error');
+        }
+    };
     
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-                <Typography variant="h4" component="h1" gutterBottom>KI-Inhalte Verwaltung</Typography>
+                <Typography variant="h4" component="h1" gutterBottom>
+                    KI-Inhalte Verwaltung {selected.length > 0 && `(${selected.length})`}
+                </Typography>
                 
                 <Paper sx={{ p: 2, mb: 2 }}>
                     <Grid container spacing={2} alignItems="center">
