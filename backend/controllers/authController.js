@@ -56,15 +56,20 @@ function suggestUsernames(base) {
 }
 
 async function resolveBusinessPartnerId(voucher) {
-  // Beispiel: Voucher-Code in business_partners.code
-  if (!voucher) return null;
+  if (!voucher || typeof voucher !== 'string' || voucher.trim() === '') return null;
+  
+  const cleanVoucher = voucher.trim().toLowerCase();
+  
   try {
+    // Wir suchen einen Partner, dessen ID (als Text) mit dem Voucher endet
+    // RIGHT(id::text, 8) extrahiert die letzten 8 Zeichen
     const r = await db.query(
-      'SELECT id FROM business_partners WHERE LOWER(code) = LOWER($1) LIMIT 1',
-      [voucher]
+      'SELECT id FROM business_partners WHERE LOWER(RIGHT(id::text, 8)) = $1 LIMIT 1',
+      [cleanVoucher]
     );
     return r.rows[0]?.id || null;
-  } catch {
+  } catch (err) {
+    console.error("Fehler bei der Voucher-Auflösung:", err);
     return null;
   }
 }
@@ -95,10 +100,11 @@ function safeFrontendRedirect(res, path, qs = {}) {
 // ============================
 
 // === Register ===
+// === Register ===
 exports.register = async (req, res) => {
   const { email, password, username, firstName, voucher, consentGiven, newsletterOptIn } = req.body || {};
 
-  // Pflichtfelder prüfen
+  // 1. Validierungen
   if (!consentGiven) {
     return res.status(400).json({ message: 'Den DSGVO-Bestimmungen muss zugestimmt werden.' });
   }
@@ -112,11 +118,11 @@ exports.register = async (req, res) => {
   const chosenUsername = (username && username.trim()) ? username.trim() : email.split('@')[0];
   if (!USERNAME_REGEX.test(chosenUsername)) {
     return res.status(400).json({
-      message: 'Ungültiger Benutzername. Erlaubt sind Buchstaben, Zahlen und Unterstrich, 3–30 Zeichen.',
+      message: 'Ungültiger Benutzername. Erlaubt sind Buchstaben, Zahlen und Unterstriche, 3–30 Zeichen.',
     });
   }
 
-  // Passwort-Policy mit zxcvbn (Score 0–4)
+  // Passwort-Policy
   const strength = zxcvbn(password);
   if (strength.score < 3) {
     return res.status(400).json({
@@ -126,7 +132,7 @@ exports.register = async (req, res) => {
   }
 
   try {
-    // Duplikate prüfen
+    // 2. Duplikate prüfen (Email & Username)
     const emailCheck = await db.query(
       'SELECT 1 FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
       [email]
@@ -153,16 +159,14 @@ exports.register = async (req, res) => {
       });
     }
 
+    // 3. Business Partner & Hashes
     const businessPartnerId = await resolveBusinessPartnerId(voucher);
 
-    // Passwort hashen
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
 
-    // E-Mail-Verifikationstoken
     const emailToken = crypto.randomBytes(32).toString('hex');
 
-    // Newsletter Double-Opt-In vorbereiten (nur Token setzen, kein direktes Opt-In)
     let optInToken = null;
     let optInExpires = null;
     if (newsletterOptIn) {
@@ -170,6 +174,7 @@ exports.register = async (req, res) => {
       optInExpires = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 Tage
     }
 
+    // 4. Benutzer erstellen
     const columns = [
       'username',
       'email',
@@ -194,7 +199,7 @@ exports.register = async (req, res) => {
       new Date(),
       emailToken,
       false,
-      false,                  // Double-Opt-In → erstmal false
+      false,
       optInToken,
       optInExpires,
     ];
@@ -207,7 +212,43 @@ exports.register = async (req, res) => {
     const created = await db.query(insertSql, values);
     const user = created.rows[0];
 
-    // Verifizierungs-E-Mail
+    // --- 5. NEU: STANDARD-DASHBOARD ERSTELLEN ---
+    // Wir legen sofort einen Eintrag an, damit der User nicht mit leerem Screen startet.
+    try {
+        const defaultConfig = {
+            name: 'Mein Dashboard',
+            widgets: [
+                { id: 'default-bp-info', type: 'BusinessPartnerInfo' },
+                { id: 'default-user-profile', type: 'user_activity' } // 'user_activity' ist der DB-Type-Key für das Profil-Widget
+            ],
+            layouts: {
+                lg: [
+                    { i: 'default-bp-info', x: 0, y: 0, w: 8, h: 8 },
+                    { i: 'default-user-profile', x: 8, y: 0, w: 4, h: 8 }
+                ],
+                md: [
+                    { i: 'default-bp-info', x: 0, y: 0, w: 6, h: 8 },
+                    { i: 'default-user-profile', x: 6, y: 0, w: 4, h: 8 }
+                ],
+                sm: [
+                    { i: 'default-bp-info', x: 0, y: 0, w: 6, h: 8 },
+                    { i: 'default-user-profile', x: 0, y: 8, w: 6, h: 8 }
+                ]
+            }
+        };
+
+        await db.query(
+            `INSERT INTO dashboard_configurations (user_id, name, config, is_default) 
+             VALUES ($1, $2, $3, $4)`,
+            [user.id, 'Mein Dashboard', JSON.stringify(defaultConfig), true]
+        );
+        // Keine Fehlermeldung an User senden, falls das schiefgeht (Frontend hat Fallback)
+    } catch (dashErr) {
+        console.error('Fehler beim Erstellen des Default-Dashboards für User:', user.id, dashErr.message);
+    }
+    // ---------------------------------------------
+
+    // 6. E-Mails senden
     const verifyUrl = buildVerifyUrl(emailToken);
     try {
       await sendVerificationEmail({
@@ -217,14 +258,12 @@ exports.register = async (req, res) => {
       });
     } catch (mailErr) {
       console.error('E-Mail-Versand (Verify) fehlgeschlagen:', mailErr);
-      // Registrierung bleibt erfolgreich, aber Hinweis zurück
       return res.status(201).json({
         message:
           'Registrierung erfolgreich. Der Versand der Bestätigungs-E-Mail ist fehlgeschlagen – bitte später erneut versuchen oder Support kontaktieren.',
       });
     }
 
-    // Newsletter-Opt-In-E-Mail (falls gewünscht)
     if (newsletterOptIn && optInToken) {
       try {
         const confirmUrl = buildNewsletterConfirmUrl(optInToken);
@@ -232,11 +271,9 @@ exports.register = async (req, res) => {
           to: email,
           username: chosenUsername,
           confirmUrl,
-          // unsubscribeUrl: `${getBaseUrl()}/newsletter/unsubscribe`
         });
       } catch (e) {
         console.error('Newsletter-Opt-In-Email fehlgeschlagen:', e);
-        // absichtlich kein Fehler → Registrierung bleibt OK
       }
     }
 
@@ -250,8 +287,6 @@ exports.register = async (req, res) => {
 };
 
 // === Login ===
-// backend/controllers/authController.js
-
 exports.login = async (req, res) => {
   const { identifier, password } = req.body || {};
   if (!identifier || !password) {
@@ -259,10 +294,11 @@ exports.login = async (req, res) => {
   }
 
   try {
+    // 1. Benutzer suchen
     const r = await db.query(
       `SELECT
           u.id, u.username, u.email, u.role, u.password_hash,
-          u.is_email_verified, u.contribution_score,
+          u.is_email_verified, u.contribution_score, u.profile_image_url,
           u.business_partner_id,
           bp.name as business_partner_name, bp.dashboard_title
         FROM users u
@@ -284,6 +320,7 @@ exports.login = async (req, res) => {
 
     const user = r.rows[0];
 
+    // 2. Passwort prüfen
     const ok = await bcrypt.compare(password, user.password_hash || '');
     if (!ok) {
       await logActivity({
@@ -297,10 +334,22 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
     }
 
+    // 3. E-Mail Verifizierung prüfen (optional per ENV)
     if (process.env.REQUIRE_EMAIL_VERIFIED === 'true' && !user.is_email_verified) {
       return res.status(403).json({ message: 'Bitte verifizieren Sie Ihre E-Mail-Adresse, bevor Sie sich anmelden.' });
     }
 
+    // --- 4. NEU: Login-Zeitstempel und Zähler aktualisieren ---
+    await db.query(
+        `UPDATE users 
+         SET last_login_at = CURRENT_TIMESTAMP, 
+             login_count = login_count + 1 
+         WHERE id = $1`,
+        [user.id]
+    );
+    // ----------------------------------------------------------
+
+    // 5. Token ausstellen
     const token = issueJwt(user);
 
     await logActivity({
@@ -311,19 +360,16 @@ exports.login = async (req, res) => {
         ipAddress: req.ip
     });
 
-    // ========================================================================
-    // ✅ HIER DIE ÄNDERUNG EINFÜGEN
-    // Setze den Token zusätzlich in ein sicheres Cookie.
-    // Dieses wird vom Browser automatisch bei allen Anfragen mitgesendet.
+    // 6. Cookie setzen
     res.cookie('token', token, {
-      httpOnly: true, // Macht das Cookie für JavaScript im Frontend unzugänglich (wichtig für Sicherheit!)
-      secure: process.env.NODE_ENV === 'production', // Cookie nur über HTTPS senden, wenn in Produktion
-      sameSite: 'strict', // Schutz vor Cross-Site-Request-Forgery-Angriffen
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 Tage, passend zur Token-Lebensdauer
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 Tage
     });
-    // ========================================================================    
 
-    return res.status(200).json({
+    // 7. Antwort senden
+  return res.status(200).json({
       token,
       user: {
         id: user.id,
@@ -334,6 +380,8 @@ exports.login = async (req, res) => {
         business_partner_name: user.business_partner_name || null,
         dashboard_title: user.dashboard_title || null,
         contribution_score: user.contribution_score ?? 0,
+        profile_image_url: user.profile_image_url || null,
+        last_login_at: new Date() // ✅ NEU: Da wir gerade eingeloggt haben, ist es "Jetzt"
       },
     });
 
@@ -354,7 +402,6 @@ exports.logout = async (req, res) => {
   return res.json({ message: 'Abgemeldet.' });
 };
 
-// ... (Rest der Datei bleibt unverändert) ...
 // === E-Mail verifizieren ===
 exports.verifyEmail = async (req, res) => {
   const { token } = req.params || {};

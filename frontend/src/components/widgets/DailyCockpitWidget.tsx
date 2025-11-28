@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Box, Typography, Accordion, AccordionSummary, AccordionDetails, Divider, Link as MuiLink, FormControlLabel, Switch, Tooltip } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import WbSunnyIcon from '@mui/icons-material/WbSunny'; // NEU: Import für das Fallback-Icon
+import WbSunnyIcon from '@mui/icons-material/WbSunny';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
@@ -27,7 +27,6 @@ interface CockpitData {
     linkable_names: string[];
 }
 
-// --- NEU: Spezifische Props nach dem Vorbild von AccountIntelligenceWidget ---
 interface DailyCockpitWidgetProps extends BaseWidgetProps {
   icon?: React.ReactNode;
   config?: {
@@ -61,8 +60,16 @@ const TextWithSearchLinks: React.FC<{ text: string; namesToLink: string[] }> = (
     );
 };
 
-// --- GEÄNDERT: Die Komponente verwendet nun die neuen Props ---
-const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = (props) => {
+const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = ({
+    // KORREKTUR: Props einzeln destrukturieren, um 'businessPartner' abzufangen
+    widgetId,
+    onDelete,
+    isRemovable,
+    widgetTypeKey,
+    config,
+    icon: propsIcon,
+    ...otherProps // Hier landet 'businessPartner', falls es übergeben wird (wird ignoriert)
+}) => {
     const [data, setData] = useState<CockpitData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -70,9 +77,8 @@ const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = (props) => {
     const { showSnackbar } = useSnackbar();
     const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in);
 
-    // --- NEU: Titel und Icon werden flexibel aus den Props bezogen, mit Fallback-Werten ---
-    const title = props.config?.title || 'Tägliches Cockpit';
-    const icon = props.icon || <WbSunnyIcon />;
+    const title = config?.title || 'Tägliches Cockpit';
+    const icon = propsIcon || <WbSunnyIcon />;
 
     useEffect(() => {
         setIsSubscribed(!!user?.newsletter_opt_in);
@@ -114,8 +120,10 @@ const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = (props) => {
 
     return (
         <WidgetPaper
-            // --- GEÄNDERT: Die Props für den WidgetPaper werden jetzt dynamisch befüllt ---
-            {...props}
+            // KORREKTUR: Explizite Props statt {...props}
+            widgetId={widgetId}
+            onDelete={onDelete}
+            isRemovable={isRemovable}
             title={
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     {icon}
@@ -123,7 +131,7 @@ const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = (props) => {
                 </Box>
             }
             widgetTitle={title}
-            widgetTypeKey={props.widgetTypeKey || 'daily_cockpit'}
+            widgetTypeKey={widgetTypeKey || 'daily_cockpit'}
             loading={loading}
             error={error}
             noPadding={true}

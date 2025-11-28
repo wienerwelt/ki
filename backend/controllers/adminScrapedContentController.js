@@ -254,24 +254,48 @@ exports.getAllScrapedEventsForAdmin = async (req, res) => {
     }
 };
 
-exports.createManualEvent = async (req, res) => {
-    const { title, event_date, region, summary, original_url } = req.body;
+// backend/controllers/adminScrapedContentController.js
 
-    if (!title || !event_date) {
-        return res.status(400).json({ message: 'Titel und Event-Datum sind erforderlich.' });
+exports.createManualEvent = async (req, res) => {
+    const { title, event_date, region, summary, original_url, category } = req.body;
+
+    // --- LOGIK KORREKTUR START ---
+    // Wir prüfen, ob eine echte URL da ist. Wenn nicht -> NULL
+    let finalUrl = null;
+    
+    if (original_url && original_url.trim() !== '' && original_url !== 'https://') {
+        finalUrl = original_url.trim();
     }
+    // --- LOGIK KORREKTUR ENDE ---
+
+    const sourceIdentifier = req.user.business_partner_id 
+        ? `${req.user.business_partner_id}_events` 
+        : 'manual_event';
 
     try {
-        const { rows } = await db.query(
-            `INSERT INTO scraped_content (id, title, event_date, region, summary, original_url, category, source_identifier)
-             VALUES ($1, $2, $3, $4, $5, $6, 'industry_events', 'manual_entry')
-             RETURNING *`,
-            [uuidv4(), title, event_date, region || null, summary || null, original_url || null]
+        const result = await db.query(
+            `INSERT INTO scraped_content 
+            (title, event_date, region, summary, original_url, category, source_identifier, published_date, scraped_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+            RETURNING *`,
+            [
+                title, 
+                event_date, 
+                region || null, 
+                summary || null, 
+                finalUrl, // Hier wird jetzt NULL übergeben, wenn leer
+                category || 'events',
+                sourceIdentifier
+            ]
         );
-        res.status(201).json(rows[0]);
+        
+        res.status(201).json(result.rows[0]);
     } catch (err) {
         console.error('Fehler beim Erstellen des manuellen Events:', err.message);
-        res.status(500).send('Serverfehler');
+        if (err.code === '23505') {
+             return res.status(409).json({ message: 'Ein Event mit dieser URL existiert bereits.' });
+        }
+        res.status(500).json({ message: 'Serverfehler beim Speichern.' });
     }
 };
 

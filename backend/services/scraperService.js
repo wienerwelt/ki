@@ -72,6 +72,7 @@ const extractTags = (text, availableTags) => {
 
 const computeRelevanceScore = (publishedAt, tagCount) => {
     let score = 0;
+    /*
     const now = new Date();
     if (publishedAt) {
         const days = Math.floor((now - new Date(publishedAt)) / 86400000);
@@ -82,6 +83,7 @@ const computeRelevanceScore = (publishedAt, tagCount) => {
     score += (tagCount || 0) * 10;
     if (score > 100) score = 100;
     if (score < 0) score = 0;
+    */
     return score;
 };
 

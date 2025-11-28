@@ -1543,6 +1543,8 @@ exports.getTagsForCategory = async (req, res) => {
     }
 };
 
+
+
 exports.getScrapedContent = async (req, res) => {
     const { id: userId, last_login_at: lastLogin, business_partner_id: businessPartnerId } = req.user;
     const {
@@ -1551,7 +1553,8 @@ exports.getScrapedContent = async (req, res) => {
     } = req.query;
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
-    console.log('[DEBUG] getScrapedContent: Anfrage erhalten mit Parametern:', { category, region, filter, page, limit });
+    // Logging reduziert, um Konsole nicht zu fluten
+    // console.log('[DEBUG] getScrapedContent params:', { category, page });
 
     try {
         const userSettingsResult = await db.query(
@@ -1567,6 +1570,7 @@ exports.getScrapedContent = async (req, res) => {
         let whereClauses = [];
         let paramIndex = 1;
 
+        // --- Filterlogik ---
         if (userSavedTags.length > 0) {
             whereClauses.push(`EXISTS (
                 SELECT 1 FROM scraped_content_tags sct
@@ -1580,7 +1584,7 @@ exports.getScrapedContent = async (req, res) => {
         if (category) {
             if (category === 'businesspartner_news' || category === 'businesspartner_events') {
                 if (!businessPartnerId) {
-                    return res.json({ data: [], totalPages: 0, counts: { unread: 0, new: 0 } });
+                    return res.json({ data: [], activeFilters: { tags: [] } });
                 }
                 const sourceIdentifier = `${businessPartnerId}_${category.split('_')[1]}`;
                 whereClauses.push(`sc.source_identifier = $${paramIndex++}`);
@@ -1591,9 +1595,7 @@ exports.getScrapedContent = async (req, res) => {
             }
         }
         
-        console.log(`[DEBUG] Prüfe, ob Kategorie '${category}' der Podcast-Kategorie entspricht.`);
         if (category === 'fleet_podcasts') { 
-            console.log('[DEBUG] Podcast-Kategorie erkannt! Füge Audio-URL-Filter hinzu.');
             whereClauses.push(`sc.original_url ~* '\\.(mp3|m4a|aac|ogg|wav)(\\?|$)'`);
         }
 
@@ -1647,48 +1649,30 @@ exports.getScrapedContent = async (req, res) => {
             paramIndex++;
         }
 
-        console.log('[DEBUG] Finale WHERE-Klauseln:', whereClauses);
-        console.log('[DEBUG] Finale Query-Parameter:', queryParams);
-
         const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-        const baseQuery = `FROM scraped_content sc LEFT JOIN sources s ON sc.original_url = s.url ${whereString}`;
-
-        const countQuery = `SELECT COUNT(sc.id) as total_items ${baseQuery}`;
-        const totalResult = await db.query(countQuery, queryParams);
-        const totalItems = parseInt(totalResult.rows[0].total_items, 10);
-        const totalPages = Math.ceil(totalItems / limit);
-        
-        console.log(`[DEBUG] Gesamtzahl gefundener Einträge (totalItems): ${totalItems}`);
-
-        const countsQuery = `
-            WITH filtered_content AS (
-                SELECT sc.id, sc.created_at
-                ${baseQuery}
-            )
-            SELECT
-                (SELECT COUNT(*) FROM filtered_content fc WHERE NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = fc.id AND ursc.user_id = $${paramIndex})) as unread_count,
-                (SELECT COUNT(*) FROM filtered_content WHERE created_at > $${paramIndex + 1}) as new_count
-        `;
-        const countsParams = [...queryParams, userId, lastLogin || new Date(0)];
-        const countsResult = await db.query(countsQuery, countsParams);
-        const counts = {
-            unread: parseInt(countsResult.rows[0].unread_count, 10) || 0,
-            new: parseInt(countsResult.rows[0].new_count, 10) || 0,
-        };
-        
-        console.log('[DEBUG] Berechnete Counts (im Chip angezeigt):', counts);
         
         let orderByClause = 'ORDER BY sc.published_date DESC, sc.scraped_at DESC';
         if (sortBy === 'relevance') {
             orderByClause = 'ORDER BY sc.relevance_score DESC, sc.published_date DESC';
         }
 
+        // --- OPTIMIERTE QUERY ---
+        // 1. full_text ENTFERNT! (Massive Payload-Reduktion)
+        // 2. Fallback für summary eingebaut: Wenn summary leer ist, nimm die ersten 300 Zeichen von full_text
         const dataQuery = `
             SELECT
-                sc.id, sc.title, sc.summary, sc.original_url, sc.published_date,
-                sc.event_date, sc.category, sc.scraped_at, sc.relevance_score, sc.region,
+                sc.id, 
+                sc.title, 
+                COALESCE(sc.summary, SUBSTRING(sc.full_text, 1, 300)) as summary, 
+                sc.original_url, 
+                sc.published_date,
+                sc.event_date, 
+                sc.category, 
+                sc.scraped_at, 
+                sc.relevance_score, 
+                sc.region,
                 sc.thumbnail_url,
-                sc.full_text, -- DIESE ZEILE WURDE HINZUGEFÜGT
+                -- sc.full_text WURDE ENTFERNT, um Browser-Crash zu verhindern
                 s.status = 'approved' AS is_trusted_source,
                 EXISTS (
                     SELECT 1 FROM user_read_scraped_content ursc
@@ -1706,15 +1690,10 @@ exports.getScrapedContent = async (req, res) => {
         const finalParams = [...queryParams, userId, parseInt(limit, 10), offset];
         const result = await db.query(dataQuery, finalParams);
         
-        console.log(`[DEBUG] Anzahl der an das Frontend gesendeten Einträge: ${result.rows.length}`);
-
         res.json({
             source: 'Scraped Content Feed',
             timestamp: new Date().toISOString(),
             data: result.rows,
-            totalPages: totalPages,
-            currentPage: parseInt(page, 10),
-            counts: counts,
             activeFilters: { tags: userSavedTags } 
         });
 
@@ -1723,6 +1702,153 @@ exports.getScrapedContent = async (req, res) => {
         res.status(500).json({ message: 'Error fetching scraped content', data: [] });
     }
 };
+
+
+
+exports.getScrapedContentCounts = async (req, res) => {
+    const { id: userId, last_login_at: lastLogin, business_partner_id: businessPartnerId } = req.user;
+    const {
+        limit = 10, category, region, search,
+        tag, mainFilter, filter
+    } = req.query;
+
+    console.log('[DEBUG] getScrapedContentCounts: Anfrage erhalten mit Parametern:', { category, region, filter });
+
+    try {
+        const userSettingsResult = await db.query(
+            'SELECT article_score_min, article_score_max FROM users WHERE id = $1',
+            [userId]
+        );
+        const { article_score_min, article_score_max } = userSettingsResult.rows[0] || {};
+        
+        const userTagsResult = await db.query('SELECT tag_name FROM user_saved_tags WHERE user_id = $1', [userId]);
+        const userSavedTags = userTagsResult.rows.map(row => row.tag_name);
+
+        const queryParams = [];
+        let whereClauses = [];
+        let paramIndex = 1;
+
+        // --- START: Identische Filterlogik wie in getScrapedContent ---
+        if (userSavedTags.length > 0) {
+            whereClauses.push(`EXISTS (
+                SELECT 1 FROM scraped_content_tags sct
+                JOIN tags t ON sct.tag_id = t.id
+                WHERE sct.scraped_content_id = sc.id AND t.name = ANY($${paramIndex}::text[])
+            )`);
+            queryParams.push(userSavedTags);
+            paramIndex++;
+        }
+
+        if (category) {
+            if (category === 'businesspartner_news' || category === 'businesspartner_events') {
+                if (!businessPartnerId) {
+                    return res.json({ totalPages: 0, counts: { unread: 0, new: 0 } });
+                }
+                const sourceIdentifier = `${businessPartnerId}_${category.split('_')[1]}`;
+                whereClauses.push(`sc.source_identifier = $${paramIndex++}`);
+                queryParams.push(sourceIdentifier);
+            } else {
+                whereClauses.push(`sc.category = $${paramIndex++}`);
+                queryParams.push(category);
+            }
+        }
+        
+        if (category === 'fleet_podcasts') { 
+            whereClauses.push(`sc.original_url ~* '\\.(mp3|m4a|aac|ogg|wav)(\\?|$)'`);
+        }
+
+        if (region && region !== 'all') {
+            whereClauses.push(`sc.region = $${paramIndex++}`);
+            queryParams.push(region);
+        }
+
+        if (search) {
+            whereClauses.push(`(sc.title ILIKE $${paramIndex} OR sc.summary ILIKE $${paramIndex})`);
+            queryParams.push(`%${search}%`);
+            paramIndex++;
+        }
+        
+        if (mainFilter) {
+            whereClauses.push(`EXISTS (
+                SELECT 1 FROM scraped_content_tags sct
+                JOIN tags t ON sct.tag_id = t.id
+                WHERE sct.scraped_content_id = sc.id AND t.name = $${paramIndex}
+            )`);
+            queryParams.push(mainFilter);
+            paramIndex++;
+        }
+        
+        if (tag && tag !== 'all') {
+            whereClauses.push(`EXISTS (
+                SELECT 1 FROM scraped_content_tags sct
+                JOIN tags t ON sct.tag_id = t.id
+                WHERE sct.scraped_content_id = sc.id AND t.name = $${paramIndex}
+            )`);
+            queryParams.push(tag);
+            paramIndex++;
+        }
+
+        if (article_score_min !== null && typeof article_score_min !== 'undefined') {
+            whereClauses.push(`sc.relevance_score >= $${paramIndex++}`);
+            queryParams.push(article_score_min);
+        }
+        if (article_score_max !== null && typeof article_score_max !== 'undefined') {
+            whereClauses.push(`sc.relevance_score <= $${paramIndex++}`);
+            queryParams.push(article_score_max);
+        }
+        
+        if (filter === 'unread') {
+             whereClauses.push(`NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex})`);
+             queryParams.push(userId);
+             paramIndex++;
+        } else if (filter === 'new') {
+            whereClauses.push(`sc.created_at > $${paramIndex}`);
+            queryParams.push(lastLogin || new Date(0));
+            paramIndex++;
+        }
+        // --- ENDE: Identische Filterlogik ---
+
+
+        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+        const baseQuery = `FROM scraped_content sc LEFT JOIN sources s ON sc.original_url = s.url ${whereString}`;
+
+        // --- FÜHRE NUR DIE ZÄHL-ABFRAGEN AUS ---
+        const countQuery = `SELECT COUNT(sc.id) as total_items ${baseQuery}`;
+        const totalResult = await db.query(countQuery, queryParams);
+        const totalItems = parseInt(totalResult.rows[0].total_items, 10);
+        const totalPages = Math.ceil(totalItems / (parseInt(limit, 10) || 10));
+        
+        console.log(`[DEBUG] Counts: Gesamtzahl gefundener Einträge (totalItems): ${totalItems}`);
+
+        const countsQuery = `
+            WITH filtered_content AS (
+                SELECT sc.id, sc.created_at
+                ${baseQuery}
+            )
+            SELECT
+                (SELECT COUNT(*) FROM filtered_content fc WHERE NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = fc.id AND ursc.user_id = $${paramIndex})) as unread_count,
+                (SELECT COUNT(*) FROM filtered_content WHERE created_at > $${paramIndex + 1}) as new_count
+        `;
+        const countsParams = [...queryParams, userId, lastLogin || new Date(0)];
+        const countsResult = await db.query(countsQuery, countsParams);
+        const counts = {
+            unread: parseInt(countsResult.rows[0].unread_count, 10) || 0,
+            new: parseInt(countsResult.rows[0].new_count, 10) || 0,
+        };
+        
+        console.log('[DEBUG] Counts: Berechnete Counts (im Chip angezeigt):', counts);
+
+        res.json({
+            totalPages: totalPages,
+            counts: counts,
+        });
+
+    } catch (err) {
+        console.error(`Error fetching scraped content COUNTS:`, err.message);
+        res.status(500).json({ message: 'Error fetching scraped content counts', data: [] });
+    }
+};
+
 
 exports.markScrapedContentAsRead = async (req, res) => {
     const { id: userId } = req.user;
@@ -1744,12 +1870,18 @@ exports.markScrapedContentAsRead = async (req, res) => {
 exports.getEconomicStatistics = async (req, res) => {
     const { statisticType, countryCode = 'AT' } = req.query;
 
+    console.log(`[EcoStats API] Anfrage erhalten: Type="${statisticType}", Country="${countryCode}"`);
+
     if (!statisticType) {
         return res.status(400).json({ ok: false, message: 'Ein "statisticType" ist erforderlich.' });
     }
 
     try {
-        const startDate = new Date(new Date().setFullYear(new Date().getFullYear() - 10));
+        // Wir nehmen einen weiteren Zeitraum (2 Jahre), um sicherzugehen, dass Daten gefunden werden
+        const startDate = new Date();
+        startDate.setFullYear(startDate.getFullYear() - 2); 
+
+        console.log(`[EcoStats API] Suche Daten ab: ${startDate.toISOString()}`);
 
         const query = `
             SELECT 
@@ -1768,26 +1900,44 @@ exports.getEconomicStatistics = async (req, res) => {
                 es.time_period >= $3
             ORDER BY es.time_period ASC, es.statistic_subtype ASC;
         `;
+        
         const queryParams = [statisticType, countryCode, startDate];
         
+        // Führe die Query aus
         const { rows } = await db.query(query, queryParams);
 
+        console.log(`[EcoStats API] DB Resultat: ${rows.length} Zeilen gefunden.`);
+
         if (rows.length === 0) {
+            // Debugging: Prüfen, ob es überhaupt Daten für diesen Typ gibt (unabhängig vom Land/Datum)
+            const checkQuery = `SELECT count(*) as total FROM economic_statistics WHERE statistic_type = $1`;
+            const checkRes = await db.query(checkQuery, [statisticType]);
+            console.log(`[EcoStats API DEBUG] Total Einträge für Typ "${statisticType}" in DB: ${checkRes.rows[0].total}`);
+            
             return res.json({ ok: true, data: [], subtypes: [], source: null });
         }
 
+        // Daten pivotieren (gleiche Logik wie vorher)
         const pivotedData = rows.reduce((acc, row) => {
-            const date = new Date(row.time_period).toISOString().split('T')[0];
-            if (!acc[date]) {
-                acc[date] = { date };
+            // WICHTIG: Datum sicher formatieren, um Zeitzonenprobleme zu vermeiden
+            const d = new Date(row.time_period);
+            const dateStr = d.toISOString().split('T')[0];
+            
+            if (!acc[dateStr]) {
+                acc[dateStr] = { date: dateStr };
             }
-            acc[date][row.statistic_subtype] = parseFloat(row.value);
+            acc[dateStr][row.statistic_subtype] = parseFloat(row.value);
             return acc;
         }, {});
 
         const chartData = Object.values(pivotedData);
+        // Sortieren nach Datum sicherstellen
+        chartData.sort((a, b) => new Date(a.date) - new Date(b.date));
+
         const subtypes = [...new Set(rows.map(r => r.statistic_subtype))];
-        const latestSourceInfo = rows[rows.length - 1];
+        const latestSourceInfo = rows[rows.length - 1]; // Neueste Quelle nehmen
+
+        console.log(`[EcoStats API] Sende ${chartData.length} aggregierte Datenpunkte an Frontend.`);
 
         res.json({
             ok: true,
@@ -1801,7 +1951,7 @@ exports.getEconomicStatistics = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Fehler beim Abrufen der Wirtschaftsstatistiken:', error);
+        console.error('[EcoStats API] SCHWERWIEGENDER FEHLER:', error);
         res.status(500).json({ ok: false, message: 'Serverfehler beim Abrufen der Statistikdaten.' });
     }
 };
@@ -1960,8 +2110,30 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
                 sc.original_url AS url, sc.region, sc.full_text,
                 s.status = 'approved' AS is_trusted_source,
                 EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $1) as is_read,
-                (SELECT COUNT(*) FROM content_relevance_votes WHERE content_id = sc.id AND vote = 1)::INTEGER AS participants,
-                (SELECT COUNT(*) FROM content_relevance_votes WHERE content_id = sc.id AND vote = 0)::INTEGER AS "maybeParticipants",
+                (
+                    SELECT COALESCE(json_agg(json_build_object(
+                        'id', u.id,
+                        'first_name', u.first_name,
+                        'last_name', u.last_name,
+                        'profile_image_url', u.profile_image_url,
+                        'last_login_at', u.last_login_at
+                    )), '[]'::json)
+                    FROM content_relevance_votes crv
+                    JOIN users u ON crv.user_id = u.id
+                    WHERE crv.content_id = sc.id AND crv.vote = 1
+                ) AS participants_data,
+                (
+                    SELECT COALESCE(json_agg(json_build_object(
+                        'id', u.id,
+                        'first_name', u.first_name,
+                        'last_name', u.last_name,
+                        'profile_image_url', u.profile_image_url,
+                        'last_login_at', u.last_login_at
+                    )), '[]'::json)
+                    FROM content_relevance_votes crv
+                    JOIN users u ON crv.user_id = u.id
+                    WHERE crv.content_id = sc.id AND crv.vote = 0
+                ) AS maybe_participants_data,
                 COALESCE((SELECT vote FROM content_relevance_votes WHERE content_id = sc.id AND user_id = $1), NULL) AS "userVote"
             ${baseQuery}
             ORDER BY sc.event_date ASC
@@ -2145,8 +2317,14 @@ exports.getAllTags = async (req, res) => {
 };
 
 
+
+// backend/controllers/dataController.js
+
+// ... (andere Exports bleiben gleich)
+
 exports.globalSearch = async (req, res) => {
     const { term } = req.query;
+    const { business_partner_id } = req.user; // ID für Sicherheits-Filter
 
     if (!term || typeof term !== 'string' || term.trim().length < 3) {
         return res.status(400).json({ message: 'Ein Suchbegriff mit mindestens 3 Zeichen ist erforderlich.' });
@@ -2158,49 +2336,76 @@ exports.globalSearch = async (req, res) => {
         const query = `
             SELECT id, title, summary, published_date, type, relevance, url
             FROM (
-                -- Bestehende Suche in scraped_content (modifiziert)
+                -- 1. Scraped Content (Öffentlich/Web)
                 SELECT
                     id, title, summary, published_date,
                     'scraped' as type,
-                    original_url as url, -- <--- HINZUGEFÜGT
-                    ts_rank(to_tsvector('german', title || ' ' || summary), to_tsquery('german', $1)) as relevance
+                    original_url as url,
+                    ts_rank(to_tsvector('german', title || ' ' || COALESCE(summary, '')), to_tsquery('german', $1)) as relevance
                 FROM scraped_content
-                WHERE to_tsvector('german', title || ' ' || summary) @@ to_tsquery('german', $1)
+                WHERE to_tsvector('german', title || ' ' || COALESCE(summary, '')) @@ to_tsquery('german', $1)
                 
                 UNION ALL
                 
-                -- Bestehende Suche in ai_generated_content (modifiziert)
+                -- 2. AI Content (Intern generiert)
                 SELECT
                     id, title, generated_output as summary, created_at as published_date,
                     'ai' as type,
-                    source_reference as url, -- <--- HINZUGEFÜGT
-                    ts_rank(to_tsvector('german', title || ' ' || generated_output), to_tsquery('german', $1)) as relevance
+                    source_reference as url,
+                    ts_rank(to_tsvector('german', title || ' ' || COALESCE(generated_output, '')), to_tsquery('german', $1)) as relevance
                 FROM ai_generated_content
-                WHERE to_tsvector('german', title || ' ' || generated_output) @@ to_tsquery('german', $1)
+                WHERE to_tsvector('german', title || ' ' || COALESCE(generated_output, '')) @@ to_tsquery('german', $1)
 
                 UNION ALL
 
-                -- Bestehende Suche in business_partner_tracked_articles (modifiziert)
+                -- 3. Account News (Web)
                 SELECT
-                    id,
-                    article_title as title,
-                    summary,
-                    published_at as published_date,
+                    id, article_title as title, summary, published_at as published_date,
                     'tracked_account_news' as type,
-                    article_url as url, -- <--- HINZUGEFÜGT
-                    ts_rank(to_tsvector('german', article_title || ' ' || summary), to_tsquery('german', $1)) as relevance
-                FROM
-                    business_partner_tracked_articles
-                WHERE
-                    to_tsvector('german', article_title || ' ' || summary) @@ to_tsquery('german', $1)
+                    article_url as url,
+                    ts_rank(to_tsvector('german', article_title || ' ' || COALESCE(summary, '')), to_tsquery('german', $1)) as relevance
+                FROM business_partner_tracked_articles
+                WHERE to_tsvector('german', article_title || ' ' || COALESCE(summary, '')) @@ to_tsquery('german', $1)
+
+                UNION ALL
+
+                -- 4. ✅ NEU: Dateien (Files) - Nur eigener Business Partner!
+                SELECT
+                    id, 
+                    filename as title, 
+                    COALESCE(description, 'Datei im Dateimanager') as summary, 
+                    created_at as published_date,
+                    'file' as type,
+                    '/files' as url, -- Link zur File-Seite
+                    ts_rank(to_tsvector('german', filename || ' ' || COALESCE(description, '') || ' ' || COALESCE(array_to_string(tags, ' '), '')), to_tsquery('german', $1)) as relevance
+                FROM business_partner_files
+                WHERE 
+                    business_partner_id = $2
+                    AND to_tsvector('german', filename || ' ' || COALESCE(description, '') || ' ' || COALESCE(array_to_string(tags, ' '), '')) @@ to_tsquery('german', $1)
+
+                UNION ALL
+
+                -- 5. ✅ NEU: Community Posts - Nur eigener Business Partner!
+                SELECT
+                    p.id, 
+                    'Community Beitrag' as title, -- Oder User Name
+                    p.content as summary, 
+                    p.created_at as published_date,
+                    'community_post' as type,
+                    '/community' as url,
+                    ts_rank(to_tsvector('german', p.content), to_tsquery('german', $1)) as relevance
+                FROM community_posts p
+                WHERE 
+                    p.business_partner_id = $2
+                    AND to_tsvector('german', p.content) @@ to_tsquery('german', $1)
 
             ) as search_results
-            ORDER BY
-                relevance DESC
-            LIMIT 25;
+            ORDER BY relevance DESC
+            LIMIT 30;
         `;
 
-        const { rows } = await db.query(query, [formattedTerm]);
+        // WICHTIG: Parameter $2 ist business_partner_id
+        const { rows } = await db.query(query, [formattedTerm, business_partner_id]);
         res.json(rows);
 
     } catch (err) {
@@ -2624,5 +2829,45 @@ exports.getNotificationCounts = async (req, res) => {
     } catch (err) {
         console.error('Fehler beim Abrufen der Benachrichtigungszählungen:', err.message);
         res.status(500).json({ message: 'Serverfehler.' });
+    }
+};
+
+// backend/controllers/dataController.js
+
+// ... bestehende Imports & Funktionen
+
+exports.getBusinessPartnerMembersPreview = async (req, res) => {
+    const { id: userId, business_partner_id: bpId } = req.user;
+
+    if (!bpId) return res.json({ total: 0, members: [] });
+
+    try {
+        // 1. Gesamtanzahl aktiver Mitglieder
+        const countRes = await db.query(
+            'SELECT COUNT(*) FROM users WHERE business_partner_id = $1 AND is_active = TRUE',
+            [bpId]
+        );
+        const total = parseInt(countRes.rows[0].count, 10);
+
+        // 2. Die 5 neuesten Mitglieder (oder zufällige) für die Vorschau
+        // Wir sortieren Admins/Assistenz nach vorne, dann Neueste
+        const membersRes = await db.query(`
+            SELECT id, first_name, last_name, profile_image_url, role, last_login_at
+            FROM users
+            WHERE business_partner_id = $1 AND is_active = TRUE
+            ORDER BY 
+                CASE WHEN role IN ('admin', 'assistenz') THEN 0 ELSE 1 END,
+                created_at DESC
+            LIMIT 6
+        `, [bpId]);
+
+        res.json({
+            total,
+            members: membersRes.rows
+        });
+
+    } catch (err) {
+        console.error('Fehler beim Laden der Mitglieder-Vorschau:', err.message);
+        res.status(500).send('Serverfehler');
     }
 };

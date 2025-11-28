@@ -104,22 +104,14 @@ const ArticleBodyRenderer: React.FC<{ summary: string | null | undefined }> = ({
 };
 
 const HighlightedText: React.FC<HighlightedTextProps> = ({ text, keywords }) => {
-    // --- DEBUGGING-CHECK: Bitte fügen Sie diese 3 Zeilen hinzu ---
-    console.log("--- Highlight Check ---");
-    console.log("Keywords zum Suchen:", keywords);
-    console.log("Text zum Durchsuchen:", text);
-
+    // FIX: Debug-Logs entfernt
     const parts = useMemo(() => {
         if (!keywords || keywords.length === 0 || !text) {
             return [text];
         }
 
-        // --- KORREKTUR: Die Wortgrenze (\b) am Ende wurde entfernt ---
-        // Das sorgt dafür, dass auch "BEVs", "BEV-Modelle" etc. gefunden werden.
         const regex = new RegExp(`\\b(${keywords.join('|')})`, 'gi');
         
-        // Die .split() und .map() Logik funktioniert weiterhin, muss aber leicht angepasst werden,
-        // da nun auch Teile von Wörtern gefunden werden. Wir suchen jetzt nach dem Anfang eines Wortes.
         const matches = [...text.matchAll(regex)];
         if (matches.length === 0) return [text];
 
@@ -130,17 +122,13 @@ const HighlightedText: React.FC<HighlightedTextProps> = ({ text, keywords }) => 
             const keyword = match[0];
             const startIndex = match.index!;
             
-            // Text vor dem Match hinzufügen
             if (startIndex > lastIndex) {
                 result.push(text.substring(lastIndex, startIndex));
             }
-            // Das gefundene Keyword als <mark>-Element hinzufügen
             result.push(<mark key={index}>{keyword}</mark>);
-            
             lastIndex = startIndex + keyword.length;
         });
 
-        // Den restlichen Text nach dem letzten Match hinzufügen
         if (lastIndex < text.length) {
             result.push(text.substring(lastIndex));
         }
@@ -271,53 +259,80 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
     useEffect(() => { const handler = setTimeout(() => { setDebouncedSearchTerm(searchTerm); }, 500); return () => { clearTimeout(handler); }; }, [searchTerm]);
     useEffect(() => { if (user?.regions && user.regions.length > 0) { const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0]; setSelectedRegion(defaultRegion); } }, [user?.regions]);
 
-    const fetchData = useCallback(async (currentPage: number, currentSortBy: string, region: Region | null, search: string, subFilter: string, currentFilterMode: string, loadMore = false) => {
-        if (!category) {
-            setIsLoading(false);
-            setError("Keine Kategorie im Widget-Typ konfiguriert.");
-            setItems([]);
-            return;
-        }
-        if (loadMore) setIsLoadingMore(true);
-        else setIsLoading(true);
-        setError(null);
-        try {
-            const token = localStorage.getItem('jwt_token');
-            const params = new URLSearchParams({
-                page: String(currentPage),
-                limit: '10',
-                sortBy: currentSortBy,
-                region: region ? region.name : 'all',
-                category,
-                tag: subFilter,
-                filter: currentFilterMode
-            });
-            if (search) params.append('search', search);
+    useEffect(() => {
+        if (!category) return;
 
-            const [contentRes, tagsRes, actionRes] = await Promise.all([
-                apiClient.get(`/api/data/scraped-content?${params.toString()}`, { headers: { 'x-auth-token': token } }),
-                apiClient.get(`/api/data/tags?category=${category}`, { headers: { 'x-auth-token': token } }),
-                apiClient.get(`/api/data/relevant-action?category=${category}&region=${region?.name || 'all'}`, { headers: { 'x-auth-token': token } })
-            ]);
-            
-            const newItems = contentRes.data?.data || [];
-            setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
-            setTotalPages(contentRes.data?.totalPages || 0);
-            setCounts(contentRes.data?.counts || { unread: 0, new: 0 });
-            setActiveGlobalTags(contentRes.data?.activeFilters?.tags || []);
-            
-            if (currentPage === 1) {
-                setAvailableTags(tagsRes.data || []);
-                setRelevantAction(actionRes.data);
-            }
+        const token = localStorage.getItem('jwt_token');
+        apiClient.get(`/api/data/tags?category=${category}`, { headers: { 'x-auth-token': token } })
+            .then(tagsRes => setAvailableTags(tagsRes.data || []))
+            .catch(e => console.error("Could not load tags", e));
 
-        } catch (err: any) {
-            setError(err.response?.data?.message || `Inhalte konnten nicht geladen werden.`);
-        } finally {
-            setIsLoading(false);
-            setIsLoadingMore(false);
-        }
     }, [category]);
+
+const fetchData = useCallback(async (currentPage: number, currentSortBy: string, region: Region | null, search: string, subFilter: string, currentFilterMode: string, loadMore = false) => {
+    if (!category) {
+        setIsLoading(false);
+        setError("Keine Kategorie im Widget-Typ konfiguriert.");
+        setItems([]);
+        return;
+    }
+    if (loadMore) setIsLoadingMore(true);
+    else setIsLoading(true);
+    setError(null);
+
+    const token = localStorage.getItem('jwt_token');
+
+    const itemParams = new URLSearchParams({
+        page: String(currentPage),
+        limit: '10',
+        sortBy: currentSortBy,
+        region: region ? region.name : 'all',
+        category,
+        tag: subFilter,
+        filter: currentFilterMode
+    });
+    if (search) itemParams.append('search', search);
+
+    try {
+        const contentRes = await apiClient.get(`/api/data/scraped-content?${itemParams.toString()}`, { headers: { 'x-auth-token': token } });
+
+        const newItems = contentRes.data?.data || [];
+        setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
+        setActiveGlobalTags(contentRes.data?.activeFilters?.tags || []);
+
+        if (currentPage === 1) {
+            apiClient.get(`/api/data/relevant-action?category=${category}&region=${region?.name || 'all'}`, { headers: { 'x-auth-token': token } })
+                .then(actionRes => setRelevantAction(actionRes.data))
+                .catch(e => console.error("Could not load relevant action", e));
+        }
+
+    } catch (err: any) {
+        setError(err.response?.data?.message || `Inhalte konnten nicht geladen werden.`);
+    } finally {
+        setIsLoading(false);
+        setIsLoadingMore(false);
+    }
+
+    try {
+        const countParams = new URLSearchParams({
+            limit: '10',
+            sortBy: currentSortBy,
+            region: region ? region.name : 'all',
+            category,
+            tag: subFilter,
+            filter: currentFilterMode
+        });
+        if (search) countParams.append('search', search);
+
+        const countsRes = await apiClient.get(`/api/data/scraped-content-counts?${countParams.toString()}`, { headers: { 'x-auth-token': token } });
+
+        setTotalPages(countsRes.data?.totalPages || 0);
+        setCounts(countsRes.data?.counts || { unread: 0, new: 0 });
+
+    } catch (err: any) {
+        console.error("Fehler beim Laden der Zähler:", err.response?.data?.message || err.message);
+    }
+}, [category]);
 
     useEffect(() => { 
         setPage(1);
@@ -429,7 +444,6 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
         setAiDraftState({ ...aiDraftState, open: true, loading: true, error: null, content: '' });
         try {
             const token = localStorage.getItem('jwt_token');
-            // Annahme: API-Endpunkt ist analog zur Funding-Seite, aber für generischen Content
             const response = await apiClient.post('/api/data/generate-draft-from-content', 
                 { contentId: selectedArticle.id }, 
                 { headers: { 'x-auth-token': token } }
@@ -449,7 +463,6 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
         
         return (
             <>
-                {/* KORREKTUR: Suchfeld hier für das mobile Menü hinzugefügt */}
                 {isMenu && controlWrapper(
                      <TextField
                         variant="outlined"
@@ -501,7 +514,6 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                     <Tooltip title={description || title}><span>{icon}</span></Tooltip>
                     <Typography variant="h6" noWrap>{title}</Typography>
                     
-                    {/* KORREKTUR: Bedingte Anzeige für mobile Chips */}
                     {isMobile ? (
                         <>
                             <Tooltip title="Neu">
@@ -567,7 +579,6 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                                 transformOrigin={{ vertical: 'top', horizontal: 'right' }}
                             >
                                 <Stack spacing={1.5} sx={{ p: 1 }}>
-                                    {/* KORREKTUR: Suche wird nun hier gerendert */}
                                     {renderFilterControls(true)}
                                 </Stack>
                             </Popover>
@@ -587,7 +598,6 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
             isRemovable={isRemovable}
             noPadding
         >
-             {/* ... (Rest der Komponente (Content-Rendering) bleibt unverändert) ... */}
             {isLoading && page === 1 ? (
                 <Box sx={{ m: 'auto', textAlign: 'center' }}><CircularProgress /></Box>
             ) : error ? (
@@ -612,6 +622,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
 
                                     if (index === 0 && item.thumbnail_url) {
                                         return (
+                                            // FIX: Valid DOM Nesting. Vote Buttons moved OUT of CardActionArea
                                             <Card key={item.id} elevation={0} square sx={{ borderBottom: 1, borderColor: 'divider' }}>
                                                 <CardActionArea onClick={() => handleOpenArticle(item)}>
                                                     <CardMedia
@@ -629,37 +640,39 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                                                         <Typography gutterBottom variant="h6" component="div" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>
                                                             <HighlightedText text={item.title} keywords={activeGlobalTags} />
                                                         </Typography>
-                                                        <Stack direction="row" justifyContent="space-between" alignItems="center" mt={1}>
-                                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-                                                                <Typography variant="caption" color="text.secondary">
-                                                                    {new Date(displayDate).toLocaleDateString('de-AT')}
-                                                                </Typography>
-        {domain && (
-            <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                <MuiLink href={item.original_url!} target="_blank" rel="noopener noreferrer" variant="caption" onClick={(e) => e.stopPropagation()}>
-                    {domain}
-                </MuiLink>
-                {item.is_trusted_source && (
-                    <Tooltip title="Info zu geprüften Quellen">
-                        <IconButton
-                            size="small"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                navigate('/trusted-sources');
-                            }}
-                            sx={{ p: 0, ml: 0.25 }}
-                        >
-                            <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
-                        </IconButton>
-                    </Tooltip>
-                )}
-            </Box>
-        )}
-                                                            </Box>
-                                                            <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
-                                                        </Stack>
                                                     </CardContent>
                                                 </CardActionArea>
+                                                
+                                                {/* NEU: Metadata & Buttons in separatem Container */}
+                                                <Box sx={{ px: 2, pb: 2, pt: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            {new Date(displayDate).toLocaleDateString('de-AT')}
+                                                        </Typography>
+                                                        {domain && (
+                                                            <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                                                                <MuiLink href={item.original_url!} target="_blank" rel="noopener noreferrer" variant="caption">
+                                                                    {domain}
+                                                                </MuiLink>
+                                                                {item.is_trusted_source && (
+                                                                    <Tooltip title="Info zu geprüften Quellen">
+                                                                        <IconButton
+                                                                            size="small"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                navigate('/trusted-sources');
+                                                                            }}
+                                                                            sx={{ p: 0, ml: 0.25 }}
+                                                                        >
+                                                                            <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                                                                        </IconButton>
+                                                                    </Tooltip>
+                                                                )}
+                                                            </Box>
+                                                        )}
+                                                    </Box>
+                                                    <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
+                                                </Box>
                                             </Card>
                                         );
                                     }
@@ -763,7 +776,6 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
         </DialogTitle>
         <DialogContent dividers sx={{ p: 2 }}>
             {selectedArticle?.thumbnail_url && (
-                // --- ÄNDERUNG 2: Container für Bild mit Zoom-Funktion ---
                 <Box sx={{ position: 'relative', mb: 2 }}>
                     <Box
                         component="img"

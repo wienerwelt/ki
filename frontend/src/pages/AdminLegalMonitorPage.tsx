@@ -1,3 +1,4 @@
+// frontend/src/pages/AdminLegalMonitorPage.tsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Table, TableBody, TableCell,
@@ -11,7 +12,8 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
-import DownloadIcon from '@mui/icons-material/Download'; 
+import DownloadIcon from '@mui/icons-material/Download';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
 // Annahme: Diese Import-Pfade sind korrekt für Ihre Ordnerstruktur
 import apiClient from '../apiClient'; 
@@ -55,7 +57,6 @@ const AdminLegalMonitorPage: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
 
     // Data States
-    // KORRIGIERT: Initialisiere mit 'null', um den Ladezustand besser zu prüfen
     const [entries, setEntries] = useState<MonitorEntryWithTemplate[] | null>(null);
     const [templates, setTemplates] = useState<MonitorTemplate[] | null>(null);
     const [businessPartners, setBusinessPartners] = useState<BusinessPartner[] | null>(null);
@@ -87,12 +88,10 @@ const AdminLegalMonitorPage: React.FC = () => {
         fields_definition_str: '[\n  {\n    "name": "ueberschrift",\n    "label": "Überschrift",\n    "type": "text"\n  },\n  {\n    "name": "kennung",\n    "label": "Kennung (z.B. BGBI)",\n    "type": "text"\n  },\n  {\n    "name": "zusammenfassung",\n    "label": "Zusammenfassung",\n    "type": "textarea"\n  }\n]'
     });
 
-    // States für PDF-Upload
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [isUploading, setIsUploading] = useState(false);
-
-// === START: FINALER DATENLADE-BLOCK ===
+    const [editingTemplate, setEditingTemplate] = useState<MonitorTemplate | null>(null);
 
     const fetchEntries = useCallback(async (pageNum = 1) => {
         setLoading(true);
@@ -104,14 +103,13 @@ const AdminLegalMonitorPage: React.FC = () => {
                 bpId: activeBpFilter === 'all' ? undefined : activeBpFilter,
                 templateId: activeTemplateFilter === 'all' ? undefined : activeTemplateFilter
             };
-            // apiClient.get gibt ein { "data": { "entries": [...], "totalCount": X } } zurück
-            const response = await apiClient.get('/admin-legal-monitor/entries', { params });
+            // KORREKTUR: /api Präfix hinzugefügt
+            const response = await apiClient.get('/api/admin-legal-monitor/entries', { params });
             
             console.log('[Frontend] fetchEntries: API-Roh-Antwort (response.data) empfangen:', response.data); 
             
-            // KORREKTUR: Wir greifen auf die "data"-Ebene des Wrappers zu
-            const entriesData = response.data.data.entries; //
-            const totalCount = response.data.data.totalCount || 0;
+            const entriesData = response.data.entries; 
+            const totalCount = response.data.totalCount || 0;
 
             if (Array.isArray(entriesData)) {
                 console.log(`[Frontend] fetchEntries: ERFOLG. Verarbeite ${entriesData.length} Einträge.`);
@@ -119,7 +117,7 @@ const AdminLegalMonitorPage: React.FC = () => {
                 setTotalPages(Math.ceil(totalCount / 10));
                 setPage(pageNum);
             } else {
-                console.warn("[Frontend] FEHLER: response.data.data.entries ist kein Array!", response.data.data);
+                console.warn("[Frontend] FEHLER: response.data.entries ist kein Array!", response.data);
                 setEntries([]); 
             }
             setError(null);
@@ -131,15 +129,15 @@ const AdminLegalMonitorPage: React.FC = () => {
         }
     }, [activeBpFilter, activeTemplateFilter]);
 
-    const fetchTemplates = useCallback(async () => {
+const fetchTemplates = useCallback(async () => {
         console.log('[Frontend] fetchTemplates: Starte API-Anfrage...');
         try {
-            // apiClient.get gibt ein { "data": [...] } zurück
-            const response = await apiClient.get('/admin-legal-monitor/templates');
+            // KORREKTUR: /api Präfix hinzugefügt
+            const response = await apiClient.get('/api/admin-legal-monitor/templates');
+            
             console.log('[Frontend] fetchTemplates: API-Roh-Antwort (response.data) empfangen:', response.data); 
             
-            // KORREKTUR: Wir greifen auf die "data"-Ebene des Wrappers zu
-            const templatesData = response.data.data; //
+            const templatesData = response.data.data; 
             let templatesArray: MonitorTemplate[] = []; 
 
             if (Array.isArray(templatesData)) {
@@ -150,25 +148,22 @@ const AdminLegalMonitorPage: React.FC = () => {
             }
             
             setTemplates(templatesArray); 
-
-            if (templatesArray.length > 0 && !formState.template_id) { 
-                setFormState(prev => ({ ...prev, template_id: templatesArray[0].id }));
-            }
-} catch (err: any) {
+        } catch (err: any) {
             console.error('[Frontend] FEHLER bei fetchTemplates:', err.response?.data?.message || err.message);
             setError('Fehler beim Laden der Vorlagen.');
+           // setTemplates([]); // <-- *** HIER IST DIE KORREKTUR ***
         }
-    }, [formState.template_id]);    
+    }, []); 
 
-    const fetchBusinessPartners = useCallback(async () => {
+const fetchBusinessPartners = useCallback(async () => {
         console.log('[Frontend] fetchBusinessPartners: Starte API-Anfrage...');
         try {
-            // apiClient.get gibt ein { "data": [...] } zurück
-            const response = await apiClient.get('/admin-legal-monitor/business-partners'); 
+            // KORREKTUR: /api Präfix hinzugefügt
+            const response = await apiClient.get('/api/admin-legal-monitor/business-partners'); 
+            
             console.log('[Frontend] fetchBusinessPartners: API-Roh-Antwort (response.data) empfangen:', response.data); 
             
-            // KORREKTUR: Wir greifen auf die "data"-Ebene des Wrappers zu
-            const partnersData = response.data.data; //
+            const partnersData = response.data.data; 
             let partnersArray: BusinessPartner[] = [];
 
             if (Array.isArray(partnersData)) {
@@ -180,32 +175,53 @@ const AdminLegalMonitorPage: React.FC = () => {
             
             setBusinessPartners(partnersArray); 
             
-             if (partnersArray.length > 0 && !formState.business_partner_id) { 
-                setFormState(prev => ({ ...prev, business_partner_id: partnersArray[0].id }));
-                setTemplateFormState(prev => ({ ...prev, business_partner_id: partnersArray[0].id })); 
-            }
         } catch (err: any) {
             console.error("[Frontend] FEHLER bei fetchBusinessPartners:", err.response?.data?.message || err.message);
+            setError('Fehler beim Laden der Business Partner.'); // <-- Bessere Fehlermeldung
+            // setBusinessPartners([]); // <-- *** HIER IST DIE KORREKTUR ***
         }
-    }, [formState.business_partner_id]);
+    }, []); 
 
-    // === ENDE: FINALER DATENLADE-BLOCK ===
 
     useEffect(() => {
         fetchEntries(1); 
     }, [fetchEntries]);
 
     useEffect(() => {
+        // Starte das Laden von Templates und BPs parallel
         Promise.all([fetchTemplates(), fetchBusinessPartners()]);
-    }, [fetchTemplates, fetchBusinessPartners]);
+    }, [fetchTemplates, fetchBusinessPartners]); // Diese Abhängigkeiten sind jetzt stabil
+
+    // NEU: Separater Hook zum Setzen der Standardwerte, NACHDEM die Daten geladen wurden
+    useEffect(() => {
+        if (businessPartners && businessPartners.length > 0 && !formState.business_partner_id) {
+            setFormState(prev => ({ ...prev, business_partner_id: businessPartners[0].id }));
+            setTemplateFormState(prev => ({ ...prev, business_partner_id: businessPartners[0].id }));
+        }
+    }, [businessPartners, formState.business_partner_id]); // Reagiert auf das Laden der BPs
+
+    // NEU: Separater Hook für Templates
+    useEffect(() => {
+        if (templates && templates.length > 0 && !formState.template_id) {
+            setFormState(prev => ({ ...prev, template_id: templates[0].id }));
+        }
+    }, [templates, formState.template_id]); // Reagiert auf das Laden der Templates
 
     const handlePageChange = (event: React.ChangeEvent<unknown>, value: number) => {
         fetchEntries(value);
     };
 
-    // --- Dialog-Handler ---
     const handleOpenTemplateDialog = () => setTemplateDialog(true);
-    const handleCloseTemplateDialog = () => setTemplateDialog(false);
+    const handleCloseTemplateDialog = () => {
+            setTemplateDialog(false);
+            setEditingTemplate(null);
+            setTemplateFormState({
+                template_name: '',
+                business_partner_id: businessPartners?.[0]?.id || '',
+                industry: '',
+                fields_definition_str: '[\n  {\n    "name": "ueberschrift",\n    "label": "Überschrift",\n    "type": "text"\n  },\n  {\n    "name": "kennung",\n    "label": "Kennung (z.B. BGBI)",\n    "type": "text"\n  },\n  {\n    "name": "zusammenfassung",\n    "label": "Zusammenfassung",\n    "type": "textarea"\n  }\n]'
+            });
+    };
 
     const handleOpenEntryDialog = (entry: MonitorEntryWithTemplate | null = null) => {
         if (entry) {
@@ -235,28 +251,39 @@ const AdminLegalMonitorPage: React.FC = () => {
     const handleCloseEntryDialog = () => setEntryDialog(false);
 
 
-    // --- Formular-Speicher-Handler ---
     const handleSaveTemplate = async () => {
         if (!templateFormState.business_partner_id) {
             showSnackbar('Fehler: Ein Business Partner muss ausgewählt werden.', 'error');
             return;
         }
+        
+        let fields_definition_obj;
         try {
-            JSON.parse(templateFormState.fields_definition_str);
+            fields_definition_obj = JSON.parse(templateFormState.fields_definition_str);
         } catch (e) {
             showSnackbar('Fehler: Felddefinition ist kein gültiges JSON.', 'error');
             return;
         }
+
+        const dataToSave = {
+            ...templateFormState,
+            fields_definition: fields_definition_obj
+        };
+
         try {
-            await apiClient.post('/admin-legal-monitor/templates', {
-                ...templateFormState,
-                fields_definition: JSON.parse(templateFormState.fields_definition_str)
-            });
-            showSnackbar('Vorlage erfolgreich erstellt.', 'success');
+            if (editingTemplate) {
+                // --- UPDATE (BEARBEITEN) ---
+                await apiClient.put(`/api/admin-legal-monitor/templates/${editingTemplate.id}`, dataToSave);
+                showSnackbar('Vorlage erfolgreich aktualisiert.', 'success');
+            } else {
+                // --- CREATE (ERSTELLEN) ---
+                await apiClient.post('/api/admin-legal-monitor/templates', dataToSave);
+                showSnackbar('Vorlage erfolgreich erstellt.', 'success');
+            }
             fetchTemplates();
-            handleCloseTemplateDialog();
+            handleCloseTemplateDialog(); // Schließt Dialog und setzt Formular zurück
         } catch (err: any) {
-            showSnackbar(err.response?.data?.message || 'Fehler beim Erstellen der Vorlage.', 'error');
+            showSnackbar(err.response?.data?.message || 'Fehler beim Speichern der Vorlage.', 'error');
         }
     };
 
@@ -271,10 +298,12 @@ const AdminLegalMonitorPage: React.FC = () => {
                 content_data: JSON.stringify(formState.content_data)
             };
             if (formState.id) {
-                await apiClient.put(`/admin-legal-monitor/entries/${formState.id}`, dataToSave);
+                // KORREKTUR: /api Präfix hinzugefügt
+                await apiClient.put(`/api/admin-legal-monitor/entries/${formState.id}`, dataToSave);
                 showSnackbar('Eintrag erfolgreich aktualisiert.', 'success');
             } else {
-                await apiClient.post('/admin-legal-monitor/entries', dataToSave);
+                // KORREKTUR: /api Präfix hinzugefügt
+                await apiClient.post('/api/admin-legal-monitor/entries', dataToSave);
                 showSnackbar('Eintrag erfolgreich erstellt.', 'success');
             }
             fetchEntries(page);
@@ -287,7 +316,8 @@ const AdminLegalMonitorPage: React.FC = () => {
      const handleDeleteEntry = async (id: string) => {
         if (window.confirm('Möchten Sie diesen Eintrag wirklich löschen?')) {
             try {
-                await apiClient.delete(`/admin-legal-monitor/entries/${id}`);
+                // KORREKTUR: /api Präfix hinzugefügt
+                await apiClient.delete(`/api/admin-legal-monitor/entries/${id}`);
                 showSnackbar('Eintrag gelöscht.', 'success');
                 fetchEntries(page);
             } catch (err: any) {
@@ -299,7 +329,8 @@ const AdminLegalMonitorPage: React.FC = () => {
     const handleDeleteTemplate = async (id: string) => {
         if (window.confirm('Möchten Sie diese Vorlage wirklich löschen? Alle zugehörigen Einträge werden ebenfalls gelöscht!')) {
             try {
-                await apiClient.delete(`/admin-legal-monitor/templates/${id}`);
+                // KORREKTUR: /api Präfix hinzugefügt
+                await apiClient.delete(`/api/admin-legal-monitor/templates/${id}`);
                 showSnackbar('Vorlage gelöscht.', 'success');
                 fetchTemplates();
                 fetchEntries(1);
@@ -309,7 +340,7 @@ const AdminLegalMonitorPage: React.FC = () => {
         }
     };
 
-    // --- PDF-Upload-Handler ---
+    // --- PDF-Upload-Handler (MIT /api PRÄFIX) ---
     const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
         if (event.target.files && event.target.files.length > 0) {
             setSelectedFile(event.target.files[0]);
@@ -333,9 +364,7 @@ const AdminLegalMonitorPage: React.FC = () => {
         formData.append('business_partner_id', formState.business_partner_id);
 
         try {
-const response = await apiClient.post('/admin-legal-monitor/entries/parse-pdf', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
+            const response = await apiClient.post('/api/admin-legal-monitor/entries/parse-pdf', formData);
             showSnackbar(response.data.message, 'success');
             fetchEntries(1); 
             setSelectedFile(null);
@@ -355,14 +384,38 @@ const response = await apiClient.post('/admin-legal-monitor/entries/parse-pdf', 
     
     const handleDownloadSource = async (id: string) => {
         try {
-            const response = await apiClient.get(`/admin-legal-monitor/entries/${id}/download-source`);
+            // KORREKTUR: /api Präfix hinzugefügt
+            const response = await apiClient.get(`/api/admin-legal-monitor/entries/${id}/download-source`);
             window.open(response.data.downloadUrl, '_blank');
         } catch (err: any) {
              showSnackbar(err.response?.data?.message || 'Fehler beim Abrufen der Download-URL.', 'error');
         }
     };
 
-    // --- Formular-Change-Handler ---
+
+    const handleOpenEditTemplate = (template: MonitorTemplate) => {
+        setEditingTemplate(template); // Setzt die zu bearbeitende Vorlage
+        setTemplateFormState({ // Füllt das Formular
+            template_name: template.template_name,
+            business_partner_id: template.business_partner_id,
+            industry: template.industry || '',
+            fields_definition_str: JSON.stringify(template.fields_definition, null, 2)
+        });
+        setTemplateDialog(true); // Öffnet den Dialog
+    };
+
+    const handleCopyTemplate = (template: MonitorTemplate) => {
+        setEditingTemplate(null); // Wichtig: Wir erstellen eine NEUE Vorlage
+        setTemplateFormState({ // Füllt das Formular mit Kopie-Daten
+            template_name: `Kopie von: ${template.template_name}`,
+            business_partner_id: template.business_partner_id,
+            industry: template.industry || '',
+            fields_definition_str: JSON.stringify(template.fields_definition, null, 2)
+        });
+        setTemplateDialog(true); // Öffnet den Dialog
+    };
+
+
     const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | { name?: string; value: unknown }> | SelectChangeEvent) => {
         const { name, value, type } = e.target as HTMLInputElement;
         
@@ -416,13 +469,18 @@ const response = await apiClient.post('/admin-legal-monitor/entries/parse-pdf', 
         ));
     };
 
-    // KORRIGIERT: Ladeanzeige, bis BPs und Templates geladen sind (auf 'null' prüfen)
-    if (!businessPartners || !templates) {
+if (!businessPartners || !templates) {
          return (
             <DashboardLayout>
                 <Container maxWidth="xl" sx={{ mt: 4, mb: 4, textAlign: 'center' }}>
-                    <CircularProgress />
-                    <Typography>Lade Konfiguration...</Typography>
+                    {error ? (
+                        <Alert severity="error">{error}</Alert>
+                    ) : (
+                        <>
+                            <CircularProgress />
+                            <Typography>Lade Konfiguration...</Typography>
+                        </>
+                    )}
                 </Container>
             </DashboardLayout>
         );
@@ -489,7 +547,6 @@ const response = await apiClient.post('/admin-legal-monitor/entries/parse-pdf', 
                     
                     {/* --- Tabelle der Einträge --- */}
                     <TableContainer>
-                        {/* KORRIGIERT: entries kann null sein, wird durch loading abgedeckt */}
                         {loading || !entries ? (
                             <Box sx={{ display: 'flex', justifyContent: 'center', p: 5 }}><CircularProgress /></Box>
                         ) : (
@@ -537,12 +594,10 @@ const response = await apiClient.post('/admin-legal-monitor/entries/parse-pdf', 
                                                             </span>
                                                         </Tooltip>
                                                         <Tooltip title="Eintrag löschen">
-                                                            {/* Das span fängt die Events ab, falls der Button disabled ist */}
                                                             <span>
                                                                 <IconButton 
                                                                     size="small" 
                                                                     onClick={() => handleDeleteEntry(entry.id)}
-                                                                    // Beispiel: disabled={!canDelete} 
                                                                 >
                                                                     <DeleteIcon fontSize="small" />
                                                                 </IconButton>
@@ -667,33 +722,53 @@ const response = await apiClient.post('/admin-legal-monitor/entries/parse-pdf', 
             </Dialog>
 
 
-            {/* --- Dialog für Template-Verwaltung --- */}
-            <Dialog open={templateDialog} onClose={handleCloseTemplateDialog} maxWidth="md" fullWidth>
-                <DialogTitle>Vorlagen verwalten</DialogTitle>
+<Dialog open={templateDialog} onClose={handleCloseTemplateDialog} maxWidth="md" fullWidth>
+                <DialogTitle>{editingTemplate ? 'Vorlage bearbeiten' : 'Vorlagen verwalten'}</DialogTitle>
                 <DialogContent>
-                    <Typography variant="h6">Bestehende Vorlagen</Typography>
-                    <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
-                        <Table size="small">
-                            <TableBody>
-                                {templates.map(t => (
-                                    <TableRow key={t.id}>
-                                        <TableCell>{t.template_name}</TableCell>
-                                        <TableCell>{t.industry || 'Allgemein'}</TableCell>
-                                        <TableCell>{businessPartners.find(bp => bp.id === t.business_partner_id)?.name || 'Fehler'}</TableCell>
-                                        <TableCell align="right">
-                                            <span>
-                                                <IconButton size="small" onClick={() => handleDeleteTemplate(t.id)}>
-                                                    <DeleteIcon fontSize="small" />
-                                                </IconButton>
-                                            </span>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
-
-                    <Typography variant="h6" sx={{mt: 3}}>Neue Vorlage erstellen</Typography>
+                    
+                    {/* KORREKTUR: Nur anzeigen, wenn NICHT editiert wird */}
+                    {!editingTemplate && (
+                        <>
+                            <Typography variant="h6">Bestehende Vorlagen</Typography>
+                            <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                                <Table size="small">
+                                    <TableBody>
+                                        {templates.map(t => (
+                                            <TableRow key={t.id}>
+                                                <TableCell>{t.template_name}</TableCell>
+                                                <TableCell>{t.industry || 'Allgemein'}</TableCell>
+                                                <TableCell>{businessPartners.find(bp => bp.id === t.business_partner_id)?.name || 'Fehler'}</TableCell>
+                                                <TableCell align="right">
+                                                    {/* +++ NEUE BUTTONS +++ */}
+                                                    <Tooltip title="Bearbeiten">
+                                                        <span>
+                                                            <IconButton size="small" onClick={() => handleOpenEditTemplate(t)}>
+                                                                <EditIcon fontSize="small" />
+                                                            </IconButton>
+                                                        </span>
+                                                    </Tooltip>
+                                                    <Tooltip title="Kopieren">
+                                                        <span>
+                                                            <IconButton size="small" onClick={() => handleCopyTemplate(t)}>
+                                                                <ContentCopyIcon fontSize="small" />
+                                                            </IconButton>
+                                                        </span>
+                                                    </Tooltip>
+                                                    {/* +++ ENDE NEUE BUTTONS +++ */}
+                                                    <span>
+                                                        <IconButton size="small" onClick={() => handleDeleteTemplate(t.id)}>
+                                                            <DeleteIcon fontSize="small" />
+                                                        </IconButton>
+                                                    </span>
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </TableContainer>
+                            <Typography variant="h6" sx={{mt: 3}}>Neue Vorlage erstellen</Typography>
+                        </>
+                    )}
                     <TextField
                         name="template_name"
                         label="Name der Vorlage"
@@ -708,14 +783,19 @@ const response = await apiClient.post('/admin-legal-monitor/entries/parse-pdf', 
                         <Select
                             name="business_partner_id"
                             value={templateFormState.business_partner_id}
-                            label="Business Partner" // Label angepasst (nicht optional)
+                            label="Business Partner"
                             onChange={(e) => setTemplateFormState(prev => ({ ...prev, business_partner_id: e.target.value }))}
-                            required // Hinzugefügt
+                            required
                         >
-                            {/* KORREKTUR: "Global" entfernt, da bp_id jetzt NOT NULL ist */}
-                            {businessPartners.map(bp => (
-                                <MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>
-                            ))}
+                            {businessPartners.length === 0 ? (
+                                <MenuItem value="" disabled>
+                                    Keine Business Partner gefunden.
+                                </MenuItem>
+                            ) : (
+                                businessPartners.map(bp => (
+                                    <MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>
+                                ))
+                            )}
                         </Select>
                     </FormControl>
                     <TextField
@@ -751,7 +831,8 @@ const response = await apiClient.post('/admin-legal-monitor/entries/parse-pdf', 
                         onClick={handleSaveTemplate} 
                         variant="contained"
                     >
-                        Vorlage erstellen
+                        {/* KORREKTUR: Button-Text dynamisch anpassen */}
+                        {editingTemplate ? 'Änderungen speichern' : 'Vorlage erstellen'}
                     </Button>
                 </DialogActions>
             </Dialog>

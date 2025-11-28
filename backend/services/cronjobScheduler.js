@@ -42,10 +42,8 @@ const runScheduledJobs = async () => {
                     console.log(`[CRON] Enqueueing Data Update Job: ${job.name}`);
                     dataUpdatesQueue.add(job.name, { jobId: job.id });
                 } 
-                // NEUER ELSE-IF BLOCK
                 else if (job.recipient_group === 'scraping') {
                     console.log(`[CRON] Enqueueing Scraping Trigger Job: ${job.name}`);
-                    // Wir geben dem Job einen eindeutigen Namen, damit der Worker ihn erkennt
                     scrapeQueue.add('trigger-account-intelligence', { cronJobId: job.id })
                         .catch(err => console.error(`[CRON] Error enqueueing account intelligence job ${job.id}:`, err.message));
                 }
@@ -54,6 +52,8 @@ const runScheduledJobs = async () => {
                     emailQueue.add(job.name, { emailJobId: job.id })
                         .catch(err => console.error(`[CRON] Error enqueueing email job ${job.id}:`, err.message));
                 }
+                
+                // [FIX] Update timestamp for ALL job types, not just emails
                 await client.query('UPDATE cronjobs SET last_run_at = NOW() WHERE id = $1', [job.id]);                
             }
         }

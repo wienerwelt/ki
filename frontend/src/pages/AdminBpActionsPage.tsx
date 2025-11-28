@@ -60,7 +60,6 @@ const AdminBpActionsPage: React.FC = () => {
     const [allBusinessPartners, setAllBusinessPartners] = useState<BusinessPartner[]>([]);
     const [allRegions, setAllRegions] = useState<Region[]>([]);
     const [allWidgetTypes, setAllWidgetTypes] = useState<WidgetTypeMeta[]>([]);
-    const [uploadedImages, setUploadedImages] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [openDialog, setOpenDialog] = useState(false);
@@ -99,13 +98,9 @@ const AdminBpActionsPage: React.FC = () => {
               params.business_partner_id = user.business_partner_id;
             }
 
-            const [actionsResponse, imagesResponse] = await Promise.all([
-                apiClient.get('/api/admin/actions', { params }),
-                apiClient.get('/api/admin/actions/images')
-            ]);
+            const actionsResponse = await apiClient.get('/api/admin/actions', { params });
             
             setActions(actionsResponse.data);
-            setUploadedImages(imagesResponse.data);
 
             if (user.role === 'admin') {
                 const [bpRes, regionsRes, widgetsRes] = await Promise.all([
@@ -161,10 +156,6 @@ const AdminBpActionsPage: React.FC = () => {
     const handleSelectChange = (e: SelectChangeEvent<string>) => {
         const { name, value } = e.target;
         setFormState(prev => ({ ...prev, [name]: value }));
-    };
-
-    const handleAutocompleteChange = (event: React.SyntheticEvent, newValue: string | null) => {
-        setFormState(prev => ({ ...prev, image_url: newValue || '' }));
     };
 
     const handleSubmit = async () => {
@@ -229,7 +220,6 @@ const AdminBpActionsPage: React.FC = () => {
             const response = await apiClient.post('/api/admin/actions/upload', formData);
             const { filePath } = response.data;
             setFormState(prev => ({ ...prev, image_url: filePath }));
-            setUploadedImages(prev => [filePath, ...prev.filter(p => p !== filePath)]);
         } catch (err: any) {
             setUploadError(err.response?.data?.message || 'Upload fehlgeschlagen.');
         }
@@ -292,15 +282,15 @@ const AdminBpActionsPage: React.FC = () => {
                         )}
                         <Grid item xs={12}><TextField name="title" label="Titel der Aktion" fullWidth value={formState.title || ''} onChange={handleInputChange} /></Grid>
                         <Grid item xs={12}><TextField name="content_text" label="Beschreibungstext" fullWidth multiline rows={3} value={formState.content_text || ''} onChange={handleInputChange} /></Grid>
-                        <Grid item xs={12}><TextField name="link_url" label="Link-URL" fullWidth value={formState.link_url || ''} onChange={handleInputChange} /></Grid>
-                        
+                        <Grid item xs={12}><TextField name="link_url" label="Link-URL" fullWidth value={formState.link_url || ''} onChange={handleInputChange} /></Grid>       
                         <Grid item xs={12} md={8}>
-                            <Autocomplete
-                                freeSolo
-                                options={uploadedImages}
-                                value={formState.image_url || ''}
-                                onChange={handleAutocompleteChange}
-                                renderInput={(params) => <TextField {...params} name="image_url" label="Bild URL oder Auswahl" />}
+                            <TextField 
+                                name="image_url" 
+                                label="Bild URL" 
+                                fullWidth 
+                                value={formState.image_url || ''} 
+                                onChange={handleInputChange} 
+                                helperText="URL wird nach dem Upload automatisch eingetragen."
                             />
                         </Grid>
                         <Grid item xs={12} md={4}>

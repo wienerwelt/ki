@@ -1,3 +1,4 @@
+// backend/controllers/adminStatsController.js
 const db = require('../config/db');
 
 const getTimeframe = (timespan) => {
@@ -18,31 +19,84 @@ exports.getUsageStats = async (req, res) => {
     const { dateTrunc, timeFilter, interval } = getTimeframe(timespan);
 
     try {
+        // Basis-Parameter für Filterung (Business Partner)
         const baseParams = [];
-        let baseWhereClauses = [`timestamp >= ${timeFilter}`];
+        let baseWhereClauses = [`timestamp >= ${timeFilter}`]; // Für Activity Log
+        let communityWhereClauses = [`created_at >= ${timeFilter}`]; // Für Community Tabellen
+
         if (businessPartnerId) {
             baseParams.push(businessPartnerId);
             baseWhereClauses.push(`u.business_partner_id = $${baseParams.length}`);
+            communityWhereClauses.push(`business_partner_id = $${baseParams.length}`); // Achtung: User Join nötig für Comments/Likes
         }
+        
         const baseWhereString = `WHERE ${baseWhereClauses.join(' AND ')}`;
+        const communityWhereString = `WHERE ${communityWhereClauses.join(' AND ')}`;
+        
+        // Helper für Community-Filterung (Posts haben direkt BP_ID, Kommentare/Likes via User)
+        const commPostFilter = businessPartnerId ? `AND business_partner_id = '${businessPartnerId}'` : '';
+        const commUserFilter = businessPartnerId ? `AND user_id IN (SELECT id FROM users WHERE business_partner_id = '${businessPartnerId}')` : '';
 
+
+        // 1. Zeitreihe (Erweitert um Community)
         const timeSeriesQuery = `
-            WITH time_series AS (SELECT generate_series(date_trunc('${dateTrunc}', ${timeFilter}), date_trunc('${dateTrunc}', NOW() + '${interval}'::interval), '${interval}'::interval) AS period)
+            WITH time_series AS (
+                SELECT generate_series(date_trunc('${dateTrunc}', ${timeFilter}), date_trunc('${dateTrunc}', NOW() + '${interval}'::interval), '${interval}'::interval) AS period
+            )
             SELECT
                 ts.period,
                 COALESCE(logins.count, 0) AS login_count,
                 COALESCE(tokens.prompt, 0) AS prompt_tokens,
                 COALESCE(tokens.completion, 0) AS completion_tokens,
-                COALESCE(funding_tokens.total, 0) AS funding_tokens
+                COALESCE(funding_tokens.total, 0) AS funding_tokens,
+                -- NEU: Community Stats
+                COALESCE(posts.count, 0) AS new_posts,
+                COALESCE(comments.count, 0) AS new_comments
             FROM time_series ts
-            LEFT JOIN (SELECT date_trunc('${dateTrunc}', timestamp) as period, count(*) as count FROM activity_log WHERE timestamp >= ${timeFilter} AND action_type = 'USER_LOGIN' GROUP BY period) AS logins ON ts.period = logins.period
-            LEFT JOIN (SELECT date_trunc('${dateTrunc}', timestamp) as period, SUM((details->'tokenUsage'->>'promptTokens')::int) as prompt, SUM((details->'tokenUsage'->>'completionTokens')::int) as completion FROM activity_log WHERE timestamp >= ${timeFilter} AND action_type LIKE 'AI_%_SUCCESS' GROUP BY period) AS tokens ON ts.period = tokens.period
-            LEFT JOIN (SELECT date_trunc('${dateTrunc}', aul.created_at) as period, SUM(aul.total_tokens) as total FROM ai_usage_logs aul JOIN ai_jobs aj ON aul.job_id = aj.id JOIN scraping_rules sr ON aj.scraping_rule_id = sr.id WHERE sr.rule_type = 'funding' AND aul.created_at >= ${timeFilter} GROUP BY period) AS funding_tokens ON ts.period = funding_tokens.period
+            -- Logins
+            LEFT JOIN (
+                SELECT date_trunc('${dateTrunc}', timestamp) as period, count(*) as count 
+                FROM activity_log al JOIN users u ON al.user_id = u.id 
+                ${baseWhereString} AND action_type = 'USER_LOGIN' 
+                GROUP BY period
+            ) AS logins ON ts.period = logins.period
+            -- Tokens
+            LEFT JOIN (
+                SELECT date_trunc('${dateTrunc}', timestamp) as period, SUM((details->'tokenUsage'->>'promptTokens')::int) as prompt, SUM((details->'tokenUsage'->>'completionTokens')::int) as completion 
+                FROM activity_log al JOIN users u ON al.user_id = u.id 
+                ${baseWhereString} AND action_type LIKE 'AI_%_SUCCESS' 
+                GROUP BY period
+            ) AS tokens ON ts.period = tokens.period
+            -- Funding Tokens
+            LEFT JOIN (
+                SELECT date_trunc('${dateTrunc}', aul.created_at) as period, SUM(aul.total_tokens) as total 
+                FROM ai_usage_logs aul 
+                JOIN ai_jobs aj ON aul.job_id = aj.id 
+                JOIN scraping_rules sr ON aj.scraping_rule_id = sr.id 
+                WHERE sr.rule_type = 'funding' AND aul.created_at >= ${timeFilter} 
+                GROUP BY period
+            ) AS funding_tokens ON ts.period = funding_tokens.period
+            -- NEU: Community Posts
+            LEFT JOIN (
+                SELECT date_trunc('${dateTrunc}', created_at) as period, COUNT(*) as count 
+                FROM community_posts 
+                WHERE created_at >= ${timeFilter} ${commPostFilter}
+                GROUP BY period
+            ) AS posts ON ts.period = posts.period
+            -- NEU: Community Comments
+            LEFT JOIN (
+                SELECT date_trunc('${dateTrunc}', created_at) as period, COUNT(*) as count 
+                FROM community_comments 
+                WHERE created_at >= ${timeFilter} ${commUserFilter}
+                GROUP BY period
+            ) AS comments ON ts.period = comments.period
+
             WHERE ts.period <= NOW()
             ORDER BY ts.period ASC;
         `;
-        const timeSeriesPromise = db.query(timeSeriesQuery);
+        const timeSeriesPromise = db.query(timeSeriesQuery, baseParams);
 
+        // 2. KPIs (Erweitert)
         const kpiQuery = `
             SELECT
                 (SELECT COUNT(*) FROM activity_log al JOIN users u ON al.user_id = u.id ${baseWhereString} AND al.action_type = 'USER_LOGIN') as total_logins,
@@ -50,10 +104,15 @@ exports.getUsageStats = async (req, res) => {
                 (SELECT COUNT(*) FROM scraped_content WHERE scraped_at >= ${timeFilter}) as total_scraped_content,
                 (SELECT SUM((al.details->'tokenUsage'->>'totalTokens')::int) FROM activity_log al JOIN users u ON al.user_id = u.id ${baseWhereString} AND al.action_type LIKE 'AI_%_SUCCESS') as total_redactional_tokens,
                 (SELECT SUM(aul.total_tokens) FROM ai_usage_logs aul JOIN ai_jobs aj ON aul.job_id = aj.id JOIN scraping_rules sr ON aj.scraping_rule_id = sr.id WHERE sr.rule_type = 'funding' AND aul.created_at >= ${timeFilter}) as total_funding_tokens,
-                (SELECT COUNT(aul.id) FROM ai_usage_logs aul JOIN ai_jobs aj ON aul.job_id = aj.id JOIN scraping_rules sr ON aj.scraping_rule_id = sr.id WHERE sr.rule_type = 'funding' AND aul.created_at >= ${timeFilter}) as total_processed_opportunities
+                (SELECT COUNT(aul.id) FROM ai_usage_logs aul JOIN ai_jobs aj ON aul.job_id = aj.id JOIN scraping_rules sr ON aj.scraping_rule_id = sr.id WHERE sr.rule_type = 'funding' AND aul.created_at >= ${timeFilter}) as total_processed_opportunities,
+                -- NEU: Community KPIs
+                (SELECT COUNT(*) FROM community_posts WHERE created_at >= ${timeFilter} ${commPostFilter}) as total_community_posts,
+                (SELECT COUNT(*) FROM community_comments WHERE created_at >= ${timeFilter} ${commUserFilter}) as total_community_comments,
+                (SELECT COUNT(*) FROM community_likes WHERE created_at >= ${timeFilter} ${commUserFilter}) as total_community_likes
         `;
         const kpiPromise = db.query(kpiQuery, baseParams).then(res => res.rows[0]);
 
+        // 3. Provider Usage (Unverändert)
         const providerUsageQuery = `
             WITH all_usage AS (
                 SELECT u.business_partner_id, al.details->>'model' as model, (al.details->'tokenUsage'->>'promptTokens')::int as prompt_tokens, (al.details->'tokenUsage'->>'completionTokens')::int as completion_tokens
@@ -74,6 +133,7 @@ exports.getUsageStats = async (req, res) => {
         `;
         const providerUsagePromise = db.query(providerUsageQuery, [businessPartnerId || null, model || null]);
 
+        // 4. Kosten pro BP (Unverändert)
         const costPerBpQuery = `
             WITH all_usage AS (
                 SELECT u.business_partner_id, (al.details->'tokenUsage'->>'totalTokens')::int as total_tokens
@@ -94,6 +154,7 @@ exports.getUsageStats = async (req, res) => {
         `;
         const costPerBpPromise = db.query(costPerBpQuery);
 
+        // 5. Kategorie Verteilung (Unverändert)
         const categoryDistributionQuery = `
             SELECT c.name, COUNT(agc.id)::INT as count
             FROM ai_generated_content agc
@@ -106,18 +167,34 @@ exports.getUsageStats = async (req, res) => {
         `;
         const categoryDistributionPromise = db.query(categoryDistributionQuery, baseParams);
 
+        // 6. Top User (Erweitert um Community Aktivität)
         const topUserActivityQuery = `
-            SELECT u.email, bp.name as business_partner_name, COUNT(al.id)::INT as activity_count
-            FROM activity_log al
-            JOIN users u ON al.user_id = u.id
+            SELECT 
+                u.email, 
+                bp.name as business_partner_name, 
+                (
+                    COUNT(DISTINCT al.id) + 
+                    (SELECT COUNT(*) FROM community_posts p WHERE p.user_id = u.id AND p.created_at >= ${timeFilter}) +
+                    (SELECT COUNT(*) FROM community_comments c WHERE c.user_id = u.id AND c.created_at >= ${timeFilter})
+                )::INT as activity_count
+            FROM users u
+            LEFT JOIN activity_log al ON al.user_id = u.id AND al.timestamp >= ${timeFilter} AND (al.action_type = 'USER_LOGIN' OR al.action_type LIKE 'AI_%_SUCCESS')
             LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
-            ${baseWhereString} AND (al.action_type = 'USER_LOGIN' OR al.action_type LIKE 'AI_%_SUCCESS')
-            GROUP BY u.email, bp.name
+            ${baseWhereString.replace('timestamp', 'al.timestamp').replace('AND al.action_type', '')} -- Grober Filter auf User Ebene via Join
+            GROUP BY u.id, u.email, bp.name
+            HAVING (
+                COUNT(DISTINCT al.id) + 
+                (SELECT COUNT(*) FROM community_posts p WHERE p.user_id = u.id AND p.created_at >= ${timeFilter}) +
+                (SELECT COUNT(*) FROM community_comments c WHERE c.user_id = u.id AND c.created_at >= ${timeFilter})
+            ) > 0
             ORDER BY activity_count DESC
             LIMIT 10;
         `;
+        // Hinweis: Die Query oben ist etwas komplexer, um alles zu aggregieren.
+        // Vereinfachung: Wir zählen Logins + AI-Nutzung + Posts + Kommentare zusammen.
         const topUserActivityPromise = db.query(topUserActivityQuery, baseParams);
 
+        // 7. Dropdowns (Unverändert)
         const availableModelsPromise = db.query(`SELECT DISTINCT model FROM ai_usage_logs WHERE model IS NOT NULL UNION SELECT DISTINCT details->>'model' as model FROM activity_log WHERE details->>'model' IS NOT NULL;`);
         const businessPartnersPromise = db.query(`SELECT id, name FROM business_partners ORDER BY name ASC;`);
 

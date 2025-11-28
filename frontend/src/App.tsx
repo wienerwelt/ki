@@ -54,8 +54,8 @@ import AdminFundingPage from './pages/AdminFundingPage';
 import AdminBpAccountsPage from './pages/AdminBpAccountsPage';
 import AdminBpCompetitorsPage from './pages/AdminBpCompetitorsPage';
 import AdminBpTrackedArticlesPage from './pages/AdminBpTrackedArticlesPage';
-
-// Import der neuen Seite
+import CommunityPage from './pages/CommunityPage';
+import AdminCommunityPage from './pages/AdminCommunityPage';
 import AdminLegalMonitorPage from './pages/AdminLegalMonitorPage';
 
 // --- ROUTE GUARDS ---
@@ -77,13 +77,11 @@ const ProtectedRoutes: React.FC = () => {
   );
 };
 
-// Guard nur für Admins
 const AdminRoutes: React.FC = () => {
   const { user } = useAuth();
   return user?.role === 'admin' ? <Outlet /> : <Navigate to="/dashboard" replace />;
 };
 
-// Guard für Admins UND Assistenten
 const BpStaffAllowedRoutes: React.FC = () => {
   const { user } = useAuth();
   const isAllowed = user?.role === 'admin' || user?.role === 'assistenz';
@@ -114,14 +112,25 @@ function App() {
               : scheme?.text_color_dark || '#ffffff',
           },
           background: {
+            // OPTIMIERUNG: Dunklerer Hintergrund im Dark Mode für besseren Kontrast zu den Cards
             default: themeMode === 'light'
               ? scheme?.background_color_light || '#f4f6f8'
-              : scheme?.background_color_dark || '#121212',
+              : '#0a0a0a', // Fast Schwarz, damit sich #1e1e1e (Paper) abhebt
             paper: themeMode === 'light'
               ? scheme?.paper_color_light || '#ffffff' 
-              : scheme?.paper_color_dark || '#1e1e1e',
+              : '#1e1e1e', // Standard Material Dark Paper
           },
         },
+        components: {
+            // OPTIONAL: Globale Anpassungen für Cards im Dark Mode
+            MuiPaper: {
+                styleOverrides: {
+                    root: {
+                        backgroundImage: 'none', // Entfernt den Standard-Overlay im Darkmode für saubereren Look
+                    }
+                }
+            }
+        }
       });
       setCurrentTheme(newTheme);
     }
@@ -142,7 +151,6 @@ function App() {
       <CssBaseline />
       <Router>
         <Routes>
-          {/* Öffentliche Routen */}
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<LoginPage isRegister={true} />} />
@@ -154,7 +162,6 @@ function App() {
           <Route path="/disclaimer" element={<DisclaimerPage />} />
           <Route path="/newsletter/confirmed" element={<NewsletterConfirmed />} />
 
-          {/* Geschützte Routen */}
           <Route element={<ProtectedRoutes />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/profile" element={<ProfilePage />} />
@@ -165,19 +172,17 @@ function App() {
             <Route path="/files" element={<FileManagementPage />} />
             <Route path="/funding-search" element={<FundingSearchPage />} />
             <Route path="/funding-detail/:id" element={<FundingDetailPage />} />
+            <Route path="/community" element={<CommunityPage />} />
 
-            {/* Routen für Admins und Assistenten */}
             <Route element={<BpStaffAllowedRoutes />}>
               <Route path="/admin/users" element={<AdminUserManagementPage />} />
               <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
               <Route path="/admin/actions" element={<AdminBpActionsPage />} />
               <Route path="/admin/surveys" element={<AdminSurveysPage />} />
-              
-              {/* ✅ HIERHIN VERSCHOBEN */}
+              <Route path="/admin/community" element={<AdminCommunityPage />} />
               <Route path="admin/legal-monitor" element={<AdminLegalMonitorPage />} />
             </Route>
 
-            {/* Routen nur für Admins */}
             <Route path="/admin" element={<AdminRoutes />}>
               <Route index element={<AdminDashboardPage />} />
               <Route path="business-partners" element={<AdminBusinessPartnersPage />} />
@@ -194,11 +199,6 @@ function App() {
               <Route path="categories" element={<AdminCategoriesPage />} />
               <Route path="tags" element={<AdminTagsPage />} />
               <Route path="monitor" element={<AdminMonitorPage />} />
-              
-              {/* 🛑 VON HIER ENTFERNT
-              <Route path="legal-monitor" element={<AdminLegalMonitorPage />} />
-              */}
-
               <Route path="statistics" element={<AdminStatisticsPage />} />
               <Route path="advertisements" element={<AdminAdvertisementsPage />} />
               <Route path="cronjobs" element={<AdminCronjobsPage />} />
@@ -216,18 +216,6 @@ function App() {
 }
 
 function AppWrapper() {
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-
-  if (typeof clientId === 'string' && /^['"].*['"]$/.test(clientId.trim())) {
-    console.warn(
-      '%cWARNUNG:',
-      'color: yellow; font-weight: bold;',
-      'Deine GOOGLE_CLIENT_ID enthält Anführungszeichen im Wert:',
-      clientId,
-      '\n→ Entferne die " oder \' aus der .env-Datei, sonst erkennt Google die ID nicht.'
-    );
-  }
-
   return (
     <AuthProvider>
       <SnackbarProvider>

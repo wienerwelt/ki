@@ -1,6 +1,9 @@
 const pool = require('../config/db');
-const fs = require('fs');   // NEU
-const path = require('path'); // NEU
+//const fs = require('fs');   // NEU
+//const path = require('path'); // NEU
+const { PutObjectCommand } = require("@aws-sdk/client-s3");
+const s3Client = require("../config/s3Client.js");
+const { v4: uuidv4 } = require('uuid');
 
 // Ihre bestehende Funktion "getActionsForBusinessPartner"
 exports.getActionsForBusinessPartner = async (req, res) => {
@@ -149,55 +152,45 @@ exports.deleteAction = async (req, res) => {
     }
 };
 
-exports.uploadActionImage = (req, res) => {
+// Ersetzen Sie die gesamte 'exports.uploadActionImage'-Funktion hiermit:
+exports.uploadActionImage = async (req, res) => {
     if (!req.file) {
         return res.status(400).send({ message: 'Bitte wählen Sie eine Datei aus.' });
     }
 
+    const file = req.file;
+
     try {
-        const tempPath = req.file.path;
-
-        const bpName = (req.body.businessPartnerName || 'global').replace(/\s+/g, '-').toLowerCase();
-        const startDate = req.body.startDate ? new Date(req.body.startDate).toISOString().split('T')[0] : 'anytime';
-        const originalName = path.parse(req.file.originalname).name.replace(/\s+/g, '-');
-        const uniqueSuffix = Date.now();
-        const newFilename = `${bpName}_${startDate}_${originalName}_${uniqueSuffix}${path.extname(req.file.originalname)}`;
+        // Eindeutigen Dateinamen generieren
+        const fileExtension = file.originalname.split('.').pop() || '';
+        const uniqueFileName = `${uuidv4()}${fileExtension ? '.' + fileExtension : ''}`;
         
-        const newPath = path.join(path.dirname(tempPath), newFilename);
+        // Ihr Zielordner '/actions' wird hier als S3-Key-Präfix verwendet
+        const storagePath = `actions/${uniqueFileName}`; 
 
-        fs.renameSync(tempPath, newPath);
+        const params = {
+            Bucket: process.env.AWS_S3_BUCKET_NAME,
+            Key: storagePath,
+            Body: file.buffer,
+            ContentType: file.mimetype
+        };
 
-        const publicFilePath = `/actions/${newFilename}`;
+        await s3Client.send(new PutObjectCommand(params));
 
-        res.status(200).json({ message: 'Datei erfolgreich hochgeladen', filePath: publicFilePath });
+        // Die öffentliche URL der Datei konstruieren (wie in adminBusinessPartnerController.js)
+        const publicUrl = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_S3_REGION}.amazonaws.com/${storagePath}`;
+
+        res.status(200).json({ 
+            message: 'Datei erfolgreich hochgeladen', 
+            // Das Frontend erhält jetzt die volle S3-URL
+            filePath: publicUrl 
+        });
 
     } catch (err) {
-        console.error("Fehler bei der Dateiverarbeitung:", err);
-        if (req.file && req.file.path) {
-            fs.unlink(req.file.path, (unlinkErr) => {
-                if(unlinkErr) console.error("Fehler beim Löschen der temporären Datei:", unlinkErr);
-            });
-        }
+        console.error("Fehler bei der S3-Dateiverarbeitung:", err);
+        // Sicherstellen, dass keine temporären Dateien zurückbleiben (nicht mehr nötig mit memoryStorage)
         res.status(500).json({ message: 'Fehler bei der Dateiverarbeitung.' });
     }
-};
-
-exports.getUploadedImages = (req, res) => {
-    const directoryPath = path.join(__dirname, '..', '..', 'frontend', 'public', 'actions');
-    fs.readdir(directoryPath, function (err, files) {
-        if (err) {
-            if (err.code === 'ENOENT') {
-                return res.json([]);
-            }
-            console.error("Fehler beim Lesen des Bilderverzeichnisses:", err);
-            return res.status(500).send('Bilder konnten nicht geladen werden.');
-        }
-        const imageFiles = files
-            .filter(file => /\.(jpg|jpeg|png|gif|webp)$/i.test(file))
-            .map(file => `/actions/${file}`)
-            .reverse();
-        res.json(imageFiles);
-    });
 };
 
 exports.copyAction = async (req, res) => {

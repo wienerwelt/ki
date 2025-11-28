@@ -118,6 +118,7 @@ exports.createUser = async (req, res) => {
     const { user: requester } = req;
 
     try {
+        // 1. Rechteprüfung für Assistenten
         if (requester.role === 'assistenz' && role === 'admin') {
             await logActivity({ userId: requester.id, username: requester.username, actionType: 'USER_CREATE_DENIED', status: 'failure', details: { reason: 'Assistant tried to create admin', attemptedRole: role }, ipAddress: req.ip });
             return res.status(403).json({ message: 'Permission denied: Assistants cannot create admin users.' });
@@ -132,15 +133,54 @@ exports.createUser = async (req, res) => {
             return res.status(400).json({ message: 'Invalid Business Partner ID format.' });
         }
 
+        // 2. Passwort hashen
         const salt = await bcrypt.genSalt(10);
         const password_hash = await bcrypt.hash(password, salt);
 
+        // 3. User erstellen
         const newUserResult = await db.query(
             `INSERT INTO users (username, email, password_hash, first_name, last_name, organization_name, linkedin_url, membership_level, role, business_partner_id, is_active)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
             [username, email, password_hash, first_name, last_name, organization_name, linkedin_url, membership_level, role, finalBpId || null, is_active]
         );
         const newUserId = newUserResult.rows[0].id;
+
+        // --- 4. NEU: DEFAULT DASHBOARD ERSTELLEN ---
+        try {
+            const defaultConfig = {
+                name: 'Mein Dashboard',
+                widgets: [
+                    { id: 'default-bp-info', type: 'BusinessPartnerInfo' },
+                    { id: 'default-user-profile', type: 'user_activity' } // 'user_activity' ist der DB-Type-Key für das Profil-Widget
+                ],
+                layouts: {
+                    lg: [
+                        { i: 'default-bp-info', x: 0, y: 0, w: 8, h: 8 },
+                        { i: 'default-user-profile', x: 8, y: 0, w: 4, h: 8 }
+                    ],
+                    md: [
+                        { i: 'default-bp-info', x: 0, y: 0, w: 6, h: 8 },
+                        { i: 'default-user-profile', x: 6, y: 0, w: 4, h: 8 }
+                    ],
+                    sm: [
+                        { i: 'default-bp-info', x: 0, y: 0, w: 6, h: 8 },
+                        { i: 'default-user-profile', x: 0, y: 8, w: 6, h: 8 }
+                    ]
+                }
+            };
+
+            await db.query(
+                `INSERT INTO dashboard_configurations (user_id, name, config, is_default) 
+                 VALUES ($1, $2, $3, $4)`,
+                [newUserId, 'Mein Dashboard', JSON.stringify(defaultConfig), true]
+            );
+        } catch (dashErr) {
+            console.error('Konnte Standard-Dashboard für neuen User nicht anlegen:', dashErr.message);
+            // Wir brechen nicht ab, da der User ja erstellt wurde.
+        }
+        // ---------------------------------------------------
+
+        // 5. Logging & Response
         const businessPartnerName = await getBusinessPartnerName(finalBpId);
 
         await logActivity({

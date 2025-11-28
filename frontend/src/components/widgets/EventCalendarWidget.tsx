@@ -1,22 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Box, Typography, CircularProgress, TextField, Tooltip,
-  IconButton, Paper, Stack, InputAdornment, Button,
+  Box, Typography, TextField, Tooltip,
+  IconButton, Stack, InputAdornment, Button,
   MenuItem, FormControl, Select, SelectChangeEvent, Link as MuiLink,
   Dialog, DialogTitle, DialogContent, DialogActions, List, ListItem,
-  ToggleButtonGroup, ToggleButton
+  ToggleButtonGroup, ToggleButton, Avatar, AvatarGroup, Badge, Divider, Chip
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import CloseIcon from '@mui/icons-material/Close';
-import EventAvailableIcon from '@mui/icons-material/EventAvailable';
-import EventBusyIcon from '@mui/icons-material/EventBusy';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CelebrationIcon from '@mui/icons-material/Celebration';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import CheckIcon from '@mui/icons-material/Check';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../../apiClient';
+
+import WidgetPaper from './WidgetPaper';
 
 interface BaseWidgetProps {
   widgetId: string;
@@ -26,17 +28,101 @@ interface BaseWidgetProps {
 interface EventCalendarWidgetProps extends BaseWidgetProps {
   icon?: React.ReactNode;
   title: string;
-  category?: string;             // z.B. "events,industry"
-  widgetTypeKey?: string;        // QA/Tests
+  category?: string;             
+  widgetTypeKey?: string;        
 }
 
 interface Region { id?: string; name: string; code: string; latitude?: number; longitude?: number; }
 
-interface EventData {
-  id: string; title: string; date: string; region: string | null; summary: string | null; url: string | null;
-  participants: number; maybeParticipants?: number; userVote: 1 | 0 | -1 | null;
-  full_text: string | null; is_trusted_source: boolean; is_read: boolean; type?: 'event' | 'holiday';
+// Struktur für einen User im Event
+interface Participant {
+    id: string;
+    first_name: string;
+    last_name: string;
+    profile_image_url: string | null;
+    last_login_at?: string;
 }
+
+interface EventData {
+  id: string; 
+  title: string; 
+  date: string; 
+  region: string | null; 
+  summary: string | null; 
+  url: string | null;
+  // NEU: Listen statt nur Zahlen
+  participants: Participant[]; 
+  maybeParticipants: Participant[]; 
+  userVote: 1 | 0 | -1 | null;
+  full_text: string | null; 
+  is_trusted_source: boolean; 
+  is_read: boolean; 
+  type?: 'event' | 'holiday';
+}
+
+// --- HELPER: Status Logik (Identisch zum BP Info Widget) ---
+const getUserStatus = (lastLoginDate?: string) => {
+    if (!lastLoginDate) return 'offline';
+    const loginTime = new Date(lastLoginDate).getTime();
+    const now = new Date().getTime();
+    const diffMinutes = (now - loginTime) / (1000 * 60);
+    
+    if (diffMinutes < 15) return 'online';
+    if (diffMinutes < 60 * 24) return 'active_today';
+    return 'offline';
+};
+
+// --- HELPER: Avatar Komponente ---
+const MemberAvatar: React.FC<{ member: Participant, size?: number, showStatus?: boolean }> = ({ member, size = 24, showStatus = true }) => {
+    const status = getUserStatus(member.last_login_at);
+    const invisible = !showStatus || status === 'offline';
+    const statusColor = status === 'online' ? '#44b700' : '#ffa726';
+    const tooltipText = `${member.first_name} ${member.last_name} (${status === 'online' ? 'Online' : (status === 'active_today' ? 'Heute aktiv' : 'Offline')})`;
+
+    return (
+        <Tooltip title={tooltipText}>
+            <Badge
+                overlap="circular"
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                variant="dot"
+                invisible={invisible}
+                sx={{
+                    '& .MuiBadge-badge': {
+                        backgroundColor: statusColor,
+                        color: statusColor,
+                        boxShadow: `0 0 0 2px white`,
+                        width: size / 3.5,
+                        height: size / 3.5,
+                        minWidth: size / 3.5,
+                        '&::after': status === 'online' ? {
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            height: '100%',
+                            borderRadius: '50%',
+                            animation: 'ripple 1.2s infinite ease-in-out',
+                            border: '1px solid currentColor',
+                            content: '""',
+                        } : {},
+                    },
+                    '@keyframes ripple': {
+                        '0%': { transform: 'scale(.8)', opacity: 1 },
+                        '100%': { transform: 'scale(2.4)', opacity: 0 },
+                    },
+                }}
+            >
+                <Avatar 
+                    src={member.profile_image_url || undefined} 
+                    alt={member.first_name}
+                    sx={{ width: size, height: size, fontSize: size * 0.5 }}
+                >
+                    {member.first_name?.charAt(0)}
+                </Avatar>
+            </Badge>
+        </Tooltip>
+    );
+};
 
 const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, alt, size = 20 }) => {
   if (!code) return null;
@@ -73,35 +159,30 @@ const isValidUrl = (urlString: string): boolean => {
   try { const u = new URL(urlString); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; }
 };
 
-const ParticipantsBadges: React.FC<{ yes: number; maybe?: number }> = ({ yes, maybe }) => (
-  <Stack direction="row" spacing={1} alignItems="center">
-    <Tooltip title="Interessiert/Teilnahme">
-      <Stack direction="row" spacing={0.5} alignItems="center">
-        <EventAvailableIcon fontSize="small" />
-        <Typography variant="caption">{yes}</Typography>
-      </Stack>
-    </Tooltip>
-    <Tooltip title="Unentschieden">
-      <Stack direction="row" spacing={0.5} alignItems="center">
-        <EventBusyIcon fontSize="small" />
-        <Typography variant="caption">{maybe ?? 0}</Typography>
-      </Stack>
-    </Tooltip>
-  </Stack>
-);
+// --- NEU: Darstellung der Avatare im Listen-Element ---
+const ParticipantsPreview: React.FC<{ yes: Participant[]; maybe: Participant[] }> = ({ yes, maybe }) => {
+    if (yes.length === 0 && maybe.length === 0) return null;
 
-const WidgetPaper: React.FC<React.PropsWithChildren<{ title: React.ReactNode; loading: boolean; error: string | null }>> = ({
-  title, children, loading, error,
-}) => (
-  <Paper elevation={3} sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-    <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-      {typeof title === 'string' ? <Typography variant="h6">{title}</Typography> : title}
-    </Box>
-    {loading && <Box sx={{ p: 3, textAlign: 'center' }}><CircularProgress /></Box>}
-    {error && <Box sx={{ p: 3, textAlign: 'center', color: 'error.main' }}><Typography>{error}</Typography></Box>}
-    {!loading && !error && <Box sx={{ flexGrow: 1, position: 'relative' }}>{children}</Box>}
-  </Paper>
-);
+    return (
+        <Stack direction="row" spacing={1} alignItems="center">
+            {yes.length > 0 && (
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <AvatarGroup max={3} spacing="small" sx={{ '& .MuiAvatar-root': { width: 20, height: 20, fontSize: 10, borderColor: 'background.paper' } }}>
+                        {yes.map(p => <MemberAvatar key={p.id} member={p} size={20} showStatus={false} />)}
+                    </AvatarGroup>
+                </Box>
+            )}
+            {maybe.length > 0 && (
+                <Box sx={{ display: 'flex', alignItems: 'center', opacity: 0.7 }}>
+                    <AvatarGroup max={2} spacing="small" sx={{ '& .MuiAvatar-root': { width: 20, height: 20, fontSize: 10, borderColor: 'background.paper' } }}>
+                        {maybe.map(p => <MemberAvatar key={p.id} member={p} size={20} showStatus={false} />)}
+                    </AvatarGroup>
+                    <HelpOutlineIcon sx={{ fontSize: 12, ml: 0.5, color: 'text.secondary' }} />
+                </Box>
+            )}
+        </Stack>
+    );
+};
 
 const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
   onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey
@@ -117,10 +198,9 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventData | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
-  const [newEvent, setNewEvent] = useState({ title: '', event_date: '', region: '', summary: '', original_url: 'https://' });
+  const [newEvent, setNewEvent] = useState({ title: '', event_date: '', region: '', summary: '', original_url: '' });
   const [viewMode, setViewMode] = useState<'upcoming' | 'past'>('upcoming');
 
-  // --- Daten holen (ohne manuelle Header; apiClient setzt Authorization automatisch) ---
   const fetchAllRegions = useCallback(async () => {
     try {
       const res = await apiClient.get('/api/data/regions');
@@ -142,10 +222,11 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     setError(null);
     try {
       const [eventsRes, holidaysRes] = await Promise.all([
-        apiClient.get('/api/data/events', { params: { category } }),
+        apiClient.get('/api/data/enhanced-calendar-events', { params: { category, limit: 50 } }), // Ggf. Endpoint anpassen
         apiClient.get('/api/data/holidays'),
       ]);
 
+      // Mapping der API-Antwort (angepasst an die neue Backend-Struktur)
       const events: EventData[] = (eventsRes.data?.events || []).map((e: any) => ({
         id: String(e.id),
         title: e.title,
@@ -153,8 +234,9 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
         region: e.region ?? null,
         summary: e.summary ?? null,
         url: e.url ?? null,
-        participants: Number(e.participants ?? 0),
-        maybeParticipants: Number(e.maybeParticipants ?? 0),
+        // Fallback: Wenn Backend noch alte Struktur liefert (Zahlen), leere Arrays nutzen
+        participants: Array.isArray(e.participants_data) ? e.participants_data : [],
+        maybeParticipants: Array.isArray(e.maybe_participants_data) ? e.maybe_participants_data : [],
         userVote: (e.userVote ?? null) as 1 | 0 | -1 | null,
         full_text: e.full_text ?? null,
         is_trusted_source: !!e.is_trusted_source,
@@ -169,8 +251,8 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
         region: h.region ?? null,
         summary: h.summary ?? null,
         url: null,
-        participants: 0,
-        maybeParticipants: 0,
+        participants: [],
+        maybeParticipants: [],
         userVote: null,
         full_text: null,
         is_trusted_source: true,
@@ -178,7 +260,6 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
         type: 'holiday',
       }));
 
-      // Regionsliste zusammenbauen
       const eventRegions: Region[] = Array.isArray(eventsRes.data?.availableRegions)
         ? eventsRes.data.availableRegions
         : [];
@@ -194,7 +275,6 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     } catch (err: any) {
       setAllEvents([]);
       setAvailableRegions([]);
-      // zeige Backend-Message, sonst generisch
       setError(err?.response?.data?.message || 'Events konnten nicht geladen werden.');
     } finally {
       setLoading(false);
@@ -202,9 +282,8 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
   }, [category, allPossibleRegions]);
 
   useEffect(() => { fetchAllRegions(); }, [fetchAllRegions]);
-  useEffect(() => { fetchEventsAndHolidays(); }, [fetchEventsAndHolidays]); // nach Regions-Laden erneut holen
+  useEffect(() => { fetchEventsAndHolidays(); }, [fetchEventsAndHolidays]);
 
-  // --- UI/Filter ---
   const daysUntil = (dateStr: string) => {
     const d = new Date(dateStr); const t = new Date();
     d.setHours(0, 0, 0, 0); t.setHours(0, 0, 0, 0);
@@ -215,9 +294,9 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     const regionName = availableRegions.find(r => r.code === selectedRegionCode)?.name;
     const filtered = allEvents.filter(e => {
       const matchesRegion = selectedRegionCode === 'all' || e.region === regionName;
-const matchesSearch =
+      const matchesSearch =
         !searchTerm ||
-        (e.title ?? '').toLowerCase().includes(searchTerm.toLowerCase()) || // <-- KORRIGIERT
+        (e.title ?? '').toLowerCase().includes(searchTerm.toLowerCase()) || 
         (e.summary ?? '').toLowerCase().includes(searchTerm.toLowerCase());
       const isUpcoming = daysUntil(e.date) >= 0;
       const matchesDate = viewMode === 'upcoming' ? isUpcoming : !isUpcoming;
@@ -254,14 +333,13 @@ const matchesSearch =
   const handleShareSubmit = async () => {
     if (!selectedEvent || !shareEmail) return;
     try {
-      const resp = await apiClient.post('/api/data/events/share', {
+      await apiClient.post('/api/data/events/share', {
         title: selectedEvent.title,
         date: selectedEvent.date,
         url: selectedEvent.url,
         summary: selectedEvent.summary,
         recipientEmail: shareEmail,
       });
-      console.log('Share OK', resp.data);
       setShareEmail('');
       setShareOpen(false);
     } catch (err) {
@@ -271,24 +349,32 @@ const matchesSearch =
 
   const handleVote = async (vote: 1 | 0 | -1 | null) => {
     if (!selectedEvent || vote === null) return;
-    const previousVote = selectedEvent.userVote; const eventId = selectedEvent.id;
+    const eventId = selectedEvent.id;
 
-    setSelectedEvent(prev => (prev ? { ...prev, userVote: vote } : null));
-    setAllEvents(prevEvents => prevEvents.map(e => {
-      if (e.id !== eventId) return e;
-      let newParticipants = e.participants;
-      let newMaybe = e.maybeParticipants || 0;
-      if (previousVote === 1) newParticipants--; else if (previousVote === 0) newMaybe--;
-      if (vote === 1) newParticipants++; else if (vote === 0) newMaybe++;
-      return { ...e, userVote: vote, participants: Math.max(0, newParticipants), maybeParticipants: Math.max(0, newMaybe) };
-    }));
-
+    // Optimistische UI-Updates sind hier schwierig, da wir das User-Objekt bräuchten.
+    // Daher laden wir einfach neu.
     try {
       await apiClient.post(`/api/data/events/${eventId}/vote`, { vote });
+      // Nach erfolgreichem Vote neu laden, um die aktualisierte Liste zu bekommen
+      fetchEventsAndHolidays();
+      // Wir schließen den Dialog nicht, aber wir könnten selectedEvent updaten, wenn wir die Daten hätten.
+      // Einfacher Hack: Kurz warten und selectedEvent aktualisieren
+      setTimeout(async () => {
+          const res = await apiClient.get('/api/data/enhanced-calendar-events', { params: { category, limit: 50 } });
+          const updatedEventRaw = (res.data.events || []).find((e: any) => String(e.id) === eventId);
+          if (updatedEventRaw) {
+              const updatedEvent: EventData = {
+                  ...selectedEvent,
+                  participants: updatedEventRaw.participants_data || [],
+                  maybeParticipants: updatedEventRaw.maybe_participants_data || [],
+                  userVote: updatedEventRaw.userVote
+              };
+              setSelectedEvent(updatedEvent);
+          }
+      }, 500);
+
     } catch (err) {
       console.error('Fehler bei der Abstimmung:', err);
-      // im Fehlerfall am besten erneut laden
-      fetchEventsAndHolidays();
     }
   };
 
@@ -311,38 +397,24 @@ const matchesSearch =
     document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
-
-const handleAddEventSubmit = async () => {
+  const handleAddEventSubmit = async () => {
     if (!newEvent.title || !newEvent.event_date) {
       alert('Titel und Datum sind erforderlich.');
       return;
     }
-    if (!isValidUrl(newEvent.original_url)) {
-      alert('Die eingegebene URL ist ungültig. Bitte verwenden Sie http:// oder https://.');
-      return;
-    }
-    
     try {
-      // Sende die Daten an das Backend
       await apiClient.post('/api/admin/scraped-content/events', { 
         ...newEvent, 
-        category: category // Stellt sicher, dass die Kategorie des Widgets verwendet wird
+        category: category 
       });
-      
-      setAddModalOpen(false); // Modal schließen
-      setNewEvent({ title: '', event_date: '', region: '', summary: '', original_url: 'https://' }); // Formular zurücksetzen
-      
-      // ENTSCHEIDEND: Lade alle Events (inkl. Feiertage) neu, damit dein neues Event erscheint
+      setAddModalOpen(false);
+      setNewEvent({ title: '', event_date: '', region: '', summary: '', original_url: '' }); 
       fetchEventsAndHolidays(); 
-
     } catch (err) {
-      console.error('Fehler beim Hinzufügen des Events:', err);
-      alert('Event konnte nicht hinzugefügt werden. Prüfe die Backend-Logs.');
+      console.error(err);
     }
   };
 
-
-  // --- Render ---
   return (
     <WidgetPaper
       title={
@@ -358,20 +430,18 @@ const handleAddEventSubmit = async () => {
               <AddCircleOutlineIcon color="action" />
             </IconButton>
           </Tooltip>
-          {isRemovable && (
-            <Tooltip title="Widget entfernen">
-              <IconButton onClick={() => onDelete?.(widgetId)} size="small" aria-label="Widget entfernen">
-                <CloseIcon color="action" />
-              </IconButton>
-            </Tooltip>
-          )}
         </Box>
       }
+      widgetTitle={title}
+      widgetTypeKey={widgetTypeKey || 'event-calendar'}
+      widgetId={widgetId}
+      onDelete={onDelete}
+      isRemovable={isRemovable}
       loading={loading}
       error={error}
     >
       {!error && (
-        <Stack spacing={2} sx={{ p: 2 }}>
+        <Stack spacing={2}>
           <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
             <ToggleButtonGroup
               value={viewMode}
@@ -381,8 +451,8 @@ const handleAddEventSubmit = async () => {
               size="small"
               fullWidth
             >
-              <ToggleButton value="upcoming" aria-label="Anstehende Events">Anstehend</ToggleButton>
-              <ToggleButton value="past" aria-label="Vergangene Events">Vergangen</ToggleButton>
+              <ToggleButton value="upcoming">Anstehend</ToggleButton>
+              <ToggleButton value="past">Vergangen</ToggleButton>
             </ToggleButtonGroup>
           </Box>
 
@@ -390,7 +460,7 @@ const handleAddEventSubmit = async () => {
             <TextField
               fullWidth
               size="small"
-              placeholder="Events durchsuchen…"
+              placeholder="Suchen…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
@@ -481,7 +551,9 @@ const handleAddEventSubmit = async () => {
                             </Typography>
 
                             <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
-                              {e.type !== 'holiday' && <ParticipantsBadges yes={e.participants} maybe={e.maybeParticipants} />}
+                              {/* HIER DIE AVATAR PREVIEW STATT NUR ZAHLEN */}
+                              {e.type !== 'holiday' && <ParticipantsPreview yes={e.participants} maybe={e.maybeParticipants} />}
+                              
                               <Typography variant="caption" color="text.secondary">
                                 {isPast ? `vor ${Math.abs(diff)} Tagen` : diff === 0 ? 'Heute' : `in ${diff} Tagen`}
                               </Typography>
@@ -549,22 +621,80 @@ const handleAddEventSubmit = async () => {
         </DialogTitle>
         <DialogContent dividers>
           {selectedEvent && (
-            <Stack spacing={2}>
-              <Typography variant="body2" color="text.secondary">
-                {new Date(selectedEvent.date).toLocaleDateString('de-DE')}
-              </Typography>
-              {selectedEvent.summary && <Typography sx={{ whiteSpace: 'pre-wrap' }}>{selectedEvent.summary}</Typography>}
+            <Stack spacing={3}>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary">Wann?</Typography>
+                <Typography variant="body1">
+                    {new Date(selectedEvent.date).toLocaleDateString('de-DE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                </Typography>
+              </Box>
+              
+              {selectedEvent.summary && (
+                  <Box>
+                    <Typography variant="subtitle2" color="text.secondary">Infos</Typography>
+                    <Typography sx={{ whiteSpace: 'pre-wrap' }}>{selectedEvent.summary}</Typography>
+                  </Box>
+              )}
+
+              {/* NEU: Teilnehmer-Liste im Dialog */}
+              {(selectedEvent.participants.length > 0 || selectedEvent.maybeParticipants.length > 0) && (
+                  <Box sx={{ bgcolor: 'action.hover', p: 2, borderRadius: 2 }}>
+                      <Typography variant="subtitle2" sx={{ mb: 1 }}>Teilnehmer</Typography>
+                      {selectedEvent.participants.length > 0 && (
+                          <Box sx={{ mb: 1 }}>
+                              <Chip label={`${selectedEvent.participants.length} Zusagen`} size="small" color="success" variant="outlined" sx={{ mb: 1 }} />
+                              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                  {selectedEvent.participants.map(p => <MemberAvatar key={p.id} member={p} size={32} />)}
+                              </Box>
+                          </Box>
+                      )}
+                      {selectedEvent.maybeParticipants.length > 0 && (
+                          <Box>
+                              <Chip label={`${selectedEvent.maybeParticipants.length} Vielleicht`} size="small" color="warning" variant="outlined" sx={{ mb: 1 }} />
+                              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                  {selectedEvent.maybeParticipants.map(p => <MemberAvatar key={p.id} member={p} size={32} />)}
+                              </Box>
+                          </Box>
+                      )}
+                  </Box>
+              )}
+
               {selectedEvent.url && (
-                <Button fullWidth size="small" startIcon={<OpenInNewIcon />} href={selectedEvent.url} target="_blank" rel="noopener" variant="outlined">
-                  Anmeldung & Infos
+                <Button fullWidth startIcon={<OpenInNewIcon />} href={selectedEvent.url} target="_blank" rel="noopener" variant="outlined">
+                  Anmeldung & Details (Extern)
                 </Button>
               )}
-              <Stack direction="row" spacing={1}>
-                <Button onClick={() => handleVote(1)} size="small" variant="outlined">Interessiert</Button>
-                <Button onClick={() => handleVote(0)} size="small" variant="outlined">Vielleicht</Button>
+              
+              <Divider />
+              
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="body2" fontWeight="bold">Deine Antwort:</Typography>
+                  <Stack direction="row" spacing={1}>
+                    <Button 
+                    onClick={() => handleVote(1)} 
+                    size="small" 
+                    startIcon={<CheckIcon />}
+                    variant={selectedEvent?.userVote === 1 ? "contained" : "outlined"}
+                    color="success"
+                    >
+                    Dabei
+                    </Button>
+                    <Button 
+                    onClick={() => handleVote(0)} 
+                    size="small" 
+                    startIcon={<HelpOutlineIcon />}
+                    variant={selectedEvent?.userVote === 0 ? "contained" : "outlined"}
+                    color="warning"
+                    >
+                    Vielleicht
+                    </Button>
+                </Stack>
+              </Box>
+
+              <Stack direction="row" spacing={1} justifyContent="center" sx={{ pt: 1 }}>
+                  <Button onClick={handleICalExport} size="small" color="inherit">iCal Export</Button>
+                  <Button onClick={() => setShareOpen(true)} size="small" color="inherit">Teilen</Button>
               </Stack>
-              <Button onClick={handleICalExport} size="small">Als iCal speichern</Button>
-              <Button onClick={() => setShareOpen(true)} size="small">Per E-Mail teilen</Button>
             </Stack>
           )}
         </DialogContent>
@@ -588,14 +718,14 @@ const handleAddEventSubmit = async () => {
         </DialogActions>
       </Dialog>
 
-      {/* Add-Dialog (Minimal) */}
+      {/* Add-Dialog */}
       <Dialog open={addModalOpen} onClose={() => setAddModalOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Neuen Termin hinzufügen</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2}>
             <TextField fullWidth size="small" label="Titel*" value={newEvent.title} onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })} />
             <TextField fullWidth size="small" type="date" label="Datum*" value={newEvent.event_date} onChange={(e) => setNewEvent({ ...newEvent, event_date: e.target.value })} InputLabelProps={{ shrink: true }} />
-            <TextField fullWidth size="small" label="URL (Optional)" value={newEvent.original_url} onChange={(e) => setNewEvent({ ...newEvent, original_url: e.target.value })} error={!isValidUrl(newEvent.original_url)} helperText={!isValidUrl(newEvent.original_url) ? 'Muss mit http:// oder https:// beginnen' : ''} />
+            <TextField fullWidth size="small" label="URL (Optional)" value={newEvent.original_url} onChange={(e) => setNewEvent({ ...newEvent, original_url: e.target.value })} />
             <TextField select fullWidth size="small" label="Region (Optional)" value={newEvent.region} onChange={(e) => setNewEvent({ ...newEvent, region: e.target.value })}>
               <MenuItem value=""><em>Keine Region</em></MenuItem>
               {allPossibleRegions.map((r) => (<MenuItem key={r.code} value={r.name}>{r.name}</MenuItem>))}
@@ -603,7 +733,7 @@ const handleAddEventSubmit = async () => {
             <TextField fullWidth size="small" multiline rows={3} label="Kurzbeschreibung (Optional)" value={newEvent.summary} onChange={(e) => setNewEvent({ ...newEvent, summary: e.target.value })} />
           </Stack>
         </DialogContent>
-<DialogActions>
+        <DialogActions>
           <Button onClick={() => setAddModalOpen(false)}>Abbrechen</Button>
           <Button variant="contained" onClick={handleAddEventSubmit}>Speichern</Button>
         </DialogActions>

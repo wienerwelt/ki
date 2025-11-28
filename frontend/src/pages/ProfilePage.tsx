@@ -1,12 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Container, Typography, Box, TextField, Button, Grid, Paper, CircularProgress,
   Alert, Snackbar, Tooltip, ToggleButton, ToggleButtonGroup, FormControlLabel, Switch,
-  FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, Chip, Autocomplete, useTheme, useMediaQuery
+  FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, Chip, Autocomplete, useTheme, useMediaQuery,
+  Avatar,
+  IconButton,
+  Badge
 } from '@mui/material';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../apiClient';
 import { useTranslation } from 'react-i18next';
@@ -28,6 +33,10 @@ const ProfilePage: React.FC = () => {
     userTags, 
     refreshUserTags 
   } = useAuth();
+  
+  const [avatarLoading, setAvatarLoading] = useState(false); 
+  const avatarUploadRef = useRef<HTMLInputElement>(null);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
@@ -123,7 +132,8 @@ const ProfilePage: React.FC = () => {
         apiClient.post('/api/funding/user-categories', { categoryIds: userFundingCategoryIds }, headers)
       ]);
       
-      updateUser(profileResponse.data);
+      updateUser(profileResponse.data); 
+      
       setSnackbar({ open: true, message: t('profile.updateSuccess') });
       setPassword('');
       setConfirmPassword('');
@@ -132,6 +142,76 @@ const ProfilePage: React.FC = () => {
       setError(err?.response?.data?.message || t('profile.updateError'));
     }
   };
+
+  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (isDemoUser) return;
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setAvatarLoading(true);
+    setError(null);
+    const formData = new FormData();
+    formData.append('avatar', file);
+
+    try {
+      const token = localStorage.getItem('jwt_token');
+      const response = await apiClient.post('/api/users/me/avatar', formData, {
+        headers: { 
+          'x-auth-token': token,
+        }
+      });
+      
+      updateUser(response.data.user); 
+      
+      setSnackbar({ open: true, message: 'Profilbild erfolgreich aktualisiert.' });
+      posthog.capture('avatar_updated');
+
+    } catch (err: any) {
+      console.error("Avatar-Upload fehlgeschlagen:", err);
+      setError(err?.response?.data?.message || 'Fehler beim Hochladen des Bildes.');
+      setSnackbar({ open: true, message: 'Fehler beim Hochladen des Bildes.' });
+    } finally {
+      setAvatarLoading(false);
+      if (avatarUploadRef.current) {
+        avatarUploadRef.current.value = "";
+      }
+    }
+  };
+
+  const handleAvatarClick = () => {
+    if (isDemoUser || avatarLoading) return;
+    avatarUploadRef.current?.click();
+  };
+
+  const handleAvatarDelete = async () => {
+    if (isDemoUser || !user?.profile_image_url) return;
+    
+    if (!window.confirm("Möchten Sie Ihr Profilbild wirklich entfernen?")) {
+        return;
+    }
+
+    setAvatarLoading(true);
+    setError(null);
+
+    try {
+        const token = localStorage.getItem('jwt_token');
+        const response = await apiClient.delete('/api/users/me/avatar', {
+            headers: { 'x-auth-token': token }
+        });
+
+        updateUser(response.data.user);
+        setSnackbar({ open: true, message: 'Profilbild erfolgreich gelöscht.' });
+        posthog.capture('avatar_deleted');
+
+    } catch (err: any) {
+        console.error("Avatar-Löschen fehlgeschlagen:", err);
+        setError(err?.response?.data?.message || 'Fehler beim Löschen des Bildes.');
+        setSnackbar({ open: true, message: 'Fehler beim Löschen des Bildes.' });
+    } finally {
+        setAvatarLoading(false);
+    }
+  };
+
 
   const handleTagsChange = async (_event: React.SyntheticEvent, newTags: string[]) => {
     if (isDemoUser) return;
@@ -172,9 +252,69 @@ const ProfilePage: React.FC = () => {
 
   return (
     <Container maxWidth="md">
-      <Paper sx={{ p: 4, mt: 4 }}>
+      {/* OPTIMIERUNG: Weniger Padding auf Mobile */}
+      <Paper sx={{ p: isMobile ? 2 : 4, mt: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>{t('profile.title')}</Typography>
         {isDemoUser && <Alert severity="info" sx={{ mb: 3 }}>{t('profile.demoUserNotice')}</Alert>}
+        
+        <Box sx={{ display: 'flex', justifyContent: 'center', mb: 3, alignItems: 'center', flexDirection: 'column' }}>
+          <input
+            type="file"
+            ref={avatarUploadRef}
+            onChange={handleAvatarUpload}
+            hidden
+            accept="image/png, image/jpeg, image/webp"
+          />
+          <Tooltip title={isDemoUser ? '' : t('profile.changeAvatar')}>
+            <Badge
+              overlap="circular"
+              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+              badgeContent={
+                <IconButton
+                  onClick={handleAvatarClick}
+                  disabled={isDemoUser || avatarLoading}
+                  size="small"
+                  sx={{ 
+                    bgcolor: 'background.paper', 
+                    '&:hover': { bgcolor: 'background.default' },
+                    border: `1px solid ${theme.palette.divider}`
+                  }}
+                >
+                  {avatarLoading ? <CircularProgress size={20} /> : <EditIcon fontSize="small" />}
+                </IconButton>
+              }
+            >
+              <Avatar
+                src={user.profile_image_url || undefined}
+                alt={user.first_name || user.username}
+                sx={{ 
+                  width: 100, 
+                  height: 100, 
+                  fontSize: '3rem', 
+                  cursor: isDemoUser ? 'default' : 'pointer' 
+                }}
+                onClick={handleAvatarClick}
+              >
+                {user.first_name ? user.first_name.charAt(0) : user.username.charAt(0)}
+              </Avatar>
+            </Badge>
+          </Tooltip>
+
+          {user.profile_image_url && (
+            <Button
+                variant="text"
+                color="error"
+                size="small"
+                startIcon={<DeleteIcon />}
+                onClick={handleAvatarDelete}
+                disabled={avatarLoading || isDemoUser}
+                sx={{ mt: 1.5 }}
+            >
+                {t('profile.deleteAvatar', 'Bild entfernen')}
+            </Button>
+          )}
+        </Box>
+
         <Box component="form" onSubmit={handleSubmit}>
           <Grid container spacing={3}>
             <Grid item xs={12} sm={6}><TextField label={t('profile.firstname')} fullWidth value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={isDemoUser}/></Grid>
@@ -201,10 +341,14 @@ const ProfilePage: React.FC = () => {
                         renderInput={(params) => (
                             <TextField {...params} variant="outlined" label="Branchen, Themen & Unternehmens-Typen" placeholder="Interessen hinzufügen" />
                         )}
+                        // --- KORREKTUR 1: Key explizit extrahiert und gesetzt ---
                         renderTags={(value, getTagProps) =>
-                            value.map((option, index) => (
-                                <Chip label={option.name} {...getTagProps({ index })} />
-                            ))
+                            value.map((option, index) => {
+                                const { key, ...tagProps } = getTagProps({ index });
+                                return (
+                                    <Chip key={key} label={option.name} {...tagProps} />
+                                );
+                            })
                         }
                     />
                 )}
@@ -222,8 +366,14 @@ const ProfilePage: React.FC = () => {
                         value={userTags}
                         onChange={handleTagsChange}
                         disabled={isDemoUser}
+                        // --- KORREKTUR 2: Key explizit extrahiert und gesetzt ---
                         renderTags={(value: readonly string[], getTagProps) =>
-                            value.map((option: string, index: number) => (<Chip variant="outlined" label={option} {...getTagProps({ index })} />))
+                            value.map((option: string, index: number) => {
+                                const { key, ...tagProps } = getTagProps({ index });
+                                return (
+                                    <Chip key={key} variant="outlined" label={option} {...tagProps} />
+                                );
+                            })
                         }
                         renderInput={(params) => (<TextField {...params} variant="outlined" label="Meine Themen" placeholder="Themen auswählen"/>)}
                     />

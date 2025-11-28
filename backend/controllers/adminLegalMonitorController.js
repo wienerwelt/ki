@@ -7,8 +7,7 @@ const s3Client = require('../config/s3Client.js');
 const { v4: uuidv4 } = require('uuid');
 const { PdfReader } = require("pdfreader"); 
 
-// --- parsePdfLayout & processParsedItems (Unverändert) ---
-// (Hier ist der Code von der vorherigen Antwort für das PDF-Parsing)
+
 function parsePdfLayout(dataBuffer) {
     return new Promise((resolve, reject) => {
         const reader = new PdfReader();
@@ -24,93 +23,183 @@ function parsePdfLayout(dataBuffer) {
         });
     });
 }
+
+
+
 function processParsedItems(items) {
     const articles = [];
-    items.sort((a, b) => {
-        if (Math.abs(a.y - b.y) < 1) { return a.x - b.x; }
-        return b.y - a.y; 
-    });
 
-    const CATEGORY_FONT_HEIGHT = 15; 
-    const TITLE_FONT_HEIGHT = 11;    
-    const MIN_FONT_HEIGHT = 8;       
-    let currentCategory = null;
-    let currentArticle = null;
-    let isCapturingSummary = false;
-    let summaryBuffer = "";
-    const IGNORE_CATEGORY = "Landesgesetzblätter";
-    const SUMMARY_KEYWORD = "KI Zusammenfassung:";
-    const SUMMARY_KEYWORD_ALT = "KI-Zusammenfassung für die Entscheidung";
+    // ---------- 1) Items -> Zeilen (seitenweise, oben→unten, links→rechts) ----------
 
-    const saveCurrentArticle = () => {
-        if (currentArticle) {
-            currentArticle.zusammenfassung = summaryBuffer.trim();
-            articles.push(currentArticle);
-            currentArticle = null;
-            summaryBuffer = "";
-            isCapturingSummary = false;
-        }
-    };
+    const Y_TOLERANCE = 0.5;
+    const pages = new Map();
 
-    for (const item of items) {
-        const text = item.text.trim();
-        if (!text || item.h < MIN_FONT_HEIGHT) continue; 
-        if (item.h > CATEGORY_FONT_HEIGHT) {
-            saveCurrentArticle(); 
-            if (text.startsWith(IGNORE_CATEGORY)) {
-                currentCategory = IGNORE_CATEGORY;
-            } else {
-                currentCategory = text;
+    for (const it of items) {
+        if (!it.text) continue;
+        const page = it.page || 0;
+        if (!pages.has(page)) pages.set(page, []);
+        pages.get(page).push(it);
+    }
+
+    const lines = [];
+    const norm = (s) => (s || '').trim().toLowerCase();
+
+    // Seiten sortiert durchgehen
+    for (const [page, pageItems] of [...pages.entries()].sort((a, b) => a[0] - b[0])) {
+        // Auf der Seite: oben nach unten, links nach rechts
+        pageItems.sort((a, b) => {
+            if (Math.abs(a.y - b.y) < Y_TOLERANCE) {
+                return a.x - b.x;
             }
-            continue; 
+            return a.y - b.y;
+        });
+
+        const rows = [];
+
+        for (const it of pageItems) {
+            let row = rows.find(r => Math.abs(r.y - it.y) < Y_TOLERANCE);
+            if (!row) {
+                row = { y: it.y, items: [] };
+                rows.push(row);
+            }
+            row.items.push(it);
         }
-        if (currentCategory === IGNORE_CATEGORY) {
-            continue;
-        }
-        if (item.h > TITLE_FONT_HEIGHT && item.h < CATEGORY_FONT_HEIGHT) {
-            saveCurrentArticle(); 
-            currentArticle = {
-                kategorie: currentCategory || "Unbekannt",
-                ueberschrift: text,
-                kennung: "",
-                zusammenfassung: ""
-            };
-            isCapturingSummary = false;
-            continue;
-        }
-        if (currentArticle) {
-            if (text.startsWith(SUMMARY_KEYWORD) || text.startsWith(SUMMARY_KEYWORD_ALT)) {
-                isCapturingSummary = true;
-                let restOfLine = text.replace(SUMMARY_KEYWORD, "").replace(SUMMARY_KEYWORD_ALT, "");
-                summaryBuffer += restOfLine + " ";
-                continue;
-            }
-            if (isCapturingSummary) {
-                summaryBuffer += text + " ";
-            }
-            else if (!isCapturingSummary && currentArticle.kennung === "") {
-                currentArticle.kennung = text;
-            }
+
+        rows.sort((a, b) => a.y - b.y);
+
+        for (const row of rows) {
+            row.items.sort((a, b) => a.x - b.x);
+            const text = row.items
+                .map(i => (i.text || '').trim())
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            if (text) lines.push(text);
         }
     }
-    saveCurrentArticle(); 
-    const filteredArticles = articles.filter(
-        a => a.kategorie.toLowerCase().includes("bundesgesetzblätter")
+
+    // ---------- 2) Bundesgesetzblätter-Block isolieren ----------
+
+    const startIdx = lines.findIndex(l => norm(l).startsWith("bundesgesetzblätter"));
+    if (startIdx === -1) {
+        console.log("[Parser] Keine 'Bundesgesetzblätter'-Sektion gefunden.");
+        return [];
+    }
+
+    // Ende = nächste Kategorie "Landesgesetzblätter" (oder Ende des Dokuments)
+    let endIdx = lines.findIndex((l, idx) =>
+        idx > startIdx && norm(l).startsWith("landesgesetzblätter")
     );
-    console.log(`[Parser] PDF-Analyse abgeschlossen. ${articles.length} Artikel gefunden, ${filteredArticles.length} davon sind Bundesgesetzblätter.`);
-    return filteredArticles;
+    if (endIdx === -1) endIdx = lines.length;
+
+    const sectionLines = lines.slice(startIdx + 1, endIdx);
+
+    // Alle Zeilenindexe mit "KI Zusammenfassung" im Bundesgesetzblätter-Block
+    const kiIndices = [];
+    for (let i = 0; i < sectionLines.length; i++) {
+        if (norm(sectionLines[i]).includes("ki zusammenfassung")) {
+            kiIndices.push(i);
+        }
+    }
+
+    if (kiIndices.length === 0) {
+        console.log("[Parser] Keine 'KI Zusammenfassung' im Bundesgesetzblätter-Block gefunden.");
+        return [];
+    }
+
+    // ---------- 3) Titel-Berechnung (2-Pass-Ansatz) ----------
+
+    const titlesInfo = [];
+    let prevKi = -1;
+    const sentenceEndRegex = /[.!?]\s*$/;
+
+    for (const kiIdx of kiIndices) {
+        // Rückwärts nach der BGBl.-Zeile für dieses Gesetz suchen
+        let bgblIdx = null;
+        for (let j = kiIdx - 1; j > prevKi; j--) {
+            if (norm(sectionLines[j]).includes("bgbl.")) {
+                bgblIdx = j;
+                break;
+            }
+        }
+        if (bgblIdx === null) {
+            // Kein BGBl. gefunden -> diesen Block überspringen
+            prevKi = kiIdx;
+            continue;
+        }
+
+        // Titelbeginn nach "Satzende" der vorherigen Zusammenfassung suchen
+        let titleStart = bgblIdx;
+        for (let j = bgblIdx - 1; j > prevKi; j--) {
+            if (sentenceEndRegex.test(sectionLines[j])) {
+                // Satzende -> Titel beginnt ab der nächsten Zeile
+                titleStart = j + 1;
+                break;
+            } else {
+                // Noch Teil der Überschrift
+                titleStart = j;
+            }
+        }
+
+        titlesInfo.push({
+            kiIdx,
+            titleStart,
+            titleEnd: bgblIdx
+        });
+
+        prevKi = kiIdx;
+    }
+
+    // ---------- 4) Aus Titel-Infos + KI-Positionen Artikel bauen ----------
+
+    for (let idx = 0; idx < titlesInfo.length; idx++) {
+        const { kiIdx, titleStart, titleEnd } = titlesInfo[idx];
+
+        const titleLines = sectionLines.slice(titleStart, titleEnd + 1);
+        const ueberschrift = titleLines.join(" ").replace(/\s+/g, " ").trim();
+
+        // Summary: von der KI-Zeile bis unmittelbar vor den nächsten Titelbeginn
+        const summaryStart = kiIdx + 1;
+        const summaryEnd =
+            idx + 1 < titlesInfo.length
+                ? titlesInfo[idx + 1].titleStart
+                : sectionLines.length;
+
+        const summaryLines = sectionLines.slice(summaryStart, summaryEnd);
+        const zusammenfassung = summaryLines.join(" ").replace(/\s+/g, " ").trim();
+
+        // Kennung = BGBl.-Zeile innerhalb des Titelblocks
+        let kennung = "";
+        for (let j = titleStart; j <= titleEnd; j++) {
+            if (norm(sectionLines[j]).includes("bgbl.")) {
+                kennung = sectionLines[j].trim();
+                break;
+            }
+        }
+
+        if (ueberschrift && zusammenfassung) {
+            articles.push({
+                kategorie: "Bundesgesetzblätter",
+                ueberschrift,
+                kennung,
+                zusammenfassung
+            });
+        }
+    }
+
+    console.log(`[Parser] Bundesgesetzblätter: ${articles.length} Artikel gefunden.`);
+    return articles;
 }
 
-// --- parseAndStorePdfArticles (Unverändert) ---
-// (Verwendet die korrigierte Logik von oben)
-exports.parseAndStorePdfArticles = async (req, res) => {
-    // ... (Code von der vorherigen Antwort)
-    const { template_id, business_partner_id } = req.body;
-    const { role } = req.user;
 
-    if (role !== 'admin') {
-        return res.status(403).json({ message: 'Zugriff verweigert.' });
-    }
+
+
+
+
+exports.parseAndStorePdfArticles = async (req, res) => {
+    const { template_id, business_partner_id } = req.body;
+    // const { role } = req.user; // Nicht mehr nötig, adminAuth prüft bereits
+
     if (!req.file) {
         return res.status(400).json({ message: 'Keine PDF-Datei hochgeladen.' });
     }
@@ -202,32 +291,30 @@ exports.parseAndStorePdfArticles = async (req, res) => {
 };
 
 
-// in backend/controllers/adminLegalMonitorController.js
 
 exports.getTemplates = async (req, res) => {
-     const { role } = req.user;
-     // Die adminAuth-Middleware hat bereits sichergestellt, dass role === 'admin' ist.
-     // Wir brauchen die 'role'-Prüfung hier nicht mehr, da die Middleware 'assistenz' bereits blockiert.
-     console.log('[AdminController] getTemplates: Wird von Admin aufgerufen.'); // NEUES LOG
+    // const { role } = req.user; // Nicht mehr nötig
+    console.log('[AdminController] getTemplates: Wird von Admin aufgerufen.'); 
     try {
         const query = "SELECT * FROM monitor_templates ORDER BY template_name ASC";
         const result = await db.query(query);
         
-        // NEUES LOG: Zeigt, was wir senden (sollte ein Array sein)
         console.log(`[AdminController] getTemplates: Sende ${result.rows.length} Templates (als Array).`); 
         
-        res.json(result.rows); //
+        res.json({ data: result.rows });
     } catch (err) {
         console.error('[AdminController] Fehler in getTemplates:', err);
         res.status(500).json({ message: 'Serverfehler' });
     }
 };
 
+
+
 exports.getEntries = async (req, res) => {
-    const { role } = req.user; // role ist 'admin'
+    // const { role } = req.user; // Nicht mehr nötig
     const { templateId, bpId, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
-    console.log(`[AdminController] getEntries: Wird von Admin aufgerufen (Seite ${page}, Limit ${limit}).`); // NEUES LOG
+    console.log(`[AdminController] getEntries: Wird von Admin aufgerufen (Seite ${page}, Limit ${limit}).`);
 
     try {
         let baseQuery = `
@@ -238,7 +325,7 @@ exports.getEntries = async (req, res) => {
         const queryParams = [];
         let paramIndex = 1;
 
-        // Da nur Admins hierher kommen, können wir die Rollenprüfung vereinfachen
+        // Da nur Admins hierher kommen, ist keine Rollenprüfung nötig
         if (bpId) {
             whereClauses.push(`me.business_partner_id = $${paramIndex++}`);
             queryParams.push(bpId);
@@ -265,11 +352,10 @@ exports.getEntries = async (req, res) => {
         queryParams.push(limit, offset);
         const entriesResult = await db.query(dataQuery, queryParams);
         
-        // NEUES LOG: Zeigt, was wir senden (ein Objekt!)
         console.log(`[AdminController] getEntries: Sende ${entriesResult.rows.length} Einträge (als Objekt).`);
 
         res.json({
-            entries: entriesResult.rows, //
+            entries: entriesResult.rows,
             totalCount: totalCount
         });
 
@@ -279,20 +365,19 @@ exports.getEntries = async (req, res) => {
     }
 };
 
+
 exports.getBusinessPartnersList = async (req, res) => {
-    const { role } = req.user; // role ist 'admin'
-    // Die Prüfung 'if (role !== 'admin')' ist nicht mehr nötig.
-    console.log('[AdminController] getBusinessPartnersList: Wird von Admin aufgerufen.'); // NEUES LOG
+    // const { role } = req.user; // Nicht mehr nötig
+    console.log(`[AdminController] getBusinessPartnersList: Wird von Admin aufgerufen.`);
 
     try {
-        const result = await db.query(
-            `SELECT id, name FROM business_partners ORDER BY name ASC` //
-        );
+        // Da nur Admins hierher kommen, immer ALLE Partner abfragen
+        const query = `SELECT id, name FROM business_partners ORDER BY name ASC`;
+        const result = await db.query(query);
         
-        // NEUES LOG: Zeigt, was wir senden (sollte ein Array sein)
-        console.log(`[AdminController] getBusinessPartnersList: Sende ${result.rows.length} Partner (als Array).`);
+        console.log(`[AdminController] getBusinessPartnersList: Sende ${result.rows.length} Partner.`);
         
-        res.json(result.rows); //
+        res.json({ data: result.rows });
 
     } catch (err) {
         console.error('[AdminController] Fehler in getBusinessPartnersList:', err);
@@ -301,22 +386,16 @@ exports.getBusinessPartnersList = async (req, res) => {
 };
 
 
-// === KORRIGIERTE Template-Routen ===
+
 exports.createTemplate = async (req, res) => {
     const { business_partner_id, template_name, industry, fields_definition } = req.body;
-    const { role } = req.user;
+    // const { role } = req.user; // Nicht mehr nötig
 
-    if (role !== 'admin') {
-        return res.status(403).json({ message: 'Zugriff verweigert.' });
-    }
-    
-    // KORREKTUR: Validierung hinzugefügt, da 'business_partner_id' jetzt 'NOT NULL' ist
     if (!business_partner_id) {
          return res.status(400).json({ message: 'Business Partner ID ist erforderlich.' });
     }
 
     try {
-        // KORREKTUR: 'created_by' entfernt und '|| null' bei bp_id entfernt
         const result = await db.query(
             `INSERT INTO monitor_templates (business_partner_id, template_name, industry, fields_definition)
              VALUES ($1, $2, $3, $4) RETURNING *`,
@@ -325,22 +404,57 @@ exports.createTemplate = async (req, res) => {
         res.status(201).json(result.rows[0]);
     } catch (err) {
         console.error('Fehler beim Erstellen der Vorlage:', err);
-        // Prüfen auf Unique-Constraint-Verletzung
-        if (err.code === '23505') { // unique_violation
+        if (err.code === '23505') { 
             return res.status(409).json({ message: 'Eine Vorlage mit diesem Namen existiert bereits für diesen Partner.' });
         }
         res.status(500).json({ message: 'Serverfehler' });
     }
 };
 
-// --- (Restliche Funktionen: deleteTemplate, createEntry, getEntries, etc. unverändert) ---
-exports.deleteTemplate = async (req, res) => {
-    // ... (unveränderter Code)
+
+
+exports.updateTemplate = async (req, res) => {
     const { id } = req.params;
-    const { role } = req.user;
-    if (role !== 'admin') {
-        return res.status(403).json({ message: 'Zugriff verweigert.' });
+    const { business_partner_id, template_name, industry, fields_definition } = req.body;
+    // const { role } = req.user; // Nicht mehr nötig, adminAuth prüft bereits
+
+    if (!business_partner_id || !template_name || !fields_definition) {
+         return res.status(400).json({ message: 'Business Partner ID, Name und Felddefinition sind erforderlich.' });
     }
+
+    try {
+        const result = await db.query(
+            `UPDATE monitor_templates 
+             SET 
+                business_partner_id = $1, 
+                template_name = $2, 
+                industry = $3, 
+                fields_definition = $4,
+                updated_at = NOW()
+             WHERE id = $5 
+             RETURNING *`,
+            [business_partner_id, template_name, industry || null, fields_definition, id]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'Vorlage nicht gefunden.' });
+        }
+        
+        res.status(200).json(result.rows[0]);
+    } catch (err) {
+        console.error('Fehler beim Aktualisieren der Vorlage:', err);
+        if (err.code === '23505') { // unique_violation
+            return res.status(409).json({ message: 'Eine andere Vorlage mit diesem Namen existiert bereits für diesen Partner.' });
+        }
+        res.status(500).json({ message: 'Serverfehler' });
+    }
+};
+
+
+exports.deleteTemplate = async (req, res) => {
+    const { id } = req.params;
+    // const { role } = req.user; // Nicht mehr nötig
+    
     const client = await db.connect();
     try {
         await client.query('BEGIN');
@@ -357,14 +471,11 @@ exports.deleteTemplate = async (req, res) => {
     }
 };
 
+// --- createEntry (Bereinigt) ---
 exports.createEntry = async (req, res) => {
-    // ... (unveränderter Code)
     const { template_id, business_partner_id, content_data, is_published, source_document_url } = req.body;
-    const { role, business_partner_id: userBpId } = req.user;
+    // const { role } = req.user; // Nicht mehr nötig
 
-    if (role !== 'admin' && business_partner_id !== userBpId) {
-        return res.status(403).json({ message: 'Zugriff verweigert.' });
-    }
     try {
         const result = await db.query(
             `INSERT INTO monitor_entries (template_id, business_partner_id, content_data, is_published, source_document_url)
@@ -378,27 +489,20 @@ exports.createEntry = async (req, res) => {
     }
 };
 
+// --- updateEntry (Bereinigt) ---
 exports.updateEntry = async (req, res) => {
-    // ... (unveränderter Code)
     const { id } = req.params;
     const { content_data, is_published } = req.body;
-    const { role, business_partner_id: userBpId } = req.user;
+    // const { role } = req.user; // Nicht mehr nötig
     
     try {
-        let query;
+        // Nur Admin-Logik ist übrig
+        const query = `UPDATE monitor_entries SET content_data = $1, is_published = $2, updated_at = NOW() WHERE id = $3 RETURNING *`;
         const queryParams = [content_data, is_published, id];
-
-        if (role === 'admin') {
-            query = `UPDATE monitor_entries SET content_data = $1, is_published = $2, updated_at = NOW() WHERE id = $3 RETURNING *`;
-        } else {
-            if (!userBpId) return res.status(403).json({ message: "Kein Zugriff." });
-            query = `UPDATE monitor_entries SET content_data = $1, is_published = $2, updated_at = NOW() WHERE id = $3 AND business_partner_id = $4 RETURNING *`;
-            queryParams.push(userBpId);
-        }
 
         const result = await db.query(query, queryParams);
         if (result.rows.length === 0) {
-            return res.status(404).json({ message: 'Eintrag nicht gefunden oder Zugriff verweigert.' });
+            return res.status(404).json({ message: 'Eintrag nicht gefunden.' });
         }
         res.json(result.rows[0]);
     } catch (err) {
@@ -407,27 +511,19 @@ exports.updateEntry = async (req, res) => {
     }
 };
 
-
+// --- deleteEntry (Bereinigt) ---
 exports.deleteEntry = async (req, res) => {
-    // ... (unveränderter Code)
     const { id } = req.params;
-    const { role, business_partner_id: userBpId } = req.user;
+    // const { role } = req.user; // Nicht mehr nötig
 
     try {
-        let query;
+        // Nur Admin-Logik ist übrig
+        const query = `DELETE FROM monitor_entries WHERE id = $1`;
         const queryParams = [id];
-
-        if (role === 'admin') {
-            query = `DELETE FROM monitor_entries WHERE id = $1`;
-        } else {
-            if (!userBpId) return res.status(403).json({ message: "Kein Zugriff." });
-            query = `DELETE FROM monitor_entries WHERE id = $1 AND business_partner_id = $2`;
-            queryParams.push(userBpId);
-        }
 
         const result = await db.query(query, queryParams);
         if (result.rowCount === 0) {
-            return res.status(404).json({ message: 'Eintrag nicht gefunden oder Zugriff verweigert.' });
+            return res.status(404).json({ message: 'Eintrag nicht gefunden.' });
         }
         res.status(204).send();
     } catch (err) {
@@ -436,26 +532,19 @@ exports.deleteEntry = async (req, res) => {
     }
 };
 
+// --- getSignedUrlForSourceDocument (Bereinigt) ---
 exports.getSignedUrlForSourceDocument = async (req, res) => {
-    // ... (unveränderter Code)
     const { id: entryId } = req.params;
-    const { role, business_partner_id: userBpId } = req.user;
+    // const { role } = req.user; // Nicht mehr nötig
 
     try {
-        let query;
+        // Nur Admin-Logik ist übrig
+        const query = `SELECT source_document_url FROM monitor_entries WHERE id = $1;`;
         const queryParams = [entryId];
-
-        if (role === 'admin') {
-            query = `SELECT source_document_url FROM monitor_entries WHERE id = $1;`;
-        } else {
-            if (!userBpId) return res.status(403).json({ message: "Kein Zugriff." });
-            query = `SELECT source_document_url FROM monitor_entries WHERE id = $1 AND business_partner_id = $2;`;
-            queryParams.push(userBpId);
-        }
 
         const result = await db.query(query, queryParams);
         if (result.rows.length === 0) {
-            return res.status(404).json({ message: "Datei nicht gefunden oder Zugriff verweigert." });
+            return res.status(404).json({ message: "Datei nicht gefunden." });
         }
 
         const storagePath = result.rows[0].source_document_url;

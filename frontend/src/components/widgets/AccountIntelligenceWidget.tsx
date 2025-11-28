@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import NewspaperIcon from '@mui/icons-material/Newspaper';
-import RadarIcon from '@mui/icons-material/Radar'; // Behalten wir als Fallback
+import RadarIcon from '@mui/icons-material/Radar'; 
 import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
@@ -28,9 +28,7 @@ interface AccountIntelligenceData {
     competitor_news: NewsArticle[];
 }
 
-// Eine spezifische Prop-Definition, die BaseWidgetProps erweitert
 interface AccountIntelligenceWidgetProps extends BaseWidgetProps {
-  // GEÄNDERT: Die Prop für das Icon wird hier jetzt offiziell erwartet
   icon?: React.ReactNode; 
   config?: {
     title?: string;
@@ -38,14 +36,20 @@ interface AccountIntelligenceWidgetProps extends BaseWidgetProps {
 }
 
 // --- Hauptkomponente ---
-const AccountIntelligenceWidget: React.FC<AccountIntelligenceWidgetProps> = (props) => {
+const AccountIntelligenceWidget: React.FC<AccountIntelligenceWidgetProps> = ({
+    widgetId,
+    onDelete,
+    isRemovable,
+    widgetTypeKey,
+    config,
+    icon: propsIcon,
+}) => {
     const [data, setData] = useState<AccountIntelligenceData[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     
-    const title = props.config?.title || 'Account-Radar';
-    // NEU: Das Icon wird aus den Props geholt, mit dem RadarIcon als Standard-Fallback
-    const icon = props.icon || <RadarIcon />;
+    const title = config?.title || 'Account-Radar';
+    const icon = propsIcon || <RadarIcon />;
 
     useEffect(() => {
         const fetchData = async () => {
@@ -122,16 +126,19 @@ const AccountIntelligenceWidget: React.FC<AccountIntelligenceWidgetProps> = (pro
 
     return (
         <WidgetPaper
-            {...props}
+            // FIX: Wir übergeben die Props explizit, statt {...props} zu nutzen.
+            // Dadurch wird 'businessPartner' nicht in das DOM-Element geschrieben.
+            widgetId={widgetId}
+            onDelete={onDelete}
+            isRemovable={isRemovable}
+            widgetTitle={title}
+            widgetTypeKey={widgetTypeKey || 'account-intelligence'}
             title={
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    {/* GEÄNDERT: Das fest kodierte Icon wird durch die dynamische Variable ersetzt */}
                     {icon}
                     <Typography variant="h6">{title}</Typography>
                 </Box>
             }
-            widgetTitle={title}
-            widgetTypeKey={props.widgetTypeKey || 'account-intelligence'}
         >
             {renderContent()}
         </WidgetPaper>

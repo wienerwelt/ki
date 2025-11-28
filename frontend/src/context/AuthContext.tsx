@@ -48,6 +48,7 @@ export interface UserPayload {
   preferred_theme?: 'light' | 'dark';
   preferred_language?: 'de' | 'en';
   newsletter_opt_in?: boolean;
+  profile_image_url?: string | null;
 }
 
 export interface BusinessPartnerData {

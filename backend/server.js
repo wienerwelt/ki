@@ -72,6 +72,9 @@ const surveyRoutes = require('./routes/surveyRoutes');
 const adminFundingRoutes = require('./routes/adminFundingRoutes'); 
 const fundingRoutes = require('./routes/fundingRoutes');
 const adminLegalMonitorRoutes = require('./routes/adminLegalMonitorRoutes');
+const communityRoutes = require('./routes/communityRoutes');
+const updateLastActive = require('./middleware/activityLogger');
+
 
 
 // Bull Board Adapter Setup
@@ -116,15 +119,16 @@ app.use('/api/admin/jobs', serverAdapter.getRouter());
 
 // ... (alle deine app.use(...) Routen) ...
 app.use('/api/auth', authRoutes);
+app.use(updateLastActive);
 app.use('/api/session', sessionRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.get('/api/data/active-advertisement', auth, dataController.getActiveAdvertisement);
 app.use('/api/data', dataRoutes);
 app.use('/api/business-partner', businessPartnerRoutes);
 app.use('/api/widgets', widgetRoutes);
 app.use('/api/sources', sourcesRoutes);
 app.use('/api/feedback', feedbackRoutes);
-app.get('/api/data/active-advertisement', auth, dataController.getActiveAdvertisement);
 app.use('/api/admin/business-partners', adminBusinessPartnerRoutes);
 app.use('/api/admin/widget-types', adminWidgetTypeRoutes);
 app.use('/api/admin/bp-widget-access', adminBpWidgetAccessRoutes);
@@ -151,7 +155,9 @@ app.use('/api/files', fileRoutes);
 app.use('/api/newsletter', newsletterRoutes);
 app.use('/api/surveys', surveyRoutes);
 app.use('/api/funding', fundingRoutes);
-app.use('/api/admin/legal-monitor', adminLegalMonitorRoutes);
+app.use('/api/admin-legal-monitor', adminLegalMonitorRoutes);
+app.use('/api/community', communityRoutes);
+app.use('/api/notifications', require('./routes/notificationRoutes'));
 
 // Debug (unverändert)
 app.get('/api/debug/db-inspector', async (req, res) => {

@@ -23,15 +23,14 @@ const ResponsiveGridLayout = WidthProvider(Responsive);
 interface SnackbarState {
   open: boolean;
   message: string;
-  severity: 'success' | 'error' | 'info'; // 'info' hinzugefügt
+  severity: 'success' | 'error' | 'info';
 }
 
-// ===== NEUE DATENSTRUKTUR FÜR WIDERRUFS-AKTION =====
+// Datenstruktur für Widget-Wiederherstellung
 interface LastDeletedState {
   widget: WidgetConfig;
   layouts: Layouts;
 }
-// ===============================================
 
 function asArray<T = any>(value: any): T[] {
   return Array.isArray(value) ? value : [];
@@ -55,7 +54,8 @@ function coerceConfig(raw: any): DashboardSavedConfig {
 
 const DashboardPage: React.FC = () => {
   const { user, businessPartner, dashboardRefreshKey } = useAuth();
-  console.log('BusinessPartner-Daten in DashboardPage:', businessPartner);
+  
+  // State
   const [dashboardConfig, setDashboardConfig] = useState<DashboardSavedConfig>(emptyConfig());
   const [availableWidgetTypes, setAvailableWidgetTypes] = useState<WidgetTypeMeta[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,19 +63,16 @@ const DashboardPage: React.FC = () => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [snackbar, setSnackbar] = useState<SnackbarState>({ open: false, message: '', severity: 'success' });
   const [runTour, setRunTour] = useState(false);
-  
-  // ===== NEUER STATE FÜR "RÜCKGÄNGIG" =====
   const [lastDeleted, setLastDeleted] = useState<LastDeletedState | null>(null);
-  // ==========================================
+  const [openSpeedDial, setOpenSpeedDial] = useState(false);
+  const [addWidgetDialogOpen, setAddWidgetDialogOpen] = useState(false);
   
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const [openSpeedDial, setOpenSpeedDial] = useState(false);
-  const [addWidgetDialogOpen, setAddWidgetDialogOpen] = useState(false);
 
-  // ... (Joyride, fetchAll, useEffects bleiben unverändert)
+  // Joyride (Tour) Konfiguration
   const tourSteps: Step[] = [
-    { target: '#add-widget-button', content: 'Hier können Sie neue Widgets zu Ihrem Dashboard hinzufügen.', placement: 'bottom-start', disableBeacon: true },
+    { target: '#add-widget-button', content: 'Hier können Sie neue Widgets (z.B. Community Feed) zu Ihrem Dashboard hinzufügen.', placement: 'bottom-start', disableBeacon: true },
     { target: '.widget-drag-handle', content: 'Widgets können Sie an diesem Anfasser verschieben, um Ihr Layout individuell zu gestalten.', placement: 'bottom' },
     { target: '#save-layout-button', content: 'Wenn Ihnen Ihr Layout gefällt, vergessen Sie nicht, es hier zu speichern!', placement: 'bottom-end' }
   ];
@@ -97,12 +94,16 @@ const DashboardPage: React.FC = () => {
     }
   };
 
+  // Daten laden
   const fetchAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      // 1. Verfügbare Widget-Typen laden (inkl. 'community_feed' aus der DB)
       const typesRes = await apiClient.get('/api/widgets/types');
       setAvailableWidgetTypes(asArray<WidgetTypeMeta>(typesRes.data));
+      
+      // 2. Gespeicherte Konfiguration laden
       const configRes = await apiClient.get('/api/dashboard/config');
       setDashboardConfig(coerceConfig(configRes.data));
     } catch (err: any) {
@@ -116,16 +117,17 @@ const DashboardPage: React.FC = () => {
     }
   }, []);
 
-    useEffect(() => { 
+  useEffect(() => { 
     fetchAll(); 
   }, [fetchAll, dashboardRefreshKey]);
 
+  // Layout Änderungen
   const onLayoutChange = (_: Layout[], allLayouts: Layouts) => {
       setDashboardConfig((prev) => ({ ...prev, layouts: allLayouts }));
   };
 
   const handleSaveConfig = async () => {
-    setLastDeleted(null); // Beim Speichern die "Rückgängig"-Möglichkeit entfernen
+    setLastDeleted(null);
     try {
       await apiClient.post('/api/dashboard/config', {
         name: dashboardConfig.name || 'Mein Dashboard',
@@ -138,6 +140,7 @@ const DashboardPage: React.FC = () => {
     }
   };
 
+  // Widget Menü Handler
   const handleOpenAddWidgetMenu = (event: React.MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget);
   const handleCloseAddWidgetMenu = () => setAnchorEl(null);
 
@@ -147,7 +150,25 @@ const DashboardPage: React.FC = () => {
   };
   const handleAddWidgetDialogClose = () => setAddWidgetDialogOpen(false);
 
-  // ===== NEUE UND ERWEITERTE FUNKTIONEN FÜR LÖSCHEN & WIEDERHERSTELLEN =====
+  // Widget hinzufügen
+  const handleAddWidget = (widgetTypeKey: string) => {
+    const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widgetTypeKey);
+    if (!widgetTypeMeta) return;
+
+    const newWidgetId = `${widgetTypeMeta.type_key}-${Date.now()}`;
+    const newWidget: WidgetConfig = { id: newWidgetId, type: widgetTypeMeta.type_key };
+    
+    setDashboardConfig((prev) => ({
+      ...prev,
+      widgets: [...prev.widgets, newWidget],
+    }));
+
+    handleCloseAddWidgetMenu();
+    handleAddWidgetDialogClose();
+    setSnackbar({ open: true, message: 'Widget hinzugefügt.', severity: 'success' });
+  };
+
+  // Löschen & Rückgängig machen
   const handleUndoDelete = () => {
     if (!lastDeleted) return;
 
@@ -167,7 +188,6 @@ const DashboardPage: React.FC = () => {
   const handleDeleteWidget = (widgetId: string) => {
     let deletedWidget: WidgetConfig | null = null;
     const deletedLayouts: Layouts = {};
-
     const currentConfig = dashboardConfig;
 
     const newWidgets = currentConfig.widgets.filter((w) => {
@@ -191,43 +211,36 @@ const DashboardPage: React.FC = () => {
     setDashboardConfig({ ...currentConfig, widgets: newWidgets, layouts: newLayouts });
     setSnackbar({ open: true, message: 'Widget entfernt.', severity: 'info' });
   };
-  // =========================================================================
 
-  const handleAddWidget = (widgetTypeKey: string) => {
-    // ... (Diese Funktion bleibt unverändert)
-    const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widgetTypeKey);
-    if (!widgetTypeMeta) return;
-
-    const newWidgetId = `${widgetTypeMeta.type_key}-${Date.now()}`;
-    const newWidget: WidgetConfig = { id: newWidgetId, type: widgetTypeMeta.type_key };
-    
-    setDashboardConfig((prev) => ({
-      ...prev,
-      widgets: [...prev.widgets, newWidget],
-    }));
-
-    handleCloseAddWidgetMenu();
-    handleAddWidgetDialogClose();
+  // Snackbar schließen
+  const handleCloseSnackbar = (_?: React.SyntheticEvent | Event, reason?: string) => {
+    if (reason === 'clickaway') return;
+    setLastDeleted(null);
+    setSnackbar({ ...snackbar, open: false });
   };
   
+  // Widget Rendering Logik
   const renderWidgetContent = (widget: WidgetConfig) => {
-    // ... (Diese Funktion bleibt unverändert)
+    // Finden der Metadaten für diesen Typ (z.B. "community_feed")
     const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widget.type);
     if (!widgetTypeMeta) {
         return <Alert severity="warning">Widget-Typ "{widget.type}" nicht gefunden.</Alert>;
     }
     
+    // Mapping auf die echte React-Komponente
+    // WICHTIG: WIDGET_COMPONENTS muss 'community_feed' -> CommunityFeedWidget mappen!
     const componentKey = widgetTypeMeta.component_key || widget.type;
     const SpecificWidgetComponent = (WIDGET_COMPONENTS as any)[componentKey];
+    
     if (!SpecificWidgetComponent) {
-        return <Alert severity="error">Frontend-Komponente "{componentKey}" nicht implementiert.</Alert>;
+        return <Alert severity="error">Komponente "{componentKey}" nicht implementiert.</Alert>;
     }
 
     const IconComponent = getIcon(widgetTypeMeta.icon_name);
     const config = widgetTypeMeta.config || {};
     
     const props = {
-      ...config,
+      ...config, // contains { category: 'fleet_statistics' } for EconomicStatWidget
       onDelete: handleDeleteWidget,
       widgetId: widget.id,
       isRemovable: widgetTypeMeta.is_removable ?? true,
@@ -236,6 +249,7 @@ const DashboardPage: React.FC = () => {
       widgetTitle: config.title || widgetTypeMeta.name,
       widgetTypeKey: widgetTypeMeta.type_key,
       businessPartner,
+      // REMOVED: category: 'community' - this was overwriting the config from DB!
     };
 
     return (
@@ -245,13 +259,6 @@ const DashboardPage: React.FC = () => {
     );
   };
 
-  const handleCloseSnackbar = (_?: React.SyntheticEvent | Event, reason?: string) => {
-    if (reason === 'clickaway') return;
-    setLastDeleted(null); // Wenn Snackbar von selbst schließt, kann man nicht mehr widerrufen
-    setSnackbar({ ...snackbar, open: false });
-  };
-  
-  // ... (Rest der Komponente bleibt unverändert)
   const speedDialActions = [
     { icon: <AddCircleOutlineIcon />, name: 'Widget hinzufügen', handler: handleAddWidgetDialogOpen },
     { icon: <SaveIcon />, name: 'Layout speichern', handler: () => { handleSaveConfig(); setOpenSpeedDial(false); } }
@@ -322,7 +329,7 @@ const DashboardPage: React.FC = () => {
             >
             {dashboardConfig.widgets.map((widget: WidgetConfig) => (
                 <div key={widget.id} data-grid={dashboardConfig.layouts.lg?.find((l: Layout) => l.i === widget.id) || {x:0, y:Infinity, w:4, h:8}}>
-                <ErrorBoundary>{renderWidgetContent(widget)}</ErrorBoundary>
+                    <ErrorBoundary>{renderWidgetContent(widget)}</ErrorBoundary>
                 </div>
             ))}
             </ResponsiveGridLayout>
@@ -371,7 +378,6 @@ const DashboardPage: React.FC = () => {
                 onClose={handleCloseSnackbar}
                 severity={snackbar.severity}
                 sx={{ width: '100%' }}
-                // ===== HIER WIRD DIE "RÜCKGÄNGIG"-AKTION HINZUGEFÜGT =====
                 action={
                     lastDeleted ? (
                         <Button color="inherit" size="small" onClick={handleUndoDelete}>
@@ -379,7 +385,6 @@ const DashboardPage: React.FC = () => {
                         </Button>
                     ) : null
                 }
-                // =========================================================
             >
             {snackbar.message}
             </Alert>

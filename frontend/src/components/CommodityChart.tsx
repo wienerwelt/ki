@@ -10,12 +10,14 @@ import {
     Brush
 } from 'recharts';
 
-// KORREKTUR: Direkter Import der PDF-Bibliotheken, genau wie in TcoCalculatorWidget.tsx
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
 
-// --- Konfiguration & Typen (unverändert) ---
+// KORREKTUR 1: Echten Auth-Hook importieren statt Fake-Definition
+import { useAuth } from '../context/AuthContext';
+
+// --- Konfiguration & Typen ---
 interface CommodityConfig {
     name: string;
     formatOptions: Intl.NumberFormatOptions;
@@ -23,6 +25,7 @@ interface CommodityConfig {
     unit: string;
 }
 
+// Wir importieren die Config eigentlich, aber hier ist sie lokal definiert (wie in deinem Upload)
 const commoditiesConfig: { [key: string]: CommodityConfig } = {
     'BRENT_OIL': { 
         name: 'Brent Rohöl', 
@@ -56,11 +59,7 @@ const commoditiesConfig: { [key: string]: CommodityConfig } = {
     }
 };
 
-const useAuth = () => ({
-    businessPartner: {
-        logo_url: "https://mobiliti-dashboard-uploads.s3.eu-central-1.amazonaws.com/logos/6813b2ae-f8ef-4ccd-b908-490a6e1de5b5.png"
-    }
-});
+// KORREKTUR 2: Fake useAuth entfernt!
 
 interface ChartDataPoint { date: string; value: number; }
 interface HistoricalData { [key: string]: ChartDataPoint[]; }
@@ -74,9 +73,7 @@ interface CommodityChartProps {
     isLoading: boolean;
 }
 
-// KORREKTUR: loadScript und PDF_SCRIPTS wurden entfernt
-
-// --- Hilfskomponenten (unverändert) ---
+// --- Hilfskomponenten ---
 const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }, originalData: HistoricalData | null) => {
     if (active && payload && payload.length) { 
         const date = new Date(label || '').toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -106,18 +103,22 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
     return null;
 };
 
-// --- Hauptkomponente (Stark überarbeitet) ---
+// --- Hauptkomponente ---
 const CommodityChart: React.FC<CommodityChartProps> = ({
     historicalData, latestData, timeframe, setTimeframe, isLoading
 }) => {
+    // KORREKTUR 3: Echten Business Partner laden
     const { businessPartner } = useAuth();
     const chartRef = useRef<HTMLDivElement>(null);
     const [isDownloading, setIsDownloading] = useState(false);
-    // const [scriptsLoaded, setScriptsLoaded] = useState(false); // ENTFERNT
     const [pdfError, setPdfError] = useState<string | null>(null);
     const [brushRange, setBrushRange] = useState<{ startIndex?: number; endIndex?: number } | null>(null);
     const [selectedIndicators, setSelectedIndicators] = useState<string[]>([]);
     
+    // KORREKTUR 4: Fallback-Logo Logik
+    // Wenn kein BP-Logo da ist, nutze das Standard-Logo
+    const watermarkUrl = businessPartner?.logo_url || '/logos/de-mobiliti.png';
+
     useEffect(() => {
         if (historicalData) {
             const historicalKeys = Object.keys(historicalData);
@@ -131,7 +132,6 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
     }, [historicalData]);
 
     const { processedData } = useMemo(() => { 
-        // ... (Logik unverändert)
         if (!historicalData || selectedIndicators.length === 0) return { processedData: [] };
         const allDatesSet = new Set<string>();
         selectedIndicators.forEach(key => {
@@ -181,34 +181,30 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
 
     const activeIndicatorConfig = selectedIndicators.length === 1 ? commoditiesConfig[selectedIndicators[0]] : null;
 
-    // --- KORRIGIERTER PDF-Export (verwendet jetzt direkte Imports) ---
     const handleDownloadPdf = async () => {
         setPdfError(null);
         setIsDownloading(true);
 
-        // KORREKTUR: Kein loadScript und kein Check auf window-Objekte mehr nötig
         if (!chartRef.current) {
             setIsDownloading(false);
             return;
         }
 
-        // Schritt 3: PDF generieren
         try {
-            // KORREKTUR: new jsPDF() statt (window as any).jspdf.jsPDF
             const doc = new jsPDF({ orientation: 'landscape', unit: 'px', format: 'a4' });
             const margin = 20;
             const docWidth = doc.internal.pageSize.getWidth() - margin * 2;
-            const logoUrl = businessPartner?.logo_url;
             
+            // PDF Header
             doc.setFontSize(18);
             doc.text('Rohstoff-Chart Analyse', margin, margin + 10);
             doc.setFontSize(10);
             doc.text(`Zeitraum: ${timeframe} | Datum: ${new Date().toLocaleDateString('de-DE')}`, margin, margin + 25);
 
-            // Logo ist jetzt verbindlich
-            if (logoUrl) {
+            // KORREKTUR 5: Logo im PDF (Verwende auch hier den Fallback)
+            if (watermarkUrl) {
                  try {
-                    const imgResponse = await fetch(logoUrl);
+                    const imgResponse = await fetch(watermarkUrl);
                     const imgBlob = await imgResponse.blob();
                     const imgData = await new Promise<string>((resolve, reject) => {
                         const reader = new FileReader();
@@ -223,12 +219,13 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
                 } catch (e) { console.error("Fehler beim Laden des PDF-Logos:", e); }
             }
 
+            // Watermark für Screenshot ausblenden
             const watermark = (chartRef.current.querySelector('.chart-watermark') as HTMLElement);
             if (watermark) watermark.style.display = 'none';
 
-            // KORREKTUR: html2canvas() wird direkt verwendet
             const canvas = await html2canvas(chartRef.current, { scale: 2, logging: false, useCORS: true, backgroundColor: null });
 
+            // Watermark wieder einblenden
             if (watermark) watermark.style.display = 'block';
 
             const imgData = canvas.toDataURL('image/png');
@@ -253,7 +250,6 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
                 ];
             });
 
-            // KORREKTUR: autoTable() wird direkt verwendet
             autoTable(doc, {
                 head: tableHead,
                 body: tableBody,
@@ -293,7 +289,6 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
 
     return (
         <Box sx={{ width: '100%' }}>
-            {/* Timeframe-Buttons (unverändert) */}
             <ToggleButtonGroup
                 value={timeframe}
                 exclusive
@@ -308,7 +303,6 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
                 <ToggleButton value="max" aria-label="Maximum" sx={{ flex: 1 }}>Max</ToggleButton> 
             </ToggleButtonGroup>
             
-            {/* Filter mittig (unverändert) */}
             <Box sx={{ display: 'flex', justifyContent: 'center' }}>
                 <FormGroup row sx={{ mt: 1, flexWrap: 'wrap', maxHeight: 50, overflowY: 'auto' }}>
                     {Object.keys(commoditiesConfig).map(key => (
@@ -331,7 +325,6 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
                 </FormGroup>
             </Box>
 
-            {/* Quellen mittig (unverändert) */}
             {latestData && selectedIndicators.length > 0 && (
                 <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', fontStyle: 'italic', textAlign: 'center' }}>
                     Quellen: {
@@ -347,7 +340,8 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
                 ref={chartRef} 
                 sx={{ height: 350, mt: 1, position: 'relative' }}
             >
-                {businessPartner?.logo_url && (
+                {/* KORREKTUR 6: Watermark rendering mit Fallback-Logik */}
+                {watermarkUrl && (
                     <Box 
                         className="chart-watermark"
                         sx={{
@@ -358,7 +352,7 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
                             transform: 'translate(-50%, -50%)',
                             width: { xs: '60%', md: '40%' },
                             height: { xs: '60%', md: '70%' },
-                            backgroundImage: `url(${businessPartner.logo_url})`,
+                            backgroundImage: `url(${watermarkUrl})`,
                             backgroundRepeat: 'no-repeat',
                             backgroundPosition: 'center',
                             backgroundSize: 'contain',
@@ -399,7 +393,6 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
                 </ResponsiveContainer>
             </Box>
 
-            {/* Datumsanzeige (unverändert) */}
             <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-start', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
                 {brushStartDate && brushEndDate && (
                     <Typography variant="body2" color="text.secondary">
@@ -408,7 +401,6 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
                 )}
             </Box>
 
-            {/* PDF-Button (unverändert) */}
             <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1 }}>
                 {pdfError && <Alert severity="error" sx={{py: 0.5, mr: 1}}>{pdfError}</Alert>}
                 <Button

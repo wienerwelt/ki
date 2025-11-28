@@ -1,24 +1,24 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     Container, Typography, Box, Grid, TextField, CircularProgress, Alert,
     Paper, FormControl, InputLabel, Select, MenuItem, Button, Dialog,
     DialogTitle, DialogContent, DialogContentText, DialogActions, IconButton,
     ListItemText, Checkbox, OutlinedInput, ListSubheader, ListItemIcon, Switch, FormControlLabel,
-    ToggleButtonGroup, ToggleButton
+    ToggleButtonGroup, ToggleButton, useTheme, useMediaQuery
 } from '@mui/material';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale/de';
 import CloseIcon from '@mui/icons-material/Close';
-import MapIcon from '@mui/icons-material/Map';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ViewModuleIcon from '@mui/icons-material/ViewModule';
 import TimelineIcon from '@mui/icons-material/Timeline';
 import StarIcon from '@mui/icons-material/Star';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+
+// KORREKTUR: Dieser Import hat gefehlt
 import { Link as RouterLink } from 'react-router-dom';
+
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
@@ -29,13 +29,6 @@ import FundingResultCard from '../components/FundingResultCard';
 import TimelineView from '../components/TimelineView';
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
-
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
-});
 
 interface FundingResult {
   id: string;
@@ -60,7 +53,6 @@ interface FundingCategory {
 interface Aggregations {
     byCategory?: Record<string, number>;
     byRegion?: Record<string, number>;
-    // server liefert ggf. keys: favorited | applied | hidden | none
     byUserStatus?: Record<string, number>;
 }
 
@@ -78,6 +70,9 @@ interface SearchResponse {
 }
 
 const FundingSearchPage: React.FC = () => {
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+    
     const [results, setResults] = useState<FundingResult[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -85,7 +80,7 @@ const FundingSearchPage: React.FC = () => {
     const [sortBy, setSortBy] = useState('deadline_end');
     const { showSnackbar } = useSnackbar();
     const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
-    const [viewMode, setViewMode] = useState<'card' | 'timeline' | 'map'>('card');
+    const [viewMode, setViewMode] = useState<'card' | 'timeline'>('card');
     const [availableRegions, setAvailableRegions] = useState<string[]>([]);
     const [userStatusFilter, setUserStatusFilter] = useState<string | null>(null);
     const [aggregations, setAggregations] = useState<Aggregations>({});
@@ -105,10 +100,6 @@ const FundingSearchPage: React.FC = () => {
     const [saveModalOpen, setSaveModalOpen] = useState(false);
     const [searchName, setSearchName] = useState('');
 
-    const mapRef = useRef<L.Map | null>(null);
-    const mapContainerRef = useRef<HTMLDivElement | null>(null);
-    const markersRef = useRef<L.FeatureGroup>(new L.FeatureGroup());
-
     const searchFunding = useCallback(async () => {
         setLoading(true);
         setError(null);
@@ -124,7 +115,6 @@ const FundingSearchPage: React.FC = () => {
                 sortBy,
                 order: sortBy === 'match_score' ? 'desc' : 'asc',
                 userStatus: userStatusFilter || undefined,
-                // WICHTIG: Wenn "Alle" aktiv ist (userStatusFilter === null), hidden NICHT ausblenden
                 includeHidden: userStatusFilter ? undefined : 'true',
             };
             const { data } = await apiClient.get<SearchResponse>('/api/funding/search', { params });
@@ -167,50 +157,6 @@ const FundingSearchPage: React.FC = () => {
     useEffect(() => {
         searchFunding();
     }, [searchFunding]);
-
-    // Map initialisieren / zerstören beim Umschalten, damit Ein-/Ausblenden stabil funktioniert
-    useEffect(() => {
-        if (viewMode === 'map') {
-            if (mapContainerRef.current && !mapRef.current) {
-                const map = L.map(mapContainerRef.current).setView([47.5, 13.3], 7);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-                markersRef.current = new L.FeatureGroup();
-                markersRef.current.addTo(map);
-                mapRef.current = map;
-                // Containergröße nach Mount aktualisieren
-                setTimeout(() => map.invalidateSize(), 0);
-            } else if (mapRef.current) {
-                // falls Container neu gerendert wurde
-                setTimeout(() => mapRef.current!.invalidateSize(), 0);
-            }
-        } else {
-            // Beim Verlassen der Kartenansicht Map sauber entfernen
-            if (mapRef.current) {
-                mapRef.current.remove();
-                mapRef.current = null;
-            }
-            // Marker-Layer zurücksetzen
-            markersRef.current = new L.FeatureGroup();
-        }
-    }, [viewMode]);
-
-    // Marker aktualisieren, wenn Ergebnisse sich ändern
-    useEffect(() => {
-        const map = mapRef.current;
-        const markers = markersRef.current;
-        if (!map || !markers) return;
-        markers.clearLayers();
-        results.forEach(item => {
-            if (item.latitude && item.longitude) {
-                const popupContent = `<b>${item.title}</b>`;
-                L.marker([item.latitude, item.longitude]).addTo(markers).bindPopup(popupContent);
-            }
-        });
-        if (markers.getLayers().length > 0) {
-            map.fitBounds(markers.getBounds(), { padding: [50, 50], maxZoom: 12 });
-        }
-        setTimeout(() => map.invalidateSize(), 0);
-    }, [results]);
 
     const handleFilterChange = (event: React.ChangeEvent<HTMLInputElement | { name?: string; value: unknown }>) => {
         const { name, value } = event.target as any;
@@ -311,7 +257,6 @@ const FundingSearchPage: React.FC = () => {
         }
     };
 
-    // Helfer: Gesamtsumme für "Alle" ermitteln
     const totalCount = (() => {
         const byUS = aggregations.byUserStatus || {};
         return Object.values(byUS).reduce((a, b) => a + (b || 0), 0);
@@ -320,11 +265,12 @@ const FundingSearchPage: React.FC = () => {
     return (
         <DashboardLayout>
             <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={de}>
-                <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-                    <Typography variant="h4" component="h1" gutterBottom>
+                <Container maxWidth="xl" sx={{ mt: isMobile ? 2 : 4, mb: 4, px: isMobile ? 1 : 3 }}>
+                    <Typography variant={isMobile ? "h5" : "h4"} component="h1" gutterBottom>
                         Förder-Assistent {results.length > 0 && `(${results.length} Treffer)`}
                     </Typography>
-                    <Paper sx={{ p: 2, mb: 3 }}>
+                    
+                    <Paper sx={{ p: isMobile ? 2 : 3, mb: 3 }}>
                         <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2, mb: 2 }}>
                             <Typography variant="h6" gutterBottom>Persönliche Filter</Typography>
                             {savedSearches.length > 0 && (
@@ -345,7 +291,6 @@ const FundingSearchPage: React.FC = () => {
                                     </Select>
                                 </FormControl>
                             )}
-                            {/* Persönliche Filter um "Alle" erweitern */}
                             <ToggleButtonGroup
                                 value={userStatusFilter || 'all'}
                                 exclusive
@@ -355,6 +300,8 @@ const FundingSearchPage: React.FC = () => {
                                 }}
                                 aria-label="Status-Filter"
                                 size="small"
+                                fullWidth={isMobile}
+                                orientation={isMobile ? 'vertical' : 'horizontal'}
                             >
                                 <ToggleButton value="all" aria-label="alle">
                                     Alle ({totalCount || 0})
@@ -374,14 +321,21 @@ const FundingSearchPage: React.FC = () => {
                                 </ToggleButton>
                             </ToggleButtonGroup>
                         </Box>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
                             <Typography variant="h6">Allgemeine Filter</Typography>
-                            <ToggleButtonGroup value={viewMode} exclusive onChange={(_, newView) => { if (newView) setViewMode(newView as 'card' | 'timeline' | 'map'); }} aria-label="Ansichtsmodus">
+                            <ToggleButtonGroup 
+                                value={viewMode} 
+                                exclusive 
+                                onChange={(_, newView) => { if (newView) setViewMode(newView as 'card' | 'timeline'); }} 
+                                aria-label="Ansichtsmodus"
+                                size="small"
+                            >
                                 <ToggleButton value="card" aria-label="Kartenansicht"><ViewModuleIcon /></ToggleButton>
                                 <ToggleButton value="timeline" aria-label="Timeline-Ansicht"><TimelineIcon /></ToggleButton>
-                                <ToggleButton value="map" aria-label="Karten-Ansicht"><MapIcon /></ToggleButton>
                             </ToggleButtonGroup>
                         </Box>
+
                         <Grid container spacing={2} alignItems="center">
                             <Grid item xs={12} md={3}>
                                 <TextField fullWidth size="small" name="q" label="Stichwortsuche" value={filters.q} onChange={handleFilterChange} />
@@ -485,10 +439,8 @@ const FundingSearchPage: React.FC = () => {
                                         />
                                     ))}
                                 </Grid>
-                            ) : viewMode === 'timeline' ? (
-                                <TimelineView data={results} />
                             ) : (
-                                <Box ref={mapContainerRef} sx={{ height: '70vh', width: '100%', borderRadius: 1 }} />
+                                <TimelineView data={results} />
                             )
                         )}
                     </Box>

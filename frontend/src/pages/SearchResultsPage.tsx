@@ -1,13 +1,17 @@
-// src/pages/SearchResultsPage.tsx
 import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Container, Typography, Box, CircularProgress, Alert, List, ListItem, ListItemText,
-  Paper, Divider, Chip
+  Paper, Divider, Chip, ListItemButton // ListItemButton ist besser als ListItem button
 } from '@mui/material';
+
+// Icons
 import ArticleIcon from '@mui/icons-material/Article';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
-import BusinessIcon from '@mui/icons-material/Business'; // <-- NEU
+import BusinessIcon from '@mui/icons-material/Business';
+import FolderIcon from '@mui/icons-material/Folder'; // ✅ NEU
+import ForumIcon from '@mui/icons-material/Forum';   // ✅ NEU
+
 import apiClient from '../apiClient';
 
 interface SearchResult {
@@ -15,14 +19,17 @@ interface SearchResult {
   title: string;
   summary: string | null;
   published_date: string;
-  type: 'scraped' | 'ai' | 'tracked_account_news'; // <-- ERWEITERT
+  // ✅ ERWEITERT: file und community_post hinzugefügt
+  type: 'scraped' | 'ai' | 'tracked_account_news' | 'file' | 'community_post'; 
   relevance: number;
-  url: string | null; // <-- NEU
+  url: string | null;
 }
 
 const SearchResultsPage: React.FC = () => {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate(); // ✅ NEU: Für interne Navigation
   const term = searchParams.get('term');
+  
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,26 +55,54 @@ const SearchResultsPage: React.FC = () => {
     }
   }, [term]);
 
+  // ✅ ICON-LOGIK ERWEITERT
   const renderIcon = (type: SearchResult['type']) => {
-    if (type === 'ai') {
-      return <SmartToyIcon sx={{ mr: 2, color: 'secondary.main' }} />;
+    switch (type) {
+      case 'ai':
+        return <SmartToyIcon sx={{ mr: 2, color: 'secondary.main', fontSize: 30 }} />;
+      case 'tracked_account_news':
+        return <BusinessIcon sx={{ mr: 2, color: 'primary.main', fontSize: 30 }} />;
+      case 'file':
+        return <FolderIcon sx={{ mr: 2, color: 'info.main', fontSize: 30 }} />;
+      case 'community_post':
+        return <ForumIcon sx={{ mr: 2, color: 'warning.main', fontSize: 30 }} />;
+      default:
+        return <ArticleIcon sx={{ mr: 2, color: 'text.secondary', fontSize: 30 }} />;
     }
-    if (type === 'tracked_account_news') {
-      return <BusinessIcon sx={{ mr: 2, color: 'primary.main' }} />;
-    }
-    return <ArticleIcon sx={{ mr: 2, color: 'text.secondary' }} />;
   };
 
+  // ✅ LABELS ERWEITERT
   const getChipLabel = (type: SearchResult['type']) => {
-    if (type === 'ai') return 'KI-Analyse';
-    if (type === 'tracked_account_news') return 'Account-News';
-    return 'Artikel';
+    switch (type) {
+      case 'ai': return 'KI-Analyse';
+      case 'tracked_account_news': return 'Account-News';
+      case 'file': return 'Datei';
+      case 'community_post': return 'Community';
+      default: return 'Artikel';
+    }
   };
 
-  const getChipColor = (type: SearchResult['type']): "primary" | "secondary" | "default" => {
-    if (type === 'ai') return 'secondary';
-    if (type === 'tracked_account_news') return 'primary';
-    return 'default';
+  // ✅ FARBEN ERWEITERT
+  const getChipColor = (type: SearchResult['type']): "primary" | "secondary" | "default" | "info" | "warning" => {
+    switch (type) {
+      case 'ai': return 'secondary';
+      case 'tracked_account_news': return 'primary';
+      case 'file': return 'info';
+      case 'community_post': return 'warning';
+      default: return 'default';
+    }
+  };
+
+  // ✅ Navigation Handler
+  const handleResultClick = (url: string | null) => {
+    if (!url) return;
+    // Wenn URL mit '/' beginnt, ist es eine interne Route -> SPA Navigation
+    if (url.startsWith('/')) {
+      navigate(url);
+    } else {
+      // Sonst externer Link -> Neuer Tab
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
   };
 
   return (
@@ -95,43 +130,42 @@ const SearchResultsPage: React.FC = () => {
           <List>
             {results.map((result, index) => (
               <React.Fragment key={result.id}>
-                <ListItem
-                  alignItems="flex-start"
-                  // --- KLICKBAR MACHEN ---
-                  button
-                  component="a"
-                  href={result.url || '#'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  disabled={!result.url}
-                  // --- ENDE ---
-                >
-                  {renderIcon(result.type)}
-                  <ListItemText
-                    primary={result.title}
-                    secondary={
-                      <>
-                        <Typography
-                          sx={{ display: 'inline' }}
-                          component="span"
-                          variant="body2"
-                          color="text.primary"
-                        >
-                          {new Date(result.published_date).toLocaleDateString('de-DE')} - 
-                          <Chip 
-                            label={getChipLabel(result.type)} 
-                            size="small" 
-                            sx={{ mx: 1 }}
-                            color={getChipColor(result.type)}
-                            variant="outlined"
-                          />
+                <ListItem disablePadding>
+                  <ListItemButton 
+                    alignItems="flex-start"
+                    onClick={() => handleResultClick(result.url)}
+                    disabled={!result.url}
+                  >
+                    {renderIcon(result.type)}
+                    <ListItemText
+                      primary={
+                        <Typography variant="subtitle1" color="primary" sx={{ fontWeight: 'bold' }}>
+                          {result.title}
                         </Typography>
-                        {result.summary ? `${result.summary.substring(0, 200)}...` : ''}
-                      </>
-                    }
-                  />
+                      }
+                      secondary={
+                        <>
+                          <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1, my: 0.5 }}>
+                            <Typography variant="caption" color="text.secondary">
+                              {new Date(result.published_date).toLocaleDateString('de-DE')}
+                            </Typography>
+                            <Chip 
+                              label={getChipLabel(result.type)} 
+                              size="small" 
+                              color={getChipColor(result.type)}
+                              variant="outlined"
+                              sx={{ height: 20, fontSize: '0.7rem' }}
+                            />
+                          </Box>
+                          <Typography variant="body2" color="text.primary">
+                            {result.summary ? (result.summary.length > 250 ? `${result.summary.substring(0, 250)}...` : result.summary) : ''}
+                          </Typography>
+                        </>
+                      }
+                    />
+                  </ListItemButton>
                 </ListItem>
-                {index < results.length - 1 && <Divider variant="inset" component="li" />}
+                {index < results.length - 1 && <Divider component="li" />}
               </React.Fragment>
             ))}
           </List>

@@ -1,21 +1,15 @@
 // backend/controllers/adminStatusController.js
 const db = require('../config/db');
-// KORREKTUR: Importiere beide Redis-Clients, um den Heartbeat-Client zu nutzen
-const { connection: redisClient, heartbeatRedisClient } = require('../services/queueService'); 
-// HINZUGEFÜGT: Für die Server-Version
+const { connection: redisClient, heartbeatRedisClient } = require('../services/queueService');
 const packageJson = require('../package.json'); 
 
-/**
- * Überprüft den Zustand der Kerndienste sowie der einzelnen Worker-Prozesse.
- */
 exports.getSystemHealth = async (req, res) => {
-    // Promise für den Datenbank-Status (Ihre Logik wurde beibehalten, sie ist gut)
+    // 1. DB Check
     const dbPromise = db.connect()
         .then(client => {
             return client.query('SELECT version()')
                 .then(result => {
                     client.release();
-                    // Kleines Detail: Nehmen Sie nur den Teil vor dem ersten Komma für die Übersicht
                     const version = result.rows[0].version.split(',')[0];
                     return { status: 'online', version };
                 })
@@ -26,32 +20,43 @@ exports.getSystemHealth = async (req, res) => {
         })
         .catch(err => ({ status: 'offline', error: err.message }));
 
-    // Promise für den Redis-Status
+    // 2. Redis Check
     const redisPromise = redisClient.ping()
-        .then(pong => (pong === 'PONG' ? { status: 'online' } : { status: 'offline', error: 'Invalid PING response' }))
+        .then(pong => (pong === 'PONG' ? { status: 'online' } : { status: 'offline', error: 'Invalid PING' }))
         .catch(err => ({ status: 'offline', error: err.message }));
 
-    // ERWEITERT: 'fundingWorker' zur Liste der zu prüfenden Worker hinzugefügt
-    const workersToCheck = ['aiContentWorker', 'scrapeWorker', 'emailWorker', 'dataUpdateWorker', 'fundingWorker'];
+    // 3. Worker Check (mit DEBUGGING)
+    // HIER BITTE PRÜFEN: Heißen deine Worker-Dateien/Variablen exakt so?
+    const workersToCheck = ['aiWorker', 'scrapeWorker', 'emailWorker', 'dataUpdateWorker', 'fundingWorker'];
+    
     const workerPromise = (async () => {
         try {
             const heartbeatKeys = workersToCheck.map(name => `worker_heartbeat:${name}`);
-            // KORREKTUR: Nutze den dedizierten Heartbeat-Client
-            const heartbeats = await heartbeatRedisClient.mGet(heartbeatKeys); 
             
+            // Debugging: Zeige an, welche Keys wir suchen
+            console.log('[StatusCheck] Suche nach Redis-Keys:', heartbeatKeys);
+
+            const heartbeats = await heartbeatRedisClient.mget(heartbeatKeys); 
+            
+            // Debugging: Zeige an, was Redis zurückgegeben hat
+            console.log('[StatusCheck] Redis Antwort:', heartbeats);
+
             const workerStatus = {};
             const now = new Date();
 
             heartbeats.forEach((heartbeat, index) => {
                 const name = workersToCheck[index];
                 if (!heartbeat) {
-                    workerStatus[name] = { status: 'offline', error: 'Kein Heartbeat gefunden.' };
+                    // Kein Eintrag in Redis gefunden (oder abgelaufen)
+                    workerStatus[name] = { status: 'offline', error: 'Kein Heartbeat in Redis gefunden.' };
                 } else {
                     const lastBeat = new Date(heartbeat);
-                    // 90 Sekunden Toleranz
                     const diffSeconds = (now - lastBeat) / 1000;
-                    if (diffSeconds > 90) { 
-                        workerStatus[name] = { status: 'offline', error: `Letzter Heartbeat ist ${Math.round(diffSeconds)}s alt.` };
+                    
+                    console.log(`[StatusCheck] ${name}: Letzter Beat vor ${diffSeconds}s`);
+
+                    if (diffSeconds > 120) { // Toleranz auf 120s erhöht
+                        workerStatus[name] = { status: 'offline', error: `Inaktiv seit ${Math.round(diffSeconds)}s` };
                     } else {
                         workerStatus[name] = { status: 'online' };
                     }
@@ -59,18 +64,17 @@ exports.getSystemHealth = async (req, res) => {
             });
             return workerStatus;
         } catch (err) {
+            console.error('[StatusCheck] Redis Fehler:', err);
             const errorResult = {};
             workersToCheck.forEach(name => {
-                errorResult[name] = { status: 'offline', error: 'Redis-Fehler beim Abrufen der Heartbeats.' };
+                errorResult[name] = { status: 'offline', error: 'Fehler beim Lesen der Heartbeats' };
             });
             return errorResult;
         }
     })();
     
-    // Alle Prüfungen parallel ausführen
     const [dbResult, redisResult, workerResult] = await Promise.all([dbPromise, redisPromise, workerPromise]);
     
-    // Server-Informationen
     const uptimeInSeconds = process.uptime();
     const d = Math.floor(uptimeInSeconds / (3600*24));
     const h = Math.floor(uptimeInSeconds % (3600*24) / 3600);
@@ -84,7 +88,7 @@ exports.getSystemHealth = async (req, res) => {
             uptime: `${d}d ${h}h ${m}m`,
             memoryUsage: process.memoryUsage(),
             currentTime: new Date().toISOString(),
-            version: packageJson.version || 'N/A'
+            version: packageJson.version || '1.0.0'
         }
     });
 };

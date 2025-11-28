@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'; // useRef entfernt
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Box, Typography, CircularProgress, Alert, ToggleButton,
     ToggleButtonGroup, Link as MuiLink, Tooltip, FormControl,
@@ -23,7 +23,7 @@ import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
 
-// ... (Interfaces und Helper-Komponenten bleiben gleich, ca. Zeile 20-102)
+// --- Types ---
 interface StatDataPoint {
   date: string;
   [key: string]: string | number;
@@ -39,6 +39,8 @@ interface EconomicStatWidgetProps extends BaseWidgetProps {
   category: string;
   countryCode?: string;
 }
+
+// --- Constants & Helpers ---
 const subtypeIcons: { [key: string]: { icon: React.ReactElement; tooltip: string } } = {
   'Benzin': { icon: <LocalGasStationIcon />, tooltip: 'Benzin' },
   'Diesel': { icon: <LocalGasStationIcon />, tooltip: 'Diesel' },
@@ -49,30 +51,36 @@ const subtypeIcons: { [key: string]: { icon: React.ReactElement; tooltip: string
   'Elektro': { icon: <EvStationIcon />, tooltip: 'Elektro' },
   'default': { icon: <HelpOutlineIcon />, tooltip: 'Unbekannt' },
 };
+
 const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#0088FE', '#00C49F'];
 const integerFormatter = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
+
 const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, alt, size = 20 }) => {
   if (!code) return null;
   const c = code.toUpperCase();
-  if (c === 'EU') { return ( <svg width={size} height={(size * 2) / 3} viewBox="0 0 12 8" xmlns="http://www.w3.org/2000/svg" aria-label={alt || 'EU'}><rect width="12" height="8" fill="#003399" />{Array.from({ length: 12 }).map((_, i) => { const angle = (i * 30 * Math.PI) / 180; const cx = 6 + Math.cos(angle) * 2.2; const cy = 4 + Math.sin(angle) * 2.2; return (<g key={i} transform={`translate(${cx},${cy})`}><polygon points="0,-0.6 0.17,-0.1 0.6,-0.1 0.26,0.16 0.39,0.6 0,0.35 -0.39,0.6 -0.26,0.16 -0.6,-0.1 -0.17,-0.1" fill="#FFCC00" /></g>);})}</svg> );}
+  if (c === 'EU') { 
+      return ( <svg width={size} height={(size * 2) / 3} viewBox="0 0 12 8" xmlns="http://www.w3.org/2000/svg" aria-label={alt || 'EU'}><rect width="12" height="8" fill="#003399" />{Array.from({ length: 12 }).map((_, i) => { const angle = (i * 30 * Math.PI) / 180; const cx = 6 + Math.cos(angle) * 2.2; const cy = 4 + Math.sin(angle) * 2.2; return (<g key={i} transform={`translate(${cx},${cy})`}><polygon points="0,-0.6 0.17,-0.1 0.6,-0.1 0.26,0.16 0.39,0.6 0,0.35 -0.39,0.6 -0.26,0.16 -0.6,-0.1 -0.17,-0.1" fill="#FFCC00" /></g>);})}</svg> );
+  }
   return <img loading="lazy" width={size} src={`https://flagcdn.com/w20/${c.toLowerCase()}.png`} alt={alt || c} />;
 };
+
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     const date = format(new Date(label), 'MMMM yyyy', { locale: de });
     const total = payload.reduce((sum: number, entry: { value: number }) => sum + (entry.value || 0), 0);
     return (
       <Paper elevation={3} sx={{ p: 1.5, bgcolor: 'background.paper', minWidth: 200 }}>
-        <Typography variant="body2" sx={{ mb: 1, fontWeight: 'bold' }}>{date}</Typography>
+        {/* FIX: component="div" verhindert nesting Fehler falls date komische Zeichen hat, aber hier vor allem als Struktur */}
+        <Typography variant="body2" component="div" sx={{ mb: 1, fontWeight: 'bold' }}>{date}</Typography>
         {payload.map((pld: any) => {
             const percentage = total > 0 ? ((pld.value / total) * 100).toFixed(1) : 0;
             return (
                  <Box key={pld.dataKey} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', my: 0.5 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
                         <Box sx={{ width: 10, height: 10, bgcolor: pld.fill, mr: 1, borderRadius: '50%' }} />
-                        <Typography variant="body2">{`${pld.name}:`}</Typography>
+                        <Typography variant="body2" component="span">{`${pld.name}:`}</Typography>
                     </Box>
-                    <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                    <Typography variant="body2" component="span" sx={{ fontWeight: 'bold' }}>
                         {`${integerFormatter.format(pld.value)} (${percentage}%)`}
                     </Typography>
                 </Box>
@@ -80,17 +88,16 @@ const CustomTooltip = ({ active, payload, label }: any) => {
         })}
         <Divider sx={{ my: 1 }} />
         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Typography variant="body2">Gesamt:</Typography>
-            <Typography variant="body2" sx={{ fontWeight: 'bold' }}>{integerFormatter.format(total)}</Typography>
+            <Typography variant="body2" component="span">Gesamt:</Typography>
+            <Typography variant="body2" component="span" sx={{ fontWeight: 'bold' }}>{integerFormatter.format(total)}</Typography>
         </Box>
       </Paper>
     );
   }
   return null;
 };
-// ... (Ende der Helper)
 
-
+// --- Main Component ---
 const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
   widgetId, onDelete, isRemovable, icon, title, widgetTypeKey,
   category, countryCode = 'DE'
@@ -108,7 +115,7 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
   const [availableCountries, setAvailableCountries] = useState<Region[]>([]);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
 
-  // Hook 1: Lädt die verfügbaren Länder für den Dropdown-Filter
+  // Hook 1: Länder laden
   useEffect(() => {
     const fetchCountries = async () => {
         if (!category) return;
@@ -116,48 +123,42 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
             const response = await apiClient.get('/api/data/economic-statistics/countries', {
                 params: { statisticType: category }
             });
-            setAvailableCountries(response.data || []); // Sicherstellen, dass es ein Array ist
+            setAvailableCountries(response.data || []);
         } catch (err) {
-            console.error("Länder für Statistik-Widget konnten nicht geladen werden:", err);
-            setAvailableCountries([]); // Im Fehlerfall leeres Array setzen
+            console.error("Länder konnten nicht geladen werden:", err);
+            setAvailableCountries([]);
         }
     };
     fetchCountries();
   }, [category]);
 
-  // Hook 2: Stellt die Standard-Region ein (KORRIGIERT, um Schleifen zu vermeiden)
+  // Hook 2: Standard-Region setzen
   useEffect(() => {
-    // Dieser Hook läuft nur, wenn Länder geladen sind UND die Initialisierung noch nicht erfolgt ist.
-    if (initialLoadDone || availableCountries.length === 0) {
-        return; // Entweder schon initialisiert oder Länder sind noch nicht geladen
-    }
+    if (initialLoadDone || availableCountries.length === 0) return;
 
     const availableCountryCodes = availableCountries.map(c => c.code);
-    let countryToSet = availableCountryCodes.length > 0 ? availableCountryCodes[0] : countryCode; // Fallback 1: erstes Land oder Prop
+    let countryToSet = availableCountryCodes.length > 0 ? availableCountryCodes[0] : countryCode;
 
     if (user?.regions) {
         const userDefaultRegion = user.regions.find(r => r.is_default);
         if (userDefaultRegion && availableCountryCodes.includes(userDefaultRegion.code)) {
-            countryToSet = userDefaultRegion.code; // Bevorzuge User-Region
+            countryToSet = userDefaultRegion.code;
         }
     }
 
     setSelectedCountry(countryToSet);
-    setInitialLoadDone(true); // Initialisierung abschließen (löst Hook 3 aus)
+    setInitialLoadDone(true);
+  }, [availableCountries, user, initialLoadDone, countryCode]);
 
-  }, [availableCountries, user, initialLoadDone, countryCode]); // Abhängigkeiten sind korrekt
-
-
-  // Hook 3: Lädt die Chart-Daten (DIESER BLOCK HAT GEFEHLT)
+  // Hook 3: Daten laden
   useEffect(() => {
     const fetchData = async () => {
       if (!category) {
-        setError("Keine Kategorie im Widget-Typ konfiguriert.");
+        setError("Keine Kategorie konfiguriert.");
         setLoading(false);
         return;
       }
       
-      console.log(`[StatWidget] Fetching data for: ${category} / ${selectedCountry}`);
       setLoading(true);
       setError(null);
       
@@ -174,51 +175,42 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
           setData(response.data.data || []);
           setSource(response.data.source || null);
           setAvailableSubtypes(subtypes);
-          // Wähle alle Subtypen standardmäßig aus, wenn neue Daten geladen werden
           setSelectedSubtypes(subtypes); 
         } else {
           setData([]);
-          setSource(null);
-          setAvailableSubtypes([]);
-          setSelectedSubtypes([]);
-          setError(response.data?.message || "Unbekannter Fehler beim Laden der Daten.");
+          setError(response.data?.message || "Fehler beim Laden.");
         }
       } catch (err: any) {
         console.error("Fehler beim Laden der Statistikdaten:", err);
-        setData([]);
-        setSource(null);
-        setAvailableSubtypes([]);
-        setSelectedSubtypes([]);
-        setError(err?.response?.data?.message || "Daten konnten nicht geladen werden.");
+        setError(err?.response?.data?.message || "Datenfehler.");
       } finally {
         setLoading(false);
       }
     };
 
-    // Nur ausführen, wenn die Initialisierung abgeschlossen ist
-    // und wir eine Kategorie UND ein Land haben.
     if (initialLoadDone && category && selectedCountry) {
       fetchData();
     }
-  }, [category, selectedCountry, initialLoadDone]); // Abhängig von diesen Werten
+  }, [category, selectedCountry, initialLoadDone]);
 
-
-  // ... (Rest der Datei: useMemo, renderContent, widgetTitleComponent, etc. bleiben gleich)
   const latestTotal = useMemo(() => {
     if (!data || data.length === 0 || selectedSubtypes.length === 0) return 0;
-    // KORREKTUR: Berechne nur die Summe des *letzten* Datums, nicht aller Daten
     const latestDataPoint = data[data.length - 1];
-    if (!latestDataPoint) return 0;
-    
-    return selectedSubtypes.reduce((subSum, key) => {
-        return subSum + (Number(latestDataPoint[key]) || 0);
-    }, 0);
+    return selectedSubtypes.reduce((subSum, key) => subSum + (Number(latestDataPoint[key]) || 0), 0);
   }, [data, selectedSubtypes]);
+
+  // FIX: Begrenzung der angezeigten Datenpunkte für den Chart, um Browser-Freeze zu verhindern
+  const chartData = useMemo(() => {
+      if (data.length > 150) {
+          return data.slice(data.length - 150);
+      }
+      return data;
+  }, [data]);
 
   const renderContent = () => {
     if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box>;
     if (error) return <Alert severity="error">{error}</Alert>;
-    if (data.length === 0) return <Typography sx={{ p: 2, textAlign: 'center' }} color="text.secondary">Keine Daten für das gewählte Land verfügbar.</Typography>;
+    if (data.length === 0) return <Typography sx={{ p: 2, textAlign: 'center' }} color="text.secondary">Keine Daten verfügbar.</Typography>;
 
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -237,17 +229,16 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
                         <Tooltip title={subtype} key={subtype}>
                             <ToggleButton
                                 value={subtype}
-                                aria-label={subtype}
+                                size="small"
                                 sx={{
                                     color: color,
-                                    '&.Mui-selected, &.Mui-selected:hover': {
-                                        color: color,
-                                    },
+                                    '&.Mui-selected, &.Mui-selected:hover': { color: color },
                                     border: `1px solid ${color} !important`,
-                                    m: 0.25
+                                    m: 0.25,
+                                    p: 0.5
                                 }}
                             >
-                                {(subtypeIcons[subtype] || subtypeIcons.default).icon}
+                                {subtypeIcons[subtype]?.icon || subtypeIcons.default.icon}
                             </ToggleButton>
                         </Tooltip>
                     );
@@ -255,9 +246,9 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
             </ToggleButtonGroup>
         </Box>
 
-        <Box sx={{ flexGrow: 1, height: 300 }}>
+        <Box sx={{ flexGrow: 1, height: 300, minHeight: 0 }}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 45 }}>
+            <BarChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 45 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis
                 dataKey="date"
@@ -280,7 +271,7 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
           </ResponsiveContainer>
         </Box>
         {source && (
-            <Typography variant="caption" sx={{ textAlign: 'center', p: 1, pt: 2, color: 'text.secondary', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0.5 }}>
+            <Typography variant="caption" component="div" sx={{ textAlign: 'center', p: 1, pt: 2, color: 'text.secondary', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0.5 }}>
                 Quelle: <MuiLink href={source.url} target="_blank" rel="noopener">{source.name}</MuiLink>
                 {source.is_trusted && (
                     <Tooltip title="Info zu geprüften Quellen">
@@ -307,19 +298,18 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
         {icon}
         <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>{title}</Typography>
         {availableCountries.length > 1 && (
-            <FormControl size="small" sx={{ minWidth: 100, '.MuiOutlinedInput-notchedOutline': { border: 'none' } }} onMouseDown={(e) => e.stopPropagation()}>
+            <FormControl size="small" sx={{ minWidth: 100 }} onMouseDown={(e) => e.stopPropagation()}>
                 <Select
                     value={selectedCountry}
-                    onChange={(e: SelectChangeEvent) => {
-                      setSelectedCountry(e.target.value);
-                      // Hinweis: setSelectedSubtypes([]); wird jetzt im fetchData-Hook gehandhabt
-                    }}
+                    variant="standard"
+                    disableUnderline
+                    onChange={(e: SelectChangeEvent) => setSelectedCountry(e.target.value)}
                     renderValue={(value) => {
                         const country = availableCountries.find(c => c.code === value);
                         return (
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                 <Flag code={value as string} alt={country?.name} />
-                                {country?.code}
+                                <Typography variant="body2">{country?.code}</Typography>
                             </Box>
                         );
                     }}

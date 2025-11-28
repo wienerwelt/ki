@@ -24,8 +24,8 @@ import FactCheckIcon from '@mui/icons-material/FactCheck';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import PollIcon from '@mui/icons-material/Poll';
 import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
-import GavelIcon from '@mui/icons-material/Gavel'; // ✅ NEU: Icon importiert
-
+import GavelIcon from '@mui/icons-material/Gavel';
+import ForumIcon from '@mui/icons-material/Forum'; // ✅ NEU: Icon für Community
 
 const AdminDashboardPage: React.FC = () => {
     return (
@@ -39,7 +39,18 @@ const AdminDashboardPage: React.FC = () => {
                 </Typography>
 
                 <Grid container spacing={3}>
-                    {/* ... (Alle anderen Kacheln bleiben unverändert) ... */}
+                    {/* ... (Bestehende Kacheln) ... */}
+                    
+                    {/* ✅ NEU: Community Moderation Kachel */}
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <ForumIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
+                            <Typography variant="h6" component="h2" gutterBottom>Community</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Beiträge und Kommentare aller Mandanten moderieren.</Typography>
+                            <Button component={Link} to="/admin/community" variant="contained" color="primary">Verwalten</Button>
+                        </Paper>
+                    </Grid>
+
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <ShoppingCartCheckoutIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
@@ -48,6 +59,8 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/funding" variant="contained" color="primary">Öffnen</Button>
                         </Paper>
                     </Grid>
+                    
+                    {/* ... (Restliche Kacheln wie zuvor) ... */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <ScheduleIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
@@ -129,7 +142,6 @@ const AdminDashboardPage: React.FC = () => {
                         </Paper>
                     </Grid>
 
-                    {/* ✅ NEUE KACHEL HINZUGEFÜGT */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <GavelIcon sx={{ fontSize: 60, mb: 2 }} color="action" />

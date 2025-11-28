@@ -21,8 +21,9 @@ router.get('/jobs-auth', authorize(['admin', 'assistenz']), (req, res) => {
     res.cookie('bull-auth-token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      path: '/api/admin/jobs',
-      maxAge: 60 * 1000,
+      path: '/',
+      maxAge: 5 * 60 * 1000, 
+      sameSite: 'lax'      
     });
 
     res.redirect('/api/admin/jobs');

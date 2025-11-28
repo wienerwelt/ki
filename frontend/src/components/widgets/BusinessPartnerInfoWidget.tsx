@@ -1,6 +1,5 @@
-// frontend/src/widgets/BusinessPartnerInfoWidget.tsx
-
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -19,11 +18,13 @@ import {
   Tooltip,
   Link as MuiLink,
   Button,
+  AvatarGroup,
+  Badge
 } from '@mui/material';
-import { BusinessPartnerInfoWidgetProps as BaseWidgetProps } from '../../types/dashboard.types';
+// KORREKTUR: Importiere BaseWidgetProps direkt, nicht als Alias, um Zirkelbezug zu vermeiden
+import { BaseWidgetProps } from '../../types/dashboard.types';
 import WidgetPaper from './WidgetPaper';
 import apiClient from '../../apiClient';
-// ✅ NEU: useAuth importieren, um die Benutzerrolle abzurufen
 import { useAuth } from '../../context/AuthContext'; 
 
 import LanguageIcon from '@mui/icons-material/Language';
@@ -37,6 +38,7 @@ import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt';
 import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
 import Groups3Icon from '@mui/icons-material/Groups3';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
 
 interface Region {
   id: string;
@@ -64,6 +66,8 @@ interface BusinessPartner {
 
 interface BusinessPartnerInfoWidgetProps extends Omit<BaseWidgetProps, 'businessPartner'> {
   businessPartner: BusinessPartner | null | undefined;
+  loading?: boolean;
+  error?: string | null;
 }
 
 interface ContentItem {
@@ -74,12 +78,84 @@ interface ContentItem {
   published_date?: string;
   event_date?: string;
   relevance_score: number;
-  user_vote: number; // -1, 0, 1
+  user_vote: number;
 }
 interface UserStats {
   active: number;
   inactive: number;
 }
+
+interface MemberPreview {
+    id: string;
+    first_name: string;
+    last_name: string;
+    profile_image_url: string | null;
+    role: string;
+    last_login_at?: string; 
+}
+
+// --- STATUS LOGIK ---
+const getUserStatus = (lastLoginDate?: string) => {
+    if (!lastLoginDate) return 'offline';
+    const loginTime = new Date(lastLoginDate).getTime();
+    const now = new Date().getTime();
+    const diffMinutes = (now - loginTime) / (1000 * 60);
+    
+    if (diffMinutes < 15) return 'online';
+    if (diffMinutes < 60 * 24) return 'active_today';
+    return 'offline';
+};
+
+// --- AVATAR KOMPONENTE MIT STATUS ---
+const MemberAvatar: React.FC<{ member: MemberPreview, onClick?: () => void }> = ({ member, onClick }) => {
+    const status = getUserStatus(member.last_login_at);
+    const invisible = status === 'offline';
+    const statusColor = status === 'online' ? '#44b700' : '#ffa726';
+    const tooltipText = `${member.first_name} ${member.last_name} (${status === 'online' ? 'Online' : (status === 'active_today' ? 'Heute aktiv' : member.role)})`;
+
+    return (
+        <Tooltip title={tooltipText}>
+            <Badge
+                overlap="circular"
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                variant="dot"
+                invisible={invisible}
+                sx={{
+                    '& .MuiBadge-badge': {
+                        backgroundColor: statusColor,
+                        color: statusColor,
+                        boxShadow: `0 0 0 2px white`,
+                        '&::after': status === 'online' ? {
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            height: '100%',
+                            borderRadius: '50%',
+                            animation: 'ripple 1.2s infinite ease-in-out',
+                            border: '1px solid currentColor',
+                            content: '""',
+                        } : {},
+                    },
+                    '@keyframes ripple': {
+                        '0%': { transform: 'scale(.8)', opacity: 1 },
+                        '100%': { transform: 'scale(2.4)', opacity: 0 },
+                    },
+                    cursor: 'pointer'
+                }}
+            >
+                <Avatar 
+                    src={member.profile_image_url || undefined} 
+                    alt={member.first_name}
+                    onClick={onClick}
+                    sx={{ width: 32, height: 32, fontSize: '0.8rem' }}
+                >
+                    {member.first_name?.charAt(0)}
+                </Avatar>
+            </Badge>
+        </Tooltip>
+    );
+};
 
 const VoteComponent: React.FC<{
   item: ContentItem;
@@ -91,6 +167,7 @@ const VoteComponent: React.FC<{
 
   const handleVote = (e: React.MouseEvent, vote: 1 | -1) => {
     e.stopPropagation();
+    e.preventDefault();
     onVote(vote);
   };
 
@@ -132,18 +209,20 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
   widgetId,
   isRemovable,
 }) => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  
   const [bpNews, setBpNews] = useState<ContentItem[]>([]);
   const [bpEvents, setBpEvents] = useState<ContentItem[]>([]);
   const [userStats, setUserStats] = useState<UserStats | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
 
-  // ✅ NEU: Benutzerdaten (inkl. Rolle) aus dem AuthContext holen
-  const { user } = useAuth();
-  const userRole = user?.role;
-  const canViewAdminInfo = userRole === 'admin' || userRole === 'assistent';
+  const [members, setMembers] = useState<MemberPreview[]>([]);
+  const [totalMembers, setTotalMembers] = useState(0);
 
-  // ✅ NEU: Heutiges Datum (ohne Uhrzeit) für den Vergangenheits-Check
+  const userRole = user?.role;
+  const canViewAdminInfo = userRole === 'admin' || userRole === 'assistenz';
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -159,28 +238,33 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
     try {
       const newsUrl   = `/api/data/bp-scraped-content${qs({ businessPartnerId: bpId, category: 'news' })}`;
       const eventsUrl = `/api/data/bp-scraped-content${qs({ businessPartnerId: bpId, category: 'events' })}`;
-      
-      // ✅ NEU: Stats-URL nur aufrufen, wenn der User die Berechtigung hat
       const statsUrl  = `/api/data/user-stats/${encodeURIComponent(bpId)}`;
-      
+      const membersUrl = `/api/data/bp-members-preview`;
+
       const promises = [
         apiClient.get(newsUrl),
         apiClient.get(eventsUrl),
+        apiClient.get(membersUrl)
       ];
 
       if (canViewAdminInfo) {
           promises.push(apiClient.get(statsUrl));
       }
 
-      const [newsRes, eventsRes, statsRes] = await Promise.all(promises);
+      const [newsRes, eventsRes, membersRes, statsRes] = await Promise.all(promises);
 
       const newsData = (newsRes as any)?.data?.data ?? [];
       const eventsData = (eventsRes as any)?.data?.data ?? [];
-      // ✅ NEU: Stats-Daten nur setzen, wenn sie abgefragt wurden
       const statsData = (statsRes as any)?.data ?? null;
 
       setBpNews(Array.isArray(newsData) ? newsData : []);
       setBpEvents(Array.isArray(eventsData) ? eventsData : []);
+      
+      if (membersRes.data) {
+          setMembers(membersRes.data.members || []);
+          setTotalMembers(membersRes.data.total || 0);
+      }
+
       if (statsData) {
         setUserStats(statsData);
       }
@@ -190,7 +274,6 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
     } finally {
       setLoadingContent(false);
     }
-  // ✅ NEU: canViewAdminInfo als Abhängigkeit hinzugefügt
   }, [bpId, canViewAdminInfo]); 
 
   useEffect(() => {
@@ -235,6 +318,10 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
     return url.replace(/^(https?:\/\/)?(www\.)?/, '');
   };
 
+  const handleMemberClick = () => {
+      navigate('/community', { state: { defaultTab: 'members' } });
+  };
+
   const defaultRegion = businessPartner?.regions?.find((r) => r.is_default);
   const memberLevels = [businessPartner?.level_1_name, businessPartner?.level_2_name, businessPartner?.level_3_name]
     .filter(Boolean)
@@ -246,13 +333,29 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
   return (
     <WidgetPaper
       title={
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography variant="h6">{businessPartner?.name || 'Business Partner'}</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+          <Typography variant="h6" noWrap sx={{ maxWidth: '60%' }}>
+              {businessPartner?.name || 'Business Partner'}
+          </Typography>
+          
+          {totalMembers > 0 && (
+              <Chip 
+                label={`${totalMembers}`} 
+                icon={<Groups3Icon style={{ fontSize: 16 }} />} 
+                size="small" 
+                variant="outlined"
+                sx={{ cursor: 'pointer', borderColor: 'divider' }}
+                onClick={handleMemberClick}
+              />
+          )}
+
+          <Box sx={{ flexGrow: 1 }} />
+
           {defaultRegion && (
             <Tooltip title={`Standard Region: ${defaultRegion.name}`}>
               <img
                 src={`https://flagcdn.com/w20/${defaultRegion.code.toLowerCase()}.png`}
-                width="30"
+                width="24"
                 alt={defaultRegion.name}
                 style={{ border: '1px solid #eee', borderRadius: '2px' }}
               />
@@ -278,26 +381,47 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
       ) : (
         <Card variant="outlined" sx={{ height: '100%', border: 'none', display: 'flex', flexDirection: 'column' }}>
           <CardContent sx={{ flexGrow: 1, overflowY: 'auto', pt: 2 }}>
+            
+            {/* FACEBOOK STYLE MEMBER PILE */}
+            <Box sx={{ px: 2, mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box onClick={handleMemberClick} sx={{ cursor: 'pointer' }}>
+                    <AvatarGroup 
+                        max={7} 
+                        sx={{ 
+                            '& .MuiAvatar-root': { width: 32, height: 32, fontSize: '0.8rem' } 
+                        }}
+                    >
+                        {members.map(m => (
+                            <MemberAvatar key={m.id} member={m} />
+                        ))}
+                    </AvatarGroup>
+                </Box>
+
+                {canViewAdminInfo && (
+                    <Tooltip title="Nutzer verwalten">
+                        <IconButton size="small" onClick={() => navigate(`/admin/users?business_partner_id=${bpId}`)}>
+                            <PersonAddIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                )}
+            </Box>
+            <Divider sx={{ mb: 2 }} />
+
             <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', px: 2, mb: 2 }}>
-<Avatar
-  src={businessPartner.logo_url || undefined}
-  variant="rounded"
-  sx={{
-    width: 90,
-    height: 60,
-    mt: 0.5,
-    '& img': {
-      objectFit: 'contain',
-      width: '100%',
-      height: '100%',
-      padding: 0.5, // = theme.spacing(0.5)
-    },
-  }}
->
-  {typeof businessPartner.name === 'string' && businessPartner.name.length > 0
-    ? businessPartner.name.charAt(0)
-    : null}
-</Avatar>
+              <Avatar
+                src={businessPartner.logo_url || undefined}
+                variant="rounded"
+                sx={{
+                  width: 90,
+                  height: 60,
+                  mt: 0.5,
+                  '& img': { objectFit: 'contain', width: '100%', height: '100%', padding: 0.5 },
+                }}
+              >
+                {typeof businessPartner.name === 'string' && businessPartner.name.length > 0
+                  ? businessPartner.name.charAt(0)
+                  : null}
+              </Avatar>
               <Stack spacing={0.5} sx={{ flexGrow: 1 }}>
                 {businessPartner.url_businesspartner && (
                   <MuiLink
@@ -305,14 +429,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                     target="_blank"
                     rel="noopener noreferrer"
                     variant="body2"
-                    sx={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 1,
-                      wordBreak: 'break-all',
-                      textDecoration: 'none',
-                      color: 'text.primary',
-                    }}
+                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, wordBreak: 'break-all', textDecoration: 'none', color: 'text.primary' }}
                   >
                     <LanguageIcon color="action" fontSize="small" />{' '}
                     {getDisplayUrl(businessPartner.url_businesspartner)}
@@ -322,39 +439,25 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                   <MuiLink
                     href={`mailto:${businessPartner.email}`}
                     variant="body2"
-                    sx={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 1,
-                      wordBreak: 'break-all',
-                      textDecoration: 'none',
-                      color: 'text.primary',
-                    }}
+                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, wordBreak: 'break-all', textDecoration: 'none', color: 'text.primary' }}
                   >
                     <EmailIcon color="action" fontSize="small" /> {businessPartner.email}
                   </MuiLink>
                 )}
                 {businessPartner.address && (
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}
-                  >
+                  <Typography variant="body2" color="text.secondary" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
                     <LocationOnIcon color="action" fontSize="small" /> {businessPartner.address}
                   </Typography>
                 )}
               </Stack>
             </Stack>
+            
             <Divider />
 
             {loadingContent ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
-                <CircularProgress size={24} />
-              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}><CircularProgress size={24} /></Box>
             ) : contentError ? (
-              <Alert severity="error" sx={{ m: 2 }}>
-                {contentError}
-              </Alert>
+              <Alert severity="error" sx={{ m: 2 }}>{contentError}</Alert>
             ) : (
               <>
                 <Typography variant="subtitle2" sx={{ mt: 2, mb: 1, color: 'text.secondary', pl: 2 }}>
@@ -364,21 +467,13 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                   {bpNews.length > 0 ? (
                     bpNews.map((item, index) => (
                       <React.Fragment key={item.id}>
-                        <ListItem
-                          button
-                          component="a"
-                          href={item.original_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
+                        <ListItem button component="a" href={item.original_url} target="_blank" rel="noopener noreferrer">
                           <ListItemText
                             primary={<Typography variant="body2">{item.title}</Typography>}
                             secondaryTypographyProps={{ component: 'div' }}
                             secondary={
                               <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
-                                <Typography variant="caption" color="text.secondary">
-                                  {formatDate(item.published_date)}
-                                </Typography>
+                                <Typography variant="caption" color="text.secondary">{formatDate(item.published_date)}</Typography>
                                 <Box sx={{ flexGrow: 1 }} />
                                 <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote, 'news')} />
                               </Box>
@@ -389,9 +484,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                       </React.Fragment>
                     ))
                   ) : (
-                    <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>
-                      Keine Nachrichten gefunden.
-                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>Keine Nachrichten gefunden.</Typography>
                   )}
                 </List>
 
@@ -401,36 +494,23 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                 <List dense>
                   {bpEvents.length > 0 ? (
                     bpEvents.map((item, index) => {
-                      // ✅ NEU: Prüfen, ob das Event in der Vergangenheit liegt
                       const eventDate = item.event_date ? new Date(item.event_date) : null;
                       const isPast = eventDate ? eventDate < today : false;
-                    
                       return (
                         <React.Fragment key={item.id}>
                           <ListItem>
                             <Box sx={{ mr: 2, display: 'flex', alignItems: 'center' }}>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                href={item.original_url}
-                                target="_blank"
-                                onMouseDown={(e) => e.stopPropagation()}
-                                // ✅ NEU: Button für vergangene Events deaktivieren
-                                disabled={isPast}
-                              >
+                              <Button size="small" variant="outlined" href={item.original_url} target="_blank" onMouseDown={(e) => e.stopPropagation()} disabled={isPast}>
                                 Anmelden
                               </Button>
                             </Box>
                             <ListItemText
-                              // ✅ NEU: Styling anwenden, wenn Event vergangen ist
                               sx={isPast ? { color: 'text.disabled' } : undefined}
                               primary={<Typography variant="body2">{item.title}</Typography>}
                               secondaryTypographyProps={{ component: 'div' }}
                               secondary={
                                 <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
-                                  <Typography variant="caption" color="inherit">
-                                    {formatDate(item.event_date)}
-                                  </Typography>
+                                  <Typography variant="caption" color="inherit">{formatDate(item.event_date)}</Typography>
                                 </Box>
                               }
                             />
@@ -440,15 +520,12 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                       );
                     })
                   ) : (
-                    <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>
-                      Keine Events gefunden.
-                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>Keine Events gefunden.</Typography>
                   )}
                 </List>
               </>
             )}
 
-            {/* ✅ NEU: Den gesamten Block nur für Admin/Assistent anzeigen */}
             {canViewAdminInfo && (
               <Box sx={{ p: 2, pt: 2 }}>
                 <Divider sx={{ mb: 2 }} />
@@ -459,9 +536,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                 {userStats && (
                   <Box display="flex" alignItems="center" mb={1}>
                     <GroupIcon color="action" sx={{ mr: 1.5, fontSize: '1rem' }} />
-                    <Typography variant="caption">
-                      Nutzer: <strong>{userStats.active}</strong> aktiv / <strong>{userStats.inactive}</strong> inaktiv
-                    </Typography>
+                    <Typography variant="caption">Nutzer: <strong>{userStats.active}</strong> aktiv / <strong>{userStats.inactive}</strong> inaktiv</Typography>
                   </Box>
                 )}
                 {memberLevels && (

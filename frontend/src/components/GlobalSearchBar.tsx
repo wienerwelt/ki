@@ -1,102 +1,268 @@
-// src/components/GlobalSearchBar.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TextField, InputAdornment, IconButton, Tooltip } from '@mui/material';
-import SearchIcon from '@mui/icons-material/Search';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'; // NEU: KI-Icon
-import { styled, alpha } from '@mui/material/styles';
+import {
+  Autocomplete, TextField, InputAdornment, IconButton, Tooltip, 
+  Box, Typography, Chip, CircularProgress
+} from '@mui/material';
+import { styled, alpha, useTheme } from '@mui/material/styles';
 
-const Search = styled('div')(({ theme }) => ({
+// Icons
+import SearchIcon from '@mui/icons-material/Search';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import ClearIcon from '@mui/icons-material/Clear'; // ✅ NEU
+import ArticleIcon from '@mui/icons-material/Article';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
+import BusinessIcon from '@mui/icons-material/Business';
+import FolderIcon from '@mui/icons-material/Folder';
+import ForumIcon from '@mui/icons-material/Forum';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+
+import apiClient from '../apiClient';
+
+// --- Interfaces ---
+interface SearchResult {
+  id: string;
+  title: string;
+  summary: string | null;
+  type: 'scraped' | 'ai' | 'tracked_account_news' | 'file' | 'community_post';
+  url: string | null;
+  published_date: string;
+}
+
+// --- Styling ---
+const SearchWrapper = styled('div')(({ theme }) => ({
   position: 'relative',
   borderRadius: theme.shape.borderRadius,
   backgroundColor: alpha(theme.palette.common.white, 0.15),
   '&:hover': {
     backgroundColor: alpha(theme.palette.common.white, 0.25),
   },
+  marginRight: theme.spacing(2),
   marginLeft: 0,
   width: '100%',
-  display: 'flex', // NEU: Für Icon am Ende
   [theme.breakpoints.up('sm')]: {
-    marginLeft: theme.spacing(1),
+    marginLeft: theme.spacing(3),
     width: 'auto',
   },
 }));
 
-const StyledTextField = styled(TextField)(({ theme }) => ({
-  width: '100%', // NEU: Nimmt flexiblen Platz ein
-  '& .MuiInputBase-input': {
-    color: 'inherit',
-    padding: theme.spacing(1, 1, 1, 0),
-    paddingLeft: `calc(1em + ${theme.spacing(4)})`,
-    transition: theme.transitions.create('width'),
-    [theme.breakpoints.up('sm')]: {
-      width: '20ch',
-      '&:focus': {
-        width: '30ch',
-      },
-    },
-  },
-}));
-
 const GlobalSearchBar: React.FC = () => {
-  const [searchTerm, setSearchTerm] = useState('');
   const navigate = useNavigate();
+  const theme = useTheme();
+  
+  const [open, setOpen] = useState(false);
+  const [options, setOptions] = useState<SearchResult[]>([]);
+  const [inputValue, setInputValue] = useState('');
+  const [loading, setLoading] = useState(false);
+  
+  const debounceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleSearch = () => {
-    if (searchTerm.trim()) {
-      navigate(`/search?term=${encodeURIComponent(searchTerm.trim())}`);
+  // --- API Suche ---
+  useEffect(() => {
+    if (inputValue.length < 3) {
+        setOptions([]);
+        setLoading(false);
+        return;
     }
-  };
 
-  // NEU: KI-Suchfunktion
+    setLoading(true);
+
+    if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
+
+    debounceTimeout.current = setTimeout(async () => {
+        try {
+            const response = await apiClient.get(`/api/data/search?term=${encodeURIComponent(inputValue)}`);
+            setOptions(response.data || []);
+        } catch (err) {
+            console.error("Search error:", err);
+        } finally {
+            setLoading(false);
+        }
+    }, 400);
+
+    return () => {
+        if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
+    };
+  }, [inputValue]);
+
+  // --- Handlers ---
+
   const handleAiSearch = () => {
-    if (searchTerm.trim()) {
-      navigate(`/ask?question=${encodeURIComponent(searchTerm.trim())}`);
-      setSearchTerm(''); // Optional: Feld leeren
+    if (inputValue.trim()) {
+      navigate(`/ask?question=${encodeURIComponent(inputValue.trim())}`);
+      setOpen(false);
     }
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      // Standard-Enter löst normale Suche aus
-      event.preventDefault();
-      handleSearch();
-    }
-    // Optional: Strg+Enter für KI-Suche
+  const handleClear = () => {
+      setInputValue('');
+      setOptions([]);
+      setOpen(false);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       handleAiSearch();
     }
   };
 
+  const handleOptionSelect = (_event: React.SyntheticEvent, value: SearchResult | string | null) => {
+    if (!value) return;
+
+    if (typeof value === 'string') {
+        navigate(`/search?term=${encodeURIComponent(value)}`);
+        return;
+    }
+
+    if (value.url) {
+        if (value.url.startsWith('/')) {
+            navigate(value.url);
+        } else {
+            window.open(value.url, '_blank', 'noopener,noreferrer');
+        }
+    }
+    setOpen(false);
+  };
+
+  // --- Helper ---
+  const getIcon = (type: string) => {
+      switch (type) {
+          case 'file': return <FolderIcon sx={{ color: 'info.main' }} />;
+          case 'community_post': return <ForumIcon sx={{ color: 'warning.main' }} />;
+          case 'ai': return <SmartToyIcon sx={{ color: 'secondary.main' }} />;
+          case 'tracked_account_news': return <BusinessIcon sx={{ color: 'primary.main' }} />;
+          default: return <ArticleIcon sx={{ color: 'text.secondary' }} />;
+      }
+  };
+
+  const getTypeLabel = (type: string) => {
+      switch (type) {
+          case 'file': return 'Datei';
+          case 'community_post': return 'Community';
+          case 'ai': return 'KI';
+          case 'tracked_account_news': return 'News';
+          default: return 'Web';
+      }
+  };
+
   return (
-    <Search>
-      <InputAdornment position="start" sx={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 1 }}>
-        <SearchIcon sx={{ color: 'inherit' }} />
-      </InputAdornment>
-      <StyledTextField
-        placeholder="Global Suchen..."
-        value={searchTerm}
-        onChange={(e) => setSearchTerm(e.target.value)}
-        onKeyDown={handleKeyDown} // Geändert
-        variant="standard"
-        InputProps={{
-          disableUnderline: true,
-        }}
-      />
-      {/* --- NEUER KI-BUTTON --- */}
-      <Tooltip title="KI-Frage stellen (Ctrl+Enter)">
-        <IconButton
-          color="inherit"
-          onClick={handleAiSearch}
-          disabled={!searchTerm.trim()}
-          sx={{ p: '10px' }}
-        >
-          <AutoAwesomeIcon />
-        </IconButton>
-      </Tooltip>
-      {/* --- ENDE --- */}
-    </Search>
+    <SearchWrapper>
+        <Autocomplete
+            id="global-search-bar"
+            freeSolo
+            open={open}
+            onOpen={() => { if (inputValue.length >= 3) setOpen(true); }}
+            onClose={() => setOpen(false)}
+            inputValue={inputValue}
+            onInputChange={(_, newVal) => setInputValue(newVal)}
+            onChange={handleOptionSelect}
+            options={options}
+            getOptionLabel={(option) => typeof option === 'string' ? option : option.title}
+            loading={loading}
+            filterOptions={(x) => x}
+            noOptionsText={inputValue.length < 3 ? "Tippen Sie mind. 3 Zeichen..." : "Keine Treffer gefunden"}
+            
+            renderInput={(params) => (
+                <TextField
+                    {...params}
+                    placeholder="Suchen..."
+                    variant="standard"
+                    onKeyDown={handleKeyDown}
+                    InputProps={{
+                        ...params.InputProps,
+                        disableUnderline: true,
+                        sx: {
+                            color: 'inherit',
+                            padding: theme.spacing(0.5, 1, 0.5, 0),
+                            paddingLeft: `calc(1em + ${theme.spacing(1)})`,
+                            width: { xs: '100%', sm: '25ch', md: '35ch' },
+                            transition: theme.transitions.create('width'),
+                            '&:focus-within': { width: { sm: '40ch', md: '50ch' } }
+                        },
+startAdornment: (
+                            <InputAdornment position="start" sx={{ mr: 1, color: 'inherit' }}>
+                                <SearchIcon />
+                            </InputAdornment>
+                        ),
+                        // --- KORREKTUR START ---
+                        endAdornment: (
+                            <InputAdornment position="end"> 
+                                {/* WICHTIG: params.InputProps.endAdornment enthält ggf. default Autocomplete Elemente. 
+                                    Da du aber eigene Logik (Clear, Loading) hast, ist es okay, es hier zu überschreiben,
+                                    SOLANGE du den Wrapper InputAdornment verwendest. */}
+                                
+                                {inputValue.length > 0 && (
+                                    <Tooltip title="Suche leeren">
+                                        <IconButton
+                                            color="inherit"
+                                            size="small"
+                                            onClick={handleClear}
+                                            sx={{ p: 0.5 }}
+                                        >
+                                            <ClearIcon fontSize="small" />
+                                        </IconButton>
+                                    </Tooltip>
+                                )}
+                                
+                                {loading ? <CircularProgress color="inherit" size={16} sx={{ mx: 1 }} /> : null}
+                                
+                                <Tooltip title="KI-Frage stellen (Ctrl+Enter)">
+                                    {/* Span ist wichtig für Tooltip bei disabled Button, hier sicherheitshalber lassen */}
+                                    <span>
+                                        <IconButton
+                                            color="inherit"
+                                            onClick={handleAiSearch}
+                                            disabled={!inputValue.trim()}
+                                            size="small"
+                                            sx={{ p: 0.5 }}
+                                        >
+                                            <AutoAwesomeIcon fontSize="small" />
+                                        </IconButton>
+                                    </span>
+                                </Tooltip>
+                            </InputAdornment>
+                        )
+                        // --- KORREKTUR ENDE ---
+                    }}
+                />
+            )}
+            
+            renderOption={(props, option) => {
+                if (typeof option === 'string') return null;
+                const { key, ...otherProps } = props;
+
+                return (
+                    <li key={key} {...otherProps}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', py: 0.5 }}>
+                            <Box sx={{ mr: 2, display: 'flex' }}>
+                                {getIcon(option.type)}
+                            </Box>
+                            <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
+                                <Typography variant="body2" noWrap fontWeight="medium">
+                                    {option.title}
+                                </Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <Chip 
+                                        label={getTypeLabel(option.type)} 
+                                        size="small" 
+                                        variant="outlined" 
+                                        sx={{ height: 16, fontSize: '0.6rem' }} 
+                                    />
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                        {new Date(option.published_date).toLocaleDateString()}
+                                    </Typography>
+                                </Box>
+                            </Box>
+                            {!option.url?.startsWith('/') && (
+                                <OpenInNewIcon fontSize="small" sx={{ color: 'text.disabled', ml: 1 }} />
+                            )}
+                        </Box>
+                    </li>
+                );
+            }}
+        />
+    </SearchWrapper>
   );
 };
 

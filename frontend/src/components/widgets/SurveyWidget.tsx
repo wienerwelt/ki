@@ -1,4 +1,3 @@
-// frontend/src/components/widgets/SurveyWidget.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Box, Typography, CircularProgress, Alert, Button, Radio, RadioGroup,
@@ -21,7 +20,7 @@ interface SurveyWidgetProps extends BaseWidgetProps { icon?: React.ReactNode; ti
 
 const SurveyResultsCard: React.FC<{ survey: Survey; results: SurveyResult[]; userResponses: { [key: string]: string } }> = ({ survey, results, userResponses }) => {
     const totalParticipants = results.length > 0 && results[0].results.length > 0 && results[0].question_type === 'multiple-choice'
-        ? results[0].results.reduce((acc, r) => acc + (parseInt(r.count, 10) || 0), 0) : 0;
+        ? results[0].results.reduce((acc: number, r: any) => acc + (parseInt(r.count, 10) || 0), 0) : 0;
 
     return (
         <Box>
@@ -50,12 +49,11 @@ const SurveyResultsCard: React.FC<{ survey: Survey; results: SurveyResult[]; use
                     {res.question_type === 'free-text' && (
                         <Box sx={{ height: 200, mt: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                             {res.results.length > 0 ? (
-                                // KORREKTUR: 'words' wurde zu 'data' und 'options' wurden zu direkten Props.
                                 <WordCloud
                                     data={res.results}
                                     rotate={0}
                                     padding={2}
-                                    fontSize={(word) => Math.log2(word.value) * 15 + 12} // Dynamische Schriftgröße
+                                    fontSize={(word) => Math.log2(word.value) * 15 + 12} 
                                 />
                             ) : <Typography sx={{ p: 2 }} color="text.secondary">Keine Freitext-Antworten.</Typography>}
                         </Box>
@@ -66,7 +64,6 @@ const SurveyResultsCard: React.FC<{ survey: Survey; results: SurveyResult[]; use
     );
 };
 
-// --- ÜBERARBEITET: Haupt-Widget mit neuer Logik ---
 const SurveyWidget: React.FC<SurveyWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, widgetTypeKey }) => {
     const { showSnackbar } = useSnackbar();
     const [view, setView] = useState<'loading' | 'active' | 'archive' | 'taking' | 'results' | 'empty' | 'error'>('loading');
@@ -80,34 +77,11 @@ const SurveyWidget: React.FC<SurveyWidgetProps> = ({ onDelete, widgetId, isRemov
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [currentResults, setCurrentResults] = useState<{ survey: Survey, results: SurveyResult[], userResponses: { [key: string]: string } } | null>(null);
 
-    // NEU: Logik zur Speicherung des Fortschritts
     useEffect(() => {
         if (currentSurvey) {
             localStorage.setItem(`survey-progress-${currentSurvey.id}`, JSON.stringify(responses));
         }
     }, [responses, currentSurvey]);
-
-const fetchActiveSurveys = useCallback(async () => {
-    setView('loading');
-    try {
-        const response = await apiClient.get('/api/surveys/active');
-        const surveysData: Survey[] = response.data;
-
-        // WICHTIG: Die Liste wird jetzt immer gespeichert.
-        setActiveSurveys(surveysData);
-        
-        if (surveysData.length === 1) {
-            handleStartSurvey(surveysData[0]);
-        } else if (surveysData.length > 1) {
-            setView('active');
-        } else {
-            setView('empty');
-        }
-    } catch (err: any) {
-        setError(err.response?.data?.message || 'Fehler beim Laden der Umfragen.');
-        setView('error');
-    }
-}, []); // Abhängigkeiten bleiben leer.
 
     const handleStartSurvey = (survey: Survey) => {
         setCurrentSurvey(survey);
@@ -119,6 +93,26 @@ const fetchActiveSurveys = useCallback(async () => {
         }
         setView('taking');
     };
+
+    const fetchActiveSurveys = useCallback(async () => {
+        setView('loading');
+        try {
+            const response = await apiClient.get('/api/surveys/active');
+            const surveysData: Survey[] = response.data;
+            setActiveSurveys(surveysData);
+            
+            if (surveysData.length === 1) {
+                handleStartSurvey(surveysData[0]);
+            } else if (surveysData.length > 1) {
+                setView('active');
+            } else {
+                setView('empty');
+            }
+        } catch (err: any) {
+            setError(err.response?.data?.message || 'Fehler beim Laden der Umfragen.');
+            setView('error');
+        }
+    }, []); 
 
     const fetchArchivedSurveys = useCallback(async () => {
         setView('loading');
@@ -137,8 +131,8 @@ const fetchActiveSurveys = useCallback(async () => {
     const handleViewArchivedResults = async (survey: Survey) => {
         setView('loading');
         try {
-            const res = await apiClient.get(`/api/surveys/admin/${survey.id}/results`);
-            // Fürs Archiv haben wir die User-Antworten nicht, daher leeres Objekt
+            // KORREKTUR: Nutze den öffentlichen Endpunkt statt /admin
+            const res = await apiClient.get(`/api/surveys/${survey.id}/results`);
             setCurrentResults({ survey, results: res.data, userResponses: {} });
             setView('results');
         } catch (err) {
@@ -152,7 +146,10 @@ const fetchActiveSurveys = useCallback(async () => {
         setIsSubmitting(true);
         try {
             await apiClient.post('/api/surveys/submit', { surveyId: currentSurvey.id, responses });
-            const res = await apiClient.get(`/api/surveys/admin/${currentSurvey.id}/results`);
+            
+            // KORREKTUR: Nutze den öffentlichen Endpunkt statt /admin
+            const res = await apiClient.get(`/api/surveys/${currentSurvey.id}/results`);
+            
             setCurrentResults({ survey: currentSurvey, results: res.data, userResponses: responses });
             setView('results');
             localStorage.removeItem(`survey-progress-${currentSurvey.id}`);
@@ -218,9 +215,7 @@ const fetchActiveSurveys = useCallback(async () => {
                                 </FormControl>
                             </Box>
                         ))}
-                        {/* HIER IST DIE KORREKTUR */}
                         <Box sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', mt: 3 }}>
-                            {/* Der "Zurück"-Button wird nur angezeigt, wenn es mehr als eine Umfrage gibt */}
                             {activeSurveys.length > 1 && (
                                 <Button onClick={fetchActiveSurveys} sx={{ mr: 'auto' }}>
                                     Zurück zur Übersicht

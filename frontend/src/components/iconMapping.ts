@@ -28,6 +28,8 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import RadarIcon from '@mui/icons-material/Radar';
 import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
 import InsightsIcon from '@mui/icons-material/Insights';
+import ForumIcon from '@mui/icons-material/Forum';
+import SettingsAccessibilityIcon from '@mui/icons-material/SettingsAccessibility';
 
 export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     SpaIcon: SpaIcon,
@@ -54,7 +56,8 @@ export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     BarChartIcon: BarChartIcon,
     RadarIcon: RadarIcon,
     SwitchAccountIcon: SwitchAccountIcon,
-    InsightsIcon: InsightsIcon
+    InsightsIcon: InsightsIcon,
+    ForumIcon: ForumIcon,
 };
 
 // === GEÄNDERT: Die Funktion ist jetzt ein einfacher, direkter Lookup ===

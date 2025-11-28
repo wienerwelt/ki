@@ -30,6 +30,7 @@ router.use(adminAuth);
 router.post('/templates', adminLegalMonitorController.createTemplate);
 router.get('/templates', adminLegalMonitorController.getTemplates);
 router.delete('/templates/:id', adminLegalMonitorController.deleteTemplate);
+router.put('/templates/:id', adminLegalMonitorController.updateTemplate);
 router.get('/business-partners', adminLegalMonitorController.getBusinessPartnersList);
 
 // === Eintrags-Routen (angepasst) ===

@@ -59,15 +59,15 @@ const adminAuth = (req, res, next) => {
       return res.status(401).json({ message: 'Token is not valid (no user/role)' });
     }
 
-    // === KORREKTUR: Nur noch 'admin' erlauben ===
-    const role = String(user.role).toLowerCase();
-    console.log(`[adminAuth] Prüfe Zugriff für Route: ${req.originalUrl}. User-Rolle: ${role}`); // NEUES LOG
+// === KORREKTUR: NUR 'admin' erlauben ===
+const role = String(user.role).toLowerCase();
+console.log(`[adminAuth] Prüfe Zugriff für Route: ${req.originalUrl}. User-Rolle: ${role}`);
 
-    if (role !== 'admin') {
-      console.warn(`[adminAuth] Zugriff verweigert: ${role} ist kein 'admin'.`);
-      return res.status(403).json({ message: 'Access denied. Admin role required.' }); //
-    }
-    // === Ende der Korrektur ===
+if (role !== 'admin') {
+  console.warn(`[adminAuth] Zugriff verweigert: Rolle '${role}' ist nicht 'admin'.`);
+  return res.status(403).json({ message: 'Access denied. Admin role required.' });
+}
+// === Ende der Korrektur ===
 
     console.log('[adminAuth] Zugriff ERLAUBT. User an Controller weitergeleitet.');
     req.user = user;

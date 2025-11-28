@@ -4,13 +4,17 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 
+// Interfaces erweitert
 interface TimeSeriesData {
     period: string;
     login_count: number;
     prompt_tokens: number;
     completion_tokens: number;
     funding_tokens: number;
+    new_posts: number;     // NEU
+    new_comments: number;  // NEU
 }
+
 interface KpiData {
     total_logins: string;
     total_ai_content: string;
@@ -18,7 +22,11 @@ interface KpiData {
     total_redactional_tokens: string | null;
     total_funding_tokens: string | null;
     total_processed_opportunities: string;
+    total_community_posts: string;    // NEU
+    total_community_comments: string; // NEU
+    total_community_likes: string;    // NEU
 }
+
 interface ProviderUsageData {
     model: string;
     requests: string;
@@ -45,9 +53,9 @@ interface TopUserData {
 
 const StatCard: React.FC<{ title: string; value: string | number; description?: string }> = ({ title, value, description }) => (
     <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <Typography variant="h6" color="text.secondary">{title}</Typography>
-        <Typography component="p" variant="h4">{value}</Typography>
-        {description && <Typography color="text.secondary" sx={{ flexGrow: 1 }}>{description}</Typography>}
+        <Typography variant="h6" color="text.secondary" sx={{ fontSize: '0.9rem' }}>{title}</Typography>
+        <Typography component="p" variant="h4" sx={{ mt: 1 }}>{value}</Typography>
+        {description && <Typography variant="caption" color="text.secondary" sx={{ flexGrow: 1, mt: 0.5 }}>{description}</Typography>}
     </Paper>
 );
 
@@ -114,25 +122,36 @@ const AdminStatisticsPage: React.FC = () => {
 
         return (
             <Grid container spacing={3}>
+                {/* Zeile 1: System KPIs */}
                 <Grid item xs={6} sm={4} md={2}><StatCard title="Logins" value={stats.kpis.total_logins} /></Grid>
                 <Grid item xs={6} sm={4} md={2}><StatCard title="KI-Inhalte" value={stats.kpis.total_ai_content} /></Grid>
                 <Grid item xs={6} sm={4} md={2}><StatCard title="Gescrapte Inhalte" value={stats.kpis.total_scraped_content} /></Grid>
                 <Grid item xs={6} sm={6} md={3}><StatCard title="Verarbeitete Förderungen" value={stats.kpis.total_processed_opportunities} description="durch KI analysiert" /></Grid>
                 <Grid item xs={12} sm={6} md={3}><StatCard title="Gesamte Tokens" value={totalTokensOverall.toLocaleString('de-DE')} description={`davon Förderungen: ${totalFundingTokens.toLocaleString('de-DE')} (~${estimatedFundingCost} USD)`} /></Grid>
                 
+                {/* Zeile 2: Community KPIs (NEU) */}
+                <Grid item xs={4} md={2}><StatCard title="Beiträge" value={stats.kpis.total_community_posts} description="Community" /></Grid>
+                <Grid item xs={4} md={2}><StatCard title="Kommentare" value={stats.kpis.total_community_comments} description="Community" /></Grid>
+                <Grid item xs={4} md={2}><StatCard title="Likes" value={stats.kpis.total_community_likes} description="Community" /></Grid>
+                <Grid item xs={12} md={6}>
+                    {/* Platzhalter oder weitere Metriken */}
+                </Grid>
+
                 <Grid item xs={12}>
-                    <Paper sx={{ p: 2, height: 350 }}>
-                        <Typography variant="h6">Token-Verbrauch im Zeitverlauf</Typography>
+                    <Paper sx={{ p: 2, height: 400 }}>
+                        <Typography variant="h6">Aktivität & Token-Verbrauch</Typography>
                         <ResponsiveContainer>
                             <LineChart data={stats.timeSeries}>
                                 <CartesianGrid strokeDasharray="3 3" />
                                 <XAxis dataKey="period" tickFormatter={formatXAxis} />
-                                <YAxis />
+                                <YAxis yAxisId="left" />
+                                <YAxis yAxisId="right" orientation="right" />
                                 <Tooltip />
                                 <Legend />
-                                <Line type="monotone" dataKey="prompt_tokens" name="Redaktionell (Anfrage)" stroke="#8884d8" />
-                                <Line type="monotone" dataKey="completion_tokens" name="Redaktionell (Antwort)" stroke="#ffc658" />
-                                <Line type="monotone" dataKey="funding_tokens" name="Förderungen (Gesamt)" stroke="#82ca9d" />
+                                <Line yAxisId="left" type="monotone" dataKey="prompt_tokens" name="Tokens (Anfrage)" stroke="#8884d8" dot={false} />
+                                <Line yAxisId="left" type="monotone" dataKey="completion_tokens" name="Tokens (Antwort)" stroke="#ffc658" dot={false} />
+                                <Line yAxisId="right" type="monotone" dataKey="new_posts" name="Neue Beiträge" stroke="#FF8042" strokeWidth={2} />
+                                <Line yAxisId="right" type="monotone" dataKey="new_comments" name="Neue Kommentare" stroke="#AF19FF" strokeWidth={2} />
                             </LineChart>
                         </ResponsiveContainer>
                     </Paper>
@@ -155,40 +174,24 @@ const AdminStatisticsPage: React.FC = () => {
 
                 <Grid item xs={12} md={6}>
                      <Paper sx={{ p: 2, height: 400 }}>
-                        <Typography variant="h6">Verteilung der KI-Inhalte nach Kategorie</Typography>
+                        <Typography variant="h6">Top 10 Benutzer-Aktivität (System & Community)</Typography>
                         <ResponsiveContainer>
-                            <PieChart>
-                                <Pie data={stats.categoryDistribution} dataKey="count" nameKey="name" cx="50%" cy="50%" outerRadius={100} labelLine={false} label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
-                                    {stats.categoryDistribution.map((_entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip />
-                                <Legend />
-                            </PieChart>
-                        </ResponsiveContainer>
-                    </Paper>
-                </Grid>
-                
-                <Grid item xs={12}>
-                     <Paper sx={{ p: 2, height: 400 }}>
-                        <Typography variant="h6">Top 10 Benutzer-Aktivität</Typography>
-                        <ResponsiveContainer>
-                            <BarChart data={stats.topUserActivity} layout="vertical" margin={{ top: 5, right: 30, left: 250, bottom: 5 }}>
+                            <BarChart data={stats.topUserActivity} layout="vertical" margin={{ top: 5, right: 30, left: 200, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" />
                                 <XAxis type="number" />
                                 <YAxis
                                     type="category"
                                     dataKey="email"
-                                    width={250}
-                                    tick={{ fontSize: 12 }}
+                                    width={200}
+                                    tick={{ fontSize: 11 }}
                                     tickFormatter={(value, index) => {
                                         const user = stats.topUserActivity[index];
-                                        return `${user.email} (${user.business_partner_name || 'N/A'})`;
+                                        // E-Mail abschneiden wenn zu lang
+                                        return value.length > 25 ? value.substring(0, 22) + '...' : value;
                                     }}
                                 />
                                 <Tooltip />
-                                <Bar dataKey="activity_count" name="Aktionen (Logins, KI-Nutzung)" fill="#82ca9d" />
+                                <Bar dataKey="activity_count" name="Aktionen (Logins, Posts, KI)" fill="#82ca9d" />
                             </BarChart>
                         </ResponsiveContainer>
                     </Paper>
@@ -209,13 +212,9 @@ const AdminStatisticsPage: React.FC = () => {
                             <MenuItem value=""><em>Alle Partner</em></MenuItem>
                             {stats?.businessPartners.map(bp => <MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>)}
                         </TextField>
-                        <TextField select label="Modell filtern" value={modelFilter} onChange={(e) => setModelFilter(e.target.value)} size="small" sx={{ minWidth: 180 }}>
-                            <MenuItem value=""><em>Alle Modelle</em></MenuItem>
-                            {stats?.availableModels.map(m => <MenuItem key={m} value={m}>{m}</MenuItem>)}
-                        </TextField>
-                        <ToggleButtonGroup value={timespan} exclusive onChange={handleTimespanChange}>
+                        <ToggleButtonGroup value={timespan} exclusive onChange={handleTimespanChange} size="small">
                             <ToggleButton value="day">24h</ToggleButton>
-                            <ToggleButton value="week">7 Tage</ToggleButton>
+                            <ToggleButton value="week">7T</ToggleButton>
                             <ToggleButton value="month">Monat</ToggleButton>
                             <ToggleButton value="year">Jahr</ToggleButton>
                         </ToggleButtonGroup>

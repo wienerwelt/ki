@@ -14,6 +14,7 @@ router.get('/commodities', dataController.getCommodityPrices);
 router.get('/traffic-info', dataController.getTrafficInfo);
 router.get('/ai-content', dataController.getAiContent);
 router.get('/scraped-content', dataController.getScrapedContent);
+router.get('/scraped-content-counts', dataController.getScrapedContentCounts);
 router.get('/tax-changes', dataController.getTaxChanges);
 router.get('/fleet-news', dataController.getFleetAssociationNews);
 router.get('/traffic-regions', dataController.getUniqueTrafficRegions);
@@ -50,5 +51,6 @@ router.get('/account-intelligence', dataController.getAccountIntelligence);
 router.get('/daily-briefing', dataController.getDailyBriefing);
 router.get('/notifications/count', dataController.getNotificationCounts);
 router.get('/monitor-entries', dataController.getMonitorEntries);
+router.get('/bp-members-preview', dataController.getBusinessPartnerMembersPreview);
 
 module.exports = router;

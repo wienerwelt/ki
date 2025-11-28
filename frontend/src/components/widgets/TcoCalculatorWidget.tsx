@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
   Box, Button, Grid, Paper, TextField, Typography, ToggleButtonGroup, ToggleButton,
-  InputAdornment, Slider, Alert, FormControlLabel, Switch
+  InputAdornment, Slider, Alert, FormControlLabel, Switch, useTheme, useMediaQuery
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import AddIcon from '@mui/icons-material/Add';
@@ -73,6 +73,9 @@ const imageToBase64 = async (url: string): Promise<string | null> => {
 
 const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isRemovable, icon, title, widgetTypeKey }) => {
   const { user, businessPartner } = useAuth();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  
   const [vehicles, setVehicles] = useState<VehicleInputState[]>([INITIAL_VEHICLE_STATE]);
   const [results, setResults] = useState<TcoResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -142,81 +145,100 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
     const input = resultsRef.current;
     if (!input || !results) return;
 
-    const canvas = await html2canvas(input, { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff' });
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 15;
-    let yPos = 15;
+    // OPTIMIERUNG: Vorübergehendes Styling für PDF-Generierung im Dark Mode
+    const originalColor = input.style.color;
+    input.style.color = '#000000'; // Text schwarz machen für Screenshot
 
-    pdf.setFontSize(22);
-    pdf.text('TCO-Analyse', margin, yPos);
-    yPos += 7;
-    pdf.setFontSize(10);
-    pdf.text(new Date().toLocaleDateString('de-DE'), margin, yPos);
+    try {
+        const canvas = await html2canvas(input, { 
+            scale: 2, 
+            useCORS: true, 
+            allowTaint: true, 
+            backgroundColor: '#ffffff' // Zwingend weißer Hintergrund
+        });
+        
+        // Farbe zurücksetzen
+        input.style.color = originalColor;
 
-    if (includeLogo && businessPartner?.logo_url) {
-      const logoBase64 = await imageToBase64(businessPartner.logo_url);
-      if (logoBase64) {
-        const logoWidth = 40;
-        const img = new Image();
-        img.src = logoBase64;
-        await new Promise(resolve => { img.onload = resolve; });
-        const logoHeight = (img.height * logoWidth) / img.width;
-        pdf.addImage(logoBase64, 'PNG', pdfWidth - logoWidth - margin, 15, logoWidth, logoHeight);
-      }
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const margin = 15;
+        let yPos = 15;
+
+        pdf.setFontSize(22);
+        pdf.text('TCO-Analyse', margin, yPos);
+        yPos += 7;
+        pdf.setFontSize(10);
+        pdf.text(new Date().toLocaleDateString('de-DE'), margin, yPos);
+
+        if (includeLogo && businessPartner?.logo_url) {
+        const logoBase64 = await imageToBase64(businessPartner.logo_url);
+        if (logoBase64) {
+            const logoWidth = 40;
+            const img = new Image();
+            img.src = logoBase64;
+            await new Promise(resolve => { img.onload = resolve; });
+            const logoHeight = (img.height * logoWidth) / img.width;
+            pdf.addImage(logoBase64, 'PNG', pdfWidth - logoWidth - margin, 15, logoWidth, logoHeight);
+        }
+        }
+        yPos += 10;
+
+        pdf.setFontSize(14);
+        pdf.text('Eingabeparameter', margin, yPos);
+        yPos += 2;
+
+        const v1 = vehicles[0];
+        const v2 = vehicles.length > 1 ? vehicles[1] : null;
+
+        const tableHead: string[] = ['Parameter', v1.name];
+        if (v2) tableHead.push(v2.name);
+
+        const rawRows: (string | undefined)[][] = [
+        ['Antriebsart', v1.driveType, v2 ? v2.driveType : undefined],
+        ['Kaufpreis', `${integerFormatter.format(Number(v1.purchasePrice))} €`, v2 ? `${integerFormatter.format(Number(v2.purchasePrice))} €` : undefined],
+        ['Förderungen', `${integerFormatter.format(Number(v1.subsidy))} €`, v2 ? `${integerFormatter.format(Number(v2.subsidy))} €` : undefined],
+        ['Haltedauer', `${v1.holdingPeriod} Jahre`, v2 ? `${v2.holdingPeriod} Jahre` : undefined],
+        ['Fahrleistung p.a.', `${integerFormatter.format(Number(v1.annualMileage))} km`, v2 ? `${integerFormatter.format(Number(v2.annualMileage))} km` : undefined],
+        ['Restwert', `${integerFormatter.format(Number(v1.residualValue))} €`, v2 ? `${integerFormatter.format(Number(v2.residualValue))} €` : undefined],
+        ];
+        const tableBody: string[][] = rawRows.map(row => (v2 ? row : row.slice(0, 2)).map(c => c ?? ''));
+
+        autoTable(pdf, {
+        startY: yPos,
+        head: [tableHead],
+        body: tableBody,
+        theme: 'grid',
+        margin: { left: margin, right: margin }
+        });
+
+        yPos = (pdf as any).lastAutoTable.finalY + 10;
+
+        pdf.setFontSize(14);
+        pdf.text('Ergebnis-Übersicht', margin, yPos);
+        yPos += 2;
+
+        const maxImageHeight = pageHeight - yPos - 30;
+        const scaledHeight = (canvas.height * (pdfWidth - 2 * margin)) / canvas.width;
+        const drawHeight = Math.min(scaledHeight, maxImageHeight);
+        pdf.addImage(imgData, 'PNG', margin, yPos, pdfWidth - 2 * margin, drawHeight);
+
+        const footerY = pageHeight - 20;
+        pdf.setLineWidth(0.5);
+        pdf.line(margin, footerY, pdfWidth - margin, footerY);
+        pdf.setFontSize(8);
+        pdf.text(`Erstellt von: ${user?.username || 'N/A'}`, margin, footerY + 8);
+        pdf.text(`Analyse für: ${businessPartner?.name || 'N/A'}`, pdfWidth / 2, footerY + 8, { align: 'center' });
+        pdf.text(`Seite 1 von 1`, pdfWidth - margin, footerY + 8, { align: 'right' });
+
+        pdf.save(`TCO-Analyse-${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (e) {
+        console.error(e);
+        // Reset color in case of error
+        input.style.color = originalColor;
     }
-    yPos += 10;
-
-    pdf.setFontSize(14);
-    pdf.text('Eingabeparameter', margin, yPos);
-    yPos += 2;
-
-    const v1 = vehicles[0];
-    const v2 = vehicles.length > 1 ? vehicles[1] : null;
-
-    const tableHead: string[] = ['Parameter', v1.name];
-    if (v2) tableHead.push(v2.name);
-
-    const rawRows: (string | undefined)[][] = [
-      ['Antriebsart', v1.driveType, v2 ? v2.driveType : undefined],
-      ['Kaufpreis', `${integerFormatter.format(Number(v1.purchasePrice))} €`, v2 ? `${integerFormatter.format(Number(v2.purchasePrice))} €` : undefined],
-      ['Förderungen', `${integerFormatter.format(Number(v1.subsidy))} €`, v2 ? `${integerFormatter.format(Number(v2.subsidy))} €` : undefined],
-      ['Haltedauer', `${v1.holdingPeriod} Jahre`, v2 ? `${v2.holdingPeriod} Jahre` : undefined],
-      ['Fahrleistung p.a.', `${integerFormatter.format(Number(v1.annualMileage))} km`, v2 ? `${integerFormatter.format(Number(v2.annualMileage))} km` : undefined],
-      ['Restwert', `${integerFormatter.format(Number(v1.residualValue))} €`, v2 ? `${integerFormatter.format(Number(v2.residualValue))} €` : undefined],
-    ];
-    const tableBody: string[][] = rawRows.map(row => (v2 ? row : row.slice(0, 2)).map(c => c ?? ''));
-
-    autoTable(pdf, {
-      startY: yPos,
-      head: [tableHead],
-      body: tableBody,
-      theme: 'grid',
-      margin: { left: margin, right: margin }
-    });
-
-    yPos = (pdf as any).lastAutoTable.finalY + 10;
-
-    pdf.setFontSize(14);
-    pdf.text('Ergebnis-Übersicht', margin, yPos);
-    yPos += 2;
-
-    const maxImageHeight = pageHeight - yPos - 30;
-    const scaledHeight = (canvas.height * (pdfWidth - 2 * margin)) / canvas.width;
-    const drawHeight = Math.min(scaledHeight, maxImageHeight);
-    pdf.addImage(imgData, 'PNG', margin, yPos, pdfWidth - 2 * margin, drawHeight);
-
-    const footerY = pageHeight - 20;
-    pdf.setLineWidth(0.5);
-    pdf.line(margin, footerY, pdfWidth - margin, footerY);
-    pdf.setFontSize(8);
-    pdf.text(`Erstellt von: ${user?.username || 'N/A'}`, margin, footerY + 8);
-    pdf.text(`Analyse für: ${businessPartner?.name || 'N/A'}`, pdfWidth / 2, footerY + 8, { align: 'center' });
-    pdf.text(`Seite 1 von 1`, pdfWidth - margin, footerY + 8, { align: 'right' });
-
-    pdf.save(`TCO-Analyse-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   const renderDriveSpecificFields = (vehicle: VehicleInputState, index: number) => {
@@ -265,11 +287,17 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
     return (<text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central">{`${(percent * 100).toFixed(0)}%`}</text>);
   };
 
+  // --- Theme Anpassungen für Charts ---
+  const chartTextColor = theme.palette.text.primary;
+  const chartGridColor = theme.palette.divider;
+
   return (
     <WidgetPaper title={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, overflow: 'hidden' }}>{icon}<Typography variant="h6" noWrap>{title}</Typography></Box>}
       widgetTitle={title} widgetTypeKey={widgetTypeKey || 'tco_calculator'} widgetId={widgetId} onDelete={onDelete} isRemovable={isRemovable}>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-      <Grid container spacing={4}>
+      
+      {/* KORREKTUR: Grid Spacing angepasst für Mobile */}
+      <Grid container spacing={isMobile ? 2 : 4}>
         {vehicles.map((vehicle, index) => (
           <Grid item xs={12} md={vehicles.length > 1 ? 6 : 12} key={vehicle.id}>
             <TextField label={`Bezeichnung`} value={vehicle.name} onChange={(e) => handleInputChange(index, 'name', e.target.value)} fullWidth size="small" />
@@ -302,9 +330,9 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
         ))}
       </Grid>
 
-      <Box sx={{ mt: 3, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-        <Button variant="contained" onClick={handleCalculate} size="large">Berechnen</Button>
-        <Button variant="outlined" onClick={toggleCompareVehicle} startIcon={vehicles.length === 1 ? <AddIcon /> : <RemoveIcon />}>
+      <Box sx={{ mt: 3, display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: isMobile ? 'center' : 'flex-start' }}>
+        <Button variant="contained" onClick={handleCalculate} size="large" fullWidth={isMobile}>Berechnen</Button>
+        <Button variant="outlined" onClick={toggleCompareVehicle} startIcon={vehicles.length === 1 ? <AddIcon /> : <RemoveIcon />} fullWidth={isMobile}>
           {vehicles.length === 1 ? 'Fahrzeug zum Vergleich' : 'Vergleich entfernen'}
         </Button>
       </Box>
@@ -319,7 +347,7 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
             </ToggleButtonGroup>
           </Box>
           <Paper variant="outlined">
-            <Box ref={resultsRef} sx={{ p: 2, bgcolor: 'background.paper' }}>
+            <Box ref={resultsRef} sx={{ p: 2, bgcolor: 'background.paper', color: 'text.primary' }}>
               <Grid container spacing={2}>
                 {results.map((res, i) => (
                   <Grid item xs={12} md={6} key={i}>
@@ -335,10 +363,13 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
                 {chartType === 'bar' ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" />
-                      <YAxis tickFormatter={(tick) => `${integerFormatter.format(tick)} €`} />
-                      <RechartsTooltip formatter={(value: number) => `${integerFormatter.format(value)} €`} />
+                      <CartesianGrid strokeDasharray="3 3" stroke={chartGridColor} />
+                      <XAxis dataKey="name" stroke={chartTextColor} />
+                      <YAxis tickFormatter={(tick) => `${integerFormatter.format(tick)} €`} stroke={chartTextColor} />
+                      <RechartsTooltip 
+                        contentStyle={{ backgroundColor: theme.palette.background.paper, color: theme.palette.text.primary, border: `1px solid ${theme.palette.divider}` }}
+                        formatter={(value: number) => `${integerFormatter.format(value)} €`} 
+                      />
                       <Legend />
                       <Bar dataKey={results[0].vehicleName} fill="#8884d8" />
                       {results.length > 1 && <Bar dataKey={results[1].vehicleName} fill="#82ca9d" />}
@@ -354,7 +385,10 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
                             <Pie data={chart.data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} labelLine={false} label={renderCustomizedLabel}>
                               {chart.data.map((_, i) => <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />)}
                             </Pie>
-                            <RechartsTooltip formatter={(value: number) => `${integerFormatter.format(value)} €`} />
+                            <RechartsTooltip 
+                                contentStyle={{ backgroundColor: theme.palette.background.paper, color: theme.palette.text.primary }}
+                                formatter={(value: number) => `${integerFormatter.format(value)} €`} 
+                            />
                             <Legend />
                           </PieChart>
                         </ResponsiveContainer>
@@ -365,8 +399,8 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
               </Box>
             </Box>
           </Paper>
-          <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Button startIcon={<DownloadIcon />} onClick={handleDownloadPdf}>
+          <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 2, flexDirection: isMobile ? 'column' : 'row' }}>
+            <Button startIcon={<DownloadIcon />} onClick={handleDownloadPdf} fullWidth={isMobile}>
               Ergebnis als PDF speichern
             </Button>
             <FormControlLabel control={<Switch checked={includeLogo} onChange={(e) => setIncludeLogo(e.target.checked)} />}
