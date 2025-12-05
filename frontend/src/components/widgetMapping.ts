@@ -27,4 +27,5 @@ export const WIDGET_COMPONENTS: { [key: string]: React.LazyExoticComponent<React
     LegalMonitor: React.lazy(() => import('./widgets/LegalMonitorWidget')),
     community_feed: React.lazy(() => import('./widgets/CommunityFeedWidget')),
     user_profile: React.lazy(() => import('./widgets/UserProfileWidget')),
+    sentiment_widget: React.lazy(() => import('./widgets/SentimentWidget')),
 };

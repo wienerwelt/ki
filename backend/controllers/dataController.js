@@ -1007,6 +1007,9 @@ exports.getAccountIntelligence = async (req, res) => {
 
 
 exports.voteOnContent = async (req, res) => {
+if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen nicht abstimmen.' });
+    }    
     const { contentId } = req.params;
     const { id: userId } = req.user;
     const { vote, contentType } = req.body;
@@ -1058,6 +1061,10 @@ exports.voteOnContent = async (req, res) => {
 };
 
 exports.markContentAsRead = async (req, res) => {
+if (req.user.role === 'demo') {
+        // Bei Read-Status geben wir OK zurück, speichern aber nichts, damit das UI nicht crasht
+        return res.status(200).json({ message: 'Simuliert: Als gelesen markiert (Demo).' });
+    }    
     const { id: userId } = req.user;
     const { contentId } = req.params;
     try {
@@ -1073,6 +1080,12 @@ exports.markContentAsRead = async (req, res) => {
 };
 
 exports.generateEmailFromContent = async (req, res) => {
+if (req.user.role === 'demo') {
+        return res.json({ 
+            subject: "Demo Betreff", 
+            body: "Dies ist eine simulierte E-Mail-Generierung im Demo-Modus." 
+        });
+    }    
     const { title, content } = req.body;
     const { name: userName } = req.user;
 
@@ -1126,6 +1139,9 @@ function toAbsoluteUrl(pathOrUrl) {
 }
 
 exports.shareContentByEmail = async (req, res) => {
+if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'E-Mail-Versand ist im Demo-Modus deaktiviert.' });
+    }    
   try {
     const { title, summary, source, recipientEmail } = req.body || {};
     if (!title || !summary || !recipientEmail) {
@@ -1663,7 +1679,7 @@ exports.getScrapedContent = async (req, res) => {
             SELECT
                 sc.id, 
                 sc.title, 
-                COALESCE(sc.summary, SUBSTRING(sc.full_text, 1, 300)) as summary, 
+                sc.summary,
                 sc.original_url, 
                 sc.published_date,
                 sc.event_date, 
@@ -1706,21 +1722,21 @@ exports.getScrapedContent = async (req, res) => {
 
 
 exports.getScrapedContentCounts = async (req, res) => {
-    const { id: userId, last_login_at: lastLogin, business_partner_id: businessPartnerId } = req.user;
+    // KORREKTUR: Wir nutzen token_issued_at statt last_login_at für stabile "Neu"-Zahlen
+    const { id: userId, token_issued_at, business_partner_id: businessPartnerId } = req.user;
     const {
         limit = 10, category, region, search,
-        tag, mainFilter, filter
+        tag, mainFilter
+        // KORREKTUR: 'filter' (z.B. 'unread') ignorieren wir hier absichtlich!
+        // Die Zähler sollen immer ALLES zählen, egal welchen Tab der User offen hat.
     } = req.query;
 
-    console.log('[DEBUG] getScrapedContentCounts: Anfrage erhalten mit Parametern:', { category, region, filter });
+    // Fallback, falls token_issued_at fehlt
+    const stableLastLogin = token_issued_at || new Date(0);
 
     try {
-        const userSettingsResult = await db.query(
-            'SELECT article_score_min, article_score_max FROM users WHERE id = $1',
-            [userId]
-        );
+        const userSettingsResult = await db.query('SELECT article_score_min, article_score_max FROM users WHERE id = $1', [userId]);
         const { article_score_min, article_score_max } = userSettingsResult.rows[0] || {};
-        
         const userTagsResult = await db.query('SELECT tag_name FROM user_saved_tags WHERE user_id = $1', [userId]);
         const userSavedTags = userTagsResult.rows.map(row => row.tag_name);
 
@@ -1728,129 +1744,91 @@ exports.getScrapedContentCounts = async (req, res) => {
         let whereClauses = [];
         let paramIndex = 1;
 
-        // --- START: Identische Filterlogik wie in getScrapedContent ---
+        // --- Basis-Filter (Kategorie, Region etc.) übernehmen ---
         if (userSavedTags.length > 0) {
-            whereClauses.push(`EXISTS (
-                SELECT 1 FROM scraped_content_tags sct
-                JOIN tags t ON sct.tag_id = t.id
-                WHERE sct.scraped_content_id = sc.id AND t.name = ANY($${paramIndex}::text[])
-            )`);
+            whereClauses.push(`EXISTS (SELECT 1 FROM scraped_content_tags sct JOIN tags t ON sct.tag_id = t.id WHERE sct.scraped_content_id = sc.id AND t.name = ANY($${paramIndex}::text[]))`);
             queryParams.push(userSavedTags);
             paramIndex++;
         }
-
         if (category) {
-            if (category === 'businesspartner_news' || category === 'businesspartner_events') {
-                if (!businessPartnerId) {
-                    return res.json({ totalPages: 0, counts: { unread: 0, new: 0 } });
-                }
-                const sourceIdentifier = `${businessPartnerId}_${category.split('_')[1]}`;
+            if (category.startsWith('businesspartner_')) {
+                if (!businessPartnerId) return res.json({ totalPages: 0, counts: { unread: 0, new: 0 } });
                 whereClauses.push(`sc.source_identifier = $${paramIndex++}`);
-                queryParams.push(sourceIdentifier);
+                queryParams.push(`${businessPartnerId}_${category.split('_')[1]}`);
             } else {
                 whereClauses.push(`sc.category = $${paramIndex++}`);
                 queryParams.push(category);
             }
         }
-        
-        if (category === 'fleet_podcasts') { 
-            whereClauses.push(`sc.original_url ~* '\\.(mp3|m4a|aac|ogg|wav)(\\?|$)'`);
-        }
-
-        if (region && region !== 'all') {
-            whereClauses.push(`sc.region = $${paramIndex++}`);
-            queryParams.push(region);
-        }
-
-        if (search) {
-            whereClauses.push(`(sc.title ILIKE $${paramIndex} OR sc.summary ILIKE $${paramIndex})`);
-            queryParams.push(`%${search}%`);
-            paramIndex++;
-        }
-        
-        if (mainFilter) {
-            whereClauses.push(`EXISTS (
-                SELECT 1 FROM scraped_content_tags sct
-                JOIN tags t ON sct.tag_id = t.id
-                WHERE sct.scraped_content_id = sc.id AND t.name = $${paramIndex}
-            )`);
-            queryParams.push(mainFilter);
-            paramIndex++;
-        }
-        
-        if (tag && tag !== 'all') {
-            whereClauses.push(`EXISTS (
-                SELECT 1 FROM scraped_content_tags sct
-                JOIN tags t ON sct.tag_id = t.id
-                WHERE sct.scraped_content_id = sc.id AND t.name = $${paramIndex}
-            )`);
-            queryParams.push(tag);
-            paramIndex++;
-        }
-
-        if (article_score_min !== null && typeof article_score_min !== 'undefined') {
-            whereClauses.push(`sc.relevance_score >= $${paramIndex++}`);
-            queryParams.push(article_score_min);
-        }
-        if (article_score_max !== null && typeof article_score_max !== 'undefined') {
-            whereClauses.push(`sc.relevance_score <= $${paramIndex++}`);
-            queryParams.push(article_score_max);
-        }
-        
-        if (filter === 'unread') {
-             whereClauses.push(`NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex})`);
-             queryParams.push(userId);
-             paramIndex++;
-        } else if (filter === 'new') {
-            whereClauses.push(`sc.created_at > $${paramIndex}`);
-            queryParams.push(lastLogin || new Date(0));
-            paramIndex++;
-        }
-        // --- ENDE: Identische Filterlogik ---
-
+        if (category === 'fleet_podcasts') whereClauses.push(`sc.original_url ~* '\\.(mp3|m4a|aac|ogg|wav)(\\?|$)'`);
+        if (region && region !== 'all') { whereClauses.push(`sc.region = $${paramIndex++}`); queryParams.push(region); }
+        if (search) { whereClauses.push(`(sc.title ILIKE $${paramIndex} OR sc.summary ILIKE $${paramIndex})`); queryParams.push(`%${search}%`); paramIndex++; }
+        if (mainFilter) { whereClauses.push(`EXISTS (SELECT 1 FROM scraped_content_tags sct JOIN tags t ON sct.tag_id = t.id WHERE sct.scraped_content_id = sc.id AND t.name = $${paramIndex})`); queryParams.push(mainFilter); paramIndex++; }
+        if (tag && tag !== 'all') { whereClauses.push(`EXISTS (SELECT 1 FROM scraped_content_tags sct JOIN tags t ON sct.tag_id = t.id WHERE sct.scraped_content_id = sc.id AND t.name = $${paramIndex})`); queryParams.push(tag); paramIndex++; }
+        if (article_score_min != null) { whereClauses.push(`sc.relevance_score >= $${paramIndex++}`); queryParams.push(article_score_min); }
+        if (article_score_max != null) { whereClauses.push(`sc.relevance_score <= $${paramIndex++}`); queryParams.push(article_score_max); }
 
         const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-        const baseQuery = `FROM scraped_content sc LEFT JOIN sources s ON sc.original_url = s.url ${whereString}`;
+        const baseJoin = `FROM scraped_content sc LEFT JOIN sources s ON sc.original_url = s.url`;
 
-        // --- FÜHRE NUR DIE ZÄHL-ABFRAGEN AUS ---
-        const countQuery = `SELECT COUNT(sc.id) as total_items ${baseQuery}`;
+        // 1. Pagination Total (bleibt exakt)
+        const countQuery = `SELECT COUNT(sc.id) as total_items ${baseJoin} ${whereString}`;
         const totalResult = await db.query(countQuery, queryParams);
         const totalItems = parseInt(totalResult.rows[0].total_items, 10);
         const totalPages = Math.ceil(totalItems / (parseInt(limit, 10) || 10));
-        
-        console.log(`[DEBUG] Counts: Gesamtzahl gefundener Einträge (totalItems): ${totalItems}`);
 
-        const countsQuery = `
-            WITH filtered_content AS (
-                SELECT sc.id, sc.created_at
-                ${baseQuery}
-            )
-            SELECT
-                (SELECT COUNT(*) FROM filtered_content fc WHERE NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = fc.id AND ursc.user_id = $${paramIndex})) as unread_count,
-                (SELECT COUNT(*) FROM filtered_content WHERE created_at > $${paramIndex + 1}) as new_count
+        // 2. Optimierte Zähler (Limit 11 + 30 Tage Zeitfenster + KEIN Filter auf 'unread'/'new')
+        const pIdxUser = paramIndex; 
+        const pIdxLogin = paramIndex + 1;
+        const countParams = [...queryParams, userId, stableLastLogin];
+
+        // UNREAD: "Jünger als 30 Tage UND nicht gelesen" (Max 11)
+        const unreadQuery = `
+            SELECT COUNT(*) as cnt FROM (
+                SELECT sc.id 
+                ${baseJoin}
+                ${whereString ? whereString + ' AND ' : 'WHERE '}
+                sc.created_at > NOW() - INTERVAL '30 days' 
+                AND NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${pIdxUser})
+                LIMIT 11
+            ) sub
         `;
-        const countsParams = [...queryParams, userId, lastLogin || new Date(0)];
-        const countsResult = await db.query(countsQuery, countsParams);
-        const counts = {
-            unread: parseInt(countsResult.rows[0].unread_count, 10) || 0,
-            new: parseInt(countsResult.rows[0].new_count, 10) || 0,
-        };
-        
-        console.log('[DEBUG] Counts: Berechnete Counts (im Chip angezeigt):', counts);
+
+        // NEW: "Neuer als Login-Zeitpunkt" (Max 11)
+        const newQuery = `
+            SELECT COUNT(*) as cnt FROM (
+                SELECT sc.id 
+                ${baseJoin}
+                ${whereString ? whereString + ' AND ' : 'WHERE '}
+                sc.created_at > $${pIdxLogin}
+                LIMIT 11
+            ) sub
+        `;
+
+        const [unreadRes, newRes] = await Promise.all([
+            db.query(unreadQuery, countParams),
+            db.query(newQuery, countParams)
+        ]);
 
         res.json({
             totalPages: totalPages,
-            counts: counts,
+            counts: {
+                unread: parseInt(unreadRes.rows[0].cnt, 10),
+                new: parseInt(newRes.rows[0].cnt, 10),
+            },
         });
 
     } catch (err) {
         console.error(`Error fetching scraped content COUNTS:`, err.message);
-        res.status(500).json({ message: 'Error fetching scraped content counts', data: [] });
+        res.json({ totalPages: 0, counts: { unread: 0, new: 0 } }); 
     }
 };
 
 
 exports.markScrapedContentAsRead = async (req, res) => {
+if (req.user.role === 'demo') {
+        return res.status(200).json({ message: 'Simuliert: Als gelesen markiert (Demo).' });
+    }    
     const { id: userId } = req.user;
     const { contentId } = req.params;
     try {
@@ -2089,18 +2067,43 @@ exports.getCalendarEvents = async (req, res) => {
 
 exports.getEnhancedCalendarEvents = async (req, res) => {
     const { id: userId } = req.user;
-    const { page = 1, limit = 5 } = req.query;
+    // KORREKTUR 1: 'category' aus dem Request lesen
+    const { page = 1, limit = 50, category } = req.query; 
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
     try {
-        const baseQuery = `
+        const queryParams = [];
+        let whereClauses = [];
+        let paramIndex = 1;
+
+        // KORREKTUR 2: Nur Events anzeigen, die heute oder in der Zukunft sind (ODER z.B. max 30 Tage alt)
+        // Wenn du 'Anstehend' priorisieren willst, filtern wir alte Events raus.
+        // Falls du auch vergangene sehen willst, müsste man die Logik komplexer machen (z.B. 2 Queries).
+        // Hier: Wir holen alles ab HEUTE.
+        whereClauses.push(`sc.event_date >= CURRENT_DATE`); 
+
+        // KORREKTUR 3: Auf die spezifische Kategorie filtern, falls vorhanden
+        if (category) {
+            whereClauses.push(`sc.category = $${paramIndex}`);
+            queryParams.push(category);
+            paramIndex++;
+        } else {
+            // Fallback auf dein altes Muster, falls keine Kategorie kommt
+            whereClauses.push(`sc.category LIKE '%_events'`); 
+        }
+
+        whereClauses.push(`sc.event_date IS NOT NULL`);
+
+        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+        // Zähle nur die relevanten Items
+        const countQuery = `
+            SELECT COUNT(sc.id) as total_items 
             FROM scraped_content sc
             LEFT JOIN sources s ON sc.original_url LIKE s.url || '%'
-            WHERE sc.category LIKE '%_events' AND sc.event_date IS NOT NULL
+            ${whereString}
         `;
-
-        const countQuery = `SELECT COUNT(sc.id) as total_items ${baseQuery}`;
-        const totalResult = await db.query(countQuery);
+        const totalResult = await db.query(countQuery, queryParams);
         const totalItems = parseInt(totalResult.rows[0].total_items, 10);
         const totalPages = Math.ceil(totalItems / limit);
 
@@ -2109,7 +2112,7 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
                 sc.id, sc.title, sc.event_date AS date, sc.summary, 
                 sc.original_url AS url, sc.region, sc.full_text,
                 s.status = 'approved' AS is_trusted_source,
-                EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $1) as is_read,
+                EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex}) as is_read,
                 (
                     SELECT COALESCE(json_agg(json_build_object(
                         'id', u.id,
@@ -2134,13 +2137,20 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
                     JOIN users u ON crv.user_id = u.id
                     WHERE crv.content_id = sc.id AND crv.vote = 0
                 ) AS maybe_participants_data,
-                COALESCE((SELECT vote FROM content_relevance_votes WHERE content_id = sc.id AND user_id = $1), NULL) AS "userVote"
-            ${baseQuery}
+                COALESCE((SELECT vote FROM content_relevance_votes WHERE content_id = sc.id AND user_id = $${paramIndex}), NULL) AS "userVote"
+            FROM scraped_content sc
+            LEFT JOIN sources s ON sc.original_url LIKE s.url || '%'
+            ${whereString}
             ORDER BY sc.event_date ASC
-            LIMIT $2 OFFSET $3
+            LIMIT $${paramIndex + 1} OFFSET $${paramIndex + 2}
         `;
-        const { rows: events } = await db.query(dataQuery, [userId, limit, offset]);
 
+        // Parameter zusammenbauen: [category?, userId, limit, offset]
+        const finalParams = [...queryParams, userId, parseInt(limit, 10), offset];
+        
+        const { rows: events } = await db.query(dataQuery, finalParams);
+
+        // Regionen Logik beibehalten
         const availableRegions = [...new Set(events.map(e => e.region).filter(Boolean))];
         let regionsData = [];
         if (availableRegions.length > 0) {
@@ -2162,6 +2172,9 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
 };
 
 exports.voteOnEventAttendance = async (req, res) => {
+if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Teilnahme-Voting ist im Demo-Modus deaktiviert.' });
+    }    
     const { eventId } = req.params;
     const { vote } = req.body;
     const { id: userId } = req.user;
@@ -2184,7 +2197,10 @@ exports.voteOnEventAttendance = async (req, res) => {
     }
 };
 
-exports.shareEventByEmail = async (req, res) => {
+exports.shareEventByEmail = async (req, res) => {  
+if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'E-Mail-Versand ist im Demo-Modus deaktiviert.' });
+    }    
     const { title, date, url, summary, recipientEmail } = req.body;
     const { name: senderName } = req.user;
 
@@ -2416,6 +2432,9 @@ exports.globalSearch = async (req, res) => {
 
 
 exports.generateDraftFromContent = async (req, res) => {
+if (req.user.role === 'demo') {
+        return res.json({ draft: "Dies ist ein generierter Beispiel-Entwurf. Im Demo-Modus werden keine echten KI-Anfragen gesendet." });
+    }    
     const { contentId } = req.body; // Das Frontend sendet die ID des Artikels
     const { id: userId } = req.user;
 
@@ -2636,6 +2655,9 @@ async function retrieveInternalDocuments(searchTerm) {
 // Der neue Controller für die KI-Anfrage
 // AKTUALISIERTER Controller für die KI-Anfrage (mit korrigierter Transaktion)
 exports.handleAiQuestion = async (req, res) => {
+if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'KI-Anfragen sind im Demo-Modus deaktiviert.' });
+    }    
     const { question } = req.body;
     const { id: userId, business_partner_id: businessPartnerId } = req.user;
 
@@ -2832,25 +2854,41 @@ exports.getNotificationCounts = async (req, res) => {
     }
 };
 
-// backend/controllers/dataController.js
 
-// ... bestehende Imports & Funktionen
 
 exports.getBusinessPartnerMembersPreview = async (req, res) => {
-    const { id: userId, business_partner_id: bpId } = req.user;
+    // Wir holen uns die User-Info UND erlauben optional einen Query-Parameter zur Übersteuerung (für Admins wichtig)
+    const { id: userId, business_partner_id: userBpId, role: userRole } = req.user;
+    const { businessPartnerId: queryBpId } = req.query;
 
-    if (!bpId) return res.json({ total: 0, members: [] });
+    // Priorität: Query-Param (für Admins, die filtern) -> User-BP-ID (für Assistenz/User)
+    // Wenn User 'admin' ist und queryBpId sendet, nutzen wir das.
+    // Wenn User 'assistenz' ist, zwingen wir userBpId.
+    
+    let targetBpId = null;
+
+    if (userRole === 'admin' && queryBpId) {
+        targetBpId = queryBpId;
+    } else {
+        targetBpId = userBpId;
+    }
+
+    console.log(`[DEBUG MembersPreview] UserID: ${userId}, Role: ${userRole}, UserBP: ${userBpId}, QueryBP: ${queryBpId} -> FINAL BP: ${targetBpId}`);
+
+    if (!targetBpId) {
+        console.warn('[DEBUG MembersPreview] Abbruch: Keine Business Partner ID ermittelt.');
+        return res.json({ total: 0, members: [] });
+    }
 
     try {
         // 1. Gesamtanzahl aktiver Mitglieder
         const countRes = await db.query(
             'SELECT COUNT(*) FROM users WHERE business_partner_id = $1 AND is_active = TRUE',
-            [bpId]
+            [targetBpId]
         );
         const total = parseInt(countRes.rows[0].count, 10);
 
-        // 2. Die 5 neuesten Mitglieder (oder zufällige) für die Vorschau
-        // Wir sortieren Admins/Assistenz nach vorne, dann Neueste
+        // 2. Die 6 neuesten Mitglieder für die Vorschau
         const membersRes = await db.query(`
             SELECT id, first_name, last_name, profile_image_url, role, last_login_at
             FROM users
@@ -2859,7 +2897,9 @@ exports.getBusinessPartnerMembersPreview = async (req, res) => {
                 CASE WHEN role IN ('admin', 'assistenz') THEN 0 ELSE 1 END,
                 created_at DESC
             LIMIT 6
-        `, [bpId]);
+        `, [targetBpId]);
+
+        console.log(`[DEBUG MembersPreview] Gefunden: ${total} User für BP ${targetBpId}`);
 
         res.json({
             total,
@@ -2869,5 +2909,108 @@ exports.getBusinessPartnerMembersPreview = async (req, res) => {
     } catch (err) {
         console.error('Fehler beim Laden der Mitglieder-Vorschau:', err.message);
         res.status(500).send('Serverfehler');
+    }
+};
+
+
+exports.getMarketSentiment = async (req, res) => {
+    const { id: userId, business_partner_id: bpId } = req.user;
+
+    try {
+        if (!bpId) {
+            return res.json({ active: false, message: "Kein Business Partner zugeordnet" });
+        }
+
+        // 1. Finde die Barometer-Umfrage DES PARTNERS
+        const surveyRes = await db.query(
+            "SELECT id FROM surveys WHERE title = 'Markt-Barometer' AND business_partner_id = $1 AND is_active = TRUE LIMIT 1",
+            [bpId]
+        );
+        
+        if (surveyRes.rows.length === 0) {
+            return res.json({ active: false, message: "Kein Barometer für diesen Partner aktiv" });
+        }
+        const surveyId = surveyRes.rows[0].id;
+
+        // ... (Rest bleibt identisch: Neueste Frage holen, Votes prüfen, Statistik berechnen) ...
+        // Ab hier musst du nichts ändern, da die Logik auf 'surveyId' basiert, 
+        // und wir oben jetzt die korrekte surveyId (die des Partners) geholt haben.
+        
+        // Kopie des Rests zur Sicherheit:
+        const questionRes = await db.query(`
+            SELECT id, question_text, options 
+            FROM survey_questions 
+            WHERE survey_id = $1 
+            ORDER BY display_order DESC, id DESC 
+            LIMIT 1
+        `, [surveyId]);
+
+        if (questionRes.rows.length === 0) return res.json({ active: false });
+        
+        const question = questionRes.rows[0];
+
+        // Prüfen ob User abgestimmt hat
+        const userVoteRes = await db.query(
+            "SELECT response_text FROM survey_responses WHERE question_id = $1 AND user_id = $2",
+            [question.id, userId]
+        );
+        const hasVoted = userVoteRes.rows.length > 0;
+        const userVote = hasVoted ? userVoteRes.rows[0].response_text : null;
+
+        // Statistik
+        const statsRes = await db.query(`
+            SELECT response_text, COUNT(*) as count 
+            FROM survey_responses 
+            WHERE question_id = $1 
+            GROUP BY response_text
+        `, [question.id]);
+
+        let totalVotes = 0;
+        const sentimentCounts = { bullish: 0, bearish: 0 };
+
+        statsRes.rows.forEach(row => {
+            const count = parseInt(row.count, 10);
+            totalVotes += count;
+            if (row.response_text === 'bullish') sentimentCounts.bullish = count;
+            else if (row.response_text === 'bearish') sentimentCounts.bearish = count;
+        });
+
+        res.json({
+            active: true,
+            questionId: question.id,
+            questionText: question.question_text,
+            hasVoted,
+            userVote,
+            stats: {
+                total: totalVotes,
+                bullishPercent: totalVotes > 0 ? Math.round((sentimentCounts.bullish / totalVotes) * 100) : 0,
+                bearishPercent: totalVotes > 0 ? Math.round((sentimentCounts.bearish / totalVotes) * 100) : 0,
+            }
+        });
+
+    } catch (err) {
+        console.error("Fehler beim Sentiment-Abruf:", err);
+        res.status(500).json({ message: "Serverfehler" });
+    }
+};
+
+// Vote-Funktion (nutzt du wahrscheinlich schon, aber hier spezifisch für Sentiment)
+exports.voteSentiment = async (req, res) => {
+    const { questionId, vote } = req.body; // vote = 'bullish' | 'bearish'
+    const { id: userId } = req.user;
+
+    try {
+        await db.query(
+            "INSERT INTO survey_responses (survey_id, question_id, user_id, response_text) VALUES ((SELECT survey_id FROM survey_questions WHERE id = $1), $1, $2, $3)",
+            [questionId, userId, vote]
+        );
+        
+        // +1 Punkt Gamification
+        await db.query('UPDATE users SET contribution_score = contribution_score + 1 WHERE id = $1', [userId]);
+
+        res.json({ success: true });
+    } catch (err) {
+        // Unique Constraint fängt Doppel-Votes ab
+        res.status(400).json({ message: "Bereits abgestimmt." });
     }
 };

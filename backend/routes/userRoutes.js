@@ -13,6 +13,10 @@ const upload = multer({
     limits: { fileSize: 5 * 1024 * 1024 } // z.B. 5MB Limit
 });
 
+// --- ÖFFENTLICHE ROUTE (NEU) ---
+// Muss VOR authMiddleware stehen!
+router.get('/public/:userId', userController.getPublicUserProfile);
+
 router.use(authMiddleware);
 
 // Bestehende Routen

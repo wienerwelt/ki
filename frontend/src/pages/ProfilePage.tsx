@@ -1,3 +1,4 @@
+// frontend/src/pages/ProfilePage.tsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Container, Typography, Box, TextField, Button, Grid, Paper, CircularProgress,
@@ -5,18 +6,23 @@ import {
   FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, Chip, Autocomplete, useTheme, useMediaQuery,
   Avatar,
   IconButton,
-  Badge
+  Badge,
+  Dialog, DialogTitle, DialogContent, DialogActions 
 } from '@mui/material';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+import QrCodeIcon from '@mui/icons-material/QrCode';
+import ShareIcon from '@mui/icons-material/Share';
+
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../apiClient';
 import { useTranslation } from 'react-i18next';
 import posthog from 'posthog-js';
 import ContributionHistoryModal from '../components/ContributionHistoryModal';
+import { QRCodeCanvas } from 'qrcode.react';
 
 type ScoreFilter = 'all' | 'balanced' | 'positive';
 interface FundingCategory { id: number; name: string; }
@@ -42,19 +48,27 @@ const ProfilePage: React.FC = () => {
   const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  
+  // Form States
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [organizationName, setOrganizationName] = useState('');
   const [linkedinUrl, setLinkedinUrl] = useState('');
+  const [phone, setPhone] = useState(''); // <--- NEU: Telefonnummer State
+  
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [scoreFilter, setScoreFilter] = useState<ScoreFilter>('all');
+  
   const [allAvailableTags, setAllAvailableTags] = useState<string[]>([]);
   const [tagsLoading, setTagsLoading] = useState(true);
   const [allFundingCategories, setAllFundingCategories] = useState<FundingCategory[]>([]);
   const [userFundingCategoryIds, setUserFundingCategoryIds] = useState<number[]>([]);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [newsletterOptIn, setNewsletterOptIn] = useState<boolean>(false);
+  
+  const [qrDialogOpen, setQrDialogOpen] = useState(false);
+
   const isDemoUser = user?.role === 'demo';
 
   const fetchData = useCallback(async () => {
@@ -89,6 +103,8 @@ const ProfilePage: React.FC = () => {
       setLastName(user.last_name || '');
       setOrganizationName(user.organization_name || '');
       setLinkedinUrl(user.linkedin_url || '');
+      // <--- NEU: Telefonnummer laden (Cast as any, da Interface evtl. noch nicht aktuell)
+      setPhone((user as any).phone || ''); 
 
       const scoreMin = user.article_score_min;
       if (scoreMin === 1) setScoreFilter('positive');
@@ -117,10 +133,16 @@ const ProfilePage: React.FC = () => {
       else if (scoreFilter === 'balanced') articleScoreMin = 0;
 
       const profileData = {
-        first_name: firstName, lastName, organization_name: organizationName, linkedin_url: linkedinUrl,
+        first_name: firstName, 
+        last_name: lastName, 
+        organization_name: organizationName, 
+        linkedin_url: linkedinUrl,
+        phone: phone, // <--- NEU: Telefonnummer senden
         password: password || undefined,
-        article_score_min: articleScoreMin, article_score_max: null,
-        preferred_theme: themeMode, preferred_language: language,
+        article_score_min: articleScoreMin, 
+        article_score_max: null,
+        preferred_theme: themeMode, 
+        preferred_language: language,
         newsletter_opt_in: newsletterOptIn,
       };
 
@@ -156,13 +178,10 @@ const ProfilePage: React.FC = () => {
     try {
       const token = localStorage.getItem('jwt_token');
       const response = await apiClient.post('/api/users/me/avatar', formData, {
-        headers: { 
-          'x-auth-token': token,
-        }
+        headers: { 'x-auth-token': token }
       });
       
       updateUser(response.data.user); 
-      
       setSnackbar({ open: true, message: 'Profilbild erfolgreich aktualisiert.' });
       posthog.capture('avatar_updated');
 
@@ -185,10 +204,7 @@ const ProfilePage: React.FC = () => {
 
   const handleAvatarDelete = async () => {
     if (isDemoUser || !user?.profile_image_url) return;
-    
-    if (!window.confirm("Möchten Sie Ihr Profilbild wirklich entfernen?")) {
-        return;
-    }
+    if (!window.confirm("Möchten Sie Ihr Profilbild wirklich entfernen?")) return;
 
     setAvatarLoading(true);
     setError(null);
@@ -211,7 +227,6 @@ const ProfilePage: React.FC = () => {
         setAvatarLoading(false);
     }
   };
-
 
   const handleTagsChange = async (_event: React.SyntheticEvent, newTags: string[]) => {
     if (isDemoUser) return;
@@ -252,7 +267,6 @@ const ProfilePage: React.FC = () => {
 
   return (
     <Container maxWidth="md">
-      {/* OPTIMIERUNG: Weniger Padding auf Mobile */}
       <Paper sx={{ p: isMobile ? 2 : 4, mt: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>{t('profile.title')}</Typography>
         {isDemoUser && <Alert severity="info" sx={{ mb: 3 }}>{t('profile.demoUserNotice')}</Alert>}
@@ -287,12 +301,7 @@ const ProfilePage: React.FC = () => {
               <Avatar
                 src={user.profile_image_url || undefined}
                 alt={user.first_name || user.username}
-                sx={{ 
-                  width: 100, 
-                  height: 100, 
-                  fontSize: '3rem', 
-                  cursor: isDemoUser ? 'default' : 'pointer' 
-                }}
+                sx={{ width: 100, height: 100, fontSize: '3rem', cursor: isDemoUser ? 'default' : 'pointer' }}
                 onClick={handleAvatarClick}
               >
                 {user.first_name ? user.first_name.charAt(0) : user.username.charAt(0)}
@@ -313,6 +322,15 @@ const ProfilePage: React.FC = () => {
                 {t('profile.deleteAvatar', 'Bild entfernen')}
             </Button>
           )}
+
+          <Button 
+            variant="outlined" 
+            startIcon={<QrCodeIcon />} 
+            onClick={() => setQrDialogOpen(true)}
+            sx={{ mt: 2 }}
+          >
+            Digitale Visitenkarte
+          </Button>
         </Box>
 
         <Box component="form" onSubmit={handleSubmit}>
@@ -320,7 +338,19 @@ const ProfilePage: React.FC = () => {
             <Grid item xs={12} sm={6}><TextField label={t('profile.firstname')} fullWidth value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={isDemoUser}/></Grid>
             <Grid item xs={12} sm={6}><TextField label={t('profile.lastname')} fullWidth value={lastName} onChange={(e) => setLastName(e.target.value)} disabled={isDemoUser}/></Grid>
             <Grid item xs={12}><TextField label={t('profile.organization')} fullWidth value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} disabled={isDemoUser}/></Grid>
-            <Grid item xs={12}><TextField label={t('profile.linkedinUrl')} fullWidth value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} disabled={isDemoUser}/></Grid>
+            <Grid item xs={12} sm={6}><TextField label={t('profile.linkedinUrl')} fullWidth value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} disabled={isDemoUser}/></Grid>
+            
+            {/* NEU: Telefonnummer Feld */}
+            <Grid item xs={12} sm={6}>
+                <TextField 
+                    label="Telefonnummer (für Visitenkarte)" 
+                    fullWidth 
+                    value={phone} 
+                    onChange={(e) => setPhone(e.target.value)} 
+                    disabled={isDemoUser}
+                    placeholder="+43 123 456789"
+                />
+            </Grid>
             
             <Grid item xs={12}>
                 <Typography variant="h6" sx={{ mt: 2 }}>Meine Förder-Interessen</Typography>
@@ -341,7 +371,6 @@ const ProfilePage: React.FC = () => {
                         renderInput={(params) => (
                             <TextField {...params} variant="outlined" label="Branchen, Themen & Unternehmens-Typen" placeholder="Interessen hinzufügen" />
                         )}
-                        // --- KORREKTUR 1: Key explizit extrahiert und gesetzt ---
                         renderTags={(value, getTagProps) =>
                             value.map((option, index) => {
                                 const { key, ...tagProps } = getTagProps({ index });
@@ -366,7 +395,6 @@ const ProfilePage: React.FC = () => {
                         value={userTags}
                         onChange={handleTagsChange}
                         disabled={isDemoUser}
-                        // --- KORREKTUR 2: Key explizit extrahiert und gesetzt ---
                         renderTags={(value: readonly string[], getTagProps) =>
                             value.map((option: string, index: number) => {
                                 const { key, ...tagProps } = getTagProps({ index });
@@ -381,7 +409,7 @@ const ProfilePage: React.FC = () => {
             </Grid>
 
             <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.dashboardSettings')}</Typography></Grid>
-<Grid item xs={12}>
+            <Grid item xs={12}>
               <Typography variant="body2" color="text.secondary" gutterBottom>{t('profile.articleQuality')}</Typography>
               <ToggleButtonGroup
                 value={scoreFilter}
@@ -417,19 +445,21 @@ const ProfilePage: React.FC = () => {
             <Grid item xs={12} sm={6}><FormControlLabel control={<Switch checked={themeMode === 'dark'} onChange={handleThemeChange} disabled={isDemoUser}/>} label={t('profile.darkTheme')}/></Grid>
             <Grid item xs={12} sm={6}><FormControl fullWidth size="small"><InputLabel>{t('profile.language')}</InputLabel><Select value={language} label={t('profile.language')} onChange={handleLanguageChange} disabled={isDemoUser}><MenuItem value="de">Deutsch</MenuItem><MenuItem value="en">English</MenuItem></Select></FormControl></Grid>
             <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.newsletterTitle')}</Typography><Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{t('profile.newsletterDescription')}</Typography><FormControlLabel control={<Switch checked={newsletterOptIn} onChange={handleNewsletterToggle} disabled={isDemoUser}/>} label={newsletterOptIn ? t('profile.newsletterOn') : t('profile.newsletterOff')}/></Grid>
+            
             <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.accountInfo')}</Typography></Grid>
             <Grid item xs={12} sm={6}><TextField label={t('profile.email')} fullWidth value={user.email} disabled /></Grid>
             <Grid item xs={12} sm={6}><TextField label={t('profile.role')} fullWidth value={user.role} disabled /></Grid>
             <Grid item xs={12} sm={6}><TextField label={t('profile.membershipLevel')} fullWidth value={user.membership_level || 'Kein Level'} disabled/></Grid>
-      <Grid item xs={12} sm={6}>
-        <Paper variant="outlined" sx={{ p: '13.5px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-            <Box>
-                <Typography variant="caption" color="text.secondary">Community-Punkte</Typography>
-                <Typography variant="body1">{user.contribution_score || 0}</Typography>
-            </Box>
-            <Button size="small" onClick={() => setHistoryModalOpen(true)}>Verlauf</Button>
-        </Paper>
-      </Grid>
+            <Grid item xs={12} sm={6}>
+                <Paper variant="outlined" sx={{ p: '13.5px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Box>
+                        <Typography variant="caption" color="text.secondary">Community-Punkte</Typography>
+                        <Typography variant="body1">{user.contribution_score || 0}</Typography>
+                    </Box>
+                    <Button size="small" onClick={() => setHistoryModalOpen(true)}>Verlauf</Button>
+                </Paper>
+            </Grid>
+            
             <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.changePassword')}</Typography></Grid>
             <Grid item xs={12} sm={6}><TextField type="password" label={t('profile.newPassword')} fullWidth value={password} onChange={(e) => setPassword(e.target.value)} disabled={isDemoUser}/></Grid>
             <Grid item xs={12} sm={6}><TextField type="password" label={t('profile.confirmPassword')} fullWidth value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} disabled={isDemoUser}/></Grid>
@@ -444,6 +474,40 @@ const ProfilePage: React.FC = () => {
         onClose={() => setHistoryModalOpen(false)} 
         currentUserScore={user.contribution_score || 0}
       />        
+
+      {/* NEU: Dialog für Visitenkarte */}
+      <Dialog open={qrDialogOpen} onClose={() => setQrDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ textAlign: 'center' }}>Meine Visitenkarte</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 3 }}>
+            <Box sx={{ p: 2, bgcolor: 'white', borderRadius: 2, border: '1px solid #eee', mb: 2 }}>
+                {user && (
+                    <QRCodeCanvas 
+                        value={`${window.location.origin}/p/${user.id}`}
+                        size={200}
+                        level="M"
+                    />
+                )}
+            </Box>
+            <Typography variant="body2" align="center" color="text.secondary">
+                Scannen Sie diesen Code, um Ihre Kontaktdaten zu teilen.
+            </Typography>
+            <Button 
+                startIcon={<ShareIcon />} 
+                sx={{ mt: 2 }} 
+                onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/p/${user?.id}`);
+                    setSnackbar({ open: true, message: 'Link kopiert!' });
+                }}
+            >
+                Link kopieren
+            </Button>
+        </DialogContent>
+        <DialogActions>
+            <Button onClick={() => setQrDialogOpen(false)}>Schließen</Button>
+            <Button component="a" href={`/p/${user?.id}`} target="_blank">Vorschau</Button>
+        </DialogActions>
+      </Dialog>
+
     </Container>
   );
 };

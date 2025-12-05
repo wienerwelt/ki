@@ -32,8 +32,8 @@ exports.getCategoryById = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
     try {
-        // KORREKTUR: Wählt die neuen Spalten aus
-        const result = await db.query('SELECT id, name, name_lang, name_lang_en, description FROM categories WHERE id = $1', [id]);
+        // KORREKTUR: category_type hinzugefügt
+        const result = await db.query('SELECT id, name, name_lang, name_lang_en, description, category_type FROM categories WHERE id = $1', [id]);
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Category not found.' });
         }

@@ -63,6 +63,43 @@ exports.getCategories = async (req, res) => {
 };
 
 
+// Einzelnen Post laden (für Verlinkung)
+exports.getPostById = async (req, res) => {
+    const { id } = req.params;
+    const { id: userId } = req.user;
+    try {
+        // Query identisch zum Feed, nur mit WHERE p.id = $1
+        const query = `
+            SELECT 
+                p.id, p.content, p.image_url, p.created_at, p.is_pinned,
+                c.name as category_name, c.id as category_id,
+                u.id as author_id, u.first_name, u.last_name, u.username, u.profile_image_url,
+                u.organization_name, u.role as author_role, u.membership_level, u.linkedin_url, 
+                u.created_at as member_since, u.contribution_score, u.last_login_at,
+                (SELECT COUNT(*) FROM community_likes l WHERE l.post_id = p.id)::int as like_count,
+                (SELECT COUNT(*) FROM community_comments com WHERE com.post_id = p.id)::int as comment_count,
+                EXISTS (SELECT 1 FROM community_likes l WHERE l.post_id = p.id AND l.user_id = $2) as is_liked_by_me,
+                (
+                    SELECT json_agg(json_build_object(
+                        'id', po.id, 'text', po.option_text, 'votes', (SELECT COUNT(*) FROM community_poll_votes pv WHERE pv.option_id = po.id), 'is_voted_by_me', EXISTS(SELECT 1 FROM community_poll_votes pv WHERE pv.option_id = po.id AND pv.user_id = $2)
+                    ) ORDER BY po.sort_order)
+                    FROM community_poll_options po WHERE po.post_id = p.id
+                ) as poll_options
+            FROM community_posts p
+            JOIN users u ON p.user_id = u.id
+            LEFT JOIN categories c ON p.category_id = c.id
+            WHERE p.id = $1
+        `;
+        const { rows } = await db.query(query, [id, userId]);
+        if (rows.length === 0) return res.status(404).json({ message: 'Beitrag nicht gefunden' });
+        res.json(rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Serverfehler' });
+    }
+};
+
+
 // 2. Feed abrufen (Erweitert um Pins, Profile & Umfragen)
 exports.getFeed = async (req, res) => {
     const { business_partner_id } = req.user;
@@ -78,7 +115,7 @@ exports.getFeed = async (req, res) => {
                 -- Autor Infos (INKLUSIVE last_login_at)
                 u.id as author_id, u.first_name, u.last_name, u.username, u.profile_image_url,
                 u.organization_name, u.role as author_role, u.membership_level, u.linkedin_url, 
-                u.created_at as member_since, u.contribution_score, u.last_login_at, -- ✅ NEU
+                u.created_at as member_since, u.contribution_score, u.last_login_at,
                 
                 -- Interaktionen
                 (SELECT COUNT(*) FROM community_likes l WHERE l.post_id = p.id)::int as like_count,
@@ -126,18 +163,20 @@ exports.getFeed = async (req, res) => {
 
 // 3. Post erstellen (inkl. Umfragen)
 exports.createPost = async (req, res) => {
-    const { content, categoryId, existingFileUrl, pollOptions } = req.body; // ✅ NEU: pollOptions
+    // DEMO CHECK
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Beiträge erstellen.' });
+    }
+
+    const { content, categoryId, existingFileUrl, pollOptions } = req.body; 
     const { id: userId, business_partner_id } = req.user;
     const file = req.file;
 
-    // Validierung: Text ODER File ODER Link ODER Umfrage muss da sein
-    // pollOptions muss ein JSON-String sein, wenn es von FormData kommt
     let parsedOptions = [];
     if (pollOptions) {
         try {
             parsedOptions = JSON.parse(pollOptions);
         } catch (e) {
-            // Falls es schon ein Array ist (bei JSON Request)
             parsedOptions = Array.isArray(pollOptions) ? pollOptions : [];
         }
     }
@@ -150,25 +189,21 @@ exports.createPost = async (req, res) => {
     try {
         await client.query('BEGIN');
         
-        // ... (File Upload Logik bleibt exakt gleich wie vorher) ...
         let publicUrl = existingFileUrl || null;
         if (file) {
-            // ... (Ihr bestehender S3 Code hier) ...
              const extension = getFileExtension(file.originalname);
              const fileName = `${uuidv4()}.${extension}`;
              const storagePath = `community/${business_partner_id}/${fileName}`;
-             // ... (S3 Upload und publicUrl setzen) ...
-             // (Ich kürze das hier ab, fügen Sie Ihren bestehenden S3-Code ein)
+             
              await s3Client.send(new PutObjectCommand({
                 Bucket: process.env.AWS_S3_BUCKET_NAME,
                 Key: storagePath,
-                Body: file.buffer, // Ggf. mit Sharp bearbeitet
+                Body: file.buffer,
                 ContentType: file.mimetype
             }));
             publicUrl = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_S3_REGION}.amazonaws.com/${storagePath}`;
         }
 
-        // Post Insert
         const insertQuery = `
             INSERT INTO community_posts (business_partner_id, user_id, content, image_url, category_id)
             VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at
@@ -178,7 +213,11 @@ exports.createPost = async (req, res) => {
         ]);
         const postId = postResult.rows[0].id;
 
-        // ✅ NEU: Umfrage-Optionen speichern
+        // --- FIX: Mentions in Posts verarbeiten ---
+        if (content) {
+            await processMentions(content, postId, userId, client);
+        }
+
         if (parsedOptions && parsedOptions.length > 0) {
             for (let i = 0; i < parsedOptions.length; i++) {
                 if (parsedOptions[i].trim()) {
@@ -190,12 +229,32 @@ exports.createPost = async (req, res) => {
             }
         }
         
-        // ... (Rest wie Mentions, Gamification, Commit) ...
-        // (Der Einfachheit halber hier kurz:)
         await client.query('UPDATE users SET contribution_score = contribution_score + 5 WHERE id = $1', [userId]);
         await client.query('COMMIT');
 
-        res.status(201).json({ message: "Post erstellt" }); // Frontend lädt neu
+        const fullPostRes = await client.query(`
+            SELECT 
+                p.id, p.content, p.image_url, p.created_at, p.is_pinned,
+                c.name as category_name, c.id as category_id,
+                u.id as author_id, u.first_name, u.last_name, u.username, u.profile_image_url,
+                u.organization_name, u.role as author_role, u.membership_level, u.linkedin_url, 
+                u.created_at as member_since, u.contribution_score, u.last_login_at,
+                0 as like_count, 0 as comment_count, false as is_liked_by_me,
+                (
+                    SELECT json_agg(json_build_object(
+                        'id', po.id, 'text', po.option_text, 'votes', 0, 'is_voted_by_me', false
+                    ) ORDER BY po.sort_order)
+                    FROM community_poll_options po WHERE po.post_id = p.id
+                ) as poll_options
+            FROM community_posts p
+            JOIN users u ON p.user_id = u.id
+            LEFT JOIN categories c ON p.category_id = c.id
+            WHERE p.id = $1
+        `, [postId]);
+
+        // Den vollständigen Post zurückgeben statt nur einer Message
+        res.status(201).json(fullPostRes.rows[0]);
+
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
@@ -214,7 +273,7 @@ exports.getComments = async (req, res) => {
                 c.id, c.content, c.created_at,
                 u.id as author_id, u.first_name, u.last_name, u.username, u.profile_image_url,
                 u.membership_level, u.organization_name, u.role,
-                u.linkedin_url, u.created_at as member_since, u.contribution_score, u.last_login_at -- ✅ NEU
+                u.linkedin_url, u.created_at as member_since, u.contribution_score, u.last_login_at
             FROM community_comments c
             JOIN users u ON c.user_id = u.id
             WHERE c.post_id = $1
@@ -229,6 +288,11 @@ exports.getComments = async (req, res) => {
 
 // 5. Kommentar erstellen
 exports.createComment = async (req, res) => {
+    // DEMO CHECK
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Kommentare erstellen.' });
+    }
+
     const { postId } = req.params;
     const { content } = req.body;
     const { id: userId } = req.user;
@@ -314,6 +378,11 @@ exports.createComment = async (req, res) => {
 
 // 6. Post löschen
 exports.deletePost = async (req, res) => {
+    // DEMO CHECK
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Beiträge löschen.' });
+    }
+
     const { id } = req.params;
     const { id: userId, role } = req.user;
 
@@ -346,7 +415,7 @@ exports.getLeaderboard = async (req, res) => {
     try {
         const query = `
             SELECT id, first_name, last_name, username, profile_image_url, contribution_score, membership_level,
-            organization_name, role, linkedin_url, created_at as member_since, last_login_at -- ✅ NEU
+            organization_name, role, linkedin_url, created_at as member_since, last_login_at
             FROM users
             WHERE business_partner_id = $1
             ORDER BY contribution_score DESC, first_name ASC
@@ -362,6 +431,11 @@ exports.getLeaderboard = async (req, res) => {
 
 // 8. Like
 exports.toggleLike = async (req, res) => {
+    // DEMO CHECK
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen nicht liken.' });
+    }
+
     const { postId } = req.params;
     const { id: userId } = req.user;
 
@@ -437,6 +511,11 @@ exports.getAdminPosts = async (req, res) => {
 
 // 10. Update Post
 exports.updatePost = async (req, res) => {
+    // DEMO CHECK
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Beiträge bearbeiten.' });
+    }
+
     const { id } = req.params;
     const { content, categoryId } = req.body;
     const { role, business_partner_id } = req.user;
@@ -458,6 +537,11 @@ exports.updatePost = async (req, res) => {
 
 // 11. Pin Post
 exports.togglePin = async (req, res) => {
+    // DEMO CHECK
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Beiträge pinnen.' });
+    }
+
     const { id } = req.params;
     const { role, business_partner_id } = req.user;
     try {
@@ -480,6 +564,11 @@ exports.togglePin = async (req, res) => {
 
 // 12. Report Content
 exports.reportContent = async (req, res) => {
+    // DEMO CHECK
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Inhalte melden.' });
+    }
+
     const { postId, commentId, reason } = req.body;
     const { id: userId } = req.user;
     if (!postId && !commentId) return res.status(400).json({ message: 'Ziel fehlt.' });
@@ -493,7 +582,7 @@ exports.reportContent = async (req, res) => {
     }
 };
 
-// 13. Get Members (HIER WAR DER FEHLER)
+// 13. Get Members
 exports.getMembers = async (req, res) => {
     const { business_partner_id } = req.user;
     const { search } = req.query;
@@ -527,6 +616,11 @@ exports.getMembers = async (req, res) => {
 
 // 14. Abstimmmen
 exports.votePoll = async (req, res) => {
+    // DEMO CHECK
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen nicht abstimmen.' });
+    }
+
     const { optionId } = req.body;
     const { id: userId } = req.user;
 
@@ -563,5 +657,83 @@ exports.votePoll = async (req, res) => {
         res.status(500).json({ message: 'Fehler' });
     } finally {
         client.release();
+    }
+};
+
+
+// 15. Experten suchen (NEU)
+exports.searchExperts = async (req, res) => {
+    const { business_partner_id, id: currentUserId } = req.user;
+    const { query } = req.query; // Der Suchbegriff (Tag/Thema)
+
+    if (!query || query.trim().length < 2) {
+        return res.json([]);
+    }
+
+    try {
+        // Wir suchen Nutzer, die:
+        // 1. Aktiv sind
+        // 2. NICHT der aktuelle Nutzer sind
+        // 3. Den Suchbegriff entweder in ihren TAGS (user_saved_tags) haben
+        // 4. ODER im Namen/Rolle/Firma haben
+        // 5. (Optional) Können wir die Suche auf den eigenen BP beschränken ODER global machen.
+        //    Hier machen wir es GLOBAL (Plattform-Networking), aber filtern Admins/System-User raus.
+        
+        const sql = `
+            SELECT DISTINCT
+                u.id, u.first_name, u.last_name, u.username, u.profile_image_url,
+                u.role, u.organization_name, u.membership_level, u.contribution_score,
+                u.created_at as member_since,
+                bp.name as business_partner_name,
+                (
+                    SELECT array_agg(ust.tag_name) 
+                    FROM user_saved_tags ust 
+                    WHERE ust.user_id = u.id
+                ) as tags
+            FROM users u
+            LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
+            LEFT JOIN user_saved_tags ust ON u.id = ust.user_id
+            WHERE 
+                u.is_active = TRUE 
+                AND u.id != $1
+                AND u.role NOT IN ('demo', 'system') -- Keine Demo-User anzeigen
+                AND (
+                    ust.tag_name ILIKE $2 -- Suche in Tags
+                    OR u.role ILIKE $2    -- Suche in Rolle (z.B. "Fuhrparkleiter")
+                    OR u.organization_name ILIKE $2
+                )
+            ORDER BY u.contribution_score DESC -- Aktivste Nutzer zuerst
+            LIMIT 20
+        `;
+
+        const { rows } = await db.query(sql, [currentUserId, `%${query}%`]);
+        res.json(rows);
+
+    } catch (err) {
+        console.error("Fehler bei der Expertensuche:", err);
+        res.status(500).json({ message: "Fehler bei der Suche." });
+    }
+};
+
+// 16. Neueste Kommentare für die Sidebar (bessere Sichtbarkeit)
+exports.getRecentComments = async (req, res) => {
+    const { business_partner_id } = req.user;
+    try {
+        const query = `
+            SELECT 
+                c.id, c.content, c.created_at, c.post_id,
+                u.username, u.first_name, u.last_name, u.profile_image_url
+            FROM community_comments c
+            JOIN users u ON c.user_id = u.id
+            JOIN community_posts p ON c.post_id = p.id
+            WHERE p.business_partner_id = $1
+            ORDER BY c.created_at DESC
+            LIMIT 5
+        `;
+        const { rows } = await db.query(query, [business_partner_id]);
+        res.json(rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Fehler beim Laden der neuen Kommentare.' });
     }
 };

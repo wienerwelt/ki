@@ -16,13 +16,14 @@ exports.getProfile = async (req, res) => {
     try {
         const userId = req.user.id;
         const result = await db.query(
-            `SELECT
+                `SELECT
                 u.id, u.username, u.email, u.first_name, u.last_name, u.organization_name,
                 u.linkedin_url, u.membership_level, u.role, u.business_partner_id,
                 u.article_score_min, u.article_score_max,
                 u.contribution_score, u.newsletter_opt_in,
                 u.profile_image_url,
-                u.last_login_at, -- ✅ NEU HINZUGEFÜGT
+                u.last_login_at,
+                u.phone,
 
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
@@ -48,14 +49,28 @@ exports.getProfile = async (req, res) => {
 };
 
 exports.updateProfile = async (req, res) => {
-    // ... (Diese Funktion bleibt unverändert)
     try {
         const userId = req.user.id;
         const {
             first_name, last_name, organization_name, linkedin_url, password,
             article_score_min, article_score_max, preferred_theme, preferred_language,
-            newsletter_opt_in
+            newsletter_opt_in,
+            phone // <--- NEU: HIER HINZUFÜGEN
         } = req.body;
+
+        // 1. Telefonnummer Validierung (Einfach & Sinnvoll)
+        if (phone) {
+            const cleanPhone = phone.replace(/[^0-9+]/g, '');
+            // Erlaubt +, -, Leerzeichen, Klammern und Ziffern. Mindestens 5 Zeichen.
+            const phoneRegex = /^[+]?[0-9\s\-()]{5,30}$/;
+
+            if (cleanPhone.length < 5 || !phoneRegex.test(phone.trim())) {
+                return res.status(400).json({ 
+                    message: 'Ungültige Telefonnummer. Bitte verwenden Sie nur Ziffern, +, - oder Leerzeichen.' 
+                });
+            }
+        }
+
         const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
         if (rows.length === 0) return res.status(404).json({ message: 'Benutzer nicht gefunden.' });
 
@@ -65,27 +80,33 @@ exports.updateProfile = async (req, res) => {
             password_hash = await bcrypt.hash(password, salt);
         }
 
+        // 2. Update Query mit phone
+        // ACHTUNG: Hier hat der Parameter im Array gefehlt!
         await db.query(
             `UPDATE users SET
                 first_name = $1, last_name = $2, organization_name = $3, linkedin_url = $4, password_hash = $5,
                 article_score_min = $6, article_score_max = $7, preferred_theme = $8, preferred_language = $9,
                 newsletter_opt_in = $10,
+                phone = $11, -- <--- NEU: Feld in der Query
                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = $11 RETURNING *`,
+            WHERE id = $12 RETURNING *`,
             [
                 first_name, last_name, organization_name, linkedin_url, password_hash,
                 article_score_min, article_score_max, preferred_theme, preferred_language,
                 newsletter_opt_in,
-                userId
+                phone ? phone.trim() : null, // <--- HIER KORRIGIERT: phone als 11. Parameter
+                userId // <--- userId ist der 12. Parameter
             ]
         );
         
+        // 3. Profil zurückgeben
         const profileResult = await db.query(
             `SELECT
                 u.id, u.username, u.email, u.first_name, u.last_name, u.organization_name,
                 u.linkedin_url, u.membership_level, u.role, u.business_partner_id,
                 u.article_score_min, u.article_score_max,
                 u.contribution_score, u.newsletter_opt_in,
+                u.phone, -- <--- WICHTIG: Damit das Frontend die neue Nummer sofort sieht
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
                     ORDER BY bpr.is_default DESC, r.name ASC
@@ -517,5 +538,50 @@ exports.getUserActivities = async (req, res) => {
     } catch (err) {
         console.error('Fehler beim Laden der Aktivitäten:', err.message);
         res.status(500).json({ message: 'Serverfehler' });
+    }
+};
+
+
+exports.getPublicUserProfile = async (req, res) => {
+    const { userId } = req.params;
+
+    if (!userId || !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(userId)) {
+        return res.status(400).json({ message: 'Ungültige User-ID.' });
+    }
+
+    try {
+        const query = `
+            SELECT 
+                u.id,
+                u.first_name,
+                u.last_name,
+                u.username,
+                u.organization_name,
+                u.role,
+                u.membership_level,
+                u.linkedin_url,
+                u.profile_image_url,
+                u.contribution_score,
+                u.created_at as member_since,
+                u.email,  -- NEU
+                u.phone,  -- NEU (muss in DB existieren)
+                bp.logo_url as bp_logo_url, -- NEU
+                bp.name as bp_name
+            FROM users u
+            LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
+            WHERE u.id = $1 AND u.is_active = TRUE
+        `;
+        
+        const { rows } = await db.query(query, [userId]);
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Profil nicht verfügbar.' });
+        }
+
+        res.json(rows[0]);
+
+    } catch (err) {
+        console.error('Fehler beim Abrufen des öffentlichen Profils:', err.message);
+        res.status(500).send('Serverfehler');
     }
 };

@@ -4,7 +4,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import {
     Box, Typography, Button, CircularProgress, Alert, Paper, Tabs, Tab,
     Stack, Card, CardContent, CardActions, Chip, Tooltip, TextField,
-    Select, MenuItem, FormControl, InputLabel, Grid, Container, Dialog, DialogTitle, DialogContent, IconButton
+    Select, MenuItem, FormControl, InputLabel, Grid, Container, Dialog, DialogTitle, DialogContent, IconButton,
+    useTheme
 } from '@mui/material';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbUpOutlinedIcon from '@mui/icons-material/ThumbUpOutlined';
@@ -47,21 +48,22 @@ function TabPanel(props: TabPanelProps) {
 const getStatusChip = (status: FeedbackItem['status']) => {
     const statusMap = {
         new: { label: 'Neu', color: 'info' },
-        in_review: { label: 'In Prüfung', color: 'secondary' },
-        planned: { label: 'Geplant', color: 'primary' },
+        in_review: { label: 'In Prüfung', color: 'warning' }, // Geändert auf warning für Gelb/Orange
+        planned: { label: 'Geplant', color: 'warning' },
         done: { label: 'Umgesetzt', color: 'success' },
-        rejected: { label: 'Abgelehnt', color: 'error' }
+        rejected: { label: 'Abgelehnt', color: 'default' } // Grau für abgelehnt
     };
     const { label, color } = statusMap[status] || { label: status, color: 'default' };
-    return <Chip label={label} color={color as any} size="small" />;
+    return <Chip label={label} color={color as any} size="small" variant="filled" />; // Filled für besseren Kontrast im Chip
 };
 
 
 // --- Hauptkomponente ---
 
 const FeedbackCenterPage: React.FC = () => {
-const { user, refreshUser } = useAuth();
+    const { user, refreshUser } = useAuth();
     const isAdmin = user?.role === 'admin';
+    const isDemo = user?.role === 'demo';
     const location = useLocation();
     const navigate = useNavigate();
 
@@ -91,8 +93,8 @@ const { user, refreshUser } = useAuth();
     }, [location.state, navigate]);
 
     const fetchData = React.useCallback(async () => {
-        // setLoading(true); // Nur beim ersten Mal voll laden
         try {
+            setError(null);
             const token = localStorage.getItem('jwt_token');
             const response = await apiClient.get('/api/feedback', { headers: { 'x-auth-token': token } });
             setItems(response.data);
@@ -108,6 +110,7 @@ const { user, refreshUser } = useAuth();
     }, [fetchData]);
 
     const handleVote = async (itemId: string) => {
+        if (isDemo) return;
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.post(`/api/feedback/${itemId}/vote`, {}, { headers: { 'x-auth-token': token } });
@@ -118,6 +121,7 @@ const { user, refreshUser } = useAuth();
     };
 
     const handleStatusChange = async (itemId: string, newStatus: FeedbackItem['status']) => {
+        if (isDemo) return;
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.put(`/api/feedback/${itemId}/status`, { status: newStatus }, { headers: { 'x-auth-token': token } });
@@ -128,6 +132,7 @@ const { user, refreshUser } = useAuth();
     };
 
     const handleSubmitFeedback = async () => {
+        if (isDemo) return;
         if (!formTitle || !formDescription) {
             alert('Bitte füllen Sie Titel und Beschreibung aus.');
             return;
@@ -139,10 +144,8 @@ const { user, refreshUser } = useAuth();
                 type: formType, title: formTitle, description: formDescription, widget_type_key: formWidgetKey
             }, { headers: { 'x-auth-token': token } });
 
-            // NEU: Nach dem erfolgreichen Senden stoßen wir die Aktualisierung an
             await refreshUser();
             
-            // Bisherige Aktionen nach Erfolg:
             setFormTitle(''); setFormDescription(''); setFormWidgetKey('');
             setTabIndex(0);
             fetchData();
@@ -160,20 +163,26 @@ const { user, refreshUser } = useAuth();
         if (sortBy === 'type') {
             return filtered.sort((a, b) => a.type.localeCompare(b.type));
         }
-        return filtered; // Standard ist nach Datum (kommt von API)
+        return filtered; 
     }, [items, sortBy]);
     
+    // UPDATE: "Abgelehnt" (rejected) hinzugefügt, damit Admins/User sie sehen
     const boardColumns: { status: FeedbackItem['status']; title: string }[] = [
         { status: 'in_review', title: 'In Prüfung' },
         { status: 'planned', title: 'Geplant' },
-        { status: 'done', title: 'Umgesetzt' }
+        { status: 'done', title: 'Umgesetzt' },
+        { status: 'rejected', title: 'Abgelehnt' } // NEU: Damit sie nicht verschwinden
     ];
 
     return (
         <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
             <Typography variant="h4" sx={{ mb: 2 }}>Feedback & Ideen-Center</Typography>
+            
+            {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+            
+            {isDemo && <Alert severity="info" sx={{ mb: 2 }}>Im Demo-Modus sind Interaktionen (Voting, Erstellen) deaktiviert.</Alert>}
             <Paper>
-                <Tabs value={tabIndex} onChange={(e, newValue) => setTabIndex(newValue)} centered variant="scrollable" scrollButtons="auto">
+                <Tabs value={tabIndex} onChange={(_e, newValue) => setTabIndex(newValue)} centered variant="scrollable" scrollButtons="auto">
                     <Tab label="Ideen-Board" />
                     <Tab label={`Meine Meldungen (${myItems.length})`} />
                     <Tab label="Neue Meldung erstellen" />
@@ -182,9 +191,10 @@ const { user, refreshUser } = useAuth();
                 <TabPanel value={tabIndex} index={0}>
                     {loading ? <CircularProgress /> : 
                     <Grid container spacing={2}>
-                        <Grid item xs={12} md={6} lg={3} key="new">
+                        {/* Spalte für NEUE IDEEN */}
+                        <Grid item xs={12} md={4} lg={2.4} key="new"> {/* Breite angepasst für 5 Spalten */}
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: 2, borderColor: 'divider', pb: 1, mb: 1 }}>
-                                <Typography variant="h6">Neue Ideen</Typography>
+                                <Typography variant="h6" color="info.main">Neue Ideen</Typography>
                                 <Tooltip title="Sortieren">
                                     <IconButton size="small" onClick={() => setSortBy(prev => prev === 'created_at' ? 'type' : 'created_at')}>
                                         <SortIcon />
@@ -193,18 +203,20 @@ const { user, refreshUser } = useAuth();
                             </Box>
                             <Stack spacing={2}>
                                 {newItems.map(item => (
-                                    <FeedbackCard key={item.id} item={item} onVote={handleVote} onClick={() => setSelectedItem(item)} isAdmin={isAdmin} onStatusChange={handleStatusChange} />
+                                    <FeedbackCard key={item.id} item={item} onVote={handleVote} onClick={() => setSelectedItem(item)} isAdmin={isAdmin} onStatusChange={handleStatusChange} isDemo={isDemo} />
                                 ))}
                             </Stack>
                         </Grid>
+
+                        {/* RESTLICHE SPALTEN (In Prüfung, Geplant, Umgesetzt, Abgelehnt) */}
                         {boardColumns.map(col => (
-                            <Grid item xs={12} md={6} lg={3} key={col.status}>
-                                <Typography variant="h6" sx={{ textTransform: 'capitalize', mb: 1, borderBottom: 2, borderColor: 'divider', pb: 1 }}>
+                            <Grid item xs={12} md={4} lg={2.4} key={col.status}> {/* Breite angepasst */}
+                                <Typography variant="h6" sx={{ textTransform: 'capitalize', mb: 1, borderBottom: 2, borderColor: 'divider', pb: 1, color: col.status === 'done' ? 'success.main' : col.status === 'rejected' ? 'text.secondary' : 'warning.main' }}>
                                     {col.title}
                                 </Typography>
                                 <Stack spacing={2}>
                                     {items.filter(item => item.status === col.status).map(item => (
-                                        <FeedbackCard key={item.id} item={item} onVote={handleVote} onClick={() => setSelectedItem(item)} isAdmin={isAdmin} onStatusChange={handleStatusChange} />
+                                        <FeedbackCard key={item.id} item={item} onVote={handleVote} onClick={() => setSelectedItem(item)} isAdmin={isAdmin} onStatusChange={handleStatusChange} isDemo={isDemo} />
                                     ))}
                                 </Stack>
                             </Grid>
@@ -216,7 +228,7 @@ const { user, refreshUser } = useAuth();
                      {loading ? <CircularProgress /> : myItems.length > 0 ? (
                         <Stack spacing={2}>
                             {myItems.map(item => (
-                                <FeedbackCard key={item.id} item={item} onVote={handleVote} onClick={() => setSelectedItem(item)} isAdmin={isAdmin} onStatusChange={handleStatusChange} />
+                                <FeedbackCard key={item.id} item={item} onVote={handleVote} onClick={() => setSelectedItem(item)} isAdmin={isAdmin} onStatusChange={handleStatusChange} isDemo={isDemo} />
                             ))}
                         </Stack>
                     ) : (
@@ -228,17 +240,33 @@ const { user, refreshUser } = useAuth();
                     <Box sx={{ maxWidth: 600, mx: 'auto' }}>
                         <Typography variant="h6" sx={{ mb: 2 }}>Was möchten Sie uns mitteilen?</Typography>
                         <Stack spacing={2}>
-                            <FormControl fullWidth>
+                            <FormControl fullWidth disabled={isDemo}>
                                 <InputLabel>Art der Meldung</InputLabel>
                                 <Select value={formType} label="Art der Meldung" onChange={(e) => setFormType(e.target.value as any)}>
-                                    <MenuItem value="idea">🚀 Idee</MenuItem>
-                                    <MenuItem value="suggestion">💡 Vorschlag</MenuItem>
-                                    <MenuItem value="bug">🐞 Fehler</MenuItem>
+                                    <MenuItem value="idea">Idee</MenuItem>
+                                    <MenuItem value="suggestion">Verbesserung</MenuItem>
+                                    <MenuItem value="bug">Fehler</MenuItem>
                                 </Select>
                             </FormControl>
-                            <TextField autoFocus label="Titel / Kurzbeschreibung" fullWidth value={formTitle} onChange={(e) => setFormTitle(e.target.value)} />
-                            <TextField label="Beschreibung" fullWidth multiline rows={8} value={formDescription} onChange={(e) => setFormDescription(e.target.value)} />
-                            <Button onClick={handleSubmitFeedback} variant="contained" disabled={submitLoading} sx={{ alignSelf: 'flex-end' }}>
+                            <TextField 
+                                autoFocus label="Titel / Kurzbeschreibung" 
+                                fullWidth value={formTitle} 
+                                onChange={(e) => setFormTitle(e.target.value)} 
+                                disabled={isDemo}
+                            />
+                            <TextField 
+                                label="Beschreibung" 
+                                fullWidth multiline rows={8} 
+                                value={formDescription} 
+                                onChange={(e) => setFormDescription(e.target.value)} 
+                                disabled={isDemo}
+                            />
+                            <Button 
+                                onClick={handleSubmitFeedback} 
+                                variant="contained" 
+                                disabled={submitLoading || isDemo}
+                                sx={{ alignSelf: 'flex-end' }}
+                            >
                                 {submitLoading ? <CircularProgress size={24} /> : 'Meldung absenden'}
                             </Button>
                         </Stack>
@@ -254,6 +282,9 @@ const { user, refreshUser } = useAuth();
                     </Box>
                 </DialogTitle>
                 <DialogContent dividers>
+                    <Box sx={{ mb: 2 }}>
+                        {selectedItem && getStatusChip(selectedItem.status)}
+                    </Box>
                     <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
                         {selectedItem?.description}
                     </Typography>
@@ -263,30 +294,81 @@ const { user, refreshUser } = useAuth();
     );
 };
 
+// --- VISUELLE VERBESSERUNG DER FEEDBACK CARD ---
 const FeedbackCard: React.FC<{ 
     item: FeedbackItem; 
     onVote: (id: string) => void; 
     onClick: () => void;
     isAdmin: boolean;
     onStatusChange: (id: string, status: FeedbackItem['status']) => void;
-}> = ({ item, onVote, onClick, isAdmin, onStatusChange }) => {
+    isDemo?: boolean;
+}> = ({ item, onVote, onClick, isAdmin, onStatusChange, isDemo }) => {
+    const theme = useTheme();
+    
     const typeMap = {
         bug: { label: 'Fehler', icon: '🐞' },
         suggestion: { label: 'Vorschlag', icon: '💡' },
         idea: { label: 'Idee', icon: '🚀' }
     };
     const { label, icon } = typeMap[item.type] || { label: item.type, icon: '' };
-    
+
+    // --- FARBLOGIK ---
+    let cardSx = { 
+        cursor: 'pointer',
+        transition: 'all 0.2s',
+        '&:hover': { boxShadow: 4, transform: 'translateY(-2px)' },
+        border: '1px solid',
+        borderColor: 'divider',
+        backgroundColor: 'background.paper',
+        opacity: 1
+    };
+
+    if (item.status === 'in_review' || item.status === 'planned') {
+        // Leichtes Gelb
+        cardSx = {
+            ...cardSx,
+            backgroundColor: theme.palette.mode === 'dark' ? '#332b00' : '#fffdeb', 
+            borderColor: 'warning.light'
+        };
+    } else if (item.status === 'done') {
+        // Leichtes Grün
+        cardSx = {
+            ...cardSx,
+            backgroundColor: theme.palette.mode === 'dark' ? '#002b0f' : '#f1f8e9',
+            borderColor: 'success.light'
+        };
+    } else if (item.status === 'rejected') {
+        // Ausgegraut
+        cardSx = {
+            ...cardSx,
+            backgroundColor: theme.palette.action.hover,
+            opacity: 0.7,
+            borderColor: 'divider'
+        };
+    }
+
     return (
-        <Card variant="outlined" sx={{ '&:hover': { boxShadow: 3 } }}>
-            <CardContent onClick={onClick} sx={{ cursor: 'pointer' }}>
+        <Card variant="outlined" sx={cardSx}>
+            <CardContent onClick={onClick}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                    <Chip label={label} size="small" variant="outlined" icon={<span>{icon}</span>} />
+                    <Chip 
+                        label={label} 
+                        size="small" 
+                        variant="outlined" 
+                        icon={<span style={{fontSize: '1.1em'}}>{icon}</span>} 
+                        sx={{ bgcolor: 'background.paper' }} // Chip bleibt weiß für Kontrast
+                    />
+                    
                     {isAdmin ? (
                         <Select
                             value={item.status}
                             size="small"
-                            sx={{'.MuiOutlinedInput-notchedOutline': { border: 0 }}}
+                            disabled={isDemo}
+                            sx={{ 
+                                height: 24, fontSize: '0.8rem', 
+                                bgcolor: 'background.paper',
+                                '& .MuiOutlinedInput-notchedOutline': { border: '1px solid #ddd' } 
+                            }}
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => onStatusChange(item.id, e.target.value as FeedbackItem['status'])}
                         >
@@ -296,35 +378,42 @@ const FeedbackCard: React.FC<{
                             <MenuItem value="done">Umgesetzt</MenuItem>
                             <MenuItem value="rejected">Abgelehnt</MenuItem>
                         </Select>
-                    ) : getStatusChip(item.status)}
+                    ) : (
+                        // Für normale User nur Chip anzeigen, Status "rejected" auch visualisieren
+                        item.status === 'rejected' 
+                            ? <Chip label="Abgelehnt" size="small" color="default" variant="filled" />
+                            : getStatusChip(item.status)
+                    )}
                 </Box>
-                <Typography variant="body1" sx={{ fontWeight: 'bold' }}>{item.title}</Typography>
-                <Typography variant="body2" color="text.secondary" noWrap sx={{ mt: 1 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 'bold', lineHeight: 1.3 }}>{item.title}</Typography>
+                <Typography variant="body2" color="text.secondary" noWrap sx={{ mt: 0.5 }}>
                     {item.description}
                 </Typography>
             </CardContent>
-            <CardActions sx={{ justifyContent: 'space-between', px: 2, pb: 2 }}>
+            <CardActions sx={{ justifyContent: 'space-between', px: 2, pb: 1.5, pt: 0 }}>
                 <Box>
                     <Typography variant="caption" color="text.secondary">
-                        von {item.author_username} 
-                        {item.organization_name && ` (${item.organization_name})`}
+                        {item.author_username} • {new Date(item.created_at).toLocaleDateString('de-DE')}
                     </Typography>
-                    {isAdmin && (
-                        <Typography variant="caption" display="block" color="text.disabled">
-                           {new Date(item.created_at).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short'})}
-                        </Typography>
-                    )}
                 </Box>
-                <Tooltip title="Zustimmen">
-                    <Button 
-                        size="small" 
-                        variant={item.has_voted ? "contained" : "outlined"}
-                        color={item.has_voted ? "success" : "inherit"}
-                        startIcon={item.has_voted ? <ThumbUpIcon /> : <ThumbUpOutlinedIcon />} 
-                        onClick={(e) => { e.stopPropagation(); onVote(item.id); }}
-                    >
-                        {item.votes}
-                    </Button>
+                <Tooltip title={isDemo ? "Deaktiviert im Demo-Modus" : "Zustimmen"}>
+                    <span>
+                        <Button 
+                            size="small"
+                            disabled={isDemo}
+                            variant={item.has_voted ? "contained" : "outlined"}
+                            color={item.has_voted ? "success" : "inherit"}
+                            startIcon={item.has_voted ? <ThumbUpIcon /> : <ThumbUpOutlinedIcon />} 
+                            onClick={(e) => { e.stopPropagation(); onVote(item.id); }}
+                            sx={{ 
+                                minWidth: 0, 
+                                px: 1.5,
+                                bgcolor: item.has_voted ? 'success.main' : 'background.paper' 
+                            }}
+                        >
+                            {item.votes}
+                        </Button>
+                    </span>
                 </Tooltip>
             </CardActions>
         </Card>

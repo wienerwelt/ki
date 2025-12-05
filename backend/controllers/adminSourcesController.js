@@ -47,6 +47,9 @@ exports.getSourceDetailsAdmin = async (req, res) => {
 // @route   PUT /api/admin/sources/:id/status
 // @access  Admin
 exports.updateSourceStatus = async (req, res) => {
+if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen den Status nicht ändern.' });
+    }    
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
 
@@ -95,6 +98,9 @@ exports.updateSourceStatus = async (req, res) => {
 // @route   DELETE /api/admin/sources/:id
 // @access  Admin
 exports.deleteSource = async (req, res) => {
+if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen nicht löschen.' });
+    }    
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
 

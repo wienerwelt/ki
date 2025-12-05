@@ -1,8 +1,7 @@
 // frontend/src/pages/TrustedSourcesPage.tsx
 import React, { useState, useEffect, useMemo } from 'react';
-// HIER IST DIE ÄNDERUNG: useLocation wird benötigt
 import { useLocation } from 'react-router-dom';
-import { Container, Typography, Box, Paper, Tabs, Tab, CircularProgress, Alert, Tooltip } from '@mui/material';
+import { Container, Typography, Box, Paper, Tabs, Tab, Alert, Tooltip } from '@mui/material';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
@@ -27,10 +26,9 @@ function TabPanel(props: TabPanelProps) {
 
 const TrustedSourcesPage: React.FC = () => {
     const { user } = useAuth();
-    // HIER IST DIE ÄNDERUNG: useLocation wird hier aufgerufen
+    const isDemo = user?.role === 'demo';
     const location = useLocation();
 
-    // HIER IST DIE ÄNDERUNG: Der Start-Tab wird aus dem State der Navigation gelesen
     const [tabIndex, setTabIndex] = useState(location.state?.tab || 0);
     const [contributionScore, setContributionScore] = useState(user?.contribution_score || 0);
 
@@ -56,16 +54,14 @@ const TrustedSourcesPage: React.FC = () => {
 
     return (
         <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+            {/* Header Bereich */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
                 <Typography variant="h4" component="h1">
                     Vertrauenswürdige Quellen
                 </Typography>
+                
+                {/* Info Box Stimmkraft */}
                 <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                    <Paper elevation={2} sx={{ p: '4px 12px', borderRadius: '16px' }}>
-                        <Typography variant="h6" component="span">
-                            Ihre Punkte: <strong>{contributionScore}</strong>
-                        </Typography>
-                    </Paper>
                     <Tooltip title={`Mit ${contributionScore} Punkten zählt Ihre Stimme ${votePower}-fach.`}>
                         <Paper elevation={2} sx={{ p: '4px 12px', borderRadius: '16px', display: 'flex', alignItems: 'center', gap: 1 }}>
                             <Typography variant="h6" component="span" color="primary">
@@ -76,20 +72,38 @@ const TrustedSourcesPage: React.FC = () => {
                     </Tooltip>
                 </Box>
             </Box>
+
+            {/* Demo Alert (volle Breite über dem Content) */}
+            {isDemo && <Alert severity="info" sx={{ mb: 2 }}>Einige Funktionen sind im Demo-Modus deaktiviert.</Alert>}
+
+            {/* Hauptinhalt */}
             <Paper>
                 <Tabs value={tabIndex} onChange={handleTabChange} centered variant="scrollable" scrollButtons="auto">
                     <Tab label="Quellen durchsuchen" />
                     <Tab label="Abstimmen" />
                     <Tab label="Neue Quelle vorschlagen" />
                 </Tabs>
+                
                 <TabPanel value={tabIndex} index={0}>
                     <BrowseSourcesList />
                 </TabPanel>
+                
                 <TabPanel value={tabIndex} index={1}>
-                    <VoteSourcesList />
+                    {/* Demo-Schutz für Abstimmung */}
+                    {isDemo ? (
+                        <Alert severity="warning">Das Abstimmen über Quellen ist für Demo-Benutzer deaktiviert.</Alert>
+                    ) : (
+                        <VoteSourcesList />
+                    )}
                 </TabPanel>
+                
                 <TabPanel value={tabIndex} index={2}>
-                    <ProposeSourceForm onSuccess={refreshUserScore} />
+                    {/* Demo-Schutz für Vorschläge */}
+                    {isDemo ? (
+                        <Alert severity="warning">Das Vorschlagen neuer Quellen ist für Demo-Benutzer deaktiviert.</Alert>
+                    ) : (
+                        <ProposeSourceForm onSuccess={refreshUserScore} />
+                    )}
                 </TabPanel>
             </Paper>
         </Container>

@@ -49,4 +49,8 @@ router.get('/members', communityController.getMembers);
 router.post('/report', communityController.reportContent);
 router.post('/poll/vote', communityController.votePoll);
 
+router.get('/experts', communityController.searchExperts);
+router.get('/recent-comments', communityController.getRecentComments);
+router.get('/feed/:id', communityController.getPostById);
+
 module.exports = router;

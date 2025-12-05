@@ -269,52 +269,33 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
 
     }, [category]);
 
-const fetchData = useCallback(async (currentPage: number, currentSortBy: string, region: Region | null, search: string, subFilter: string, currentFilterMode: string, loadMore = false) => {
-    if (!category) {
-        setIsLoading(false);
-        setError("Keine Kategorie im Widget-Typ konfiguriert.");
-        setItems([]);
-        return;
-    }
-    if (loadMore) setIsLoadingMore(true);
-    else setIsLoading(true);
-    setError(null);
+// frontend/src/components/widgets/GenericScrapeWidget.tsx
 
-    const token = localStorage.getItem('jwt_token');
+// ... (Imports bleiben gleich)
 
-    const itemParams = new URLSearchParams({
-        page: String(currentPage),
-        limit: '10',
-        sortBy: currentSortBy,
-        region: region ? region.name : 'all',
-        category,
-        tag: subFilter,
-        filter: currentFilterMode
-    });
-    if (search) itemParams.append('search', search);
+// Suche nach der fetchData Funktion und ersetze sie komplett:
 
-    try {
-        const contentRes = await apiClient.get(`/api/data/scraped-content?${itemParams.toString()}`, { headers: { 'x-auth-token': token } });
-
-        const newItems = contentRes.data?.data || [];
-        setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
-        setActiveGlobalTags(contentRes.data?.activeFilters?.tags || []);
-
-        if (currentPage === 1) {
-            apiClient.get(`/api/data/relevant-action?category=${category}&region=${region?.name || 'all'}`, { headers: { 'x-auth-token': token } })
-                .then(actionRes => setRelevantAction(actionRes.data))
-                .catch(e => console.error("Could not load relevant action", e));
+    const fetchData = useCallback(async (currentPage: number, currentSortBy: string, region: Region | null, search: string, subFilter: string, currentFilterMode: string, loadMore = false) => {
+        if (!category) {
+            setIsLoading(false);
+            setError("Keine Kategorie im Widget-Typ konfiguriert.");
+            setItems([]);
+            return;
         }
 
-    } catch (err: any) {
-        setError(err.response?.data?.message || `Inhalte konnten nicht geladen werden.`);
-    } finally {
-        setIsLoading(false);
-        setIsLoadingMore(false);
-    }
+        // 1. Loading State setzen
+        if (loadMore) {
+            setIsLoadingMore(true);
+        } else {
+            setIsLoading(true);
+        }
+        setError(null);
 
-    try {
-        const countParams = new URLSearchParams({
+        const token = localStorage.getItem('jwt_token');
+
+        // Parameter für den Inhalt (Liste)
+        const itemParams = new URLSearchParams({
+            page: String(currentPage),
             limit: '10',
             sortBy: currentSortBy,
             region: region ? region.name : 'all',
@@ -322,17 +303,56 @@ const fetchData = useCallback(async (currentPage: number, currentSortBy: string,
             tag: subFilter,
             filter: currentFilterMode
         });
-        if (search) countParams.append('search', search);
+        if (search) itemParams.append('search', search);
 
-        const countsRes = await apiClient.get(`/api/data/scraped-content-counts?${countParams.toString()}`, { headers: { 'x-auth-token': token } });
+        // --- SCHRITT A: Inhalt laden (Priorität 1) ---
+        try {
+            const contentRes = await apiClient.get(`/api/data/scraped-content?${itemParams.toString()}`, { headers: { 'x-auth-token': token } });
 
-        setTotalPages(countsRes.data?.totalPages || 0);
-        setCounts(countsRes.data?.counts || { unread: 0, new: 0 });
+            const newItems = contentRes.data?.data || [];
+            setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
+            setActiveGlobalTags(contentRes.data?.activeFilters?.tags || []);
 
-    } catch (err: any) {
-        console.error("Fehler beim Laden der Zähler:", err.response?.data?.message || err.message);
-    }
-}, [category]);
+            // Relevant Action nur auf Seite 1 laden
+            if (currentPage === 1 && !relevantAction) {
+                apiClient.get(`/api/data/relevant-action?category=${category}&region=${region?.name || 'all'}`, { headers: { 'x-auth-token': token } })
+                    .then(actionRes => setRelevantAction(actionRes.data))
+                    .catch(e => console.error("Could not load relevant action", e)); // Fehler hier ignorieren, nicht kritisch
+            }
+
+        } catch (err: any) {
+            console.error("Fehler beim Laden der Inhalte:", err);
+            setError(err.response?.data?.message || `Inhalte konnten nicht geladen werden.`);
+        } finally {
+            // WICHTIG: Loading HIER beenden, damit der Nutzer sofort die Liste sieht.
+            // Wir warten NICHT auf die Counts.
+            setIsLoading(false);
+            setIsLoadingMore(false);
+        }
+
+        // --- SCHRITT B: Counts & Pagination laden (Priorität 2 - im Hintergrund) ---
+        // Dies blockiert nun nicht mehr die Anzeige der Liste
+        try {
+            const countParams = new URLSearchParams({
+                limit: '10',
+                sortBy: currentSortBy,
+                region: region ? region.name : 'all',
+                category,
+                tag: subFilter,
+                filter: currentFilterMode
+            });
+            if (search) countParams.append('search', search);
+
+            const countsRes = await apiClient.get(`/api/data/scraped-content-counts?${countParams.toString()}`, { headers: { 'x-auth-token': token } });
+
+            setTotalPages(countsRes.data?.totalPages || 0);
+            setCounts(countsRes.data?.counts || { unread: 0, new: 0 });
+
+        } catch (err: any) {
+            // Zähler-Fehler loggen wir nur, sie sollen den Feed nicht kaputt machen
+            console.warn("Fehler beim Laden der Zähler (nicht kritisch):", err.message);
+        }
+    }, [category, relevantAction]); // relevantAction in Dependency, damit es nicht ständig neu lädt
 
     useEffect(() => { 
         setPage(1);

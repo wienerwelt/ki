@@ -1,3 +1,4 @@
+// frontend/src/components/widgets/BusinessPartnerInfoWidget.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -87,8 +88,8 @@ interface UserStats {
 
 interface MemberPreview {
     id: string;
-    first_name: string;
-    last_name: string;
+    first_name: string | null;
+    last_name: string | null;
     profile_image_url: string | null;
     role: string;
     last_login_at?: string; 
@@ -111,7 +112,23 @@ const MemberAvatar: React.FC<{ member: MemberPreview, onClick?: () => void }> = 
     const status = getUserStatus(member.last_login_at);
     const invisible = status === 'offline';
     const statusColor = status === 'online' ? '#44b700' : '#ffa726';
-    const tooltipText = `${member.first_name} ${member.last_name} (${status === 'online' ? 'Online' : (status === 'active_today' ? 'Heute aktiv' : member.role)})`;
+    
+    // LOGIK-ÄNDERUNG:
+    // 1. Prüfen, ob mindestens ein Namensteil vorhanden ist
+    const hasName = member.first_name || member.last_name;
+
+    // 2. Namen zusammenbauen: Nur vorhandene Teile nutzen (filter(Boolean) entfernt null/undefined)
+    // Wenn gar kein Name da ist -> "Anonymer Benutzer"
+    const fullName = hasName 
+        ? [member.first_name, member.last_name].filter(Boolean).join(' ') 
+        : 'Anonymer Benutzer';
+    
+    // 3. Avatar-Buchstabe: Erster Buchstabe vom ersten verfügbaren Namensteil oder 'A'
+    const avatarLetter = hasName 
+        ? (member.first_name || member.last_name || '').charAt(0).toUpperCase() 
+        : 'A';
+
+    const tooltipText = `${fullName} (${status === 'online' ? 'Online' : (status === 'active_today' ? 'Heute aktiv' : member.role)})`;
 
     return (
         <Tooltip title={tooltipText}>
@@ -146,11 +163,11 @@ const MemberAvatar: React.FC<{ member: MemberPreview, onClick?: () => void }> = 
             >
                 <Avatar 
                     src={member.profile_image_url || undefined} 
-                    alt={member.first_name}
+                    alt={fullName}
                     onClick={onClick}
                     sx={{ width: 32, height: 32, fontSize: '0.8rem' }}
                 >
-                    {member.first_name?.charAt(0)}
+                    {avatarLetter}
                 </Avatar>
             </Badge>
         </Tooltip>
@@ -239,7 +256,9 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
       const newsUrl   = `/api/data/bp-scraped-content${qs({ businessPartnerId: bpId, category: 'news' })}`;
       const eventsUrl = `/api/data/bp-scraped-content${qs({ businessPartnerId: bpId, category: 'events' })}`;
       const statsUrl  = `/api/data/user-stats/${encodeURIComponent(bpId)}`;
-      const membersUrl = `/api/data/bp-members-preview`;
+      
+      // KORREKTUR: ID explizit übergeben, damit Backend auch bei Admins richtig filtert
+      const membersUrl = `/api/data/bp-members-preview?businessPartnerId=${bpId}`;
 
       const promises = [
         apiClient.get(newsUrl),
@@ -329,6 +348,11 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
 
   const primaryColor = businessPartner?.primary_color || 'primary.main';
   const secondaryColor = businessPartner?.secondary_color || 'secondary.main';
+
+  // NEU: Google Maps Link generieren
+  const getMapsLink = (address: string) => {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  };
 
   return (
     <WidgetPaper
@@ -444,10 +468,19 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                     <EmailIcon color="action" fontSize="small" /> {businessPartner.email}
                   </MuiLink>
                 )}
+                
+                {/* NEU: Google Maps Link */}
                 {businessPartner.address && (
-                  <Typography variant="body2" color="text.secondary" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                  <MuiLink
+                    href={getMapsLink(businessPartner.address)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+                  >
                     <LocationOnIcon color="action" fontSize="small" /> {businessPartner.address}
-                  </Typography>
+                  </MuiLink>
                 )}
               </Stack>
             </Stack>

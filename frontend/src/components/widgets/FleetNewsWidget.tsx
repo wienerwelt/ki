@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Typography, CircularProgress, Alert, Chip, Link as MuiLink, Stack, Divider } from '@mui/material';
+import { Box, Typography, Chip, Link as MuiLink, Stack, Divider } from '@mui/material';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
@@ -20,6 +20,13 @@ interface FleetNewsWidgetProps extends BaseWidgetProps {
   category: string;
   widgetTypeKey: string;
 }
+
+// HELPER: Sicheres Datumsformat
+const safeDate = (dateStr: string | undefined) => {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? null : d.toLocaleDateString('de-AT');
+};
 
 const FleetNewsWidget: React.FC<FleetNewsWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey }) => {
     const [items, setItems] = useState<NewsItem[]>([]);
@@ -104,8 +111,8 @@ const FleetNewsWidget: React.FC<FleetNewsWidgetProps> = ({ onDelete, widgetId, i
                                 </Typography>
                             )}
                             <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                                {item.event_date && (
-                                    <Chip label={`Datum: ${new Date(item.event_date).toLocaleDateString()}`} size="small" variant="outlined" />
+                                {safeDate(item.event_date) && (
+                                    <Chip label={`Datum: ${safeDate(item.event_date)}`} size="small" variant="outlined" />
                                 )}
                                 {item.category && (
                                     <Chip label={item.category} size="small" />

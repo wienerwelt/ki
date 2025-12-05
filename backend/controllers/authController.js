@@ -334,22 +334,46 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
     }
 
-    // 3. E-Mail Verifizierung prüfen (optional per ENV)
+// 3. E-Mail Verifizierung prüfen (optional per ENV)
     if (process.env.REQUIRE_EMAIL_VERIFIED === 'true' && !user.is_email_verified) {
       return res.status(403).json({ message: 'Bitte verifizieren Sie Ihre E-Mail-Adresse, bevor Sie sich anmelden.' });
     }
 
-    // --- 4. NEU: Login-Zeitstempel und Zähler aktualisieren ---
+    // --- 4. NEU: Login-Zeitstempel, Zähler UND PUNKTE aktualisieren ---
+    
+    // a) User-Tabelle updaten (+1 Punkt)
+    const pointsForLogin = 1;
     await db.query(
         `UPDATE users 
          SET last_login_at = CURRENT_TIMESTAMP, 
-             login_count = login_count + 1 
+             login_count = login_count + 1,
+             contribution_score = contribution_score + $2
          WHERE id = $1`,
-        [user.id]
+        [user.id, pointsForLogin]
+    );
+
+    // b) Log-Eintrag für die Punkte erstellen
+    // Da reference_id NOT NULL ist, generieren wir eine zufällige ID für dieses "Login-Event"
+    const loginEventId = crypto.randomUUID(); 
+    
+    await db.query(
+        `INSERT INTO user_score_logs (id, reference_id, user_id, points_change, action_type, description) 
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+            crypto.randomUUID(), // ID des Log-Eintrags
+            loginEventId,        // reference_id (Dummy-ID für den Login-Vorgang)
+            user.id,             // user_id
+            pointsForLogin,      // points_change
+            'LOGIN_REWARD',      // action_type
+            'Täglicher Login-Bonus' // description
+        ]
     );
     // ----------------------------------------------------------
 
     // 5. Token ausstellen
+    // WICHTIG: Den Score im User-Objekt für das Token/Response auch aktualisieren!
+    user.contribution_score = (user.contribution_score || 0) + pointsForLogin;
+
     const token = issueJwt(user);
 
     await logActivity({

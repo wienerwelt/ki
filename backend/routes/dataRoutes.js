@@ -53,4 +53,8 @@ router.get('/notifications/count', dataController.getNotificationCounts);
 router.get('/monitor-entries', dataController.getMonitorEntries);
 router.get('/bp-members-preview', dataController.getBusinessPartnerMembersPreview);
 
+// NEU: Sentiment Barometer
+router.get('/sentiment', dataController.getMarketSentiment);
+router.post('/sentiment/vote', dataController.voteSentiment);
+
 module.exports = router;

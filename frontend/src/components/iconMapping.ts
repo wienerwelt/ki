@@ -30,6 +30,7 @@ import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
 import InsightsIcon from '@mui/icons-material/Insights';
 import ForumIcon from '@mui/icons-material/Forum';
 import SettingsAccessibilityIcon from '@mui/icons-material/SettingsAccessibility';
+import PersonIcon from '@mui/icons-material/Person';
 
 export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     SpaIcon: SpaIcon,
@@ -58,6 +59,8 @@ export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     SwitchAccountIcon: SwitchAccountIcon,
     InsightsIcon: InsightsIcon,
     ForumIcon: ForumIcon,
+    PersonIcon: PersonIcon,
+    SettingsAccessibilityIcon: SettingsAccessibilityIcon,
 };
 
 // === GEÄNDERT: Die Funktion ist jetzt ein einfacher, direkter Lookup ===

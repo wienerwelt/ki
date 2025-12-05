@@ -12,18 +12,19 @@ import SearchIcon from '@mui/icons-material/Search';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 
+// KORREKTUR 1: Interface erweitern
 interface Category {
     id: string;
     name: string;
     name_lang: string | null;
     name_lang_en: string | null;
     description: string | null;
-    category_type: 'industry' | 'content';
+    category_type: 'industry' | 'content' | 'community'; // <--- community HINZUGEFÜGT
     created_at: string;
     updated_at: string;
 }
 
-// --- Sortier-Helferfunktionen ---
+// ... (Sortier-Helferfunktionen bleiben unverändert) ...
 type Order = 'asc' | 'desc';
 
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
@@ -42,7 +43,6 @@ function getComparator<Key extends keyof any>(
         ? (a, b) => descendingComparator(a, b, orderBy)
         : (a, b) => -descendingComparator(a, b, orderBy);
 }
-// --- Ende ---
 
 const AdminCategoriesPage: React.FC = () => {
     const [categories, setCategories] = useState<Category[]>([]);
@@ -50,7 +50,16 @@ const AdminCategoriesPage: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-    const [formState, setFormState] = useState({ name: '', name_lang: '', name_lang_en: '', description: '', category_type: 'content' as 'industry' | 'content' });
+    
+    // KORREKTUR 2: State-Typdefinition erweitern
+    const [formState, setFormState] = useState({ 
+        name: '', 
+        name_lang: '', 
+        name_lang_en: '', 
+        description: '', 
+        category_type: 'content' as 'industry' | 'content' | 'community' // <--- Typ hier auch anpassen!
+    });
+    
     const [dialogError, setDialogError] = useState<string | null>(null);
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -198,7 +207,11 @@ const AdminCategoriesPage: React.FC = () => {
                                             <TableCell>{category.name_lang || '-'}</TableCell>
                                             <TableCell>{category.name_lang_en || '-'}</TableCell>
                                             <TableCell>
-                                                <Chip label={category.category_type === 'industry' ? 'Branche' : 'Content'} size="small" color={category.category_type === 'industry' ? 'primary' : 'default'} />
+                                                <Chip 
+                                                    label={category.category_type} 
+                                                    size="small" 
+                                                    color={category.category_type === 'industry' ? 'primary' : (category.category_type === 'community' ? 'secondary' : 'default')} 
+                                                />
                                             </TableCell>                                            
                                             <TableCell>{category.description || '-'}</TableCell>
                                             <TableCell align="right">
@@ -222,9 +235,10 @@ const AdminCategoriesPage: React.FC = () => {
                     <TextField margin="dense" name="name_lang" label="Name (Deutsch)" type="text" fullWidth variant="outlined" value={formState.name_lang} onChange={handleFormChange} />
                     <TextField margin="dense" name="name_lang_en" label="Name (Englisch)" type="text" fullWidth variant="outlined" value={formState.name_lang_en} onChange={handleFormChange} />
                     <TextField select margin="dense" name="category_type" label="Kategorie-Typ" fullWidth value={formState.category_type} onChange={handleFormChange}>
-                        <MenuItem value="content">Content-Kategorie</MenuItem>
+                        <MenuItem value="content">Content-Kategorie (News, Artikel)</MenuItem>
                         <MenuItem value="industry">Branche (für Business Partner)</MenuItem>
-                    </TextField>                    
+                        <MenuItem value="community">Community / Wissen (für Experten & Posts)</MenuItem>
+                    </TextField>                  
                     <TextField margin="dense" name="description" label="Beschreibung" type="text" fullWidth multiline rows={3} variant="outlined" value={formState.description} onChange={handleFormChange} />
                 </DialogContent>
                 <DialogActions>

@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef, ChangeEvent, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Box, Typography, CircularProgress, Alert, Divider, Avatar,
-  IconButton, Tooltip, Chip, Paper, Slider, TextField, MenuItem, Link as MuiLink, Button, Card, CardContent, Stack
+  IconButton, Tooltip, Chip, Paper, Slider, TextField, MenuItem, Link as MuiLink, Button, Card, CardContent, Stack, Popover
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
@@ -11,12 +11,15 @@ import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt';
 import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt'; 
 import CloseIcon from '@mui/icons-material/Close';
+import TuneIcon from '@mui/icons-material/Tune';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
-import { format } from 'date-fns';
+import { format, isValid } from 'date-fns';
 import { de } from 'date-fns/locale';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useTheme } from '@mui/material/styles';
 
 // --- Interfaces ---
 interface PodcastItem {
@@ -46,53 +49,47 @@ interface HighlightedTextProps {
     keywords: string[];
 }
 
+// HELPER: Sicheres Datumsformat mit date-fns
+const safeFormat = (dateStr: string, fmt: string) => {
+    const d = new Date(dateStr);
+    return isValid(d) ? format(d, fmt, { locale: de }) : '';
+};
+
+// HELPER: Zähler-Formatierung (>10)
+const formatCount = (count: number) => count > 10 ? ">10" : count;
+
 const HighlightedText: React.FC<HighlightedTextProps> = ({ text, keywords }) => {
     const parts = useMemo(() => {
-        if (!keywords || keywords.length === 0 || !text) {
-            return [text];
-        }
+        if (!keywords || keywords.length === 0 || !text) return [text];
         const regex = new RegExp(`\\b(${keywords.join('|')})`, 'gi');
         const matches = [...text.matchAll(regex)];
         if (matches.length === 0) return [text];
-
         const result: (string | JSX.Element)[] = [];
         let lastIndex = 0;
-
         matches.forEach((match, index) => {
             const keyword = match[0];
             const startIndex = match.index!;
-            
-            if (startIndex > lastIndex) {
-                result.push(text.substring(lastIndex, startIndex));
-            }
+            if (startIndex > lastIndex) result.push(text.substring(lastIndex, startIndex));
             result.push(<mark key={index}>{keyword}</mark>);
             lastIndex = startIndex + keyword.length;
         });
-
-        if (lastIndex < text.length) {
-            result.push(text.substring(lastIndex));
-        }
-        
+        if (lastIndex < text.length) result.push(text.substring(lastIndex));
         return result;
     }, [text, keywords]);
-
     return <span>{parts}</span>;
 };
 
-// --- Helpers ---
 const getDomain = (url: string | null | undefined): string | null => {
   if (!url) return null;
   try { return new URL(url).hostname.replace(/^www\./, ''); }
   catch { return null; }
 };
 
-// NEUE HELPER-FUNKTION: Prüft, ob eine URL direkt abspielbar ist.
 const isDirectAudioUrl = (url: string): boolean => {
   if (!url) return false;
   const validAudioExtensions = ['.mp3', '.m4a', '.aac', '.ogg', '.wav'];
   try {
     const pathname = new URL(url).pathname.toLowerCase();
-    // Prüft, ob der Pfad mit einer Audio-Endung aufhört (ignoriert Query-Parameter)
     return validAudioExtensions.some(ext => pathname.endsWith(ext));
   } catch {
     return false;
@@ -122,7 +119,6 @@ const VoteComponent: React.FC<{ item: PodcastItem; onVote: (vote: 1 | -1) => voi
   );
 };
 
-// --- Haupt-Widget ---
 const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey }) => {
   const { user } = useAuth();
   const [items, setItems] = useState<PodcastItem[]>([]);
@@ -144,6 +140,13 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
   const [duration, setDuration] = useState(0);
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  
+  // Mobile Filter Menu
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
+  const handleOpenFilterMenu = (event: React.MouseEvent<HTMLElement>) => setFilterAnchorEl(event.currentTarget);
+  const handleCloseFilterMenu = () => setFilterAnchorEl(null);
 
   useEffect(() => {
     if (user?.regions && user.regions.length > 0) {
@@ -174,14 +177,10 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
       });
       if (filter !== 'all') params.append('filter', filter);
 
+      // 1. Content laden
       const response = await apiClient.get(`/api/data/scraped-content?${params.toString()}`, { headers: { 'x-auth-token': token } });
-      
-      // KORREKTUR 2: Der redundante Frontend-Filter wurde entfernt. Das Backend liefert die korrekte Liste.
       const newItems: PodcastItem[] = response.data?.data || [];
       setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
-      
-      setCounts(response.data?.counts || { unread: 0, new: 0 });
-      setTotalPages(response.data?.totalPages || 0);
       setActiveFilters(response.data?.activeFilters || null);
 
     } catch (err: any) {
@@ -190,6 +189,29 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
       setIsLoading(false);
       setIsLoadingMore(false);
     }
+    
+    // 2. Counts separat laden (Non-Blocking)
+    try {
+        const token = localStorage.getItem('jwt_token');
+        
+        // KORREKTUR: URLSearchParams mag kein 'undefined', daher bauen wir es so auf:
+        const countParams = new URLSearchParams({
+            category, 
+            limit: '5', 
+            sortBy: 'date', 
+            region: region ? region.name : 'all'
+        });
+        if (filter !== 'all') {
+            countParams.append('filter', filter);
+        }
+        
+        const countsRes = await apiClient.get(`/api/data/scraped-content-counts?${countParams.toString()}`, { headers: { 'x-auth-token': token } });
+        setCounts(countsRes.data?.counts || { unread: 0, new: 0 });
+        setTotalPages(countsRes.data?.totalPages || 0);
+    } catch(err) {
+        console.warn("Fehler beim Laden der Zähler:", err);
+    }
+
   }, [category]);
 
   useEffect(() => {
@@ -205,16 +227,12 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
   };
 
   const handlePlayPause = (item: PodcastItem) => {
-    // KORREKTUR 1: Logik zum Stoppen überlappender Audiospuren
     if (activeTrack?.id === item.id) {
-      // Bestehenden Track anhalten/fortsetzen
       setIsPlaying(!isPlaying);
     } else {
-      // Wenn ein anderer Track lief, stoppe ihn zuerst
       if (audioRef.current) {
         audioRef.current.pause();
       }
-      // Neuen Track starten
       setProgress(0);
       setDuration(0);
       setActiveTrack(item);
@@ -293,6 +311,22 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
     else audioRef.current?.pause();
   }, [isPlaying, activeTrack]);
 
+  const renderFilterControls = (isMenu: boolean) => {
+        const controlWrapper = (child: React.ReactNode) => isMenu 
+        ? <Box sx={{ p: 1, width: 220 }}>{child}</Box> 
+        : child;
+        
+        return (
+            <>
+                 {user?.regions && user.regions.length > 1 && controlWrapper(
+                    <TextField select value={selectedRegion?.id || ''} onChange={(e) => { const region = user?.regions?.find(r => r.id === e.target.value); setSelectedRegion(region || null); }} size="small" fullWidth={isMenu} variant="outlined" sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '24px' } }} label={isMenu ? "Region" : ""}>
+                        {user?.regions?.map((region) => <MenuItem key={region.id} value={region.id}><Tooltip title={region.name} placement="right"><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} /></Tooltip></MenuItem>)}
+                    </TextField>
+                 )}
+            </>
+        );
+    };
+
   const renderContent = () => {
     if (isLoading) return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', p: 2 }}><CircularProgress /></Box>;
     if (error) return <Alert severity="error" sx={{ m: 2 }}>{error}</Alert>;
@@ -323,12 +357,7 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
         {items.map((item) => {
           const isPlayable = isDirectAudioUrl(item.original_url);
           return (
-            <Card key={item.id} variant="outlined"
-              sx={{
-                bgcolor: activeTrack?.id === item.id ? 'action.selected' : 'background.default',
-                borderColor: activeTrack?.id === item.id ? 'primary.main' : 'divider',
-                transition: 'background-color 0.3s'
-              }}>
+            <Card key={item.id} variant="outlined" sx={{ bgcolor: activeTrack?.id === item.id ? 'action.selected' : 'background.default', borderColor: activeTrack?.id === item.id ? 'primary.main' : 'divider', transition: 'background-color 0.3s' }}>
               <CardContent sx={{ p: '12px !important' }}>
                 <Stack direction="row" spacing={1.5} alignItems="center">
                   <Tooltip title={!isPlayable ? "Keine direkte Audio-Datei" : (isPlaying && activeTrack?.id === item.id ? 'Pause' : 'Abspielen')}>
@@ -356,9 +385,7 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
                           />
                       </Typography>
                       <Stack direction="row" spacing={1.5} alignItems="center" color="text.secondary">
-                      <Typography variant="caption">
-                        {format(new Date(item.published_date), 'd. MMM yyyy', { locale: de })}
-                      </Typography>
+                      <Typography variant="caption">{safeFormat(item.published_date, 'd. MMM yyyy')}</Typography>
                       <Divider orientation="vertical" flexItem />
                         <MuiLink href={item.original_url} target="_blank" rel="noopener noreferrer" variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }} onClick={(e) => e.stopPropagation()}>
                           {item.full_text ? item.full_text : getDomain(item.original_url)}
@@ -385,122 +412,76 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
     <WidgetPaper
       title={
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 1.5 }}>
-          {/* ... (Header-Code bleibt unverändert) ... */}
            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, overflow: 'hidden' }}>
-            {icon}
-            <Typography variant="h6" noWrap>{title}</Typography>
-            <Chip
-              label="Neu"
-              size="small"
-              variant={filterMode === 'new' ? 'filled' : 'outlined'}
-              color="primary"
-              clickable
-              onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')}
-              avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'primary.main', color: 'primary.contrastText' }}>{counts.new}</Avatar>}
-            />
-            <Chip
-              label="Nicht gehört"
-              size="small"
-              variant={filterMode === 'unread' ? 'filled' : 'outlined'}
-              color="secondary"
-              clickable
-              onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')}
-              avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{counts.unread}</Avatar>}
-            />
-          </Box>
-          <Box>
-            {user?.regions && user.regions.length > 1 && (
-              <TextField
-                select
-                value={selectedRegion?.id || ''}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  const region = user?.regions?.find(r => r.id === e.target.value);
-                  setSelectedRegion(region || null);
-                }}
-                SelectProps={{
-                  renderValue: (selectedId: unknown) => {
-                    const idAsString = selectedId as string;
-                    if (idAsString === '') {
-                      return (
-                        <Tooltip title="Alle Regionen">
-                          <img src="https://flagcdn.com/w20/eu.png" width={20} alt="Alle Regionen" style={{ border: '1px solid #eee', verticalAlign: 'middle' }} />
+               {icon}
+               <Typography variant="h6" noWrap>{title}</Typography>
+               
+               {isMobile ? (
+                    <>
+                        <Tooltip title="Neu">
+                            <Chip 
+                                size="small" 
+                                onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')} 
+                                sx={{ bgcolor: filterMode === 'new' ? 'primary.main' : 'action.hover', color: filterMode === 'new' ? 'primary.contrastText' : 'text.primary', '& .MuiChip-avatar': { color: 'inherit !important' } }} 
+                                avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', color: 'inherit', bgcolor: 'transparent' }}>{formatCount(counts.new)}</Avatar>} 
+                            />
                         </Tooltip>
-                      );
-                    }
-                    const region = user?.regions?.find(r => r.id === idAsString);
-                    if (!region) return null;
-                    return (
-                      <Tooltip title={region.name}>
-                        <img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width={20} alt={region.name} style={{ border: '1px solid #eee', verticalAlign: 'middle' }} />
-                      </Tooltip>
-                    );
-                  }
-                }}
-                size="small"
-                variant="outlined"
-                sx={{
-                  minWidth: 60,
-                  '& .MuiSelect-select': { display: 'flex', alignItems: 'center', paddingRight: '32px' }
-                }}
-              >
-                <MenuItem key="all-regions" value="">
-                  <Tooltip title="Alle Regionen" placement="right">
-                    <img src="https://flagcdn.com/w20/eu.png" width={20} alt="Alle Regionen" style={{ border: '1px solid #eee' }} />
-                  </Tooltip>
-                </MenuItem>
-                {user?.regions?.map((region) => (
-                  <MenuItem key={region.id} value={region.id}>
-                    <Tooltip title={region.name} placement="right">
-                      <img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width={20} alt={region.name} style={{ border: '1px solid #eee' }} />
-                    </Tooltip>
-                  </MenuItem>
-                ))}
-              </TextField>
-            )}
-          </Box>
+                        <Tooltip title="Nicht gehört">
+                            <Chip 
+                                size="small" 
+                                onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')} 
+                                sx={{ bgcolor: filterMode === 'unread' ? 'secondary.main' : 'action.hover', color: filterMode === 'unread' ? 'secondary.contrastText' : 'text.primary', '& .MuiChip-avatar': { color: 'inherit !important' } }} 
+                                avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', color: 'inherit', bgcolor: 'transparent' }}>{formatCount(counts.unread)}</Avatar>} 
+                            />
+                        </Tooltip>
+                    </>
+               ) : (
+                   <>
+                        <Chip 
+                            label="Neu" 
+                            size="small" 
+                            variant={filterMode === 'new' ? 'filled' : 'outlined'} 
+                            color="primary" 
+                            clickable 
+                            onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')} 
+                            avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'primary.main', color: 'primary.contrastText' }}>{formatCount(counts.new)}</Avatar>} 
+                        />
+                        <Chip 
+                            label="Nicht gehört" 
+                            size="small" 
+                            variant={filterMode === 'unread' ? 'filled' : 'outlined'} 
+                            color="secondary" 
+                            clickable 
+                            onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')} 
+                            avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{formatCount(counts.unread)}</Avatar>} 
+                        />
+                   </>
+               )}
+           </Box>
+          
+           <Box sx={{ flexGrow: 1 }} />
+
+           <Box>
+                {isMobile ? (
+                    <>
+                        <IconButton onClick={handleOpenFilterMenu} size="small"><TuneIcon /></IconButton>
+                        <Popover open={Boolean(filterAnchorEl)} anchorEl={filterAnchorEl} onClose={handleCloseFilterMenu} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}><Stack spacing={1.5} sx={{ p: 1 }}>{renderFilterControls(true)}</Stack></Popover>
+                    </>
+                ) : (
+                    <>
+                       {renderFilterControls(false)}
+                    </>
+                )}
+           </Box>
         </Box>
       }
-      widgetTitle={title}
-      widgetTypeKey={widgetTypeKey || ''}
-      widgetId={widgetId || ''}
-      onDelete={onDelete}
-      isRemovable={isRemovable}
-      noPadding
+      widgetTitle={title} widgetTypeKey={widgetTypeKey || ''} widgetId={widgetId || ''} onDelete={onDelete} isRemovable={isRemovable} noPadding
     >
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
-          {renderContent()}
-        </Box>
-
-        {activeTrack && (
-          <Paper sx={{ p: 2, borderTop: 1, borderColor: 'divider', mt: 'auto' }} elevation={4}>
-            {/* Das audio-Element wird nun nur einmal gerendert und seine Quelle dynamisch geändert */}
-            <audio ref={audioRef} src={activeTrack.original_url} preload="metadata" />
-            <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>
-              <Typography variant="subtitle2" noWrap sx={{ fontWeight: 'bold' }}>{activeTrack.title}</Typography>
-              <IconButton onClick={handleClosePlayer} size="small" aria-label="Player schließen">
-                <CloseIcon fontSize="small" />
-              </IconButton>
-            </Stack>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}>
-              <IconButton onClick={() => setIsPlaying(!isPlaying)} size="small" color="primary">
-                {isPlaying ? <PauseIcon /> : <PlayArrowIcon />}
-              </IconButton>
-              <Typography variant="caption" sx={{ minWidth: 40 }}>{formatTime(progress)}</Typography>
-              <Slider
-                size="small"
-                value={progress}
-                max={duration || 100}
-                onChange={(_, value) => { if (audioRef.current) audioRef.current.currentTime = value as number; }}
-                sx={{ flexGrow: 1 }}
-              />
-              <Typography variant="caption" sx={{ minWidth: 40 }}>{formatTime(duration)}</Typography>
-            </Box>
-          </Paper>
-        )}
+        <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>{renderContent()}</Box>
+        {activeTrack && (<Paper sx={{ p: 2, borderTop: 1, borderColor: 'divider', mt: 'auto' }} elevation={4}><audio ref={audioRef} src={activeTrack.original_url} preload="metadata" /><Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}><Typography variant="subtitle2" noWrap sx={{ fontWeight: 'bold' }}>{activeTrack.title}</Typography><IconButton onClick={handleClosePlayer} size="small" aria-label="Player schließen"><CloseIcon fontSize="small" /></IconButton></Stack><Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}><IconButton onClick={() => setIsPlaying(!isPlaying)} size="small" color="primary">{isPlaying ? <PauseIcon /> : <PlayArrowIcon />}</IconButton><Typography variant="caption" sx={{ minWidth: 40 }}>{formatTime(progress)}</Typography><Slider size="small" value={progress} max={duration || 100} onChange={(_, value) => { if (audioRef.current) audioRef.current.currentTime = value as number; }} sx={{ flexGrow: 1 }} /><Typography variant="caption" sx={{ minWidth: 40 }}>{formatTime(duration)}</Typography></Box></Paper>)}
       </Box>
     </WidgetPaper>
   );
 };
-
 export default PodcastWidget;

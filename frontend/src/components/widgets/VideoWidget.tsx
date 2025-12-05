@@ -1,21 +1,23 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     Box, Typography, CircularProgress, Alert, Divider,
-    IconButton, Tooltip, Avatar, Chip, TextField, MenuItem, Link as MuiLink, Button, Card, CardContent, Stack
+    IconButton, Tooltip, Avatar, Chip, TextField, MenuItem, Link as MuiLink, Button, Card, CardContent, Stack, Popover
 } from '@mui/material';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import CloseIcon from '@mui/icons-material/Close';
-import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt';
 import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt';
+import TuneIcon from '@mui/icons-material/Tune';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
-import { format } from 'date-fns';
+import { format, isValid } from 'date-fns';
 import { de } from 'date-fns/locale';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useTheme } from '@mui/material/styles';
 
 interface VideoItem {
     id: string;
@@ -40,6 +42,15 @@ interface VideoWidgetProps extends BaseWidgetProps {
     title: string;
     category: string;
 }
+
+// HELPER: Sicheres Datumsformat mit date-fns
+const safeFormat = (dateStr: string, fmt: string) => {
+    const d = new Date(dateStr);
+    return isValid(d) ? format(d, fmt, { locale: de }) : '';
+};
+
+// HELPER: Zähler-Formatierung (>10)
+const formatCount = (count: number) => count > 10 ? ">10" : count;
 
 const HighlightedText: React.FC<HighlightedTextProps> = ({ text, keywords }) => {
     const parts = useMemo(() => {
@@ -136,6 +147,14 @@ const VoteComponent: React.FC<{ item: VideoItem; onVote: (vote: 1 | -1) => void;
 
 const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey }) => {
     const { user } = useAuth();
+    
+    // Mobile Filter Menu
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+    const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
+    const handleOpenFilterMenu = (event: React.MouseEvent<HTMLElement>) => setFilterAnchorEl(event.currentTarget);
+    const handleCloseFilterMenu = () => setFilterAnchorEl(null);
+
     const [items, setItems] = useState<VideoItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -157,12 +176,13 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
         }
 
         if (loadMore) setIsLoadingMore(true);
-        else setIsLoading(true);
-        if (!loadMore) setItems([]);
+        else { setIsLoading(true); if (!loadMore) setItems([]); }
         setError(null);
 
         try {
             const token = localStorage.getItem('jwt_token');
+            
+            // 1. Content laden
             const params = new URLSearchParams({
                 category,
                 limit: '5',
@@ -176,8 +196,6 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
             const fetchedItems: VideoItem[] = response.data?.data || [];
             
             setItems(prev => loadMore ? [...prev, ...fetchedItems] : fetchedItems);
-            setCounts(response.data?.counts || { unread: 0, new: 0 });
-            setTotalPages(response.data?.totalPages || 0);
             setActiveGlobalTags(response.data?.activeFilters?.tags || []);
 
             if (currentPage === 1 && !loadMore && fetchedItems.length > 0 && !activeVideo) {
@@ -190,6 +208,28 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
             setIsLoading(false);
             setIsLoadingMore(false);
         }
+
+        // 2. Counts separat laden (Non-Blocking)
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const countParams = new URLSearchParams({
+                category, 
+                limit: '5', 
+                sortBy: 'date', 
+                region: region ? region.name : 'all'
+            });
+            if (filter !== 'all') {
+                countParams.append('filter', filter);
+            }
+            
+            const countsRes = await apiClient.get(`/api/data/scraped-content-counts?${countParams.toString()}`, { headers: { 'x-auth-token': token } });
+            setCounts(countsRes.data?.counts || { unread: 0, new: 0 });
+            setTotalPages(countsRes.data?.totalPages || 0);
+
+        } catch (err) {
+            console.warn("Fehler beim Laden der Zähler:", err);
+        }
+
     }, [category, activeVideo]);
     
     useEffect(() => {
@@ -246,6 +286,21 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
         setActiveVideo(null);
     };
 
+    const renderFilterControls = (isMenu: boolean) => {
+         const controlWrapper = (child: React.ReactNode) => isMenu 
+            ? <Box sx={{ p: 1, width: 220 }}>{child}</Box> 
+            : child;
+        return (
+             <>
+                 {user?.regions && user.regions.length > 1 && controlWrapper(
+                    <TextField select value={selectedRegion?.id || ''} onChange={(e) => { const region = user?.regions?.find(r => r.id === e.target.value); setSelectedRegion(region || null); }} size="small" fullWidth={isMenu} variant="outlined" sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '24px' } }} label={isMenu ? "Region" : ""}>
+                        {user?.regions?.map((region) => <MenuItem key={region.id} value={region.id}><Tooltip title={region.name} placement="right"><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} /></Tooltip></MenuItem>)}
+                    </TextField>
+                )}
+             </>
+        );
+    };
+
     const renderContent = () => {
         if (isLoading) return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', p: 2 }}><CircularProgress /></Box>;
         if (error) return <Alert severity="error" sx={{ m: 2 }}>{error}</Alert>;
@@ -284,7 +339,7 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
                         <Stack direction="row" spacing={1.5} alignItems="center" color="text.secondary" mt={0.5}>
                             <Typography variant="caption">{decodeHtmlEntities(activeVideo.full_text)}</Typography>
                             <Divider orientation="vertical" flexItem />
-                            <Typography variant="caption">{format(new Date(activeVideo.published_date), "d. MMMM yyyy", { locale: de })}</Typography>
+                            <Typography variant="caption">{safeFormat(activeVideo.published_date, "d. MMMM yyyy")}</Typography>
                         </Stack>
                     </Box>
                 )}
@@ -335,7 +390,7 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
                                             <Stack direction="row" spacing={1.5} alignItems="center" color="text.secondary">
                                                 <Typography variant="caption">{decodeHtmlEntities(item.full_text)}</Typography>
                                                 <Divider orientation="vertical" flexItem />
-                                                <Typography variant="caption">{format(new Date(item.published_date), "d. MMM yy", { locale: de })}</Typography>
+                                                <Typography variant="caption">{safeFormat(item.published_date, "d. MMM yy")}</Typography>
                                             </Stack>
                                         </Box>
                                         <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote)} />
@@ -357,47 +412,74 @@ const VideoWidget: React.FC<VideoWidgetProps> = ({ onDelete, widgetId, isRemovab
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, overflow: 'hidden' }}>
                         {icon}
                         <Typography variant="h6" noWrap>{title}</Typography>
-                        <Chip label="Neu" size="small" variant={filterMode === 'new' ? 'filled' : 'outlined'} color="primary" clickable onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')} avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem' }}>{counts.new}</Avatar>} />
-                        <Chip label="Nicht gesehen" size="small" variant={filterMode === 'unread' ? 'filled' : 'outlined'} color="secondary" clickable onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')} avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem' }}>{counts.unread}</Avatar>} />
+                        
+                        {isMobile ? (
+                            <>
+                                <Tooltip title="Neu">
+                                    <Chip 
+                                        size="small" 
+                                        onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')} 
+                                        sx={{ bgcolor: filterMode === 'new' ? 'primary.main' : 'action.hover', color: filterMode === 'new' ? 'primary.contrastText' : 'text.primary', '& .MuiChip-avatar': { color: 'inherit !important' } }} 
+                                        avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', color: 'inherit', bgcolor: 'transparent' }}>{formatCount(counts.new)}</Avatar>} 
+                                    />
+                                </Tooltip>
+                                <Tooltip title="Ungelesen">
+                                    <Chip 
+                                        size="small" 
+                                        onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')} 
+                                        sx={{ bgcolor: filterMode === 'unread' ? 'secondary.main' : 'action.hover', color: filterMode === 'unread' ? 'secondary.contrastText' : 'text.primary', '& .MuiChip-avatar': { color: 'inherit !important' } }} 
+                                        avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', color: 'inherit', bgcolor: 'transparent' }}>{formatCount(counts.unread)}</Avatar>} 
+                                    />
+                                </Tooltip>
+                            </>
+                        ) : (
+                            <>
+                                <Chip 
+                                    label="Neu" 
+                                    size="small" 
+                                    variant={filterMode === 'new' ? 'filled' : 'outlined'} 
+                                    color="primary" 
+                                    clickable 
+                                    onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')} 
+                                    avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'primary.main', color: 'primary.contrastText' }}>{formatCount(counts.new)}</Avatar>} 
+                                />
+                                <Chip 
+                                    label="Ungelesen" 
+                                    size="small" 
+                                    variant={filterMode === 'unread' ? 'filled' : 'outlined'} 
+                                    color="secondary" 
+                                    clickable 
+                                    onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')} 
+                                    avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{formatCount(counts.unread)}</Avatar>} 
+                                />
+                            </>
+                        )}
                     </Box>
                     <Box>
-                        {user?.regions && user.regions.length > 0 && (
-                            <TextField 
-                                select 
-                                value={selectedRegion?.id || ''} 
-                                onChange={(e) => { 
-                                    const regionId = e.target.value;
-                                    const region = user?.regions?.find(r => r.id === regionId) || null; 
-                                    setSelectedRegion(region); 
-                                }} 
-                                size="small" 
-                                variant="outlined" 
-                                sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '32px !important' } }}
-                                SelectProps={{
-                                    renderValue: (selectedId) => {
-                                        const idAsString = selectedId as string;
-                                        if (idAsString === '') {
-                                            return <Tooltip title="Alle Regionen"><img src="https://flagcdn.com/w20/eu.png" width={20} alt="Alle Regionen" style={{ border: '1px solid #eee', verticalAlign: 'middle' }} /></Tooltip>;
-                                        }
-                                        const region = user?.regions?.find(r => r.id === idAsString);
-                                        return <Tooltip title={region?.name}><img src={`https://flagcdn.com/w20/${region?.code.toLowerCase()}.png`} width={20} alt={region?.name} style={{ border: '1px solid #eee', verticalAlign: 'middle' }} /></Tooltip>;
-                                    }
-                                }}
+                         <Box sx={{ flexGrow: 1 }} />
+                    
+                    {isMobile ? (
+                        <>
+                            <IconButton onClick={handleOpenFilterMenu} size="small">
+                                <TuneIcon />
+                            </IconButton>
+                            <Popover
+                                open={Boolean(filterAnchorEl)}
+                                anchorEl={filterAnchorEl}
+                                onClose={handleCloseFilterMenu}
+                                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
                             >
-                                <MenuItem value="">
-                                    <Tooltip title="Alle Regionen" placement="right">
-                                        <img src="https://flagcdn.com/w20/eu.png" width="20" alt="Alle Regionen" style={{ border: '1px solid #eee' }} />
-                                    </Tooltip>
-                                </MenuItem>
-                                {user?.regions?.map((region) => (
-                                    <MenuItem key={region.id} value={region.id}>
-                                        <Tooltip title={region.name} placement="right">
-                                            <img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} />
-                                        </Tooltip>
-                                    </MenuItem>
-                                ))}
-                            </TextField>
-                        )}
+                                <Stack spacing={1.5} sx={{ p: 1 }}>
+                                    {renderFilterControls(true)}
+                                </Stack>
+                            </Popover>
+                        </>
+                    ) : (
+                        <>
+                           {renderFilterControls(false)}
+                        </>
+                    )}
                     </Box>
                 </Box>
             }

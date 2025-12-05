@@ -4,7 +4,8 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { 
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
-    TextField, MenuItem, Switch, FormControlLabel, Chip, Tabs, Tab, TableSortLabel, InputAdornment, Tooltip, Snackbar, Grid
+    TextField, MenuItem, Switch, FormControlLabel, Chip, Tabs, Tab, TableSortLabel, InputAdornment, Tooltip, Snackbar, Grid,
+    Avatar
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -32,6 +33,7 @@ interface User {
   business_partner_name: string | null;
   is_active: boolean;
   last_login_at: string | null;
+  profile_image_url: string | null;
 }
 
 interface BusinessPartnerOption {
@@ -104,6 +106,7 @@ const AdminUserManagementPage: React.FC = () => {
   const [formRole, setFormRole] = useState('user');
   const [formBusinessPartnerId, setFormBusinessPartnerId] = useState('');
   const [formIsActive, setFormIsActive] = useState(true);
+  const [formProfileImageUrl, setFormProfileImageUrl] = useState('');
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -241,6 +244,7 @@ useEffect(() => {
     setFormLastName('');
     setFormOrganizationName('');
     setFormLinkedinUrl('');
+    setFormProfileImageUrl('');
     setFormMembershipLevel('');
     setFormRole('user');
     setFormBusinessPartnerId(isAssistant ? (loggedInUser?.business_partner_id || '') : (adminFilterBpId || ''));
@@ -262,6 +266,7 @@ useEffect(() => {
     setFormRole(user.role);
     setFormBusinessPartnerId(user.business_partner_id || '');
     setFormIsActive(user.is_active);
+    setFormProfileImageUrl(user.profile_image_url || '');
     setDialogError(null);
     setOpenDialog(true);
   };
@@ -281,6 +286,7 @@ useEffect(() => {
       last_name: formLastName || null,
       organization_name: formOrganizationName || null,
       linkedin_url: formLinkedinUrl || null,
+      profile_image_url: formProfileImageUrl || null,
       membership_level: formMembershipLevel || null,
       role: formRole,
       business_partner_id: formBusinessPartnerId || null,
@@ -451,6 +457,7 @@ const handleExport = async () => {
               <Table>
 <TableHead>
                   <TableRow>
+                    <TableCell>Avatar</TableCell>
                     <TableCell sortDirection={orderBy === 'last_name' ? order : false}>
                       <TableSortLabel active={orderBy === 'last_name'} direction={order} onClick={() => handleSortRequest('last_name')}>
                         Name
@@ -495,6 +502,15 @@ const handleExport = async () => {
 <TableBody>
                   {sortedAndFilteredUsers.map((user) => (
                     <TableRow key={user.id} hover sx={{ backgroundColor: user.is_active ? 'inherit' : '#fafafa' }}>
+                      <TableCell>
+                        <Avatar 
+                            src={user.profile_image_url || undefined} 
+                            alt={user.first_name || 'User'}
+                            sx={{ width: 32, height: 32 }}
+                        >
+                            {user.first_name ? user.first_name.charAt(0) : '?'}
+                        </Avatar>
+                      </TableCell>                      
                       <TableCell>{user.first_name} {user.last_name}</TableCell>
                       <TableCell>{user.organization_name || '-'}</TableCell>
                       {isAdmin && <TableCell>{user.business_partner_name || '-'}</TableCell>}
@@ -538,6 +554,15 @@ const handleExport = async () => {
               <Grid item xs={12} sm={6}>
                 <TextField label="Nachname" fullWidth value={formLastName} onChange={(e) => setFormLastName(e.target.value)} />
               </Grid>
+              <Grid item xs={12}>
+                  <TextField 
+                      label="Profilbild URL" 
+                      fullWidth 
+                      value={formProfileImageUrl} 
+                      onChange={(e) => setFormProfileImageUrl(e.target.value)} 
+                      helperText="Link zu einem öffentlichen Bild (z.B. HTTPS URL)"
+                  />
+                </Grid>              
               <Grid item xs={12}>
                 <TextField label="Organisation" fullWidth value={formOrganizationName} onChange={(e) => setFormOrganizationName(e.target.value)} />
               </Grid>

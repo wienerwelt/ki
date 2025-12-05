@@ -63,9 +63,9 @@ const adminAuth = (req, res, next) => {
 const role = String(user.role).toLowerCase();
 console.log(`[adminAuth] Prüfe Zugriff für Route: ${req.originalUrl}. User-Rolle: ${role}`);
 
-if (role !== 'admin') {
-  console.warn(`[adminAuth] Zugriff verweigert: Rolle '${role}' ist nicht 'admin'.`);
-  return res.status(403).json({ message: 'Access denied. Admin role required.' });
+if (role !== 'admin' && role !== 'assistenz') {
+  console.warn(`[adminAuth] Zugriff verweigert: Rolle '${role}' ist nicht 'admin' oder 'assistenz'.`);
+  return res.status(403).json({ message: 'Access denied. Admin or Assistenz role required.' });
 }
 // === Ende der Korrektur ===
 

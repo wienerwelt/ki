@@ -128,11 +128,11 @@ const AdminLegalMonitorPage: React.FC = () => {
             setLoading(false);
         }
     }, [activeBpFilter, activeTemplateFilter]);
+    
 
 const fetchTemplates = useCallback(async () => {
         console.log('[Frontend] fetchTemplates: Starte API-Anfrage...');
         try {
-            // KORREKTUR: /api Präfix hinzugefügt
             const response = await apiClient.get('/api/admin-legal-monitor/templates');
             
             console.log('[Frontend] fetchTemplates: API-Roh-Antwort (response.data) empfangen:', response.data); 
@@ -147,13 +147,14 @@ const fetchTemplates = useCallback(async () => {
                  console.warn("[Frontend] FEHLER: response.data.data ist kein Array!", templatesData);
             }
             
+            // WICHTIG: State immer aktualisieren
             setTemplates(templatesArray); 
         } catch (err: any) {
             console.error('[Frontend] FEHLER bei fetchTemplates:', err.response?.data?.message || err.message);
             setError('Fehler beim Laden der Vorlagen.');
-           // setTemplates([]); // <-- *** HIER IST DIE KORREKTUR ***
+            // Im Fehlerfall setzen wir die Liste nicht zurück, damit alte Daten sichtbar bleiben (oder man könnte sie leeren)
         }
-    }, []); 
+    }, []);
 
 const fetchBusinessPartners = useCallback(async () => {
         console.log('[Frontend] fetchBusinessPartners: Starte API-Anfrage...');
@@ -251,7 +252,7 @@ const fetchBusinessPartners = useCallback(async () => {
     const handleCloseEntryDialog = () => setEntryDialog(false);
 
 
-    const handleSaveTemplate = async () => {
+const handleSaveTemplate = async () => {
         if (!templateFormState.business_partner_id) {
             showSnackbar('Fehler: Ein Business Partner muss ausgewählt werden.', 'error');
             return;
@@ -273,16 +274,22 @@ const fetchBusinessPartners = useCallback(async () => {
         try {
             if (editingTemplate) {
                 // --- UPDATE (BEARBEITEN) ---
+                // KORREKTUR: /api Präfix hinzugefügt, falls es fehlte (in deinem Code war es da, aber sicher ist sicher)
                 await apiClient.put(`/api/admin-legal-monitor/templates/${editingTemplate.id}`, dataToSave);
                 showSnackbar('Vorlage erfolgreich aktualisiert.', 'success');
             } else {
                 // --- CREATE (ERSTELLEN) ---
+                // KORREKTUR: /api Präfix hinzugefügt
                 await apiClient.post('/api/admin-legal-monitor/templates', dataToSave);
                 showSnackbar('Vorlage erfolgreich erstellt.', 'success');
             }
-            fetchTemplates();
+            
+            // WICHTIG: Warten, bis die Liste neu geladen ist!
+            await fetchTemplates(); 
+            
             handleCloseTemplateDialog(); // Schließt Dialog und setzt Formular zurück
         } catch (err: any) {
+            console.error("Fehler beim Speichern des Templates:", err); // Debugging Log
             showSnackbar(err.response?.data?.message || 'Fehler beim Speichern der Vorlage.', 'error');
         }
     };

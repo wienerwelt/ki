@@ -21,16 +21,17 @@ function getTokenFromRequest(req) {
 
 function extractUserFromPayload(decoded) {
   if (decoded && typeof decoded === 'object') {
-    if (decoded.user && typeof decoded.user === 'object') return decoded.user;
+    const userData = (decoded.user && typeof decoded.user === 'object') ? decoded.user : decoded;
     
-    // DIESE VERSION IST DIE EINZIG KORREKTE
     return {
-      id: decoded.id || decoded.userId || decoded.sub,
-      role: decoded.role,
-      email: decoded.email,
-      username: decoded.username,
-      business_partner_id: decoded.business_partner_id || null, // DER ENTSCHEIDENDE FIX
-      contribution_score: decoded.contribution_score ?? 0,
+      id: userData.id || userData.userId || userData.sub,
+      role: userData.role,
+      email: userData.email,
+      username: userData.username,
+      business_partner_id: userData.business_partner_id || null,
+      contribution_score: userData.contribution_score ?? 0,
+      // NEU: Wir merken uns, wann der Token erstellt wurde (Login-Zeitpunkt)
+      token_issued_at: decoded.iat ? new Date(decoded.iat * 1000) : new Date(0)
     };
   }
   return null;
@@ -49,6 +50,7 @@ const authMiddleware = (req, res, next) => {
     }
     const decoded = jwt.verify(token, secret);
     const user = extractUserFromPayload(decoded);
+    
     if (!user || (!user.id && !user.email)) {
       return res.status(401).json({ message: 'Token is not valid (no user info)' });
     }

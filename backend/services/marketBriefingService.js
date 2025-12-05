@@ -278,6 +278,100 @@ async function generateBriefingsForAllPartners() {
     }
 }
 
+
+function getWeekNumber(d) {
+    d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay()||7));
+    var yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+    var weekNo = Math.ceil(( ( (d - yearStart) / 86400000) + 1)/7);
+    return weekNo;
+}
+
+// UPDATE: Akzeptiert jetzt partnerId
+async function generateSentimentQuestionForPartner(partnerId) {
+    const client = await db.connect();
+    try {
+        // 1. Das aktuellste Markt-Briefing FÜR DIESEN PARTNER holen
+        const briefingRes = await client.query(
+            `SELECT headline, analysis_summary 
+             FROM business_partner_intelligence_briefings 
+             WHERE business_partner_id = $1 AND briefing_type = 'market' 
+             ORDER BY created_at DESC LIMIT 1`,
+            [partnerId]
+        );
+
+        let contextText = "";
+
+        if (briefingRes.rows.length > 0) {
+            const b = briefingRes.rows[0];
+            contextText = `SCHLAGZEILE: ${b.headline}\nZUSAMMENFASSUNG: ${b.analysis_summary}`;
+        } else {
+            // Fallback: News aus den Kategorien dieses Partners holen
+            // Wir brauchen die Kategorie-IDs des Partners
+            const catRes = await client.query(
+                `SELECT category_id FROM business_partner_categories WHERE business_partner_id = $1`,
+                [partnerId]
+            );
+            
+            if (catRes.rows.length > 0) {
+                const catIds = catRes.rows.map(r => r.category_id);
+                const newsRes = await client.query(
+                    `SELECT title FROM scraped_content 
+                     WHERE category_id = ANY($1::uuid[]) AND published_date >= NOW() - INTERVAL '3 days' 
+                     ORDER BY relevance_score DESC LIMIT 3`,
+                    [catIds]
+                );
+                contextText = newsRes.rows.map(r => r.title).join("\n");
+            }
+        }
+
+        if (!contextText) {
+            const weekNumber = getWeekNumber(new Date());
+            return `Branchenstimmung KW ${weekNumber}`;
+        }
+
+        // 2. KI Prompt (Spezifisch für die Branche des Partners)
+        const prompt = `
+            Basierend auf den folgenden aktuellen Nachrichten aus der Branche dieses Unternehmens, 
+            formuliere EINE einzige, prägnante Frage für eine interne Umfrage (Sentiment Barometer).
+            
+            KONTEXT (Branchentrends):
+            ${contextText}
+            
+            ANFORDERUNGEN:
+            - Die Frage muss kurz sein (max. 10-12 Wörter).
+            - Sie muss spezifisch für diese Branche/Situation sein.
+            - Sie muss mit "Positiv/Optimistisch" oder "Negativ/Pessimistisch" beantwortbar sein.
+            - Beispiel: "Wie bewerten Sie die aktuelle Auftragslage im Q4?"
+            
+            Gib NUR den Fragetext zurück.
+        `;
+
+        const jobRes = await client.query(`INSERT INTO ai_jobs (status, is_automated) VALUES ('running', TRUE) RETURNING id`);
+        const jobId = jobRes.rows[0].id;
+
+        const { aiResultString } = await generateAIContent({
+            promptTemplate: prompt,
+            inputText: '',
+            ai_provider: 'OpenAI GPT-4o',
+            jobId: jobId
+        });
+
+        await client.query(`UPDATE ai_jobs SET status = 'completed' WHERE id = $1`, [jobId]);
+
+        return aiResultString.replace(/^"|"$/g, '').trim();
+
+    } catch (err) {
+        console.error(`[SentimentAI] Fehler bei Partner ${partnerId}:`, err.message);
+        const weekNumber = getWeekNumber(new Date());
+        return `Marktstimmung KW ${weekNumber}`;
+    } finally {
+        client.release();
+    }
+}
+
+
 module.exports = {
     generateBriefingsForAllPartners,
+    generateSentimentQuestionForPartner
 };

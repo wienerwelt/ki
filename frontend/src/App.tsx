@@ -21,7 +21,8 @@ import PrivacyPage from './pages/PrivacyPage';
 import DisclaimerPage from './pages/DisclaimerPage';
 import NewsletterConfirmed from './pages/NewsletterConfirmed';
 import FundingSearchPage from './pages/FundingSearchPage';
-import FundingDetailPage from './pages/FundingDetailPage'; 
+import FundingDetailPage from './pages/FundingDetailPage';
+import PublicProfileCard from './pages/PublicProfileCard';
 
 // Geschützte Seiten
 import DashboardPage from './pages/DashboardPage';
@@ -161,6 +162,7 @@ function App() {
           <Route path="/privacy" element={<PrivacyPage />} />
           <Route path="/disclaimer" element={<DisclaimerPage />} />
           <Route path="/newsletter/confirmed" element={<NewsletterConfirmed />} />
+          <Route path="/p/:userId" element={<PublicProfileCard />} />
 
           <Route element={<ProtectedRoutes />}>
             <Route path="/dashboard" element={<DashboardPage />} />

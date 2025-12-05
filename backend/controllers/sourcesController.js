@@ -24,20 +24,16 @@ exports.getAllApprovedSources = async (req, res) => {
         `;
         const queryParams = [];
 
-        // --- KORREKTUR START ---
-        // Die Logik wird erweitert, um sowohl UUIDs als auch Kategorienamen zu akzeptieren.
+        // --- KORREKTUR: UUID oder Name Support ---
         if (category) {
             if (isValidUUID(category)) {
-                // Fall 1: Eine technische UUID wird übergeben (z.B. für interne Links)
                 queryParams.push(category);
                 query += ` AND s.category_id = $${queryParams.length}`;
             } else {
-                // Fall 2: Ein Kategoriename wird übergeben (der Normalfall vom Frontend-Filter)
                 queryParams.push(category);
-                query += ` AND c.name ILIKE $${queryParams.length}`; // ILIKE für Groß-/Kleinschreibung-unabhängigen Vergleich
+                query += ` AND c.name ILIKE $${queryParams.length}`;
             }
         }
-        // --- KORREKTUR ENDE ---
 
         query += ` ORDER BY s.average_rating DESC, s.vote_count DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
         queryParams.push(limit, offset);
@@ -122,6 +118,11 @@ exports.getSourceById = async (req, res) => {
 
 
 exports.createSource = async (req, res) => {
+    // --- NEU: Demo-Check ---
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Quellen vorschlagen.' });
+    }
+
     let { url, description, category_id } = req.body;
     const userId = req.user.id;
 
@@ -201,6 +202,11 @@ exports.createSource = async (req, res) => {
 
 
 exports.voteOnSource = async (req, res) => {
+    // --- NEU: Demo-Check ---
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen nicht abstimmen.' });
+    }
+
     const { id: sourceId } = req.params;
     if (!isValidUUID(sourceId)) return res.status(400).json({ message: 'Invalid source ID format.' });
     
@@ -275,6 +281,11 @@ exports.voteOnSource = async (req, res) => {
 
 
 exports.reportSource = async (req, res) => {
+    // --- NEU: Demo-Check ---
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Quellen melden.' });
+    }
+
     const { id: sourceId } = req.params;
     if (!isValidUUID(sourceId)) return res.status(400).json({ message: 'Invalid source ID format.' });
     

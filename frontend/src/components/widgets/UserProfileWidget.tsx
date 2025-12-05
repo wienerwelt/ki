@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import {
-    Box, Typography, Avatar, Button, Divider, Grid, Skeleton, Chip, useTheme
+    Box, Typography, Avatar, Button, Divider, Grid, Skeleton, Chip, useTheme, Stack, Tooltip, IconButton
 } from '@mui/material';
 import {
     Event as EventIcon,
-    Stars as StarsIcon,
+    EmojiEvents as EmojiEventsIcon,
     Forum as ForumIcon,
-    ThumbUp as ThumbUpIcon,
+    Comment as CommentIcon,
     LinkedIn as LinkedInIcon,
     VerifiedUser as VerifiedUserIcon,
-    Edit as EditIcon
+    Edit as EditIcon,
+    QrCode as QrCodeIcon,
+    Person as PersonIcon,
+    Visibility as VisibilityIcon // Icon für "Wie werde ich gesehen"
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import WidgetPaper from './WidgetPaper';
@@ -35,7 +38,7 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
         const fetchStats = async () => {
             try {
                 const res = await apiClient.get('/api/users/activities');
-                const activities = res.data;
+                const activities = res.data || [];
                 
                 const postCount = activities.filter((a: any) => a.type === 'COMMUNITY_POST').length;
                 const commentCount = activities.filter((a: any) => a.type === 'COMMUNITY_COMMENT').length;
@@ -51,8 +54,8 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                 setLoading(false);
             }
         };
-        fetchStats();
-    }, []);
+        if (user) fetchStats();
+    }, [user]);
 
     const handleEditProfile = () => {
         navigate('/profile');
@@ -65,13 +68,15 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
             widgetId={widgetId}
             onDelete={onDelete}
             isRemovable={isRemovable}
-            widgetTitle={typeof title === 'string' ? title : 'Mein Profil'}
+            widgetTitle={typeof title === 'string' && title ? title : 'Mein Profil'}
             widgetTypeKey={widgetTypeKey || 'user_profile'}
-            // KORREKTUR: Titel wird jetzt übergeben statt ausgeblendet (<></>)
             title={
-                <Typography variant="h6">
-                    {typeof title === 'string' && title ? title : 'Mein Profil'}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <PersonIcon />
+                    <Typography variant="h6">
+                        {typeof title === 'string' && title ? title : 'Mein Profil'}
+                    </Typography>
+                </Box>
             } 
             loading={false}
             error={null}
@@ -85,19 +90,28 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                     background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`,
                     position: 'relative'
                 }}>
+                    {/* KORREKTUR: Logo Anzeige repariert (kein Filter mehr, richtige Größe) */}
                     {businessPartner?.logo_url && (
                         <Box 
                             component="img" 
                             src={businessPartner.logo_url} 
                             sx={{ 
-                                position: 'absolute', right: 10, top: 10, height: 30, 
-                                opacity: 0.3, filter: 'grayscale(100%) brightness(200%)' 
+                                position: 'absolute', 
+                                right: 15, 
+                                top: 15, 
+                                height: 32, // Etwas größer
+                                maxWidth: 120,
+                                objectFit: 'contain', // Verhindert Verzerren
+                                // Filter entfernt, damit Originalfarben sichtbar sind
+                                bgcolor: 'rgba(255,255,255,0.9)', // Optional: Weißer Hintergrund für Kontrast
+                                p: 0.5,
+                                borderRadius: 1
                             }} 
                         />
                     )}
                 </Box>
 
-                {/* 2. PROFIL BILD & INFO */}
+                {/* 2. PROFIL BILD & HAUPTINFO */}
                 <Box sx={{ px: 3, mt: -5, flexGrow: 1 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                         <Avatar 
@@ -105,29 +119,29 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                             sx={{ 
                                 width: 80, height: 80, 
                                 border: `4px solid ${theme.palette.background.paper}`,
-                                boxShadow: theme.shadows[2],
-                                fontSize: '2rem'
+                                boxShadow: theme.shadows[3],
+                                fontSize: '2.5rem',
+                                bgcolor: 'grey.300'
                             }}
                         >
-                            {user.first_name?.charAt(0)}
+                            {user.first_name ? user.first_name.charAt(0) : user.username.charAt(0)}
                         </Avatar>
-                        <Button 
-                            size="small" 
-                            startIcon={<EditIcon />} 
-                            onClick={handleEditProfile}
-                            sx={{ mb: 1 }}
-                        >
-                            Bearbeiten
-                        </Button>
+                        
+                        {/* Schnellzugriff Bearbeiten */}
+                        <Tooltip title="Profil bearbeiten">
+                            <IconButton size="small" onClick={handleEditProfile} sx={{ mb: 0.5, bgcolor: 'action.hover' }}>
+                                <EditIcon fontSize="small" />
+                            </IconButton>
+                        </Tooltip>
                     </Box>
 
-                    <Box sx={{ mt: 1 }}>
-                        <Typography variant="h6" fontWeight="bold">
+                    <Box sx={{ mt: 1.5 }}>
+                        <Typography variant="h6" fontWeight="bold" lineHeight={1.2}>
                             {user.first_name} {user.last_name}
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        <Typography variant="body2" color="text.secondary" noWrap>
                             {user.role === 'admin' ? 'Administrator' : (user.role === 'assistenz' ? 'Assistenz' : 'Mitglied')}
-                            {user.organization_name && ` bei ${user.organization_name}`}
+                            {user.organization_name && ` • ${user.organization_name}`}
                         </Typography>
 
                         {user.membership_level && (
@@ -135,9 +149,9 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                                 icon={<VerifiedUserIcon fontSize="small" />} 
                                 label={user.membership_level} 
                                 size="small" 
-                                color="secondary" 
+                                color="primary" 
                                 variant="outlined" 
-                                sx={{ mt: 1 }}
+                                sx={{ mt: 1, height: 24 }}
                             />
                         )}
                     </Box>
@@ -147,14 +161,17 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                     {/* 3. STATISTIKEN GRID */}
                     <Grid container spacing={2}>
                         <Grid item xs={6}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'text.secondary', mb: 1 }}>
-                                <StarsIcon fontSize="small" color="warning" />
-                                <Typography variant="caption">Score</Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'text.secondary', mb: 0.5 }}>
+                                <EmojiEventsIcon fontSize="small" color="warning" />
+                                <Typography variant="caption">Punkte</Typography>
                             </Box>
-                            <Typography variant="h6" fontWeight="bold">{user.contribution_score || 0}</Typography>
+                            <Typography variant="h6" fontWeight="bold" color="text.primary">
+                                {user.contribution_score || 0}
+                            </Typography>
                         </Grid>
+
                         <Grid item xs={6}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'text.secondary', mb: 1 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'text.secondary', mb: 0.5 }}>
                                 <EventIcon fontSize="small" />
                                 <Typography variant="caption">Dabei seit</Typography>
                             </Box>
@@ -172,10 +189,11 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                                 {loading ? <Skeleton width={20} /> : (stats?.post_count || 0)}
                             </Typography>
                         </Grid>
+
                         <Grid item xs={6}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'text.secondary', mb: 0.5 }}>
-                                <ThumbUpIcon fontSize="small" sx={{ fontSize: 16 }} />
-                                <Typography variant="caption">Hilfreich</Typography>
+                                <CommentIcon fontSize="small" sx={{ fontSize: 16 }} />
+                                <Typography variant="caption">Kommentare</Typography>
                             </Box>
                             <Typography variant="body2" fontWeight="bold">
                                 {loading ? <Skeleton width={20} /> : (stats?.comment_count || 0)}
@@ -184,21 +202,58 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                     </Grid>
                 </Box>
 
-                {/* 4. FOOTER */}
-                {user.linkedin_url && (
-                    <Box sx={{ p: 2, mt: 'auto', borderTop: 1, borderColor: 'divider' }}>
-                         <Button 
+                {/* 4. FOOTER ACTIONS */}
+                <Box sx={{ p: 2, mt: 'auto', borderTop: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                        {/* 1. Haupt-Button: Visitenkarte (Intern/QR) */}
+                        <Button 
                             variant="outlined" 
-                            startIcon={<LinkedInIcon />} 
+                            startIcon={<QrCodeIcon />} 
                             fullWidth 
                             size="small"
-                            href={user.linkedin_url} 
-                            target="_blank"
+                            onClick={() => navigate('/profile')} 
+                            sx={{ bgcolor: 'background.paper', flexGrow: 1 }}
                         >
-                            LinkedIn Profil
+                            Visitenkarte
                         </Button>
-                    </Box>
-                )}
+                        
+                        {/* 2. NEU: Icon-Button für öffentliche Vorschau ("Wie werde ich gesehen") */}
+                        <Tooltip title="Öffentliche Ansicht (Vorschau)">
+                            <IconButton 
+                                size="small"
+                                href={`/p/${user.id}`} // Link zur Public Card
+                                target="_blank"
+                                sx={{ 
+                                    border: 1, 
+                                    borderColor: 'divider', 
+                                    bgcolor: 'background.paper', 
+                                    borderRadius: 1 
+                                }}
+                            >
+                                <VisibilityIcon color="action" />
+                            </IconButton>
+                        </Tooltip>
+
+                        {/* 3. LinkedIn (falls vorhanden) */}
+                        {user.linkedin_url && (
+                            <Tooltip title="LinkedIn Profil öffnen">
+                                <IconButton 
+                                    size="small"
+                                    href={user.linkedin_url} 
+                                    target="_blank"
+                                    sx={{ 
+                                        border: 1, 
+                                        borderColor: 'divider', 
+                                        bgcolor: 'background.paper', 
+                                        borderRadius: 1 
+                                    }}
+                                >
+                                    <LinkedInIcon color="primary" />
+                                </IconButton>
+                            </Tooltip>
+                        )}
+                    </Stack>
+                </Box>
             </Box>
         </WidgetPaper>
     );
