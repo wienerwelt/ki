@@ -72,7 +72,6 @@ exports.getScheduledScrapingRules = async (req, res) => {
       ORDER BY name ASC
     `);
 
-    // Berechne für jede Regel die nächste Ausführungszeit
     const rulesWithNextRun = rows.map(rule => {
       let next_run_at = null;
       try {
@@ -195,7 +194,6 @@ exports.createSystemSubscription = async (req, res) => {
       [ai_prompt_rule_id, keywords, region, schedule, is_active]
     );
     const newSub = rows[0];
-    // Den neuen Job auch in Redis planen
     await jobManager.setSystemSubscriptionSchedule(newSub.id, newSub.schedule);
     res.status(201).json(newSub);
   } catch (err) {
@@ -314,7 +312,11 @@ exports.triggerDataUpdateJob = async (req, res) => {
       [job_name]
     );
 
-    await dataUpdatesQueue.add(job_name, { triggeredManually: true });
+    // Hier mapping auch für manuellen Trigger
+    let finalName = job_name;
+    if(job_name === 'Account Intelligence Search') finalName = 'trigger-account-intelligence';
+
+    await dataUpdatesQueue.add(finalName, { triggeredManually: true });
     res.status(202).json({ message: `Job '${job_name}' wurde manuell zur Warteschlange hinzugefügt.` });
   } catch (err) {
     console.error(`Error triggering data update job ${job_name}:`, err.message);
@@ -457,9 +459,11 @@ exports.getScrapingCronjobs = async (req, res) => {
 // NEUE FUNKTION: Stößt den Account Intelligence Job manuell an
 exports.triggerAccountIntelligenceJob = async (req, res) => {
   try {
-    await scrapeQueue.add('trigger-account-intelligence', { triggeredManually: true });
+    // GEÄNDERT: Jetzt dataUpdatesQueue statt scrapeQueue
+    await dataUpdatesQueue.add('trigger-account-intelligence', { triggeredManually: true });
+    
     await db.query("UPDATE cronjobs SET last_run_at = NOW() WHERE name = 'Account Intelligence Search'");
-    res.status(202).json({ message: 'Account Intelligence Job wurde manuell zur Warteschlange hinzugefügt.' });
+    res.status(202).json({ message: 'Account Intelligence Job wurde manuell zur Data-Update Warteschlange hinzugefügt.' });
   } catch (err) {
     console.error(`Error triggering Account Intelligence job:`, err.message);
     res.status(500).send('Server error');
@@ -480,7 +484,6 @@ exports.updateCronjob = async (req, res) => {
     );
     if (rows.length === 0) return res.status(404).json({ message: 'Cronjob not found.' });
     
-    // Wichtig: Auch den Job in der BullMQ-Queue neu planen
     await jobManager.synchronizeSchedulesFromDB();
     
     res.json(rows[0]);
@@ -591,5 +594,3 @@ exports.getTrackedArticleAccounts = async (req, res) => {
         res.status(500).send('Server Error');
     }
 };
-
-

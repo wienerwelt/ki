@@ -19,8 +19,8 @@ import posthog from 'posthog-js';
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
-import deTranslation from './locales/de/translation.json';
-import enTranslation from './locales/en/translation.json';
+import deTranslation from './locales/translation-de.json';
+import enTranslation from './locales/translation-en.json';
 
 posthog.init(import.meta.env.VITE_POSTHOG_KEY, {
     api_host: import.meta.env.VITE_POSTHOG_HOST,

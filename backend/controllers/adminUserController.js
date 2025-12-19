@@ -44,7 +44,6 @@ exports.getAllUsers = async (req, res) => {
     const { role: requesterRole, business_partner_id: requesterBpId } = req.user;
 
     try {
-        // KORREKTUR: u.profile_image_url hinzugefügt
         let query = `
             SELECT
                 u.id, u.username, u.first_name, u.last_name, u.organization_name, u.email, 
@@ -89,7 +88,6 @@ exports.getUserById = async (req, res) => {
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid User ID format.' });
 
     try {
-        // KORREKTUR: u.profile_image_url hinzugefügt
         const result = await db.query(
             `SELECT
                 u.id, u.username, u.first_name, u.last_name, u.organization_name, u.email, 
@@ -180,7 +178,6 @@ exports.createUser = async (req, res) => {
             );
         } catch (dashErr) {
             console.error('Konnte Standard-Dashboard für neuen User nicht anlegen:', dashErr.message);
-            // Wir brechen nicht ab, da der User ja erstellt wurde.
         }
         // ---------------------------------------------------
 
@@ -214,16 +211,13 @@ exports.createUser = async (req, res) => {
 };
 
 
-// backend/controllers/adminUserController.js
-
 // UPDATE existing user
 exports.updateUser = async (req, res) => {
-    const { id: targetUserId } = req.params; // ID aus der URL
-    const { user: requester } = req;         // Der eingeloggte User (aus dem Token)
-    const updateData = req.body;             // Die Daten aus dem Formular
+    const { id: targetUserId } = req.params;
+    const { user: requester } = req;
+    const updateData = req.body;
 
     try {
-        // 1. Den zu bearbeitenden User laden, um Rechte zu prüfen und alte Werte zu sichern
         const targetUserResult = await db.query('SELECT * FROM users WHERE id = $1', [targetUserId]);
         
         if (targetUserResult.rows.length === 0) {
@@ -231,33 +225,23 @@ exports.updateUser = async (req, res) => {
         }
         const beforeUpdate = targetUserResult.rows[0];
 
-        // 2. Sicherheitschecks für Assistenz-Rolle
         if (requester.role === 'assistenz') {
-            // Darf keine Admins bearbeiten oder jemanden zum Admin machen
             if (beforeUpdate.role === 'admin' || updateData.role === 'admin') {
                 return res.status(403).json({ message: 'Permission denied to edit admin users or assign admin role.' });
             }
-            // Darf nur User des eigenen Business Partners bearbeiten
             if (beforeUpdate.business_partner_id !== requester.business_partner_id) {
                 return res.status(403).json({ message: 'Permission denied: You can only edit users within your own business partner.' });
             }
         }
 
-        // 3. Passwort-Logik: Nur hashen, wenn ein neues Passwort gesendet wurde
         let password_hash = beforeUpdate.password_hash;
         if (updateData.password && updateData.password.trim() !== '') {
             const salt = await bcrypt.genSalt(10);
             password_hash = await bcrypt.hash(updateData.password, salt);
         }
 
-        // 4. Business Partner Logik
-        // Wenn Assistenz: Zwingend die eigene BP-ID nutzen.
-        // Wenn Admin: Die gesendete BP-ID nutzen (oder NULL).
         const finalBpId = requester.role === 'assistenz' ? requester.business_partner_id : updateData.business_partner_id;
 
-        // 5. Update Query ausführen
-        // Wir nutzen COALESCE oder explizite Prüfung im Frontend, hier nehmen wir die Werte direkt aus updateData
-        // profile_image_url wird hier explizit mitgeführt.
         await db.query(
             `UPDATE users SET
                 username = $1, 
@@ -271,35 +255,31 @@ exports.updateUser = async (req, res) => {
                 role = $9, 
                 business_partner_id = $10, 
                 is_active = $11, 
-                profile_image_url = $12,  -- <--- Hier wird das Bild gespeichert
+                profile_image_url = $12,
                 updated_at = CURRENT_TIMESTAMP
              WHERE id = $13`,
             [
-                updateData.username,            // $1
-                updateData.email,               // $2
-                password_hash,                  // $3
-                updateData.first_name,          // $4
-                updateData.last_name,           // $5
-                updateData.organization_name,   // $6
-                updateData.linkedin_url,        // $7
-                updateData.membership_level,    // $8
-                updateData.role,                // $9
-                finalBpId || null,              // $10
-                updateData.is_active,           // $11
-                updateData.profile_image_url || null, // $12
-                targetUserId                    // $13
+                updateData.username,
+                updateData.email,
+                password_hash,
+                updateData.first_name,
+                updateData.last_name,
+                updateData.organization_name,
+                updateData.linkedin_url,
+                updateData.membership_level,
+                updateData.role,
+                finalBpId || null,
+                updateData.is_active,
+                updateData.profile_image_url || null,
+                targetUserId
             ]
         );
 
-        // 6. Audit Logging (Änderungen protokollieren)
         const changes = {};
-        // Wir vergleichen die Felder, um zu sehen, was sich geändert hat
         const fieldsToCheck = ['username', 'email', 'first_name', 'last_name', 'organization_name', 'linkedin_url', 'membership_level', 'role', 'business_partner_id', 'is_active', 'profile_image_url'];
         
         for (const key of fieldsToCheck) {
-            // Einfacher Vergleich (String-Konvertierung hilft bei ID-Vergleichen oder Zahlen)
             if (String(beforeUpdate[key]) !== String(updateData[key])) {
-                // Bei undefined/null aufpassen
                 const oldVal = beforeUpdate[key] === null ? '' : beforeUpdate[key];
                 const newVal = updateData[key] === null || updateData[key] === undefined ? '' : updateData[key];
                 
@@ -332,7 +312,6 @@ exports.updateUser = async (req, res) => {
         res.json({ message: 'User updated successfully' });
 
     } catch (err) {
-        // Fehler-Logging
         await logActivity({ 
             userId: requester.id, 
             username: requester.username, 
@@ -344,7 +323,6 @@ exports.updateUser = async (req, res) => {
         });
         console.error('Error updating user:', err.message);
         
-        // Prüfung auf Unique-Constraint-Verletzung (z.B. E-Mail schon vergeben)
         if (err.code === '23505') {
             return res.status(409).json({ message: 'Benutzername oder E-Mail wird bereits verwendet.' });
         }
@@ -397,8 +375,6 @@ exports.deleteUser = async (req, res) => {
     }
 };
 
-
-// backend/controllers/adminUserController.js
 
 // IMPORT Users from CSV (VERSION MIT "INSERT ONLY", KEIN UPDATE)
 exports.importUsersFromCSV = async (req, res) => {
@@ -551,6 +527,42 @@ exports.importUsersFromCSV = async (req, res) => {
                             [finalUsername, email, password_hash, first_name || null, last_name || null, organization_name || null, linkedin_url || null, membership_level || null, role, business_partner_id, true]
                         );
                         
+                        // --- NEU: Standard-Dashboard auch beim Import anlegen ---
+                        try {
+                            const newUserId = newUserResult.rows[0].id;
+                            const defaultConfig = {
+                                name: 'Mein Dashboard',
+                                widgets: [
+                                    { id: 'default-bp-info', type: 'BusinessPartnerInfo' },
+                                    { id: 'default-user-profile', type: 'user_activity' }
+                                ],
+                                layouts: {
+                                    lg: [
+                                        { i: 'default-bp-info', x: 0, y: 0, w: 8, h: 8 },
+                                        { i: 'default-user-profile', x: 8, y: 0, w: 4, h: 8 }
+                                    ],
+                                    md: [
+                                        { i: 'default-bp-info', x: 0, y: 0, w: 6, h: 8 },
+                                        { i: 'default-user-profile', x: 6, y: 0, w: 4, h: 8 }
+                                    ],
+                                    sm: [
+                                        { i: 'default-bp-info', x: 0, y: 0, w: 6, h: 8 },
+                                        { i: 'default-user-profile', x: 0, y: 8, w: 6, h: 8 }
+                                    ]
+                                }
+                            };
+
+                            await db.query(
+                                `INSERT INTO dashboard_configurations (user_id, name, config, is_default) 
+                                 VALUES ($1, $2, $3, $4)`,
+                                [newUserId, 'Mein Dashboard', JSON.stringify(defaultConfig), true]
+                            );
+                        } catch (dashErr) {
+                            // Fehler beim Dashboard soll den User-Import nicht als "Fehlgeschlagen" markieren
+                            console.error(`Konnte Standard-Dashboard für importierten User (${email}) nicht anlegen:`, dashErr.message);
+                        }
+                        // -----------------------------------------------------
+
                         report.successCount++;
                         const bpNameForLog = await getBusinessPartnerName(business_partner_id);
                         await logActivity({

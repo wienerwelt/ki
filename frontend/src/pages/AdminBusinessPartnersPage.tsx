@@ -16,7 +16,11 @@ import FolderZipIcon from '@mui/icons-material/FolderZip';
 import DashboardLayout from '../components/DashboardLayout';
 import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
 import UploadIcon from '@mui/icons-material/Upload';
+import LinkIcon from '@mui/icons-material/Link'; 
+import QrCodeIcon from '@mui/icons-material/QrCode'; // ✅ NEU: Icon importiert
+
 import apiClient from '../apiClient';
+import { useSnackbar } from '../context/SnackbarContext';
 
 interface Region {
     id: string;
@@ -118,6 +122,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
     const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
+    // Form States
     const [formName, setFormName] = useState('');
     const [formDashboardTitle, setFormDashboardTitle] = useState('');
     const [formAddress, setFormAddress] = useState('');
@@ -139,6 +144,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [formIndustryIds, setFormIndustryIds] = useState<string[]>([]);
 
     const navigate = useNavigate();
+    const { showSnackbar } = useSnackbar();
 
     const fetchData = async () => {
         setLoading(true);
@@ -301,6 +307,17 @@ const AdminBusinessPartnersPage: React.FC = () => {
         navigate(`/admin/bp-widget-access/${bpId}`, { state: { businessPartnerName: bpName } });
     };
 
+    const handleCopyPartnerLink = (bpId: string) => {
+        const voucherCode = bpId.slice(-8); 
+        const link = `${window.location.origin}/register?partner=${voucherCode}`;
+        
+        navigator.clipboard.writeText(link).then(() => {
+            showSnackbar('Registrierungs-Link in die Zwischenablage kopiert!', 'success');
+        }).catch(() => {
+            showSnackbar('Fehler beim Kopieren des Links.', 'error');
+        });
+    };
+
     const getDaysRemaining = (endDateString: string | null): { text: string; color: string } => {
         if (!endDateString) return { text: 'Unbefristet', color: 'text.secondary' };
         const endDate = new Date(endDateString);
@@ -405,8 +422,30 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                                         </MuiTooltip>
                                                         <Box>
                                                             <Typography component="span" sx={{ fontWeight: 'bold' }}>{bp.name}</Typography>
-                                                            <Typography variant="body2" color="text.secondary" display="block">
-                                                                ID: <code>{bp.id.slice(0, -8)}<Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>{bp.id.slice(-8)}</Box></code>
+                                                            
+                                                            {/* === ID ANZEIGE MIT KOPIER-BUTTON & EINLADUNGS-BUTTON === */}
+                                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                                                                <Typography variant="body2" color="text.secondary" component="span" sx={{ fontFamily: 'monospace' }}>
+                                                                    ...<Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>{bp.id.slice(-8)}</Box>
+                                                                </Typography>
+                                                                
+                                                                <MuiTooltip title="Registrierungs-Link kopieren">
+                                                                    <IconButton size="small" onClick={() => handleCopyPartnerLink(bp.id)} sx={{ padding: '2px' }}>
+                                                                        <LinkIcon fontSize="small" />
+                                                                    </IconButton>
+                                                                </MuiTooltip>
+
+                                                                {/* ✅ NEU: Button zur Einladungskarte */}
+                                                                <MuiTooltip title="Einladungskarte öffnen (QR-Code)">
+                                                                    <IconButton size="small" onClick={() => window.open(`/invite/${bp.id}`, '_blank')} sx={{ padding: '2px', ml: 0.5 }}>
+                                                                        <QrCodeIcon fontSize="small" />
+                                                                    </IconButton>
+                                                                </MuiTooltip>
+                                                            </Box>
+                                                            
+                                                            {/* === VOLLSTÄNDIGE ID (KLEIN & GRAU) === */}
+                                                            <Typography variant="caption" color="text.disabled" sx={{ display: 'block', fontSize: '0.7rem', mt: 0.2 }}>
+                                                                {bp.id}
                                                             </Typography>
                                                         </Box>
                                                     </Box>
@@ -475,6 +514,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
                 )}
                 
                 <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
+                    {/* ... (Dialog Content wie gehabt) ... */}
                     <DialogTitle>{editingBp ? 'Business Partner bearbeiten' : 'Neuen Business Partner hinzufügen'}</DialogTitle>
                     <DialogContent>
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}

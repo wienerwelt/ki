@@ -9,7 +9,7 @@ import { styled, alpha, useTheme } from '@mui/material/styles';
 // Icons
 import SearchIcon from '@mui/icons-material/Search';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import ClearIcon from '@mui/icons-material/Clear'; // ✅ NEU
+import ClearIcon from '@mui/icons-material/Clear';
 import ArticleIcon from '@mui/icons-material/Article';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import BusinessIcon from '@mui/icons-material/Business';
@@ -19,7 +19,6 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 
 import apiClient from '../apiClient';
 
-// --- Interfaces ---
 interface SearchResult {
   id: string;
   title: string;
@@ -29,7 +28,6 @@ interface SearchResult {
   published_date: string;
 }
 
-// --- Styling ---
 const SearchWrapper = styled('div')(({ theme }) => ({
   position: 'relative',
   borderRadius: theme.shape.borderRadius,
@@ -57,9 +55,10 @@ const GlobalSearchBar: React.FC = () => {
   
   const debounceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // --- API Suche ---
   useEffect(() => {
-    if (inputValue.length < 3) {
+    const trimmedInput = inputValue.trim();
+
+    if (trimmedInput.length < 3) {
         setOptions([]);
         setLoading(false);
         return;
@@ -71,10 +70,15 @@ const GlobalSearchBar: React.FC = () => {
 
     debounceTimeout.current = setTimeout(async () => {
         try {
-            const response = await apiClient.get(`/api/data/search?term=${encodeURIComponent(inputValue)}`);
-            setOptions(response.data || []);
+            const response = await apiClient.get(`/api/data/search?term=${encodeURIComponent(trimmedInput)}`);
+            if (response.data && Array.isArray(response.data)) {
+                setOptions(response.data);
+            } else {
+                setOptions([]);
+            }
         } catch (err) {
             console.error("Search error:", err);
+            setOptions([]); 
         } finally {
             setLoading(false);
         }
@@ -84,8 +88,6 @@ const GlobalSearchBar: React.FC = () => {
         if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
     };
   }, [inputValue]);
-
-  // --- Handlers ---
 
   const handleAiSearch = () => {
     if (inputValue.trim()) {
@@ -125,7 +127,6 @@ const GlobalSearchBar: React.FC = () => {
     setOpen(false);
   };
 
-  // --- Helper ---
   const getIcon = (type: string) => {
       switch (type) {
           case 'file': return <FolderIcon sx={{ color: 'info.main' }} />;
@@ -152,7 +153,7 @@ const GlobalSearchBar: React.FC = () => {
             id="global-search-bar"
             freeSolo
             open={open}
-            onOpen={() => { if (inputValue.length >= 3) setOpen(true); }}
+            onOpen={() => { if (inputValue.trim().length >= 3) setOpen(true); }}
             onClose={() => setOpen(false)}
             inputValue={inputValue}
             onInputChange={(_, newVal) => setInputValue(newVal)}
@@ -161,7 +162,7 @@ const GlobalSearchBar: React.FC = () => {
             getOptionLabel={(option) => typeof option === 'string' ? option : option.title}
             loading={loading}
             filterOptions={(x) => x}
-            noOptionsText={inputValue.length < 3 ? "Tippen Sie mind. 3 Zeichen..." : "Keine Treffer gefunden"}
+            noOptionsText={inputValue.trim().length < 3 ? "Tippen Sie mind. 3 Zeichen..." : "Keine Treffer gefunden"}
             
             renderInput={(params) => (
                 <TextField
@@ -174,31 +175,28 @@ const GlobalSearchBar: React.FC = () => {
                         disableUnderline: true,
                         sx: {
                             color: 'inherit',
-                            padding: theme.spacing(0.5, 1, 0.5, 0),
-                            paddingLeft: `calc(1em + ${theme.spacing(1)})`,
+                            padding: theme.spacing(0.5, 1), 
                             width: { xs: '100%', sm: '25ch', md: '35ch' },
                             transition: theme.transitions.create('width'),
-                            '&:focus-within': { width: { sm: '40ch', md: '50ch' } }
+                            '&:focus-within': { width: { sm: '40ch', md: '50ch' } },
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1
                         },
-startAdornment: (
-                            <InputAdornment position="start" sx={{ mr: 1, color: 'inherit' }}>
+                        startAdornment: (
+                            <InputAdornment position="start" sx={{ color: 'inherit', mr: 0 }}>
                                 <SearchIcon />
                             </InputAdornment>
                         ),
-                        // --- KORREKTUR START ---
                         endAdornment: (
-                            <InputAdornment position="end"> 
-                                {/* WICHTIG: params.InputProps.endAdornment enthält ggf. default Autocomplete Elemente. 
-                                    Da du aber eigene Logik (Clear, Loading) hast, ist es okay, es hier zu überschreiben,
-                                    SOLANGE du den Wrapper InputAdornment verwendest. */}
-                                
+                            <InputAdornment position="end" sx={{ ml: 0 }}> 
                                 {inputValue.length > 0 && (
                                     <Tooltip title="Suche leeren">
                                         <IconButton
                                             color="inherit"
                                             size="small"
                                             onClick={handleClear}
-                                            sx={{ p: 0.5 }}
+                                            sx={{ p: 0.5, mr: 0.5 }}
                                         >
                                             <ClearIcon fontSize="small" />
                                         </IconButton>
@@ -208,14 +206,23 @@ startAdornment: (
                                 {loading ? <CircularProgress color="inherit" size={16} sx={{ mx: 1 }} /> : null}
                                 
                                 <Tooltip title="KI-Frage stellen (Ctrl+Enter)">
-                                    {/* Span ist wichtig für Tooltip bei disabled Button, hier sicherheitshalber lassen */}
                                     <span>
                                         <IconButton
+                                            // FIX: 'inherit' sorgt dafür, dass es Weiß bleibt (wie Briefing Icon).
+                                            // 'disabled' sorgt automatisch für das Ausgrauen bei leerem Text.
                                             color="inherit"
                                             onClick={handleAiSearch}
                                             disabled={!inputValue.trim()}
                                             size="small"
-                                            sx={{ p: 0.5 }}
+                                            sx={{ 
+                                                p: 0.5,
+                                                // FIX: Wir nutzen common.white mit Transparenz, damit es zum Suchfeld passt
+                                                // statt primary color, die auf dem blauen Header untergeht.
+                                                bgcolor: inputValue.trim() ? alpha(theme.palette.common.white, 0.15) : 'transparent',
+                                                '&:hover': {
+                                                    bgcolor: inputValue.trim() ? alpha(theme.palette.common.white, 0.25) : 'transparent',
+                                                }
+                                            }}
                                         >
                                             <AutoAwesomeIcon fontSize="small" />
                                         </IconButton>
@@ -223,7 +230,6 @@ startAdornment: (
                                 </Tooltip>
                             </InputAdornment>
                         )
-                        // --- KORREKTUR ENDE ---
                     }}
                 />
             )}

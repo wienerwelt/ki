@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Box, Typography, CircularProgress, Alert, Divider, Avatar,
-  IconButton, Tooltip, Chip, Paper, Slider, TextField, MenuItem, Link as MuiLink, Button, Card, CardContent, Stack, Popover
+  IconButton, Tooltip, Chip, Paper, Slider, MenuItem, Link as MuiLink, Button, Card, CardContent, Stack, Popover,
+  FormControl, Select, SelectChangeEvent
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
@@ -48,6 +49,16 @@ interface HighlightedTextProps {
     text: string;
     keywords: string[];
 }
+
+// HELPER: Flagge (aus EconomicStatWidget übernommen)
+const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, alt, size = 20 }) => {
+  if (!code) return null;
+  const c = code.toUpperCase();
+  if (c === 'EU') { 
+      return ( <svg width={size} height={(size * 2) / 3} viewBox="0 0 12 8" xmlns="http://www.w3.org/2000/svg" aria-label={alt || 'EU'}><rect width="12" height="8" fill="#003399" />{Array.from({ length: 12 }).map((_, i) => { const angle = (i * 30 * Math.PI) / 180; const cx = 6 + Math.cos(angle) * 2.2; const cy = 4 + Math.sin(angle) * 2.2; return (<g key={i} transform={`translate(${cx},${cy})`}><polygon points="0,-0.6 0.17,-0.1 0.6,-0.1 0.26,0.16 0.39,0.6 0,0.35 -0.39,0.6 -0.26,0.16 -0.6,-0.1 -0.17,-0.1" fill="#FFCC00" /></g>);})}</svg> );
+  }
+  return <img loading="lazy" width={size} src={`https://flagcdn.com/w20/${c.toLowerCase()}.png`} alt={alt || c} />;
+};
 
 // HELPER: Sicheres Datumsformat mit date-fns
 const safeFormat = (dateStr: string, fmt: string) => {
@@ -141,12 +152,8 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
 
   const audioRef = useRef<HTMLAudioElement>(null);
   
-  // Mobile Filter Menu
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
-  const handleOpenFilterMenu = (event: React.MouseEvent<HTMLElement>) => setFilterAnchorEl(event.currentTarget);
-  const handleCloseFilterMenu = () => setFilterAnchorEl(null);
 
   useEffect(() => {
     if (user?.regions && user.regions.length > 0) {
@@ -194,7 +201,6 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
     try {
         const token = localStorage.getItem('jwt_token');
         
-        // KORREKTUR: URLSearchParams mag kein 'undefined', daher bauen wir es so auf:
         const countParams = new URLSearchParams({
             category, 
             limit: '5', 
@@ -311,22 +317,6 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
     else audioRef.current?.pause();
   }, [isPlaying, activeTrack]);
 
-  const renderFilterControls = (isMenu: boolean) => {
-        const controlWrapper = (child: React.ReactNode) => isMenu 
-        ? <Box sx={{ p: 1, width: 220 }}>{child}</Box> 
-        : child;
-        
-        return (
-            <>
-                 {user?.regions && user.regions.length > 1 && controlWrapper(
-                    <TextField select value={selectedRegion?.id || ''} onChange={(e) => { const region = user?.regions?.find(r => r.id === e.target.value); setSelectedRegion(region || null); }} size="small" fullWidth={isMenu} variant="outlined" sx={{ minWidth: 60, '& .MuiSelect-select': { paddingRight: '24px' } }} label={isMenu ? "Region" : ""}>
-                        {user?.regions?.map((region) => <MenuItem key={region.id} value={region.id}><Tooltip title={region.name} placement="right"><img src={`https://flagcdn.com/w20/${region.code.toLowerCase()}.png`} width="20" alt={region.name} style={{ border: '1px solid #eee' }} /></Tooltip></MenuItem>)}
-                    </TextField>
-                 )}
-            </>
-        );
-    };
-
   const renderContent = () => {
     if (isLoading) return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', p: 2 }}><CircularProgress /></Box>;
     if (error) return <Alert severity="error" sx={{ m: 2 }}>{error}</Alert>;
@@ -361,7 +351,6 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
               <CardContent sx={{ p: '12px !important' }}>
                 <Stack direction="row" spacing={1.5} alignItems="center">
                   <Tooltip title={!isPlayable ? "Keine direkte Audio-Datei" : (isPlaying && activeTrack?.id === item.id ? 'Pause' : 'Abspielen')}>
-                    {/* Play-Button wird für nicht abspielbare URLs deaktiviert */}
                     <span>
                       <IconButton
                         onClick={() => isPlayable && handlePlayPause(item)}
@@ -408,77 +397,78 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
     );
   };
 
+  // Header Title Component analog zu EconomicStatWidget
+  const widgetTitleComponent = (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+        {icon}
+        <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>{title}</Typography>
+        
+        {/* Regionen Auswahl im neuen Stil (analog EconomicStatWidget) */}
+        {user?.regions && user.regions.length > 1 && (
+             <FormControl size="small" sx={{ minWidth: 80 }} onMouseDown={(e) => e.stopPropagation()}>
+                <Select
+                    value={selectedRegion?.id || ''}
+                    variant="standard"
+                    disableUnderline
+                    onChange={(e: SelectChangeEvent) => {
+                        const region = user?.regions?.find(r => r.id === e.target.value);
+                        setSelectedRegion(region || null);
+                    }}
+                    renderValue={(value) => {
+                        const region = user?.regions?.find(r => r.id === value);
+                        return (
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Flag code={region?.code} alt={region?.name} />
+                                <Typography variant="body2">{region?.code}</Typography>
+                            </Box>
+                        );
+                    }}
+                >
+                    {user?.regions?.map((region) => (
+                        <MenuItem key={region.id} value={region.id}>
+                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Flag code={region.code} alt={region.name} />
+                                {region.name}
+                            </Box>
+                        </MenuItem>
+                    ))}
+                </Select>
+             </FormControl>
+        )}
+    </Box>
+  );
+
   return (
     <WidgetPaper
-      title={
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 1.5 }}>
-           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, overflow: 'hidden' }}>
-               {icon}
-               <Typography variant="h6" noWrap>{title}</Typography>
-               
-               {isMobile ? (
-                    <>
-                        <Tooltip title="Neu">
-                            <Chip 
-                                size="small" 
-                                onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')} 
-                                sx={{ bgcolor: filterMode === 'new' ? 'primary.main' : 'action.hover', color: filterMode === 'new' ? 'primary.contrastText' : 'text.primary', '& .MuiChip-avatar': { color: 'inherit !important' } }} 
-                                avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', color: 'inherit', bgcolor: 'transparent' }}>{formatCount(counts.new)}</Avatar>} 
-                            />
-                        </Tooltip>
-                        <Tooltip title="Nicht gehört">
-                            <Chip 
-                                size="small" 
-                                onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')} 
-                                sx={{ bgcolor: filterMode === 'unread' ? 'secondary.main' : 'action.hover', color: filterMode === 'unread' ? 'secondary.contrastText' : 'text.primary', '& .MuiChip-avatar': { color: 'inherit !important' } }} 
-                                avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', color: 'inherit', bgcolor: 'transparent' }}>{formatCount(counts.unread)}</Avatar>} 
-                            />
-                        </Tooltip>
-                    </>
-               ) : (
-                   <>
-                        <Chip 
-                            label="Neu" 
-                            size="small" 
-                            variant={filterMode === 'new' ? 'filled' : 'outlined'} 
-                            color="primary" 
-                            clickable 
-                            onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')} 
-                            avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'primary.main', color: 'primary.contrastText' }}>{formatCount(counts.new)}</Avatar>} 
-                        />
-                        <Chip 
-                            label="Nicht gehört" 
-                            size="small" 
-                            variant={filterMode === 'unread' ? 'filled' : 'outlined'} 
-                            color="secondary" 
-                            clickable 
-                            onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')} 
-                            avatar={<Avatar sx={{ width: 22, height: 22, fontSize: '0.75rem', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>{formatCount(counts.unread)}</Avatar>} 
-                        />
-                   </>
-               )}
-           </Box>
-          
-           <Box sx={{ flexGrow: 1 }} />
-
-           <Box>
-                {isMobile ? (
-                    <>
-                        <IconButton onClick={handleOpenFilterMenu} size="small"><TuneIcon /></IconButton>
-                        <Popover open={Boolean(filterAnchorEl)} anchorEl={filterAnchorEl} onClose={handleCloseFilterMenu} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}><Stack spacing={1.5} sx={{ p: 1 }}>{renderFilterControls(true)}</Stack></Popover>
-                    </>
-                ) : (
-                    <>
-                       {renderFilterControls(false)}
-                    </>
-                )}
-           </Box>
-        </Box>
-      }
+      title={widgetTitleComponent}
       widgetTitle={title} widgetTypeKey={widgetTypeKey || ''} widgetId={widgetId || ''} onDelete={onDelete} isRemovable={isRemovable} noPadding
     >
-      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>{renderContent()}</Box>
+      <Box sx={{ display: 'flex', flexDirection: 'column', height: isMobile ? 'auto' : '100%' }}>
+        
+        {/* Filterbereich jetzt IM Inhalt (unter dem Header), analog zu den Toggles im EconomicStatWidget */}
+        <Box sx={{ display: 'flex', justifyContent: 'center', mb: 1, px: 2, pt: 2, gap: 1 }}>
+             <Chip 
+                label="Neu" 
+                size="small" 
+                variant={filterMode === 'new' ? 'filled' : 'outlined'} 
+                color="primary" 
+                clickable 
+                onClick={() => setFilterMode(filterMode === 'new' ? 'all' : 'new')} 
+                avatar={<Avatar sx={{ width: 18, height: 18, fontSize: '0.7rem', bgcolor: 'primary.dark', color: 'primary.contrastText' }}>{formatCount(counts.new)}</Avatar>} 
+            />
+            <Chip 
+                label="Nicht gehört" 
+                size="small" 
+                variant={filterMode === 'unread' ? 'filled' : 'outlined'} 
+                color="secondary" 
+                clickable 
+                onClick={() => setFilterMode(filterMode === 'unread' ? 'all' : 'unread')} 
+                avatar={<Avatar sx={{ width: 18, height: 18, fontSize: '0.7rem', bgcolor: 'secondary.dark', color: 'secondary.contrastText' }}>{formatCount(counts.unread)}</Avatar>} 
+            />
+        </Box>
+
+        <Box sx={{ flexGrow: 1, overflowY: isMobile ? 'visible' : 'auto' }}>{renderContent()}</Box>
+        
         {activeTrack && (<Paper sx={{ p: 2, borderTop: 1, borderColor: 'divider', mt: 'auto' }} elevation={4}><audio ref={audioRef} src={activeTrack.original_url} preload="metadata" /><Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}><Typography variant="subtitle2" noWrap sx={{ fontWeight: 'bold' }}>{activeTrack.title}</Typography><IconButton onClick={handleClosePlayer} size="small" aria-label="Player schließen"><CloseIcon fontSize="small" /></IconButton></Stack><Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}><IconButton onClick={() => setIsPlaying(!isPlaying)} size="small" color="primary">{isPlaying ? <PauseIcon /> : <PlayArrowIcon />}</IconButton><Typography variant="caption" sx={{ minWidth: 40 }}>{formatTime(progress)}</Typography><Slider size="small" value={progress} max={duration || 100} onChange={(_, value) => { if (audioRef.current) audioRef.current.currentTime = value as number; }} sx={{ flexGrow: 1 }} /><Typography variant="caption" sx={{ minWidth: 40 }}>{formatTime(duration)}</Typography></Box></Paper>)}
       </Box>
     </WidgetPaper>

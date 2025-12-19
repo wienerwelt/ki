@@ -14,53 +14,13 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
 
-// KORREKTUR 1: Echten Auth-Hook importieren statt Fake-Definition
+// ✅ FIXED: Pfad korrigiert (nur eine Ebene hoch zu src/context)
 import { useAuth } from '../context/AuthContext';
 
-// --- Konfiguration & Typen ---
-interface CommodityConfig {
-    name: string;
-    formatOptions: Intl.NumberFormatOptions;
-    color: string;
-    unit: string;
-}
+// ✅ FIXED: Pfad korrigiert (gleiche Ebene wie Chart component)
+import { commoditiesConfig } from './CommoditiesConfig';
 
-// Wir importieren die Config eigentlich, aber hier ist sie lokal definiert (wie in deinem Upload)
-const commoditiesConfig: { [key: string]: CommodityConfig } = {
-    'BRENT_OIL': { 
-        name: 'Brent Rohöl', 
-        formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 2 },
-        color: '#8884d8',
-        unit: 'USD/Barrel'
-    },
-    'EUR_USD': { 
-        name: 'EUR/USD', 
-        formatOptions: { style: 'currency', currency: 'USD', minimumFractionDigits: 4 },
-        color: '#82ca9d',
-        unit: 'USD'
-    },
-    'EURIBOR_3M': { 
-        name: 'Euribor 3M', 
-        formatOptions: { style: 'decimal', minimumFractionDigits: 3, maximumFractionDigits: 3 },
-        color: '#ffc658',
-        unit: '%'
-    },
-    'KVLPI_GESAMT': {
-        name: 'KVLPI',
-        formatOptions: { style: 'decimal', minimumFractionDigits: 1, maximumFractionDigits: 1 },
-        color: '#20c997',
-        unit: 'Index (2020=100)'
-    },    
-    'CO2_PRICE': { 
-        name: 'CO2-Preis', 
-        formatOptions: { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 },
-        color: '#ff7300',
-        unit: 'EUR/tCO2'
-    }
-};
-
-// KORREKTUR 2: Fake useAuth entfernt!
-
+// --- Typen ---
 interface ChartDataPoint { date: string; value: number; }
 interface HistoricalData { [key: string]: ChartDataPoint[]; }
 interface LatestData { [key: string]: { source: string; lastUpdate: string; }; }
@@ -107,7 +67,6 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
 const CommodityChart: React.FC<CommodityChartProps> = ({
     historicalData, latestData, timeframe, setTimeframe, isLoading
 }) => {
-    // KORREKTUR 3: Echten Business Partner laden
     const { businessPartner } = useAuth();
     const chartRef = useRef<HTMLDivElement>(null);
     const [isDownloading, setIsDownloading] = useState(false);
@@ -115,14 +74,14 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
     const [brushRange, setBrushRange] = useState<{ startIndex?: number; endIndex?: number } | null>(null);
     const [selectedIndicators, setSelectedIndicators] = useState<string[]>([]);
     
-    // KORREKTUR 4: Fallback-Logo Logik
-    // Wenn kein BP-Logo da ist, nutze das Standard-Logo
+    // Logo Logik: Partner-Logo oder Fallback
     const watermarkUrl = businessPartner?.logo_url || '/logos/de-mobiliti.png';
 
     useEffect(() => {
         if (historicalData) {
             const historicalKeys = Object.keys(historicalData);
             if (selectedIndicators.length === 0) {
+                // Filtere nur Keys, die wir auch in der Config kennen
                 const initialSelection = historicalKeys.filter(key => commoditiesConfig[key]); 
                 setSelectedIndicators(initialSelection.slice(0, 5));
             } else {
@@ -201,7 +160,7 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
             doc.setFontSize(10);
             doc.text(`Zeitraum: ${timeframe} | Datum: ${new Date().toLocaleDateString('de-DE')}`, margin, margin + 25);
 
-            // KORREKTUR 5: Logo im PDF (Verwende auch hier den Fallback)
+            // Logo im PDF
             if (watermarkUrl) {
                  try {
                     const imgResponse = await fetch(watermarkUrl);
@@ -325,6 +284,7 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
                 </FormGroup>
             </Box>
 
+            {/* ✅ FIXED: latestData verwenden, um Quellen anzuzeigen */}
             {latestData && selectedIndicators.length > 0 && (
                 <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', fontStyle: 'italic', textAlign: 'center' }}>
                     Quellen: {
@@ -340,7 +300,7 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
                 ref={chartRef} 
                 sx={{ height: 350, mt: 1, position: 'relative' }}
             >
-                {/* KORREKTUR 6: Watermark rendering mit Fallback-Logik */}
+                {/* Watermark Rendering */}
                 {watermarkUrl && (
                     <Box 
                         className="chart-watermark"

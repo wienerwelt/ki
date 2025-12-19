@@ -105,5 +105,42 @@
     "submitButton": "Antworten Senden",
     "next": "Weiter",
     "back": "Zurück"
+  },
+  "widgets": {
+    "sentiment": {
+      "title": "Markt-Puls",
+      "question": "Wie ist die Marktstimmung?",
+      "btnBullish": "Positiv (Bullish)",
+      "btnBearish": "Negativ (Bearish)",
+      "scoreLabel": "STIMMUNG",
+      "voteLabel": "Dein Vote",
+      "votePos": "Positiv",
+      "voteNeg": "Negativ",
+      "trendPublic": "Aktueller Community-Trend",
+      "segments": {
+        "extBearish": "Extrem Negativ",
+        "bearish": "Negativ",
+        "neutral": "Neutral",
+        "bullish": "Positiv",
+        "extBullish": "Extrem Positiv"
+      }
+    },
+    "commodities": {
+      "perUnit": "pro",
+      "interestRate": "Zinssatz",
+      "weekAgo": "-1 Woche",
+      "monthAgo": "-1 Monat",
+      "trendTooltip": "Trend seit letzter Woche",
+      "source": "Quelle",
+      "trustedTooltip": "Info zu geprüften Quellen",
+      "viewCards": "Kartenansicht",
+      "viewChart": "Grafikansicht",
+      "reportError": "Fehler Melden",
+      "lastUpdate": "Stand",
+      "noData": "Keine Daten verfügbar.",
+      "errorLoad": "Daten konnten nicht geladen werden.",
+      "errorGeneral": "Ein Fehler ist aufgetreten.",
+      "errorHistory": "Historische Daten konnten nicht geladen werden."
+    }
   }
 }

@@ -1,4 +1,3 @@
-// frontend/src/components/widgets/BusinessPartnerInfoWidget.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -20,9 +19,10 @@ import {
   Link as MuiLink,
   Button,
   AvatarGroup,
-  Badge
+  Badge,
+  useTheme,        // NEU
+  useMediaQuery    // NEU
 } from '@mui/material';
-// KORREKTUR: Importiere BaseWidgetProps direkt, nicht als Alias, um Zirkelbezug zu vermeiden
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import WidgetPaper from './WidgetPaper';
 import apiClient from '../../apiClient';
@@ -65,10 +65,20 @@ interface BusinessPartner {
   regions: Region[];
 }
 
-interface BusinessPartnerInfoWidgetProps extends Omit<BaseWidgetProps, 'businessPartner'> {
+interface BusinessPartnerInfoWidgetProps extends Partial<Omit<BaseWidgetProps, 'businessPartner'>> {
+  widgetId: string;
+  widgetTypeKey: string;
+  title?: string;
   businessPartner: BusinessPartner | null | undefined;
   loading?: boolean;
   error?: string | null;
+  isPublic?: boolean;
+  publicData?: {
+      partner?: BusinessPartner;
+      news?: ContentItem[];
+      events?: ContentItem[];
+      members?: MemberPreview[];
+  };
 }
 
 interface ContentItem {
@@ -108,27 +118,23 @@ const getUserStatus = (lastLoginDate?: string) => {
 };
 
 // --- AVATAR KOMPONENTE MIT STATUS ---
-const MemberAvatar: React.FC<{ member: MemberPreview, onClick?: () => void }> = ({ member, onClick }) => {
-    const status = getUserStatus(member.last_login_at);
+const MemberAvatar: React.FC<{ member: MemberPreview, onClick?: () => void, isPublic?: boolean }> = ({ member, onClick, isPublic }) => {
+    const status = isPublic ? 'offline' : getUserStatus(member.last_login_at);
     const invisible = status === 'offline';
     const statusColor = status === 'online' ? '#44b700' : '#ffa726';
     
-    // LOGIK-ÄNDERUNG:
-    // 1. Prüfen, ob mindestens ein Namensteil vorhanden ist
     const hasName = member.first_name || member.last_name;
-
-    // 2. Namen zusammenbauen: Nur vorhandene Teile nutzen (filter(Boolean) entfernt null/undefined)
-    // Wenn gar kein Name da ist -> "Anonymer Benutzer"
     const fullName = hasName 
         ? [member.first_name, member.last_name].filter(Boolean).join(' ') 
         : 'Anonymer Benutzer';
     
-    // 3. Avatar-Buchstabe: Erster Buchstabe vom ersten verfügbaren Namensteil oder 'A'
     const avatarLetter = hasName 
         ? (member.first_name || member.last_name || '').charAt(0).toUpperCase() 
         : 'A';
 
-    const tooltipText = `${fullName} (${status === 'online' ? 'Online' : (status === 'active_today' ? 'Heute aktiv' : member.role)})`;
+    const tooltipText = isPublic 
+        ? fullName 
+        : `${fullName} (${status === 'online' ? 'Online' : (status === 'active_today' ? 'Heute aktiv' : member.role)})`;
 
     return (
         <Tooltip title={tooltipText}>
@@ -158,13 +164,13 @@ const MemberAvatar: React.FC<{ member: MemberPreview, onClick?: () => void }> = 
                         '0%': { transform: 'scale(.8)', opacity: 1 },
                         '100%': { transform: 'scale(2.4)', opacity: 0 },
                     },
-                    cursor: 'pointer'
+                    cursor: isPublic ? 'default' : 'pointer'
                 }}
             >
                 <Avatar 
                     src={member.profile_image_url || undefined} 
                     alt={fullName}
-                    onClick={onClick}
+                    onClick={isPublic ? undefined : onClick}
                     sx={{ width: 32, height: 32, fontSize: '0.8rem' }}
                 >
                     {avatarLetter}
@@ -178,57 +184,73 @@ const VoteComponent: React.FC<{
   item: ContentItem;
   onVote: (vote: 1 | -1) => void;
   size?: 'small' | 'medium';
-}> = ({ item, onVote, size = 'small' }) => {
+  disabled?: boolean;
+}> = ({ item, onVote, size = 'small', disabled = false }) => {
   const getScoreColor = (score: number) =>
     score > 0 ? 'success.main' : score < 0 ? 'error.main' : 'text.secondary';
 
   const handleVote = (e: React.MouseEvent, vote: 1 | -1) => {
     e.stopPropagation();
     e.preventDefault();
-    onVote(vote);
+    if (!disabled) onVote(vote);
   };
 
   return (
     <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-      <Tooltip title="Hilfreich">
-        <IconButton size={size} onClick={(e) => handleVote(e, 1)} sx={{ p: 0.5 }}>
-          {item.user_vote === 1 ? (
-            <ThumbUpIcon color="success" fontSize={size} />
-          ) : (
-            <ThumbUpOffAltIcon color="action" fontSize={size} />
-          )}
-        </IconButton>
-      </Tooltip>
+      {!disabled && (
+          <Tooltip title="Hilfreich">
+            <IconButton size={size} onClick={(e) => handleVote(e, 1)} sx={{ p: 0.5 }}>
+              {item.user_vote === 1 ? (
+                <ThumbUpIcon color="success" fontSize={size} />
+              ) : (
+                <ThumbUpOffAltIcon color="action" fontSize={size} />
+              )}
+            </IconButton>
+          </Tooltip>
+      )}
+      
       <Typography
         variant="caption"
         sx={{ fontWeight: 'bold', color: getScoreColor(item.relevance_score), minWidth: 20, textAlign: 'center' }}
       >
         {item.relevance_score}
       </Typography>
-      <Tooltip title="Nicht hilfreich">
-        <IconButton size={size} onClick={(e) => handleVote(e, -1)} sx={{ p: 0.5 }}>
-          {item.user_vote === -1 ? (
-            <ThumbDownIcon color="error" fontSize={size} />
-          ) : (
-            <ThumbDownOffAltIcon color="action" fontSize={size} />
-          )}
-        </IconButton>
-      </Tooltip>
+
+      {!disabled && (
+          <Tooltip title="Nicht hilfreich">
+            <IconButton size={size} onClick={(e) => handleVote(e, -1)} sx={{ p: 0.5 }}>
+              {item.user_vote === -1 ? (
+                <ThumbDownIcon color="error" fontSize={size} />
+              ) : (
+                <ThumbDownOffAltIcon color="action" fontSize={size} />
+              )}
+            </IconButton>
+          </Tooltip>
+      )}
     </Box>
   );
 };
 
 const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
-  businessPartner,
+  businessPartner: propBusinessPartner,
   loading,
   error,
   onDelete,
   widgetId,
   isRemovable,
+  isPublic = false,
+  publicData,
+  widgetTypeKey
 }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
   
+  // NEU: Mobile Detection für "Show More" Logik
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  
+  const businessPartner = isPublic ? publicData?.partner : propBusinessPartner;
+
   const [bpNews, setBpNews] = useState<ContentItem[]>([]);
   const [bpEvents, setBpEvents] = useState<ContentItem[]>([]);
   const [userStats, setUserStats] = useState<UserStats | null>(null);
@@ -239,7 +261,8 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
   const [totalMembers, setTotalMembers] = useState(0);
 
   const userRole = user?.role;
-  const canViewAdminInfo = userRole === 'admin' || userRole === 'assistenz';
+  const canViewAdminInfo = !isPublic && (userRole === 'admin' || userRole === 'assistenz');
+  
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -249,15 +272,14 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
     '?' + new URLSearchParams(params).toString();
 
   const fetchWidgetData = useCallback(async () => {
-    if (!bpId) return;
+    if (!bpId || isPublic) return;
+    
     setLoadingContent(true);
     setContentError(null);
     try {
       const newsUrl   = `/api/data/bp-scraped-content${qs({ businessPartnerId: bpId, category: 'news' })}`;
       const eventsUrl = `/api/data/bp-scraped-content${qs({ businessPartnerId: bpId, category: 'events' })}`;
       const statsUrl  = `/api/data/user-stats/${encodeURIComponent(bpId)}`;
-      
-      // KORREKTUR: ID explizit übergeben, damit Backend auch bei Admins richtig filtert
       const membersUrl = `/api/data/bp-members-preview?businessPartnerId=${bpId}`;
 
       const promises = [
@@ -293,11 +315,18 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
     } finally {
       setLoadingContent(false);
     }
-  }, [bpId, canViewAdminInfo]); 
+  }, [bpId, canViewAdminInfo, isPublic]); 
 
   useEffect(() => {
-    if (bpId) fetchWidgetData();
-  }, [bpId, fetchWidgetData]);
+    if (isPublic && publicData) {
+        setBpNews(publicData.news || []);
+        setBpEvents(publicData.events || []);
+        setMembers(publicData.members || []);
+        setTotalMembers(publicData.members?.length || 0);
+    } else if (!isPublic && bpId) {
+        fetchWidgetData();
+    }
+  }, [bpId, fetchWidgetData, isPublic, publicData]);
 
   const formatDate = (dateString: string | null | undefined) => {
     if (!dateString) return '';
@@ -307,6 +336,8 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
   };
 
   const handleVote = async (contentId: string, vote: 1 | -1, contentType: 'news' | 'event') => {
+    if (isPublic) return;
+
     const list = contentType === 'news' ? bpNews : bpEvents;
     const setList = contentType === 'news' ? setBpNews : setBpEvents;
 
@@ -338,6 +369,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
   };
 
   const handleMemberClick = () => {
+      if (isPublic) return;
       navigate('/community', { state: { defaultTab: 'members' } });
   };
 
@@ -349,7 +381,6 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
   const primaryColor = businessPartner?.primary_color || 'primary.main';
   const secondaryColor = businessPartner?.secondary_color || 'secondary.main';
 
-  // NEU: Google Maps Link generieren
   const getMapsLink = (address: string) => {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
   };
@@ -362,7 +393,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
               {businessPartner?.name || 'Business Partner'}
           </Typography>
           
-          {totalMembers > 0 && (
+          {totalMembers > 0 && !isPublic && (
               <Chip 
                 label={`${totalMembers}`} 
                 icon={<Groups3Icon style={{ fontSize: 16 }} />} 
@@ -388,48 +419,62 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
         </Box>
       }
       widgetTitle={businessPartner?.name || 'Business Partner'}
-      widgetTypeKey="business-partner-info"
-      widgetId={widgetId || ''}
+      widgetTypeKey={widgetTypeKey}
+      widgetId={widgetId}
       onDelete={onDelete}
       isRemovable={isRemovable}
       loading={loading}
       error={error}
       noPadding
+      isPublic={isPublic}
     >
       {!businessPartner ? (
         <Box sx={{ p: 2 }}>
           <Alert severity="warning">
-            Kein Business Partner zugewiesen. Bitte wenden Sie sich an den Support.
+            {isPublic ? 'Lade Partner-Informationen...' : 'Kein Business Partner zugewiesen.'}
           </Alert>
         </Box>
       ) : (
-        <Card variant="outlined" sx={{ height: '100%', border: 'none', display: 'flex', flexDirection: 'column' }}>
-          <CardContent sx={{ flexGrow: 1, overflowY: 'auto', pt: 2 }}>
+        <Card variant="outlined" sx={{ 
+            height: isMobile ? 'auto' : '100%',  // <-- FIX 1: Höhe auf Mobile anpassen
+            border: 'none', 
+            display: 'flex', 
+            flexDirection: 'column', 
+            bgcolor: 'transparent' 
+        }}>
+          <CardContent sx={{ 
+              flexGrow: 1, 
+              overflowY: isMobile ? 'visible' : 'auto', // <-- FIX 2: Scrollbar auf Mobile entfernen
+              pt: 2 
+          }}>
             
-            {/* FACEBOOK STYLE MEMBER PILE */}
-            <Box sx={{ px: 2, mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Box onClick={handleMemberClick} sx={{ cursor: 'pointer' }}>
-                    <AvatarGroup 
-                        max={7} 
-                        sx={{ 
-                            '& .MuiAvatar-root': { width: 32, height: 32, fontSize: '0.8rem' } 
-                        }}
-                    >
-                        {members.map(m => (
-                            <MemberAvatar key={m.id} member={m} />
-                        ))}
-                    </AvatarGroup>
-                </Box>
+            {/* MEMBERS PILE */}
+            {members.length > 0 && (
+                <Box sx={{ px: 2, mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Box onClick={handleMemberClick} sx={{ cursor: isPublic ? 'default' : 'pointer' }}>
+                        <AvatarGroup 
+                            max={7} 
+                            sx={{ 
+                                '& .MuiAvatar-root': { width: 32, height: 32, fontSize: '0.8rem' } 
+                            }}
+                        >
+                            {members.map(m => (
+                                <MemberAvatar key={m.id} member={m} isPublic={isPublic} />
+                            ))}
+                        </AvatarGroup>
+                    </Box>
 
-                {canViewAdminInfo && (
-                    <Tooltip title="Nutzer verwalten">
-                        <IconButton size="small" onClick={() => navigate(`/admin/users?business_partner_id=${bpId}`)}>
-                            <PersonAddIcon fontSize="small" />
-                        </IconButton>
-                    </Tooltip>
-                )}
-            </Box>
-            <Divider sx={{ mb: 2 }} />
+                    {canViewAdminInfo && (
+                        <Tooltip title="Nutzer verwalten">
+                            <IconButton size="small" onClick={() => navigate(`/admin/users?business_partner_id=${bpId}`)}>
+                                <PersonAddIcon fontSize="small" />
+                            </IconButton>
+                        </Tooltip>
+                    )}
+                </Box>
+            )}
+            
+            {members.length > 0 && <Divider sx={{ mb: 2 }} />}
 
             <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', px: 2, mb: 2 }}>
               <Avatar
@@ -461,15 +506,18 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                 )}
                 {businessPartner.email && (
                   <MuiLink
-                    href={`mailto:${businessPartner.email}`}
+                    href={isPublic ? undefined : `mailto:${businessPartner.email}`}
                     variant="body2"
-                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, wordBreak: 'break-all', textDecoration: 'none', color: 'text.primary' }}
+                    sx={{ 
+                        display: 'inline-flex', alignItems: 'center', gap: 1, 
+                        wordBreak: 'break-all', textDecoration: 'none', color: 'text.primary',
+                        cursor: isPublic ? 'default' : 'pointer' 
+                    }}
                   >
                     <EmailIcon color="action" fontSize="small" /> {businessPartner.email}
                   </MuiLink>
                 )}
                 
-                {/* NEU: Google Maps Link */}
                 {businessPartner.address && (
                   <MuiLink
                     href={getMapsLink(businessPartner.address)}
@@ -493,6 +541,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
               <Alert severity="error" sx={{ m: 2 }}>{contentError}</Alert>
             ) : (
               <>
+                {/* --- NACHRICHTEN --- */}
                 <Typography variant="subtitle2" sx={{ mt: 2, mb: 1, color: 'text.secondary', pl: 2 }}>
                   Aktuelle Nachrichten
                 </Typography>
@@ -500,7 +549,13 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                   {bpNews.length > 0 ? (
                     bpNews.map((item, index) => (
                       <React.Fragment key={item.id}>
-                        <ListItem button component="a" href={item.original_url} target="_blank" rel="noopener noreferrer">
+                        <ListItem 
+                            button={!isPublic as any} 
+                            component={isPublic ? 'li' : 'a'} 
+                            href={isPublic ? undefined : item.original_url} 
+                            target={isPublic ? undefined : "_blank"} 
+                            rel="noopener noreferrer"
+                        >
                           <ListItemText
                             primary={<Typography variant="body2">{item.title}</Typography>}
                             secondaryTypographyProps={{ component: 'div' }}
@@ -508,7 +563,11 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                               <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
                                 <Typography variant="caption" color="text.secondary">{formatDate(item.published_date)}</Typography>
                                 <Box sx={{ flexGrow: 1 }} />
-                                <VoteComponent item={item} onVote={(vote) => handleVote(item.id, vote, 'news')} />
+                                <VoteComponent 
+                                    item={item} 
+                                    onVote={(vote) => handleVote(item.id, vote, 'news')} 
+                                    disabled={isPublic}
+                                />
                               </Box>
                             }
                           />
@@ -521,6 +580,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                   )}
                 </List>
 
+                {/* --- EVENTS --- */}
                 <Typography variant="subtitle2" sx={{ mt: 2, mb: 1, color: 'text.secondary', pl: 2 }}>
                   Kommende Events
                 </Typography>
@@ -533,8 +593,16 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                         <React.Fragment key={item.id}>
                           <ListItem>
                             <Box sx={{ mr: 2, display: 'flex', alignItems: 'center' }}>
-                              <Button size="small" variant="outlined" href={item.original_url} target="_blank" onMouseDown={(e) => e.stopPropagation()} disabled={isPast}>
-                                Anmelden
+                              <Button 
+                                size="small" 
+                                variant="outlined" 
+                                component={isPublic ? 'button' : 'a'}
+                                href={isPublic ? undefined : item.original_url} 
+                                target={isPublic ? undefined : "_blank"} 
+                                onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
+                                disabled={isPast || isPublic}
+                              >
+                                {isPublic ? 'Event' : 'Anmelden'}
                               </Button>
                             </Box>
                             <ListItemText
@@ -559,6 +627,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
               </>
             )}
 
+            {/* --- ADMIN BEREICH --- */}
             {canViewAdminInfo && (
               <Box sx={{ p: 2, pt: 2 }}>
                 <Divider sx={{ mb: 2 }} />

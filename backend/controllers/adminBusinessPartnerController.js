@@ -391,3 +391,41 @@ exports.uploadBusinessPartnerLogo = async (req, res) => {
         return res.status(500).json({ message: "Fehler beim Server während des Logo-Uploads." });
     }
 };
+
+
+// --- NEU: Öffentliche Daten für die Invite-Card abrufen ---
+exports.getPublicPartnerCard = async (req, res) => {
+    const { id } = req.params;
+
+    // 1. Validierung
+    if (!id || !/^[0-9a-fA-F-]{36}$/.test(id)) {
+        return res.status(400).json({ message: 'Ungültige ID.' });
+    }
+
+    try {
+        // 2. Abfrage der öffentlichen Daten (inkl. Primärfarbe aus dem Farbschema)
+        const query = `
+            SELECT 
+                bp.id, 
+                bp.name, 
+                bp.logo_url, 
+                bp.dashboard_title,
+                cs.primary_color, -- Farbe aus der verknüpften Tabelle holen
+                RIGHT(bp.id::text, 8) as voucher_code
+            FROM business_partners bp
+            LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id
+            WHERE bp.id = $1 AND bp.is_active = TRUE
+        `;
+        
+        const { rows } = await db.query(query, [id]);
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Partner nicht gefunden oder inaktiv.' });
+        }
+
+        res.json(rows[0]);
+    } catch (err) {
+        console.error('Fehler beim Laden der Public BP Card:', err.message);
+        res.status(500).json({ message: 'Serverfehler' });
+    }
+};

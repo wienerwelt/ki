@@ -1,13 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Paper, Box, Tooltip, IconButton, CircularProgress, Alert,
-    Menu, MenuItem, useTheme, useMediaQuery
+    Menu, MenuItem, useTheme, useMediaQuery, Button
 } from '@mui/material';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import CloseIcon from '@mui/icons-material/Close';
 import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 
 export interface WidgetPaperProps {
     title: React.ReactNode;
@@ -20,6 +22,7 @@ export interface WidgetPaperProps {
     noPadding?: boolean;
     loading?: boolean;
     error?: string | null;
+    isPublic?: boolean; 
 }
 
 const WidgetPaper: React.FC<WidgetPaperProps> = ({ 
@@ -33,13 +36,17 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
     noPadding = false,
     loading = false,
     error = null,
+    isPublic = false,
     ...rest
 }) => {
     const navigate = useNavigate();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-    const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
+    const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
     const open = Boolean(anchorEl);
+
+    // NEU: State für Mobile-Expand (Standardmäßig eingeklappt)
+    const [mobileExpanded, setMobileExpanded] = useState(false);
 
     const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
         setAnchorEl(event.currentTarget);
@@ -64,10 +71,11 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
     };
 
     const renderActions = () => {
+        if (isPublic) return null;
+
         if (isMobile) {
             return (
                 <Box onMouseDown={(e) => e.stopPropagation()} sx={{ display: 'flex', alignItems: 'center' }}>
-                    {/* Dieses Icon bleibt grau, da es außerhalb des Titel-Containers ist */}
                     <IconButton size="small" onClick={handleMenuClick} sx={{ p: 0.5, ml: 0.5 }}>
                         <MoreVertIcon fontSize="small" />
                     </IconButton>
@@ -105,13 +113,20 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
 
     return (
         <Paper 
-            elevation={3} 
+            elevation={isPublic ? 0 : 3}
             sx={{ 
-                height: '100%', 
+                // UPDATE: Auf Mobile Höhe automatisch, damit das Widget wachsen kann
+                height: isMobile ? 'auto' : '100%', 
                 display: 'flex', 
                 flexDirection: 'column',
                 overflow: 'hidden',
-                border: theme.palette.mode === 'dark' ? '1px solid rgba(255, 255, 255, 0.08)' : 'none'
+                border: theme.palette.mode === 'dark' ? '1px solid rgba(255, 255, 255, 0.08)' : 'none',
+                ...(isPublic && {
+                    backgroundColor: 'rgba(255,255,255,0.6)', 
+                    backdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    transition: 'all 0.3s ease'
+                })
             }} 
             {...rest}
         >
@@ -122,13 +137,16 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                     p: isMobile ? '8px 12px' : '12px 16px',
                     borderBottom: '1px solid',
                     borderColor: 'divider',
-                    backgroundColor: (theme) => theme.palette.mode === 'dark' 
-                        ? theme.palette.background.default 
-                        : theme.palette.grey[50],
+                    backgroundColor: (theme) => {
+                        if (isPublic) return 'transparent';
+                        return theme.palette.mode === 'dark' 
+                            ? theme.palette.background.default 
+                            : theme.palette.grey[50];
+                    },
                     minHeight: isMobile ? 44 : 52,
                 }}
             >
-                {!isMobile && (
+                {!isMobile && !isPublic && (
                     <Box 
                         className="widget-drag-handle" 
                         sx={{ 
@@ -138,45 +156,36 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                             display: 'flex',
                             alignItems: 'center',
                             '&:hover': { color: 'text.primary' },
-                            '& svg': { mr: 0, fontSize: '1.2rem' } // Drag Icon bleibt grau
+                            '& svg': { mr: 0, fontSize: '1.2rem' }
                         }}
                     >
                         <DragIndicatorIcon />
                     </Box>
                 )}
                 
-                {/* --- HIER WIRD GESTYLT --- */}
-                {/* Wir wenden die Farben nur auf diesen inneren Container an */}
                 <Box sx={{ 
                     display: 'flex', 
                     alignItems: 'center', 
                     flexGrow: 1, 
                     overflow: 'hidden', 
                     mr: 1,
-
-                    // 1. Titel-Text Größe erzwingen
                     '& .MuiTypography-h6': {
                         fontSize: isMobile ? '1.1rem' : '1.25rem',
                         fontWeight: 600,
                         lineHeight: 1.2,
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
-                        textOverflow: 'ellipsis'
+                        textOverflow: 'ellipsis',
+                        color: isPublic ? theme.palette.text.secondary : 'inherit'
                     },
-
-                    // 2. ALLE Icons im Titel-Bereich einfärben (Das Widget Icon)
                     '& svg': {
                         fontSize: isMobile ? '1.2rem' : '1.4rem',
                         marginRight: '8px',
-                        // Auf Desktop: Primary Farbe. Auf Mobile: Grau.
-                        color: isMobile ? theme.palette.text.secondary : theme.palette.primary.main
+                        color: isMobile || isPublic ? theme.palette.text.secondary : theme.palette.primary.main
                     },
-
-                    // 3. AUSNAHME: Icons in Buttons (z.B. Suche, Filter) sollen GRAU bleiben
-                    // Wir überschreiben die Regel oben für Icons innerhalb von IconButton oder InputAdornment
                     '& .MuiIconButton-root svg, & .MuiInputAdornment-root svg': {
                         color: theme.palette.text.secondary,
-                        mr: 0 // Reset margin für Funktions-Icons
+                        mr: 0 
                     }
                 }}>
                     {title}
@@ -187,12 +196,16 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
             
             <Box sx={{ 
                 flexGrow: 1, 
-                overflowY: 'auto', 
+                // UPDATE: Auf Mobile Overflow verstecken (kein interner Scrollbalken), Desktop wie gewohnt
+                overflowY: isMobile ? 'hidden' : 'auto', 
                 overflowX: 'hidden',
                 p: noPadding ? 0 : { xs: 1.5, sm: 2 }, 
                 display: 'flex', 
                 flexDirection: 'column',
-                position: 'relative'
+                position: 'relative',
+                // NEU: Max-Height Logik für Mobile "Show More"
+                maxHeight: isMobile && !mobileExpanded ? '380px' : 'none',
+                transition: 'max-height 0.4s ease-in-out'
             }}>
                 {loading ? (
                     <Box sx={{ 
@@ -207,7 +220,42 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                 ) : (
                     children
                 )}
+
+                {/* NEU: Fade-Out Effekt am Boden, wenn eingeklappt */}
+                {isMobile && !mobileExpanded && !loading && !error && (
+                    <Box sx={{ 
+                        position: 'absolute', 
+                        bottom: 0, left: 0, right: 0, 
+                        height: '60px', 
+                        background: theme.palette.mode === 'dark' 
+                            ? 'linear-gradient(to top, rgba(30,30,30,1), transparent)' 
+                            : 'linear-gradient(to top, rgba(255,255,255,1), transparent)',
+                        pointerEvents: 'none',
+                        zIndex: 2
+                    }} />
+                )}
             </Box>
+
+            {/* NEU: Show More / Show Less Button für Mobile */}
+            {isMobile && !loading && !error && (
+                <Button 
+                    fullWidth 
+                    onClick={() => setMobileExpanded(!mobileExpanded)}
+                    sx={{ 
+                        borderRadius: 0, 
+                        borderTop: '1px solid', 
+                        borderColor: 'divider',
+                        py: 1,
+                        textTransform: 'none',
+                        color: 'text.secondary',
+                        bgcolor: theme.palette.background.paper,
+                        '&:hover': { bgcolor: theme.palette.action.hover }
+                    }}
+                    endIcon={mobileExpanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                >
+                    {mobileExpanded ? 'Weniger anzeigen' : 'Mehr anzeigen'}
+                </Button>
+            )}
         </Paper>
     );
 };

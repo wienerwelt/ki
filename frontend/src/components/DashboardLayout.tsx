@@ -180,10 +180,24 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         setDrawerOpen(open);
     };
 
-    const handleLogout = () => {
+const handleLogout = () => {
+        // 1. Partner-Code sichern, BEVOR wir ausloggen (sonst sind die Daten weg)
+        const partnerCode = businessPartner?.id ? businessPartner.id.slice(-8) : null;
+
+        // 2. Ausloggen (löscht Token und User-State)
         logout();
-        navigate('/login');
         posthog.capture('user_logged_out');
+        
+        // 3. Ziel-URL bestimmen (mit Partner-Parameter, falls vorhanden)
+        const targetUrl = partnerCode ? `/login?partner=${partnerCode}` : '/login';
+
+        // 4. Weiterleiten mit Feedback-Nachricht
+        navigate(targetUrl, { 
+            state: { 
+                snackbarMessage: 'Sie wurden erfolgreich abgemeldet.',
+                severity: 'success'
+            } 
+        });
     };
 
     const handleRemoveTag = (tagToRemove: string) => async () => {
@@ -237,7 +251,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 {user?.role === 'assistenz' && (
                    <>
                         <ListItem button component={RouterLink} to="/admin/users"><GroupIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.userManagement')} /></ListItem>
-                        <ListItem button component={RouterLink} to="/admin/actions"><StarsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.manageActions')} /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/surveys"><PollIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.surveys')} /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/community"><ForumIcon sx={{ mr: 2 }} /><ListItemText primary="Community Moderation" /></ListItem>
                         <Divider sx={{ my: 1 }} />
@@ -272,10 +285,10 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItem button component={RouterLink} to="/admin/cronjobs"><ScheduleIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.automatedTasks')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/statistics"><QueryStatsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.statistics')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/monitor"><MonitorIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.activityMonitor')} /></ListItem>
+                            <Divider sx={{ my: 1 }} />                            
                         </List>
                     </>
                 )}
-                <Divider sx={{ my: 1 }} />
                 <ListItem button onClick={handleLogout}><LogoutIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.logout')} /></ListItem>
             </List>
         </Box>

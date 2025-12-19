@@ -16,15 +16,18 @@ import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import CommodityChart from '../CommodityChart';
-// ANGEPASST: Korrekter Import-Pfad und Name für die Konfigurationsdatei
 import { commoditiesConfig } from '../CommoditiesConfig';
+import { useTranslation } from 'react-i18next'; // ✅ NEU
+import { format } from 'date-fns'; // ✅ NEU: Für Datumsanzeige
 
 // --- Interfaces & Mappings ---
 
-interface CommodityPricesWidgetProps extends BaseWidgetProps {
+interface CommodityPricesWidgetProps extends Partial<BaseWidgetProps> {
     icon?: React.ReactNode;
     title: string;
     widgetTypeKey: string;
+    widgetId: string;
+    isPublic?: boolean;
 }
 
 interface HistoricalData {
@@ -51,38 +54,38 @@ interface ApiData {
 const sourceUrls: { [key: string]: string } = {
     'oilpriceapi.com': 'https://oilpriceapi.com/',
     'metalpriceapi.com': 'https://metalpriceapi.com/',
-    'ecb.europa.eu': 'https://www.ecb.europa.eu/stats/financial_markets_and_interest_rates/money_market/html/index.en.html',
+    'ecb.europa.eu': 'https://www.ecb.europa.eu/',
     'commodities-api.com': 'https://commodities-api.com/',
-    'statistik.at': 'https://www.statistik.at/statistiken/volkswirtschaft-und-oeffentliche-finanzen/preise-und-preisindizes/kraftfahrzeughaftpflicht-versicherungsleistungspreisindex-kvlpi',
-    'tradingeconomics.com': 'https://tradingeconomics.com/commodity/carbon',
+    'statistik.at': 'https://www.statistik.at/',
+    'tradingeconomics.com': 'https://tradingeconomics.com/',
 };
 
-// --- Hilfskomponenten ---
+// --- Helper Components ---
 const TrendIndicator: React.FC<{ trend: 'up' | 'down' | 'stable' }> = ({ trend }) => {
     if (trend === 'up') return <ArrowUpwardIcon color="success" sx={{ fontSize: '1.2rem' }} />;
     if (trend === 'down') return <ArrowDownwardIcon color="error" sx={{ fontSize: '1.2rem' }} />;
     return <TrendingFlatIcon color="action" sx={{ fontSize: '1.2rem' }} />;
 };
 
-const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = ({ indicatorKey, data }) => {
+const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData; isPublic?: boolean }> = ({ indicatorKey, data, isPublic }) => {
     const navigate = useNavigate();
+    const { t, i18n } = useTranslation();
     const displayInfo = commoditiesConfig[indicatorKey] || { name: indicatorKey, formatOptions: { style: 'decimal' } };
     const sourceUrl = sourceUrls[data.source] || '#';
 
     const flagCode = data.countryCode ? data.countryCode.toLowerCase() : 'eu';
-    const flagUrl = `https://flagcdn.com/w20/${flagCode}.png`; // 20px breite Flagge
-    // -----------------------------    
+    const flagUrl = `https://flagcdn.com/w20/${flagCode}.png`;
 
     const formatPrice = (price: number | null | undefined) => {
         if (price == null) return 'N/A';
         if (data.unit === '%') {
-            return `${price.toLocaleString('de-DE', displayInfo.formatOptions)}%`;
+            return `${price.toLocaleString(i18n.language, displayInfo.formatOptions)}%`;
         }
-        return new Intl.NumberFormat('de-DE', displayInfo.formatOptions).format(price);
+        return new Intl.NumberFormat(i18n.language, displayInfo.formatOptions).format(price);
     };
 
     return (
-        <Paper variant="outlined" sx={{ p: 2, display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <Paper variant="outlined" sx={{ p: 2, display: 'flex', flexDirection: 'column', height: '100%', bgcolor: 'transparent' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                 <img 
                     src={flagUrl} 
@@ -96,63 +99,57 @@ const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData }> = (
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, my: 1 }}>
                 <Typography variant="h4">{formatPrice(data.currentPrice)}</Typography>
-                <Tooltip title={`Trend seit letzter Woche`}>
+                <Tooltip title={t('widgets.commodities.trendTooltip')}>
                     <Box sx={{ alignSelf: 'center' }}>
                         <TrendIndicator trend={data.trend} />
                     </Box>
                 </Tooltip>
             </Box>
             <Typography variant="caption" color="text.secondary">
-                {data.unit !== '%' ? `pro ${data.unit}` : 'Zinssatz'}
+                {data.unit !== '%' ? `${t('widgets.commodities.perUnit')} ${data.unit}` : t('widgets.commodities.interestRate')}
             </Typography>
             
             <Divider sx={{ my: 1.5 }} />
 
             <Stack spacing={0.5} sx={{ flexGrow: 1 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2" color="text.secondary">-1 Woche:</Typography>
+                    <Typography variant="body2" color="text.secondary">{t('widgets.commodities.weekAgo')}:</Typography>
                     <Typography variant="body2">{formatPrice(data.historical.weekAgo)}</Typography>
                 </Box>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2" color="text.secondary">-1 Monat:</Typography>
+                    <Typography variant="body2" color="text.secondary">{t('widgets.commodities.monthAgo')}:</Typography>
                     <Typography variant="body2">{formatPrice(data.historical.monthAgo)}</Typography>
                 </Box>
-                {data.historical.yearAgo != null && (
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <Typography variant="body2" color="text.secondary">-1 Jahr:</Typography>
-                        <Typography variant="body2">{formatPrice(data.historical.yearAgo)}</Typography>
-                    </Box>
-                )}
             </Stack>
 
-<Box sx={{ textAlign: 'center' }}>
-    <Typography variant="caption" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-        Quelle: <MuiLink href={sourceUrl} target="_blank" rel="noopener">{data.source}</MuiLink>
-        {data.is_trusted_source && (
-            <Tooltip title="Info zu geprüften Quellen">
-                <IconButton
-                    size="small"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        navigate('/trusted-sources');
-                    }}
-                    sx={{ p: 0 }}
-                >
-                    <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
-                </IconButton>
-            </Tooltip>
-        )}
-    </Typography>
-    <Typography variant="caption" sx={{ display: 'block' }}>
-        (Stand: {new Date(data.lastUpdate).toLocaleDateString('de-DE')})
-    </Typography>
-</Box>
+            <Box sx={{ textAlign: 'center', mt: 1 }}>
+                <Typography variant="caption" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                    {t('widgets.commodities.source')}: <MuiLink href={isPublic ? undefined : sourceUrl} target={isPublic ? undefined : "_blank"} rel="noopener" sx={{ cursor: isPublic ? 'default' : 'pointer', textDecoration: isPublic ? 'none' : 'underline' }}>{data.source}</MuiLink>
+                    {data.is_trusted_source && !isPublic && (
+                        <Tooltip title={t('widgets.commodities.trustedTooltip')}>
+                            <IconButton
+                                size="small"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate('/trusted-sources');
+                                }}
+                                sx={{ p: 0 }}
+                            >
+                                <VerifiedUserIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                            </IconButton>
+                        </Tooltip>
+                    )}
+                </Typography>
+            </Box>
         </Paper>
     );
 };
 
 // --- Hauptkomponente ---
-const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, widgetTypeKey }) => {
+const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ 
+    onDelete, widgetId, isRemovable, icon, title, widgetTypeKey, isPublic = false 
+}) => {
+    const { t } = useTranslation();
     const [data, setData] = useState<ApiData | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -163,53 +160,77 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
     const [chartTimeframe, setChartTimeframe] = useState('6M');
     const [isChartLoading, setIsChartLoading] = useState(false);
 
-    // useEffect zum Laden der Kartendaten
+    // Daten laden (Mock oder API)
     useEffect(() => {
         const fetchData = async () => {
             setIsLoading(true);
             setError(null);
+
+            if (isPublic) {
+                // Public Mode: Mock-Daten
+                setTimeout(() => {
+                    setData({
+                        'BRENT_OIL': {
+                            currentPrice: 82.45, unit: 'Barrel', lastUpdate: new Date().toISOString(), source: 'oilpriceapi.com', trend: 'up', countryCode: 'us', is_trusted_source: true,
+                            historical: { weekAgo: 80.10, monthAgo: 78.50, yearAgo: 75.00 }
+                        },
+                        'EUR_USD': {
+                            currentPrice: 1.08, unit: 'USD', lastUpdate: new Date().toISOString(), source: 'ecb.europa.eu', trend: 'stable', countryCode: 'eu', is_trusted_source: true,
+                            historical: { weekAgo: 1.08, monthAgo: 1.07, yearAgo: 1.05 }
+                        },
+                        'CO2_PRICE': {
+                            currentPrice: 65.20, unit: 'Tonne', lastUpdate: new Date().toISOString(), source: 'tradingeconomics.com', trend: 'down', countryCode: 'eu', is_trusted_source: true,
+                            historical: { weekAgo: 68.00, monthAgo: 70.50, yearAgo: 85.00 }
+                        }
+                    });
+                    setIsLoading(false);
+                }, 500);
+                return;
+            }
+
+            // Normaler Modus: API
             try {
                 const token = localStorage.getItem('jwt_token');
                 const response = await apiClient.get('/api/data/commodities', { headers: { 'x-auth-token': token } });
                 if (response.data.ok) {
                     setData(response.data.data);
                 } else {
-                    throw new Error(response.data.message || 'Daten konnten nicht geladen werden.');
+                    throw new Error(response.data.message || t('widgets.commodities.errorLoad'));
                 }
             } catch (err: any) {
-                setError(err?.response?.data?.message || 'Ein Fehler ist aufgetreten.');
+                setError(err?.response?.data?.message || t('widgets.commodities.errorGeneral'));
             } finally {
                 setIsLoading(false);
             }
         };
         fetchData();
-    }, []);
+    }, [isPublic, t]);
 
-    // useEffect zum Laden der Chart-Daten
+    // Chart Daten laden
     useEffect(() => {
+        if (isPublic || viewMode !== 'chart') return;
+
         const fetchChartData = async () => {
-            if (viewMode === 'chart') {
-                setIsChartLoading(true);
-                setError(null);
-                try {
-                    const token = localStorage.getItem('jwt_token');
-                    const response = await apiClient.get(`/api/data/commodities/history?timeframe=${chartTimeframe}`, {
-                        headers: { 'x-auth-token': token },
-                    });
-                    if (response.data.ok) {
-                        setChartData(response.data.data);
-                    } else {
-                       throw new Error(response.data.message || 'Historische Daten konnten nicht geladen werden.');
-                    }
-                } catch (err: any) {
-                    setError(err?.response?.data?.message || 'Historische Daten konnten nicht geladen werden.');
-                } finally {
-                    setIsChartLoading(false);
+            setIsChartLoading(true);
+            setError(null);
+            try {
+                const token = localStorage.getItem('jwt_token');
+                const response = await apiClient.get(`/api/data/commodities/history?timeframe=${chartTimeframe}`, {
+                    headers: { 'x-auth-token': token },
+                });
+                if (response.data.ok) {
+                    setChartData(response.data.data);
+                } else {
+                   throw new Error(response.data.message || t('widgets.commodities.errorHistory'));
                 }
+            } catch (err: any) {
+                setError(err?.response?.data?.message || t('widgets.commodities.errorHistory'));
+            } finally {
+                setIsChartLoading(false);
             }
         };
         fetchChartData();
-    }, [viewMode, chartTimeframe]);
+    }, [viewMode, chartTimeframe, isPublic, t]);
 
     const handleReportError = () => {
         navigate('/feedback', {
@@ -228,6 +249,12 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
         return order.indexOf(keyA) - order.indexOf(keyB);
     }) : [];
 
+    // Finde das aktuellste Datum für die Footer-Anzeige
+    const latestUpdate = data ? Object.values(data).reduce((latest, item) => {
+        const itemDate = new Date(item.lastUpdate);
+        return itemDate > latest ? itemDate : latest;
+    }, new Date(0)) : null;
+
     return (
         <WidgetPaper
             title={
@@ -241,69 +268,79 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ onDelete,
             widgetId={widgetId}
             onDelete={onDelete}
             isRemovable={isRemovable}
+            isPublic={isPublic}
         >
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1, mt: -1 }}>
-                 <ToggleButtonGroup
-                    value={viewMode}
-                    exclusive
-                    onChange={handleViewChange}
-                    aria-label="Ansicht wechseln"
-                    size="small"
-                >
-                    <ToggleButton value="cards" aria-label="Kartenansicht">
-                        <Tooltip title="Kartenansicht">
-                            <ViewModuleIcon />
-                        </Tooltip>
-                    </ToggleButton>
-                    <ToggleButton value="chart" aria-label="Grafikansicht">
-                        <Tooltip title="Grafikansicht">
-                            <ShowChartIcon />
-                        </Tooltip>
-                    </ToggleButton>
-                </ToggleButtonGroup>
-            </Box>
+            {!isPublic && (
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1, mt: -1 }}>
+                     <ToggleButtonGroup
+                        value={viewMode}
+                        exclusive
+                        onChange={handleViewChange}
+                        aria-label="Ansicht wechseln"
+                        size="small"
+                    >
+                        <ToggleButton value="cards" aria-label="Kartenansicht">
+                            <Tooltip title={t('widgets.commodities.viewCards')}>
+                                <ViewModuleIcon />
+                            </Tooltip>
+                        </ToggleButton>
+                        <ToggleButton value="chart" aria-label="Grafikansicht">
+                            <Tooltip title={t('widgets.commodities.viewChart')}>
+                                <ShowChartIcon />
+                            </Tooltip>
+                        </ToggleButton>
+                    </ToggleButtonGroup>
+                </Box>
+            )}
 
             {error && (
                  <Alert
                     severity="error"
-                    action={
+                    action={!isPublic && (
                         <Button color="inherit" size="small" onClick={handleReportError} startIcon={<ReportProblemOutlinedIcon />}>
-                            Fehler Melden
+                            {t('widgets.commodities.reportError')}
                         </Button>
-                    }
+                    )}
                 >
                     {error}
                 </Alert>
             )}
 
-            {viewMode === 'cards' && (
+            {(viewMode === 'cards' || isPublic) && (
                 <>
                     {isLoading && <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box>}
                     {!isLoading && !error && sortedDataEntries.length > 0 ? (
-                        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 2 }}>
-                            {sortedDataEntries.map(([key, value]) => (
-                               <CommodityItem key={key} indicatorKey={key} data={value} />
-                            ))}
-                        </Box>
+                        <>
+                            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 2 }}>
+                                {sortedDataEntries.map(([key, value]) => (
+                                <CommodityItem key={key} indicatorKey={key} data={value} isPublic={isPublic} />
+                                ))}
+                            </Box>
+                            
+                            {/* NEU: Zeitstempel-Footer */}
+                            {latestUpdate && latestUpdate.getTime() > 0 && (
+                                <Box sx={{ mt: 2, textAlign: 'right' }}>
+                                    <Typography variant="caption" color="text.secondary">
+                                        {t('widgets.commodities.lastUpdate')}: {format(latestUpdate, 'dd.MM.yyyy HH:mm')}
+                                    </Typography>
+                                </Box>
+                            )}
+                        </>
                     ) : (
-                        !isLoading && !error && <Typography sx={{ p: 2, textAlign: 'center', color: 'text.secondary' }}>Keine Daten verfügbar.</Typography>
+                        !isLoading && !error && <Typography sx={{ p: 2, textAlign: 'center', color: 'text.secondary' }}>{t('widgets.commodities.noData')}</Typography>
                     )}
                 </>
             )}
             
-            {viewMode === 'chart' && (
+            {viewMode === 'chart' && !isPublic && (
                 <>
-                    {/* KORREKTUR: Die Lade-Logik (CircularProgress) wird entfernt 
-                      und an die CommodityChart-Komponente übergeben, 
-                      die jetzt ein Skeleton anzeigt.
-                    */}
                     {!error && (
                         <CommodityChart 
                             historicalData={chartData} 
                             latestData={data}
                             timeframe={chartTimeframe}
                             setTimeframe={setChartTimeframe}
-                            isLoading={isChartLoading} // NEU: isLoading-Prop übergeben
+                            isLoading={isChartLoading}
                         />
                     )}
                 </>

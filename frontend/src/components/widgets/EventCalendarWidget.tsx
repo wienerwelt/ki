@@ -4,7 +4,8 @@ import {
   IconButton, Stack, InputAdornment, Button,
   MenuItem, FormControl, Select, SelectChangeEvent, Link as MuiLink,
   Dialog, DialogTitle, DialogContent, DialogActions, List, ListItem,
-  ToggleButtonGroup, ToggleButton, Avatar, AvatarGroup, Badge, Divider, Chip
+  ToggleButtonGroup, ToggleButton, Avatar, AvatarGroup, Badge, Divider, Chip,
+  useTheme, useMediaQuery // NEU: Imports für Mobile-Erkennung
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
@@ -50,7 +51,6 @@ interface EventData {
   region: string | null; 
   summary: string | null; 
   url: string | null;
-  // NEU: Listen statt nur Zahlen
   participants: Participant[]; 
   maybeParticipants: Participant[]; 
   userVote: 1 | 0 | -1 | null;
@@ -60,7 +60,7 @@ interface EventData {
   type?: 'event' | 'holiday';
 }
 
-// --- HELPER: Status Logik (Identisch zum BP Info Widget) ---
+// --- HELPER: Status Logik ---
 const getUserStatus = (lastLoginDate?: string) => {
     if (!lastLoginDate) return 'offline';
     const loginTime = new Date(lastLoginDate).getTime();
@@ -154,10 +154,6 @@ const getDomainSafely = (url: string | null | undefined): string | null => {
   if (!url) return null;
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url.split('/')[0] ?? null; }
 };
-const isValidUrl = (urlString: string): boolean => {
-  if (!urlString || urlString === 'https://') return true;
-  try { const u = new URL(urlString); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; }
-};
 
 // --- NEU: Darstellung der Avatare im Listen-Element ---
 const ParticipantsPreview: React.FC<{ yes: Participant[]; maybe: Participant[] }> = ({ yes, maybe }) => {
@@ -188,6 +184,9 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
   onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey
 }) => {
   const navigate = useNavigate();
+  // NEU: Mobile Erkennung
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const [allEvents, setAllEvents] = useState<EventData[]>([]);
   const [availableRegions, setAvailableRegions] = useState<Region[]>([]);
@@ -222,11 +221,10 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     setError(null);
     try {
       const [eventsRes, holidaysRes] = await Promise.all([
-        apiClient.get('/api/data/enhanced-calendar-events', { params: { category, limit: 50 } }), // Ggf. Endpoint anpassen
+        apiClient.get('/api/data/enhanced-calendar-events', { params: { category, limit: 50 } }), 
         apiClient.get('/api/data/holidays'),
       ]);
 
-      // Mapping der API-Antwort (angepasst an die neue Backend-Struktur)
       const events: EventData[] = (eventsRes.data?.events || []).map((e: any) => ({
         id: String(e.id),
         title: e.title,
@@ -234,7 +232,6 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
         region: e.region ?? null,
         summary: e.summary ?? null,
         url: e.url ?? null,
-        // Fallback: Wenn Backend noch alte Struktur liefert (Zahlen), leere Arrays nutzen
         participants: Array.isArray(e.participants_data) ? e.participants_data : [],
         maybeParticipants: Array.isArray(e.maybe_participants_data) ? e.maybe_participants_data : [],
         userVote: (e.userVote ?? null) as 1 | 0 | -1 | null,
@@ -351,14 +348,10 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     if (!selectedEvent || vote === null) return;
     const eventId = selectedEvent.id;
 
-    // Optimistische UI-Updates sind hier schwierig, da wir das User-Objekt bräuchten.
-    // Daher laden wir einfach neu.
     try {
       await apiClient.post(`/api/data/events/${eventId}/vote`, { vote });
-      // Nach erfolgreichem Vote neu laden, um die aktualisierte Liste zu bekommen
       fetchEventsAndHolidays();
-      // Wir schließen den Dialog nicht, aber wir könnten selectedEvent updaten, wenn wir die Daten hätten.
-      // Einfacher Hack: Kurz warten und selectedEvent aktualisieren
+      
       setTimeout(async () => {
           const res = await apiClient.get('/api/data/enhanced-calendar-events', { params: { category, limit: 50 } });
           const updatedEventRaw = (res.data.events || []).find((e: any) => String(e.id) === eventId);
@@ -505,7 +498,12 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
               Keine Events für Ihre Auswahl gefunden.
             </Typography>
           ) : (
-            <Box sx={{ maxHeight: { xs: 'none', sm: 350 }, overflowY: { xs: 'visible', sm: 'auto' } }}>
+            <Box sx={{ 
+                // NEU: Auf Mobile keine Höhenbeschränkung und kein Scrollbalken,
+                // damit WidgetPaper "Show More" greifen kann.
+                maxHeight: isMobile ? 'none' : 350, 
+                overflowY: isMobile ? 'visible' : 'auto' 
+            }}>
               <List sx={{ p: 0 }}>
                 {Object.entries(filteredAndGrouped).map(([dateKey, events]) => (
                   <Box key={dateKey} sx={{ mb: 1 }}>
@@ -636,7 +634,6 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                   </Box>
               )}
 
-              {/* NEU: Teilnehmer-Liste im Dialog */}
               {(selectedEvent.participants.length > 0 || selectedEvent.maybeParticipants.length > 0) && (
                   <Box sx={{ bgcolor: 'action.hover', p: 2, borderRadius: 2 }}>
                       <Typography variant="subtitle2" sx={{ mb: 1 }}>Teilnehmer</Typography>

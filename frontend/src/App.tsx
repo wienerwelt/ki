@@ -11,8 +11,9 @@ import { SnackbarProvider } from './context/SnackbarContext';
 import DashboardLayout from './components/DashboardLayout';
 
 // Öffentliche Seiten
-import LandingPage from './pages/LandingPage';
-import LoginPage from './pages/LoginPage';
+// import LandingPage from './pages/LandingPage'; // <-- Nicht mehr benötigt
+import PublicPortalPage from './pages/PublicPortalPage'; 
+
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import VerifyEmailPage from './pages/VerifyEmailPage';
@@ -23,6 +24,7 @@ import NewsletterConfirmed from './pages/NewsletterConfirmed';
 import FundingSearchPage from './pages/FundingSearchPage';
 import FundingDetailPage from './pages/FundingDetailPage';
 import PublicProfileCard from './pages/PublicProfileCard';
+import PublicBpCard from './pages/PublicBpCard';
 
 // Geschützte Seiten
 import DashboardPage from './pages/DashboardPage';
@@ -113,21 +115,19 @@ function App() {
               : scheme?.text_color_dark || '#ffffff',
           },
           background: {
-            // OPTIMIERUNG: Dunklerer Hintergrund im Dark Mode für besseren Kontrast zu den Cards
             default: themeMode === 'light'
               ? scheme?.background_color_light || '#f4f6f8'
-              : '#0a0a0a', // Fast Schwarz, damit sich #1e1e1e (Paper) abhebt
+              : '#0a0a0a', 
             paper: themeMode === 'light'
               ? scheme?.paper_color_light || '#ffffff' 
-              : '#1e1e1e', // Standard Material Dark Paper
+              : '#1e1e1e', 
           },
         },
         components: {
-            // OPTIONAL: Globale Anpassungen für Cards im Dark Mode
             MuiPaper: {
                 styleOverrides: {
                     root: {
-                        backgroundImage: 'none', // Entfernt den Standard-Overlay im Darkmode für saubereren Look
+                        backgroundImage: 'none', 
                     }
                 }
             }
@@ -152,9 +152,12 @@ function App() {
       <CssBaseline />
       <Router>
         <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<LoginPage isRegister={true} />} />
+          {/* ✅ UPDATE: Startseite zeigt jetzt auf das neue Public Portal */}
+          <Route path="/" element={<PublicPortalPage />} />
+          
+          <Route path="/login" element={<PublicPortalPage />} />
+          <Route path="/register" element={<PublicPortalPage isRegister={true} />} />
+          
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
           <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
@@ -163,6 +166,7 @@ function App() {
           <Route path="/disclaimer" element={<DisclaimerPage />} />
           <Route path="/newsletter/confirmed" element={<NewsletterConfirmed />} />
           <Route path="/p/:userId" element={<PublicProfileCard />} />
+          <Route path="/invite/:bpId" element={<PublicBpCard />} />
 
           <Route element={<ProtectedRoutes />}>
             <Route path="/dashboard" element={<DashboardPage />} />

@@ -2,15 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Container, Typography, Box, CircularProgress, Alert, List, ListItem, ListItemText,
-  Paper, Divider, Chip, ListItemButton // ListItemButton ist besser als ListItem button
+  Paper, Divider, Chip, ListItemButton, Button
 } from '@mui/material';
 
 // Icons
 import ArticleIcon from '@mui/icons-material/Article';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import BusinessIcon from '@mui/icons-material/Business';
-import FolderIcon from '@mui/icons-material/Folder'; // ✅ NEU
-import ForumIcon from '@mui/icons-material/Forum';   // ✅ NEU
+import FolderIcon from '@mui/icons-material/Folder';
+import ForumIcon from '@mui/icons-material/Forum';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+// ✅ NEUE ICONS FÜR MEDIEN
+import PodcastsIcon from '@mui/icons-material/Podcasts';
+import YouTubeIcon from '@mui/icons-material/YouTube';
 
 import apiClient from '../apiClient';
 
@@ -19,15 +23,16 @@ interface SearchResult {
   title: string;
   summary: string | null;
   published_date: string;
-  // ✅ ERWEITERT: file und community_post hinzugefügt
   type: 'scraped' | 'ai' | 'tracked_account_news' | 'file' | 'community_post'; 
+  // ✅ NEU: Category Feld
+  category: string | null;
   relevance: number;
   url: string | null;
 }
 
 const SearchResultsPage: React.FC = () => {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate(); // ✅ NEU: Für interne Navigation
+  const navigate = useNavigate();
   const term = searchParams.get('term');
   
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -55,34 +60,48 @@ const SearchResultsPage: React.FC = () => {
     }
   }, [term]);
 
-  // ✅ ICON-LOGIK ERWEITERT
-  const renderIcon = (type: SearchResult['type']) => {
-    switch (type) {
-      case 'ai':
-        return <SmartToyIcon sx={{ mr: 2, color: 'secondary.main', fontSize: 30 }} />;
-      case 'tracked_account_news':
-        return <BusinessIcon sx={{ mr: 2, color: 'primary.main', fontSize: 30 }} />;
-      case 'file':
-        return <FolderIcon sx={{ mr: 2, color: 'info.main', fontSize: 30 }} />;
-      case 'community_post':
-        return <ForumIcon sx={{ mr: 2, color: 'warning.main', fontSize: 30 }} />;
-      default:
-        return <ArticleIcon sx={{ mr: 2, color: 'text.secondary', fontSize: 30 }} />;
-    }
+  // HILFSFUNKTION: Medien-Typ erkennen
+  const getMediaType = (category: string | null) => {
+    if (!category) return 'text';
+    const cat = category.toLowerCase();
+    if (cat.includes('podcast') || cat.includes('audio')) return 'podcast';
+    if (cat.includes('video') || cat.includes('movie') || cat.includes('tv') || cat.includes('youtube')) return 'video';
+    return 'text';
   };
 
-  // ✅ LABELS ERWEITERT
-  const getChipLabel = (type: SearchResult['type']) => {
-    switch (type) {
+  // ✅ LOGIK: Icon basierend auf Typ UND Kategorie wählen
+  const renderIcon = (result: SearchResult) => {
+    // Spezial-Typen zuerst
+    if (result.type === 'ai') return <SmartToyIcon sx={{ mr: 2, color: 'secondary.main', fontSize: 30 }} />;
+    if (result.type === 'tracked_account_news') return <BusinessIcon sx={{ mr: 2, color: 'primary.main', fontSize: 30 }} />;
+    if (result.type === 'file') return <FolderIcon sx={{ mr: 2, color: 'info.main', fontSize: 30 }} />;
+    if (result.type === 'community_post') return <ForumIcon sx={{ mr: 2, color: 'warning.main', fontSize: 30 }} />;
+    
+    // Für 'scraped' Inhalte den Medientyp prüfen
+    const mediaType = getMediaType(result.category);
+    if (mediaType === 'podcast') return <PodcastsIcon sx={{ mr: 2, color: 'purple', fontSize: 30 }} />;
+    if (mediaType === 'video') return <YouTubeIcon sx={{ mr: 2, color: 'red', fontSize: 30 }} />;
+    
+    // Standard Artikel
+    return <ArticleIcon sx={{ mr: 2, color: 'text.secondary', fontSize: 30 }} />;
+  };
+
+  // ✅ LOGIK: Label dynamisch anpassen
+  const getChipLabel = (result: SearchResult) => {
+    switch (result.type) {
       case 'ai': return 'KI-Analyse';
       case 'tracked_account_news': return 'Account-News';
       case 'file': return 'Datei';
       case 'community_post': return 'Community';
-      default: return 'Artikel';
+      case 'scraped':
+        const mediaType = getMediaType(result.category);
+        if (mediaType === 'podcast') return 'Podcast';
+        if (mediaType === 'video') return 'Video';
+        return 'Artikel';
+      default: return 'Inhalt';
     }
   };
 
-  // ✅ FARBEN ERWEITERT
   const getChipColor = (type: SearchResult['type']): "primary" | "secondary" | "default" | "info" | "warning" => {
     switch (type) {
       case 'ai': return 'secondary';
@@ -93,14 +112,11 @@ const SearchResultsPage: React.FC = () => {
     }
   };
 
-  // ✅ Navigation Handler
   const handleResultClick = (url: string | null) => {
     if (!url) return;
-    // Wenn URL mit '/' beginnt, ist es eine interne Route -> SPA Navigation
     if (url.startsWith('/')) {
       navigate(url);
     } else {
-      // Sonst externer Link -> Neuer Tab
       window.open(url, '_blank', 'noopener,noreferrer');
     }
   };
@@ -121,9 +137,24 @@ const SearchResultsPage: React.FC = () => {
         {error && <Alert severity="error">{error}</Alert>}
 
         {!loading && !error && results.length === 0 && (
-          <Typography color="text.secondary">
-            Keine Ergebnisse für Ihre Suche gefunden.
-          </Typography>
+          <Box sx={{ textAlign: 'center', py: 6, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <Typography variant="body1" color="text.secondary" paragraph>
+              Keine direkten Treffer für "{term}" gefunden.
+            </Typography>
+            <Typography variant="body1" sx={{ mb: 3 }}>
+              Möchten Sie stattdessen die KI fragen, um eine Antwort aus unseren internen Dokumenten zu generieren?
+            </Typography>
+            <Button
+              variant="contained"
+              // ✅ Button ist jetzt 'primary' (wie die anderen Buttons)
+              color="primary" 
+              size="large"
+              startIcon={<AutoAwesomeIcon />}
+              onClick={() => navigate(`/ask?question=${encodeURIComponent(term || '')}`)}
+            >
+              KI-Assistent fragen
+            </Button>
+          </Box>
         )}
 
         {!loading && !error && results.length > 0 && (
@@ -136,7 +167,8 @@ const SearchResultsPage: React.FC = () => {
                     onClick={() => handleResultClick(result.url)}
                     disabled={!result.url}
                   >
-                    {renderIcon(result.type)}
+                    {/* Render Icon entscheidet jetzt intelligent */}
+                    {renderIcon(result)}
                     <ListItemText
                       primary={
                         <Typography variant="subtitle1" color="primary" sx={{ fontWeight: 'bold' }}>
@@ -149,8 +181,9 @@ const SearchResultsPage: React.FC = () => {
                             <Typography variant="caption" color="text.secondary">
                               {new Date(result.published_date).toLocaleDateString('de-DE')}
                             </Typography>
+                            {/* Chip zeigt jetzt Podcast/Video direkt an */}
                             <Chip 
-                              label={getChipLabel(result.type)} 
+                              label={getChipLabel(result)} 
                               size="small" 
                               color={getChipColor(result.type)}
                               variant="outlined"

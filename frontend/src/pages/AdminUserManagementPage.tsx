@@ -14,6 +14,7 @@ import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import SearchIcon from '@mui/icons-material/Search';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import DownloadIcon from '@mui/icons-material/Download';
+import QrCodeIcon from '@mui/icons-material/QrCode'; // ✅ NEU: Icon für Einladungs-Button
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 
@@ -84,6 +85,10 @@ const AdminUserManagementPage: React.FC = () => {
   const isAssistant = loggedInUser?.role === 'assistenz';
   const businessPartnerNameFromState = (location.state as any)?.businessPartnerName;
 
+  // ✅ NEU: Ermittle die aktuelle Business Partner ID für den Invite-Button
+  // Für Assistenten ist es der eigene BP, für Admins der gefilterte BP (falls gesetzt)
+  const currentBpId = isAssistant ? loggedInUser?.business_partner_id : adminFilterBpId;
+
   const [users, setUsers] = useState<User[]>([]);
   const [businessPartnerOptions, setBusinessPartnerOptions] = useState<BusinessPartnerOption[]>([]);
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
@@ -122,7 +127,6 @@ const AdminUserManagementPage: React.FC = () => {
 
 const handleDownloadTemplate = async () => {
     try {
-      // Wir holen den Token manuell aus dem Local Storage
       const token = localStorage.getItem('jwt_token');
       if (!token) {
         throw new Error('Authentifizierungs-Token nicht gefunden.');
@@ -130,7 +134,6 @@ const handleDownloadTemplate = async () => {
 
       const apiBase = (import.meta as any).env?.VITE_API_URL || '';
       
-      // Wir verwenden die Standard-fetch-Methode und fügen den Auth-Header hinzu
       const res = await fetch(`${apiBase}/api/admin/users/import/template`, {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -155,27 +158,19 @@ const handleDownloadTemplate = async () => {
     }
   };
 
-
-
-  // KORREKTUR: Die Logik zum Abrufen der Benutzer wurde in eine separate useCallback-Funktion
-  // ausgelagert, um sie nach Änderungen wieder aufrufen zu können.
   const fetchUsers = useCallback(async () => {
-    // FRÜHZEITIGER ABBRUCH: Wenn ein Assistent eingeloggt ist, aber seine
-    // Business Partner ID noch nicht geladen wurde, warten wir ab.
     if (isAssistant && !loggedInUser?.business_partner_id) {
-        setUsers([]); // Setze Benutzer vorübergehend auf eine leere Liste
-        setLoading(false); // Beende den Ladezustand
+        setUsers([]); 
+        setLoading(false); 
         return;
     }
 
     setLoading(true);
     try {
       let userUrl = '/api/admin/users';
-      // Fall 1: Admin filtert nach einem bestimmten Partner
       if (isAdmin && adminFilterBpId) {
         userUrl = `/api/admin/users?business_partner_id=${adminFilterBpId}`;
       } 
-      // Fall 2: Assistent ist eingeloggt (sieht nur eigene Partner-Benutzer)
       else if (isAssistant && loggedInUser?.business_partner_id) {
         userUrl = `/api/admin/users?business_partner_id=${loggedInUser.business_partner_id}`;
       }
@@ -190,7 +185,6 @@ const handleDownloadTemplate = async () => {
     }
   }, [isAdmin, isAssistant, adminFilterBpId, loggedInUser?.business_partner_id]);
 
-// Ersetzen Sie Ihren bestehenden useEffect-Hook mit diesem
 useEffect(() => {
     const fetchDropdownData = async () => {
         if (!loggedInUser || !isAdmin) return;
@@ -206,12 +200,11 @@ useEffect(() => {
         }
     };
 
-    // Führen Sie die Ladefunktionen nur aus, wenn die Authentifizierung nicht mehr lädt
     if (!isAuthLoading) {
         fetchUsers();
         fetchDropdownData();
     }
-}, [fetchUsers, isAdmin, loggedInUser, isAuthLoading]); // <-- isAuthLoading hier hinzufügen
+}, [fetchUsers, isAdmin, loggedInUser, isAuthLoading]);
 
   useEffect(() => {
     const fetchLevels = async (bpId: string) => {
@@ -322,7 +315,6 @@ useEffect(() => {
 
 const handleExport = async () => {
     try {
-      // 1. Wir holen uns den Token manuell aus dem Local Storage
       const token = localStorage.getItem('jwt_token');
       if (!token) {
         throw new Error('Authentifizierungs-Token nicht gefunden.');
@@ -330,7 +322,6 @@ const handleExport = async () => {
 
       const apiBase = (import.meta as any).env?.VITE_API_URL || '';
       
-      // 2. Wir verwenden die Standard-fetch-Methode und fügen den Auth-Header hinzu
       const res = await fetch(`${apiBase}/api/admin/users/export/csv`, {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -341,7 +332,6 @@ const handleExport = async () => {
         throw new Error(`HTTP ${res.status} ${res.statusText}`);
       }
 
-      // 3. Der Rest der Funktion verarbeitet die Datei wie zuvor
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -423,6 +413,19 @@ const handleExport = async () => {
             )}
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            
+            {/* ✅ NEU: Button "Mitglieder einladen" (sichtbar bei BP-Kontext) */}
+            {currentBpId && (
+                <Button 
+                    variant="outlined" 
+                    startIcon={<QrCodeIcon />} 
+                    onClick={() => window.open(`/invite/${currentBpId}`, '_blank')}
+                    sx={{ borderColor: 'primary.main', color: 'primary.main', mr: 1 }}
+                >
+                    Mitglieder einladen
+                </Button>
+            )}
+
             <TextField
               variant="outlined"
               size="small"
@@ -485,7 +488,6 @@ const handleExport = async () => {
                         Mitgliedslevel
                       </TableSortLabel>
                     </TableCell>
-                    {/* NEU: Spalte Rolle hinzugefügt */}
                     <TableCell sortDirection={orderBy === 'role' ? order : false}>
                       <TableSortLabel active={orderBy === 'role'} direction={order} onClick={() => handleSortRequest('role')}>
                         Rolle

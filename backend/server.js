@@ -1,6 +1,5 @@
 // /var/www/vhosts/mobiliti.at/httpdocs/dashboard/backend/server.js
 
-// Nur laden, wenn die Umgebung NICHT 'production' ist
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
@@ -8,8 +7,9 @@ if (process.env.NODE_ENV !== 'production') {
 // --- 1. IMPORTE ---
 const express = require('express');
 const app = express();
-app.set('trust proxy', 1); // <--- Diese Zeile ist von der vorherigen Lösung (wichtig!)
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 5000;
+const cron = require('node-cron'); 
 
 const cors = require('cors');
 const path = require('path');
@@ -19,13 +19,14 @@ const auth = require('./middleware/authMiddleware');
 const bullAuth = require('./middleware/bullAuth');
 const jobManager = require('./services/jobManagerService');
 
+// NEU: Den Scheduler importieren, der die Arbeit jetzt macht
+const { runScheduledJobs } = require('./services/cronjobScheduler'); 
+
 // Bull Board & Queue
 const { createBullBoard } = require('@bull-board/api');
 const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
 const { ExpressAdapter } = require('@bull-board/express');
 
-// KORREKTUR 1: Importiere ALLE benötigten Queues direkt aus dem Service
-// (Dieser Teil war bei dir schon korrekt)
 const { 
   aiContentQueue, 
   scrapeQueue, 
@@ -34,8 +35,11 @@ const {
   fundingQueue
 } = require('./services/queueService');
 
-// Routen (unverändert)
+// ... Routen-Imports ...
 const authRoutes = require('./routes/authRoutes');
+// ✅ NEU: Public Routes importieren
+const publicRoutes = require('./routes/publicRoutes');
+
 const sessionRoutes = require('./routes/sessionRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -74,19 +78,14 @@ const fundingRoutes = require('./routes/fundingRoutes');
 const adminLegalMonitorRoutes = require('./routes/adminLegalMonitorRoutes');
 const communityRoutes = require('./routes/communityRoutes');
 const updateLastActive = require('./middleware/activityLogger');
-
+// ...
 
 
 // Bull Board Adapter Setup
 const serverAdapter = new ExpressAdapter();
 serverAdapter.setBasePath('/api/admin/jobs');
 
-// KORREKTUR 2: (war bei dir schon korrekt)
-// Lokale Deklarationen entfernt, da wir importierte Queues nutzen.
-
 createBullBoard({
-  // KORREKTUR 3: (war bei dir schon korrekt)
-  // Verwende die direkt importierten Queue-Instanzen
   queues: [
     new BullMQAdapter(aiContentQueue),
     new BullMQAdapter(scrapeQueue),
@@ -99,7 +98,6 @@ createBullBoard({
 
 
 // --- 3. MIDDLEWARE ---
-// (Middleware-Code unverändert)
 const allowedOrigins = ['http://localhost:5173', 'https://dashboard.mobiliti.at'];
 app.use(cors({
   origin: allowedOrigins,
@@ -113,11 +111,12 @@ app.use((req, res, next) => { console.log(`[${req.method}] ${req.originalUrl}`);
 
 
 // --- 4. ROUTEN ---
-// (Routen-Code unverändert)
 app.use('/api/admin/jobs', bullAuth);
 app.use('/api/admin/jobs', serverAdapter.getRouter());
 
-// ... (alle deine app.use(...) Routen) ...
+// ✅ NEU: Öffentliche Routen einbinden (VOR Auth-geschützten Routen!)
+app.use('/api/public', publicRoutes);
+
 app.use('/api/auth', authRoutes);
 app.use(updateLastActive);
 app.use('/api/session', sessionRoutes);
@@ -159,7 +158,7 @@ app.use('/api/admin-legal-monitor', adminLegalMonitorRoutes);
 app.use('/api/community', communityRoutes);
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 
-// Debug (unverändert)
+// Debug Routen
 app.get('/api/debug/db-inspector', async (req, res) => {
   try {
     const dbNameResult = await db.query('SELECT current_database();');
@@ -186,7 +185,6 @@ app.get('/api/debug/users', async (req, res) => {
 
 
 // --- 5. FRONTEND & FEHLERBEHANDLUNG ---
-// (Unverändert)
 app.use('/api/*', (req, res) => { res.status(404).json({ error: 'API Endpoint Not Found' }); });
 
 const frontendDistPath = path.resolve(__dirname, '..', 'frontend', 'dist');
@@ -199,18 +197,10 @@ app.use((err, req, res, next) => {
 });
 
 
-// --- 6. SERVERSTART (MODIFIZIERT) ---
-
-// KORREKTUR 4: Neue Funktion zum Leeren aller Queues
-/**
- * Löscht alle Jobs (wartend, aktiv, fehlgeschlagen, etc.)
- * aus allen Queues. BullMQ 'obliterate()' ist der gründlichste Weg,
- * um "Job-Leichen" zu entfernen.
- */
+// --- QUEUE CLEANUP ---
 async function clearAllQueuesOnStartup() {
-  console.log('[JobManager] Lösche alle alten Jobs aus den Queues vor dem Neustart...');
+  console.log('[JobManager] Bereinige Queues beim Start...');
   
-  // Wir verwenden die bereits oben importierten Queues
   const allQueues = [
     aiContentQueue,
     scrapeQueue,
@@ -220,20 +210,23 @@ async function clearAllQueuesOnStartup() {
   ];
 
   try {
-    // Führe 'obliterate' für alle Queues parallel aus
-    const promises = allQueues.map(queue => 
-      queue.obliterate({ force: true })
-    );
-    await Promise.all(promises);
+    for (const queue of allQueues) {
+      const repeatableJobs = await queue.getRepeatableJobs();
+      for (const job of repeatableJobs) {
+        await queue.removeRepeatableByKey(job.key);
+        console.log(`[JobManager] Repeatable entfernt: ${job.name} (Key: ${job.key}) aus ${queue.name}`);
+      }
+      await queue.obliterate({ force: true });
+      console.log(`[JobManager] Queue geleert: ${queue.name}`);
+    }
     
-    console.log('[JobManager] Alle Queues erfolgreich geleert.');
+    console.log('[JobManager] Alle Queues erfolgreich bereinigt.');
   } catch (err) {
-    console.error('[JobManager] Kritisches Problem beim Leeren der Queues:', err);
-    // Wir stoppen hier nicht, aber loggen den Fehler deutlich
+    console.error('[JobManager] Fehler beim Bereinigen der Queues:', err);
   }
 }
 
-// KORREKTUR 5: Die Startlogik wird 'async', um auf das Leeren zu warten
+// --- SERVER START ---
 async function startServer() {
   try {
     // 1. Mit DB verbinden
@@ -243,25 +236,29 @@ async function startServer() {
     // 2. ZUERST alle alten Redis-Jobs löschen
     await clearAllQueuesOnStartup();
 
-    // 3. DANACH die sauberen Jobs aus der DB neu synchronisieren
-    console.log('[JobManager] Starte Synchronisierung der DB-Schedules mit den (jetzt leeren) Queues...');
-    // (Diese Funktionen müssen nicht unbedingt async sein, aber wir warten zur Sicherheit)
-    await jobManager.synchronizeSchedulesFromDB();
-    await jobManager.setupAccountIntelligenceJob(); 
+    // 3. Scheduler starten
+    console.log('[Scheduler] Starte Cron-Ticker (Minutentakt)...');
     
+    cron.schedule('* * * * *', async () => {
+        try {
+            await runScheduledJobs();
+        } catch (err) {
+            console.error('[Scheduler] Fehler im Minutentakt:', err);
+        }
+    });
+
     // 4. Den Express-Server starten
     app.listen(PORT, () => {
       console.log(`Server läuft auf Port ${PORT}`);
     });
 
   } catch (err) {
-    console.error('Kritischer Fehler beim Serverstart (PostgreSQL oder Job-Sync):', err);
-    process.exit(1); // Bei kritischem Startfehler beenden
+    console.error('Kritischer Fehler beim Serverstart:', err);
+    process.exit(1); 
   }
 }
 
 if (require.main === module) {
-  // Starte die neue async-Startfunktion
   startServer();
 }
 

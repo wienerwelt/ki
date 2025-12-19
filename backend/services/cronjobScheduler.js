@@ -37,14 +37,25 @@ const runScheduledJobs = async () => {
         const genericJobs = await client.query("SELECT * FROM cronjobs WHERE is_active = TRUE AND schedule IS NOT NULL AND schedule <> ''");
         for (const job of genericJobs.rows) {
             if (isDue(job.schedule, now)) {
-                // Je nach Gruppe in die richtige Queue einreihen
+                
+                // --- UPDATE START: Account Intelligence und Data Updates ---
                 if (job.recipient_group === 'data-update') {
-                    console.log(`[CRON] Enqueueing Data Update Job: ${job.name}`);
-                    dataUpdatesQueue.add(job.name, { jobId: job.id });
+                    
+                    // Mapping: Der Job heißt in der DB "Account Intelligence Search",
+                    // aber der Worker erwartet "trigger-account-intelligence".
+                    let jobName = job.name;
+                    if (job.name === 'Account Intelligence Search') {
+                        jobName = 'trigger-account-intelligence';
+                    }
+
+                    console.log(`[CRON] Enqueueing Data Update Job: ${jobName}`);
+                    dataUpdatesQueue.add(jobName, { jobId: job.id });
                 } 
+                // --- UPDATE ENDE ---
+
                 else if (job.recipient_group === 'scraping') {
                     console.log(`[CRON] Enqueueing Scraping Trigger Job: ${job.name}`);
-                    scrapeQueue.add('trigger-account-intelligence', { cronJobId: job.id })
+                    scrapeQueue.add(job.name, { cronJobId: job.id })
                         .catch(err => console.error(`[CRON] Error enqueueing account intelligence job ${job.id}:`, err.message));
                 }
                 else { // Alle anderen gehen an die emailQueue
@@ -53,7 +64,7 @@ const runScheduledJobs = async () => {
                         .catch(err => console.error(`[CRON] Error enqueueing email job ${job.id}:`, err.message));
                 }
                 
-                // [FIX] Update timestamp for ALL job types, not just emails
+                // [FIX] Update timestamp for ALL job types
                 await client.query('UPDATE cronjobs SET last_run_at = NOW() WHERE id = $1', [job.id]);                
             }
         }

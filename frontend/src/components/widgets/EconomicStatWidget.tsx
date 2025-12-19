@@ -4,6 +4,7 @@ import {
     ToggleButtonGroup, Link as MuiLink, Tooltip, FormControl,
     Select, MenuItem, SelectChangeEvent, Paper, Divider, IconButton
 } from '@mui/material';
+import { alpha } from '@mui/material/styles'; // Alpha Import sicherstellen
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid,
     Tooltip as RechartsTooltip, Legend, ResponsiveContainer
@@ -70,7 +71,6 @@ const CustomTooltip = ({ active, payload, label }: any) => {
     const total = payload.reduce((sum: number, entry: { value: number }) => sum + (entry.value || 0), 0);
     return (
       <Paper elevation={3} sx={{ p: 1.5, bgcolor: 'background.paper', minWidth: 200 }}>
-        {/* FIX: component="div" verhindert nesting Fehler falls date komische Zeichen hat, aber hier vor allem als Struktur */}
         <Typography variant="body2" component="div" sx={{ mb: 1, fontWeight: 'bold' }}>{date}</Typography>
         {payload.map((pld: any) => {
             const percentage = total > 0 ? ((pld.value / total) * 100).toFixed(1) : 0;
@@ -97,7 +97,6 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-// --- Main Component ---
 const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
   widgetId, onDelete, isRemovable, icon, title, widgetTypeKey,
   category, countryCode = 'DE'
@@ -115,7 +114,6 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
   const [availableCountries, setAvailableCountries] = useState<Region[]>([]);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
 
-  // Hook 1: Länder laden
   useEffect(() => {
     const fetchCountries = async () => {
         if (!category) return;
@@ -132,7 +130,6 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
     fetchCountries();
   }, [category]);
 
-  // Hook 2: Standard-Region setzen
   useEffect(() => {
     if (initialLoadDone || availableCountries.length === 0) return;
 
@@ -150,7 +147,6 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
     setInitialLoadDone(true);
   }, [availableCountries, user, initialLoadDone, countryCode]);
 
-  // Hook 3: Daten laden
   useEffect(() => {
     const fetchData = async () => {
       if (!category) {
@@ -199,7 +195,6 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
     return selectedSubtypes.reduce((subSum, key) => subSum + (Number(latestDataPoint[key]) || 0), 0);
   }, [data, selectedSubtypes]);
 
-  // FIX: Begrenzung der angezeigten Datenpunkte für den Chart, um Browser-Freeze zu verhindern
   const chartData = useMemo(() => {
       if (data.length > 150) {
           return data.slice(data.length - 150);
@@ -222,20 +217,67 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
         </Box>
 
         <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2, px: 1, flexWrap: 'wrap', gap: 1 }}>
-            <ToggleButtonGroup value={selectedSubtypes} onChange={(_, newSubtypes) => setSelectedSubtypes(newSubtypes)} aria-label="Statistik-Subtypen">
+            {/* FIX: sx-Styling auf die ToggleButtonGroup anwenden, um Flex-Wrapping zu erlauben */}
+            <ToggleButtonGroup 
+                value={selectedSubtypes} 
+                onChange={(_, newSubtypes) => setSelectedSubtypes(newSubtypes)} 
+                aria-label="Statistik-Subtypen"
+                sx={{ flexWrap: 'wrap', justifyContent: 'center' }}
+            >
                 {availableSubtypes.map((subtype, index) => {
                     const color = COLORS[index % COLORS.length];
+                    const isSelected = selectedSubtypes.includes(subtype);
+                    
                     return (
                         <Tooltip title={subtype} key={subtype}>
                             <ToggleButton
                                 value={subtype}
                                 size="small"
                                 sx={{
-                                    color: color,
-                                    '&.Mui-selected, &.Mui-selected:hover': { color: color },
-                                    border: `1px solid ${color} !important`,
-                                    m: 0.25,
-                                    p: 0.5
+                                    // FARBEN & STYLING
+                                    // Inaktiv: Grau aber lesbar
+                                    // Aktiv: Kräftige Farbe mit sattem Hintergrund
+                                    color: isSelected ? color : 'text.secondary',
+                                    borderColor: isSelected ? color : 'action.disabled', // 'divider' war zu schwach
+                                    bgcolor: isSelected ? alpha(color, 0.25) : 'transparent', // Kräftigerer Hintergrund
+                                    
+                                    // HOVER
+                                    '&:hover': {
+                                        bgcolor: isSelected ? alpha(color, 0.35) : alpha(color, 0.1),
+                                        borderColor: color,
+                                        color: color
+                                    },
+                                    
+                                    // SELECTED STATE (Wichtig für MUI interne Logik)
+                                    '&.Mui-selected': {
+                                        color: color,
+                                        borderColor: color,
+                                        bgcolor: alpha(color, 0.25)
+                                    },
+
+                                    // FIX OVERLAPPING & CHIP LOOK
+                                    // Wir überschreiben die MUI ToggleGroup Styles, die Borders kollabieren wollen
+                                    margin: '4px !important',
+                                    border: `1px solid ${isSelected ? color : 'rgba(0, 0, 0, 0.12)'} !important`,
+                                    borderRadius: '8px !important', // Chip-artiges Aussehen
+                                    
+                                    // Spezifische Overrides für Gruppen-Elemente
+                                    '&.MuiToggleButtonGroup-grouped': {
+                                        border: `1px solid ${isSelected ? color : 'rgba(0, 0, 0, 0.12)'} !important`,
+                                        borderRadius: '8px !important',
+                                        margin: '4px !important',
+                                        borderLeft: `1px solid ${isSelected ? color : 'rgba(0, 0, 0, 0.12)'} !important`, // Linken Border wiederherstellen
+                                    },
+                                    '&.MuiToggleButtonGroup-grouped:not(:first-of-type)': {
+                                        borderLeft: `1px solid ${isSelected ? color : 'rgba(0, 0, 0, 0.12)'} !important`,
+                                        marginLeft: '4px !important',
+                                        borderRadius: '8px !important',
+                                    },
+                                    
+                                    // Layout
+                                    p: 0.8,
+                                    minWidth: 45,
+                                    transition: 'all 0.2s ease-in-out'
                                 }}
                             >
                                 {subtypeIcons[subtype]?.icon || subtypeIcons.default.icon}

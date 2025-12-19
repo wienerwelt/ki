@@ -110,11 +110,15 @@ async function sendNewOpportunitiesNotification({ to, username, searchName, newO
     await sendEmail({ to, subject, html });
 }
 
-async function sendVerificationEmail({ to, username, verifyUrl }) {
+async function sendVerificationEmail({ to, username, verifyUrl, partner }) {
   if (!verifyUrl) throw new Error('verifyUrl fehlt für Verifizierungs-Mail.');
-  const html = renderVerificationEmail({ username, verifyUrl });
-  const subject = 'Bitte E-Mail-Adresse bestätigen';
+  const html = renderVerificationEmail({ username, verifyUrl, partner });
+  const subject = partner?.name 
+      ? `Bitte E-Mail bestätigen für ${partner.name}` 
+      : 'Bitte E-Mail-Adresse bestätigen';
+
   const text = `Hallo ${username || ''},\n\nBitte bestätige deine E-Mail-Adresse:\n${verifyUrl}`;
+  
   await sendEmail({ to, subject, html, text });
 }
 

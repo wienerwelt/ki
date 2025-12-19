@@ -31,6 +31,7 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
 }) => {
   const { showSnackbar } = useSnackbar();
   const theme = useTheme();
+  // NEU: Mobile Detection für Responsive Layout
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
   const [data, setData] = useState<{ profile_incomplete: boolean; opportunities: FundingOpportunity[] }>({
@@ -101,13 +102,19 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
       );
     }
 
-    // Den höchsten Match-Count ermitteln, um Prozentwerte zu berechnen (falls nicht vom Backend geliefert)
-    // Da match_count absolute Treffer sind, ist die Basis die Anzahl der User-Interessen.
-    // Hier vereinfacht: Wir nehmen match_count als absoluten Score Indikator.
-    
     return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <List dense sx={{ p: 0, flexGrow: 1, overflowY: 'auto' }}>
+      <Box sx={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          // FIX: Auf Mobile automatische Höhe, damit WidgetPaper "Show More" funktioniert
+          height: isMobile ? 'auto' : '100%' 
+      }}>
+        <List dense sx={{ 
+            p: 0, 
+            flexGrow: 1, 
+            // FIX: Auf Mobile kein interner Scrollbalken
+            overflowY: isMobile ? 'visible' : 'auto' 
+        }}>
           {data.opportunities.map((opp) => (
             <ListItem 
                 key={opp.id} 
@@ -126,7 +133,7 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
                     component={RouterLink}
                     to={`/funding-detail/${opp.id}`}
                     underline="hover"
-                    color="inherit" // Nutzt Theme-Farbe (weiß im Darkmode, schwarz im Lightmode)
+                    color="inherit"
                     sx={{ fontWeight: 600, display: 'block', mb: 0.5, lineHeight: 1.3 }}
                   >
                     {opp.title}
@@ -164,7 +171,7 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
                     <Chip
                       label={`${opp.match_count} Treffer`}
                       size="small"
-                      color="success" // 'success' passt sich im Theme automatisch an (helles/dunkles grün)
+                      color="success"
                       variant={theme.palette.mode === 'dark' ? 'filled' : 'outlined'}
                       sx={{ fontWeight: 'bold' }}
                     />

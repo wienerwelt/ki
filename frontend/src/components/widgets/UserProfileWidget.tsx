@@ -12,7 +12,7 @@ import {
     Edit as EditIcon,
     QrCode as QrCodeIcon,
     Person as PersonIcon,
-    Visibility as VisibilityIcon // Icon für "Wie werde ich gesehen"
+    Visibility as VisibilityIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import WidgetPaper from './WidgetPaper';
@@ -87,10 +87,10 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                 {/* 1. HEADER BANNER */}
                 <Box sx={{ 
                     height: 80, 
+                    width: '100%', // Sicherstellen, dass der Banner die volle Breite nimmt
                     background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`,
                     position: 'relative'
                 }}>
-                    {/* KORREKTUR: Logo Anzeige repariert (kein Filter mehr, richtige Größe) */}
                     {businessPartner?.logo_url && (
                         <Box 
                             component="img" 
@@ -99,11 +99,10 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                                 position: 'absolute', 
                                 right: 15, 
                                 top: 15, 
-                                height: 32, // Etwas größer
+                                height: 32,
                                 maxWidth: 120,
-                                objectFit: 'contain', // Verhindert Verzerren
-                                // Filter entfernt, damit Originalfarben sichtbar sind
-                                bgcolor: 'rgba(255,255,255,0.9)', // Optional: Weißer Hintergrund für Kontrast
+                                objectFit: 'contain',
+                                bgcolor: 'rgba(255,255,255,0.9)',
                                 p: 0.5,
                                 borderRadius: 1
                             }} 
@@ -121,10 +120,14 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                                 border: `4px solid ${theme.palette.background.paper}`,
                                 boxShadow: theme.shadows[3],
                                 fontSize: '2.5rem',
-                                bgcolor: 'grey.300'
+                                bgcolor: 'grey.300',
+                                color: 'text.primary', // Bessere Sichtbarkeit der Initialen
+                                // WICHTIG: position relative sorgt dafür, dass der Avatar ÜBER dem Banner liegt
+                                position: 'relative', 
+                                zIndex: 2 
                             }}
                         >
-                            {user.first_name ? user.first_name.charAt(0) : user.username.charAt(0)}
+                            {user.first_name ? user.first_name.charAt(0).toUpperCase() : user.username.charAt(0).toUpperCase()}
                         </Avatar>
                         
                         {/* Schnellzugriff Bearbeiten */}
@@ -205,7 +208,6 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                 {/* 4. FOOTER ACTIONS */}
                 <Box sx={{ p: 2, mt: 'auto', borderTop: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
                     <Stack direction="row" spacing={1} alignItems="center">
-                        {/* 1. Haupt-Button: Visitenkarte (Intern/QR) */}
                         <Button 
                             variant="outlined" 
                             startIcon={<QrCodeIcon />} 
@@ -217,11 +219,10 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                             Visitenkarte
                         </Button>
                         
-                        {/* 2. NEU: Icon-Button für öffentliche Vorschau ("Wie werde ich gesehen") */}
                         <Tooltip title="Öffentliche Ansicht (Vorschau)">
                             <IconButton 
                                 size="small"
-                                href={`/p/${user.id}`} // Link zur Public Card
+                                href={`/p/${user.id}`} 
                                 target="_blank"
                                 sx={{ 
                                     border: 1, 
@@ -234,7 +235,6 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                             </IconButton>
                         </Tooltip>
 
-                        {/* 3. LinkedIn (falls vorhanden) */}
                         {user.linkedin_url && (
                             <Tooltip title="LinkedIn Profil öffnen">
                                 <IconButton 

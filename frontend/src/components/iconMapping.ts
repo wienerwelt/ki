@@ -25,12 +25,14 @@ import PollIcon from '@mui/icons-material/Poll';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
 import BarChartIcon from '@mui/icons-material/BarChart';
-import RadarIcon from '@mui/icons-material/Radar';
 import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
 import InsightsIcon from '@mui/icons-material/Insights';
 import ForumIcon from '@mui/icons-material/Forum';
 import SettingsAccessibilityIcon from '@mui/icons-material/SettingsAccessibility';
 import PersonIcon from '@mui/icons-material/Person';
+import SpeedIcon from '@mui/icons-material/Speed';
+import RadarIcon from '@mui/icons-material/Radar';
+import RocketIcon from '@mui/icons-material/Rocket';
 
 export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     SpaIcon: SpaIcon,
@@ -61,6 +63,8 @@ export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     ForumIcon: ForumIcon,
     PersonIcon: PersonIcon,
     SettingsAccessibilityIcon: SettingsAccessibilityIcon,
+    SpeedIcon: SpeedIcon,
+    RocketIcon: RocketIcon,
 };
 
 // === GEÄNDERT: Die Funktion ist jetzt ein einfacher, direkter Lookup ===

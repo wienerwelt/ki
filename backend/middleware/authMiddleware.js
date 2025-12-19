@@ -2,25 +2,20 @@
 const jwt = require('jsonwebtoken');
 
 function getTokenFromRequest(req) {
-  // 1) x-auth-token
   let token = req.header('x-auth-token');
-
-  // 2) Authorization: Bearer <jwt>
   if (!token) {
     const auth = req.headers.authorization || '';
     if (auth.startsWith('Bearer ')) token = auth.slice(7);
   }
-
-  // 3) Cookie "token"
   if (!token && req.cookies && req.cookies.token) {
     token = req.cookies.token;
   }
-
   return token;
 }
 
 function extractUserFromPayload(decoded) {
   if (decoded && typeof decoded === 'object') {
+    // Manche JWTs haben die Daten direkt, manche unter 'user'
     const userData = (decoded.user && typeof decoded.user === 'object') ? decoded.user : decoded;
     
     return {
@@ -30,8 +25,11 @@ function extractUserFromPayload(decoded) {
       username: userData.username,
       business_partner_id: userData.business_partner_id || null,
       contribution_score: userData.contribution_score ?? 0,
-      // NEU: Wir merken uns, wann der Token erstellt wurde (Login-Zeitpunkt)
-      token_issued_at: decoded.iat ? new Date(decoded.iat * 1000) : new Date(0)
+      last_login_at: userData.last_login_at, // DB Wert (ändert sich)
+      
+      // NEU: Statischer Zeitstempel des Logins (Token-Erstellung)
+      // 'iat' ist "Issued At" (Unix Timestamp in Sekunden)
+      token_issued_at: decoded.iat ? new Date(decoded.iat * 1000) : null 
     };
   }
   return null;
@@ -45,19 +43,18 @@ const authMiddleware = (req, res, next) => {
 
   try {
     const secret = process.env.JWT_SECRET;
-    if (!secret) {
-      return res.status(500).json({ message: 'Server misconfigured: JWT_SECRET missing' });
-    }
+    if (!secret) return res.status(500).json({ message: 'Server config error' });
+
     const decoded = jwt.verify(token, secret);
     const user = extractUserFromPayload(decoded);
     
-    if (!user || (!user.id && !user.email)) {
-      return res.status(401).json({ message: 'Token is not valid (no user info)' });
+    if (!user || !user.id) {
+      return res.status(401).json({ message: 'Token invalid' });
     }
     req.user = user;
     return next();
   } catch (err) {
-    return res.status(401).json({ message: 'Token is not valid' });
+    return res.status(401).json({ message: 'Token invalid' });
   }
 };
 

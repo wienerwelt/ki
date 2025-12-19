@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams, Link as RouterLink } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import {
   Container, Typography, Box, CircularProgress, Alert, List, ListItem, ListItemText,
   Paper, Divider, Chip, Avatar
@@ -18,7 +18,6 @@ interface AiSource {
   url: string;
 }
 
-// Interface für die Backend-Antwort
 interface AiAskResponse {
   answer: string;
   sources: AiSource[];
@@ -36,7 +35,6 @@ const AiAskPage: React.FC = () => {
 
   useEffect(() => {
     if (question && question.trim()) {
-      // --- NEU: AbortController erstellen ---
       const controller = new AbortController();
 
       const fetchAiAnswer = async () => {
@@ -45,11 +43,10 @@ const AiAskPage: React.FC = () => {
         setResponse(null);
         
         try {
-          // POST-Request an den neuen Endpunkt
           const res = await apiClient.post(
             '/api/data/ai-ask', 
             { question },
-            { signal: controller.signal } // <-- NEU: Signal übergeben
+            { signal: controller.signal }
           );
           
           setResponse(res.data);
@@ -57,13 +54,7 @@ const AiAskPage: React.FC = () => {
           showSnackbar('KI-Anfrage: -2 Punkte', 'info'); 
 
         } catch (err: any) {
-          // --- NEU: Abgebrochene Anfragen ignorieren ---
-          if (err.name === 'AbortError') {
-            console.log('Fetch aborted');
-            return;
-          }
-          // --- ENDE ---
-
+          if (err.name === 'AbortError') return;
           setError(err?.response?.data?.message || 'Fehler bei der KI-Anfrage.');
           setResponse(null); 
         } finally {
@@ -73,26 +64,22 @@ const AiAskPage: React.FC = () => {
 
       fetchAiAnswer();
 
-      // --- NEU: Cleanup-Funktion ---
-      // Diese Funktion wird aufgerufen, wenn der Hook neu läuft ODER die Komponente unmountet
       return () => {
         controller.abort();
       };
-      // --- ENDE ---
 
     } else {
       setLoading(false);
       setError('Keine Frage gestellt.');
       setResponse(null);
     }
-  }, [question, refreshUser, showSnackbar]); // Abhängigkeiten bleiben gleich
+  }, [question, refreshUser, showSnackbar]);
 
-  // ... (Die gesamte JSX-Render-Logik bleibt unverändert) ...
   return (
     <Container maxWidth="md">
       <Paper sx={{ p: { xs: 2, sm: 4 }, mt: 3, bgcolor: 'background.default' }}>
         
-        {/* Die Frage des Nutzers */}
+        {/* User Part */}
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
           <Avatar sx={{ bgcolor: 'primary.main' }}><AccountCircleIcon /></Avatar>
           <Box>
@@ -105,24 +92,43 @@ const AiAskPage: React.FC = () => {
 
         <Divider sx={{ my: 3 }} />
 
-        {/* Die Antwort der KI */}
+        {/* AI Part */}
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
-          <Avatar sx={{ bgcolor: 'secondary.main' }}><AutoAwesomeIcon /></Avatar>
+          
+          {/* FIX: Animierter Avatar während des Ladens */}
+          <Avatar 
+            sx={{ 
+              bgcolor: 'secondary.main',
+              // Pulsierende Animation bei Loading
+              animation: loading ? 'pulse 1.5s infinite ease-in-out' : 'none',
+              '@keyframes pulse': {
+                '0%': { transform: 'scale(1)', opacity: 1 },
+                '50%': { transform: 'scale(1.1)', opacity: 0.7 },
+                '100%': { transform: 'scale(1)', opacity: 1 },
+              }
+            }}
+          >
+            <AutoAwesomeIcon />
+          </Avatar>
+
           <Box sx={{ width: '100%' }}>
             <Typography variant="h6" component="div" sx={{ fontWeight: 'bold' }}>
               KI-Assistent
             </Typography>
             
+            {/* FIX: Deutlicherer Lade-Indikator */}
             {loading && (
-              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-                <CircularProgress size={40} />
-                <Typography sx={{ ml: 2, color: 'text.secondary' }}>Analysiere interne Daten und generiere eine Antwort...</Typography>
+              <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                <CircularProgress size={24} color="secondary" />
+                <Typography variant="body2" color="text.secondary">
+                    Analysiere Dokumente und generiere Antwort...
+                </Typography>
               </Box>
             )}
 
             {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
 
-            {response && (
+            {response && !loading && (
               <Box sx={{ mt: 1.5 }}>
                 <Box className="markdown-content" sx={{ 
                   '& p': { margin: '0 0 16px 0' },

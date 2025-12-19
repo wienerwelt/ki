@@ -11,8 +11,8 @@ const { connection: redisClient, heartbeatRedisClient } = require('../services/q
 
 const db = require('../config/db');
 
+// GEÄNDERT: triggerNewsSearchForAll entfernt, da jetzt im dataUpdateWorker
 const { triggerSingleRuleScrape, processNewsKeywordSearch } = require('../services/scraperService');
-const { triggerNewsSearchForAll } = require('../services/accountIntelligenceService');
 
 console.log('[scrape] Worker-Prozess startet...');
 
@@ -28,10 +28,7 @@ const worker = new Worker(
           await processNewsKeywordSearch(job.data);
           break;
         
-        // NEUER CASE
-        case 'trigger-account-intelligence':
-          await triggerNewsSearchForAll();
-          break;
+        // ENTFERNT: case 'trigger-account-intelligence' ist jetzt im dataUpdateWorker
 
         default:
           // Bestehende Logik für regelbasiertes Scraping

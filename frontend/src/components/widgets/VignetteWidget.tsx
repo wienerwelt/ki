@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
     Box, Typography, CircularProgress, FormControl, Select, MenuItem, SelectChangeEvent, 
-    Link as MuiLink, Paper, Stack, Divider, Tooltip, IconButton, useTheme 
+    Link as MuiLink, Paper, Stack, Divider, Tooltip, IconButton, useTheme, useMediaQuery 
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../../apiClient';
@@ -35,6 +35,9 @@ const getCurrencySymbol = (currencyCode: string | null): string => {
 const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, widgetTypeKey }) => {
     const navigate = useNavigate();
     const theme = useTheme();
+    // NEU: Mobile Detection
+    const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
     const [availableCountries, setAvailableCountries] = useState<Region[]>([]);
     const [selectedCountry, setSelectedCountry] = useState('AT');
     const [rawData, setRawData] = useState<any[]>([]);
@@ -44,7 +47,7 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     
-    // NEU: State für das ausgewählte Jahr
+    // State für das ausgewählte Jahr (Default: aktuelles Kalenderjahr)
     const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
 
     useEffect(() => {
@@ -71,7 +74,6 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
                 const response = await apiClient.get(`/api/data/vignettes?country=${selectedCountry}`, { headers: { 'x-auth-token': token } });
                 
                 const data = response.data.chart_data || [];
-                // Sortieren nach Jahr aufsteigend für das Diagramm
                 data.sort((a: any, b: any) => parseInt(a.year) - parseInt(b.year));
                 
                 setRawData(data);
@@ -79,10 +81,20 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
                 setProviderUrl(response.data.provider_url || '#');
                 setIsTrusted(response.data.is_trusted_source || false);
 
-                // Wenn Daten vorhanden sind, setze das Jahr auf das aktuellste verfügbare
+                // LOGIK VERBESSERT:
+                // Prüfen, ob das aktuelle Jahr in den Daten vorhanden ist.
+                const currentYearStr = new Date().getFullYear().toString();
+                const hasCurrentYear = data.some((d: any) => d.year === currentYearStr);
+
                 if (data.length > 0) {
-                    const latestYear = data[data.length - 1].year;
-                    setSelectedYear(latestYear);
+                    if (hasCurrentYear) {
+                        // Wenn aktuelles Jahr da ist, nimm das (auch wenn es zukünftige gibt)
+                        setSelectedYear(currentYearStr);
+                    } else {
+                        // Wenn aktuelles Jahr fehlt, nimm das allerneueste (z.B. Zukunft)
+                        const latestYear = data[data.length - 1].year;
+                        setSelectedYear(latestYear);
+                    }
                 }
 
             } catch (err: any) {
@@ -102,11 +114,8 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
         setSelectedCountry(event.target.value);
     };
     
-    // Berechne Preisvergleich dynamisch basierend auf selectedYear
     const priceComparison = useMemo(() => {
         const currentData = rawData.find(d => d.year === selectedYear);
-        
-        // Finde das Jahr davor für den Vergleich
         const prevYearInt = parseInt(selectedYear) - 1;
         const previousData = rawData.find(d => d.year === prevYearInt.toString());
 
@@ -116,7 +125,6 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
 
         const currency = currentData.currency || 'EUR';
 
-        // Wenn kein Vorjahr vorhanden ist, zeige nur aktuellen Preis ohne Trend
         if (!previousData?.price) {
             return {
                 currentPrice: currentData.price,
@@ -170,7 +178,8 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
             loading={isLoading && availableCountries.length === 0} 
             error={error}
         >
-            <Stack spacing={2} sx={{ height: '100%' }}>
+            {/* FIX: Layout für Mobile und Desktop */}
+            <Stack spacing={2} sx={{ height: isMobile ? 'auto' : '100%' }}>
                 <FormControl fullWidth size="small" onMouseDown={(e) => e.stopPropagation()}>
                     <Select value={selectedCountry} onChange={handleCountryChange} renderValue={(value) => (
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -203,7 +212,6 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
                             </Stack>
                         </Paper>
 
-                        {/* Hauptanzeige & Chart */}
                         <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                             {hasPriceData && priceComparison ? (
                                 <>
@@ -236,11 +244,10 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
                                         )}
                                     </Box>
 
-<Box sx={{ height: 120, width: '100%', mt: 'auto' }}> {/* Höhe leicht erhöht für Labels */}
+                                    <Box sx={{ height: 120, width: '100%', mt: 'auto' }}>
                                         <ResponsiveContainer width="100%" height="100%">
                                             <BarChart 
                                                 data={rawData} 
-                                                // Unten Platz für die Jahreszahlen schaffen (bottom: 20)
                                                 margin={{ top: 0, right: 0, left: 0, bottom: 20 }} 
                                             >
                                                 <RechartsTooltip 
@@ -248,13 +255,12 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
                                                     contentStyle={{ borderRadius: 8, border: 'none', boxShadow: theme.shadows[2] }}
                                                     formatter={(value: number) => [`${value} ${getCurrencySymbol(rawData[0]?.currency)}`, 'Preis']}
                                                 />
-                                                {/* KORREKTUR: X-Achse sichtbar gemacht und gestylt */}
                                                 <XAxis 
                                                     dataKey="year" 
                                                     axisLine={false} 
                                                     tickLine={false} 
                                                     tick={{ fill: theme.palette.text.secondary, fontSize: 11 }}
-                                                    dy={10} // Abstand nach unten
+                                                    dy={10} 
                                                 />
                                                 <Bar 
                                                     dataKey="price" 
@@ -271,7 +277,6 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
                                                 </Bar>
                                             </BarChart>
                                         </ResponsiveContainer>
-                                        {/* Den Text "Klicken für Historie" habe ich entfernt oder verkleinert, da die Jahre jetzt selbsterklärend sind */}
                                     </Box>
                                 </>
                             ) : (

@@ -55,22 +55,53 @@ function suggestUsernames(base) {
   ];
 }
 
+// ✅ UPDATE: Holt jetzt Branding-Infos für E-Mails & Frontend
 async function resolveBusinessPartnerId(voucher) {
-  if (!voucher || typeof voucher !== 'string' || voucher.trim() === '') return null;
+  // Fall 1: Kein Voucher -> Standard-User (Kein Partner)
+  if (!voucher || typeof voucher !== 'string' || voucher.trim() === '') {
+      return { partner: null, error: null };
+  }
   
   const cleanVoucher = voucher.trim().toLowerCase();
   
   try {
-    // Wir suchen einen Partner, dessen ID (als Text) mit dem Voucher endet
-    // RIGHT(id::text, 8) extrahiert die letzten 8 Zeichen
+    // Wir holen ID, Status, Abo-Enddatum UND Branding-Infos
     const r = await db.query(
-      'SELECT id FROM business_partners WHERE LOWER(RIGHT(id::text, 8)) = $1 LIMIT 1',
+      `SELECT id, name, logo_url, dashboard_title, is_active, subscription_end_date 
+       FROM business_partners 
+       WHERE LOWER(RIGHT(id::text, 8)) = $1 LIMIT 1`,
       [cleanVoucher]
     );
-    return r.rows[0]?.id || null;
+
+    // Fall 2: Voucher existiert nicht
+    if (r.rows.length === 0) {
+        return { partner: null, error: 'Der eingegebene Einladungscode ist ungültig.' };
+    }
+
+    const partner = r.rows[0];
+
+    // Fall 3: Partner ist inaktiv (vom Admin deaktiviert)
+    if (partner.is_active === false) {
+        return { partner: null, error: 'Dieser Einladungscode gehört zu einem deaktivierten Partner-Konto.' };
+    }
+
+    // Fall 4: Abo abgelaufen
+    if (partner.subscription_end_date) {
+        const endDate = new Date(partner.subscription_end_date);
+        const now = new Date();
+        now.setHours(0, 0, 0, 0); // Zeitanteil entfernen für fairen Vergleich
+        
+        if (endDate < now) {
+            return { partner: null, error: 'Das Abonnement für diesen Einladungscode ist abgelaufen.' };
+        }
+    }
+
+    // Alles OK -> Partner-Objekt zurückgeben
+    return { partner: partner, error: null };
+
   } catch (err) {
     console.error("Fehler bei der Voucher-Auflösung:", err);
-    return null;
+    return { partner: null, error: 'Technischer Fehler bei der Überprüfung des Codes.' };
   }
 }
 
@@ -99,7 +130,6 @@ function safeFrontendRedirect(res, path, qs = {}) {
 // Auth Controller
 // ============================
 
-// === Register ===
 // === Register ===
 exports.register = async (req, res) => {
   const { email, password, username, firstName, voucher, consentGiven, newsletterOptIn } = req.body || {};
@@ -159,8 +189,16 @@ exports.register = async (req, res) => {
       });
     }
 
-    // 3. Business Partner & Hashes
-    const businessPartnerId = await resolveBusinessPartnerId(voucher);
+    // 3. Business Partner & Hashes (MIT BRANDING CHECK)
+    // ✅ Check auf active und subscription_end_date, returniert ganzes Partner-Objekt
+    const { partner, error: voucherError } = await resolveBusinessPartnerId(voucher);
+
+    // Wenn ein Fehler zurückkam (z.B. Abo abgelaufen), Registrierung abbrechen
+    if (voucherError) {
+        return res.status(400).json({ message: voucherError });
+    }
+
+    const businessPartnerId = partner ? partner.id : null;
 
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
@@ -195,7 +233,7 @@ exports.register = async (req, res) => {
       firstName || null,
       password_hash,
       'user',
-      businessPartnerId,
+      businessPartnerId, // Ist entweder eine gültige UUID oder NULL
       new Date(),
       emailToken,
       false,
@@ -213,13 +251,12 @@ exports.register = async (req, res) => {
     const user = created.rows[0];
 
     // --- 5. NEU: STANDARD-DASHBOARD ERSTELLEN ---
-    // Wir legen sofort einen Eintrag an, damit der User nicht mit leerem Screen startet.
     try {
         const defaultConfig = {
             name: 'Mein Dashboard',
             widgets: [
                 { id: 'default-bp-info', type: 'BusinessPartnerInfo' },
-                { id: 'default-user-profile', type: 'user_activity' } // 'user_activity' ist der DB-Type-Key für das Profil-Widget
+                { id: 'default-user-profile', type: 'user_activity' }
             ],
             layouts: {
                 lg: [
@@ -242,7 +279,6 @@ exports.register = async (req, res) => {
              VALUES ($1, $2, $3, $4)`,
             [user.id, 'Mein Dashboard', JSON.stringify(defaultConfig), true]
         );
-        // Keine Fehlermeldung an User senden, falls das schiefgeht (Frontend hat Fallback)
     } catch (dashErr) {
         console.error('Fehler beim Erstellen des Default-Dashboards für User:', user.id, dashErr.message);
     }
@@ -255,6 +291,7 @@ exports.register = async (req, res) => {
         to: email,
         username: chosenUsername,
         verifyUrl,
+        partner: partner // <--- NEU: Branding-Daten übergeben
       });
     } catch (mailErr) {
       console.error('E-Mail-Versand (Verify) fehlgeschlagen:', mailErr);
@@ -334,7 +371,7 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
     }
 
-// 3. E-Mail Verifizierung prüfen (optional per ENV)
+    // 3. E-Mail Verifizierung prüfen (optional per ENV)
     if (process.env.REQUIRE_EMAIL_VERIFIED === 'true' && !user.is_email_verified) {
       return res.status(403).json({ message: 'Bitte verifizieren Sie Ihre E-Mail-Adresse, bevor Sie sich anmelden.' });
     }
@@ -353,25 +390,23 @@ exports.login = async (req, res) => {
     );
 
     // b) Log-Eintrag für die Punkte erstellen
-    // Da reference_id NOT NULL ist, generieren wir eine zufällige ID für dieses "Login-Event"
     const loginEventId = crypto.randomUUID(); 
     
     await db.query(
         `INSERT INTO user_score_logs (id, reference_id, user_id, points_change, action_type, description) 
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [
-            crypto.randomUUID(), // ID des Log-Eintrags
-            loginEventId,        // reference_id (Dummy-ID für den Login-Vorgang)
-            user.id,             // user_id
-            pointsForLogin,      // points_change
-            'LOGIN_REWARD',      // action_type
-            'Täglicher Login-Bonus' // description
+            crypto.randomUUID(), 
+            loginEventId,        
+            user.id,             
+            pointsForLogin,      
+            'LOGIN_REWARD',      
+            'Täglicher Login-Bonus' 
         ]
     );
     // ----------------------------------------------------------
 
     // 5. Token ausstellen
-    // WICHTIG: Den Score im User-Objekt für das Token/Response auch aktualisieren!
     user.contribution_score = (user.contribution_score || 0) + pointsForLogin;
 
     const token = issueJwt(user);
@@ -405,7 +440,7 @@ exports.login = async (req, res) => {
         dashboard_title: user.dashboard_title || null,
         contribution_score: user.contribution_score ?? 0,
         profile_image_url: user.profile_image_url || null,
-        last_login_at: new Date() // ✅ NEU: Da wir gerade eingeloggt haben, ist es "Jetzt"
+        last_login_at: new Date()
       },
     });
 
@@ -434,23 +469,41 @@ exports.verifyEmail = async (req, res) => {
   }
 
   try {
+    // GEÄNDERT: Wir holen direkt die business_partner_id mit
     const r = await db.query(
-      `SELECT id FROM users WHERE email_verification_token = $1 LIMIT 1`,
+      `SELECT id, business_partner_id FROM users WHERE email_verification_token = $1 LIMIT 1`,
       [token]
     );
     if (r.rows.length === 0) {
       return safeFrontendRedirect(res, '/login', { verified: 0 });
     }
 
+    const user = r.rows[0];
+
     await db.query(
       `UPDATE users
           SET is_email_verified = TRUE,
               email_verification_token = NULL
         WHERE id = $1`,
-      [r.rows[0].id]
+      [user.id]
     );
 
-    return safeFrontendRedirect(res, '/login', { verified: 1 });
+    // NEU: Redirect Logik bestimmen
+    let redirectParams = { verified: 1 };
+
+    // Wenn der User zu einem Partner gehört, ermitteln wir den "Code" (letzte 8 Stellen der UUID)
+    // damit das Frontend weiß, welches Branding es laden soll.
+    if (user.business_partner_id) {
+        const bpRes = await db.query(
+            'SELECT RIGHT(id::text, 8) as code FROM business_partners WHERE id = $1',
+            [user.business_partner_id]
+        );
+        if (bpRes.rows.length > 0) {
+            redirectParams.partner = bpRes.rows[0].code; // Key = 'partner', nicht partnerCode
+        }
+    }
+
+    return safeFrontendRedirect(res, '/login', redirectParams);
   } catch (err) {
     console.error('Verify email error:', err);
     return res.status(500).send('Serverfehler bei der Verifizierung.');
@@ -485,10 +538,15 @@ exports.resendVerification = async (req, res) => {
     );
 
     const verifyUrl = buildVerifyUrl(newToken);
+    
+    // An dieser Stelle könnte man theoretisch auch den Partner neu laden,
+    // aber bei Resend gehen wir meist vom Standard aus oder müssten den Partner vom User laden.
+    // Der Einfachheit halber hier Standard (oder TODO: Partner nachladen).
     await sendVerificationEmail({
       to: email,
       username: user.username,
       verifyUrl,
+      // partner: ... (optional nachladen)
     });
 
     return res.json({

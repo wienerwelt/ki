@@ -3,7 +3,7 @@ import {
   Box, Typography, CircularProgress, Alert, List, ListItem, ListItemText,
   IconButton, Tooltip, Chip, Button, Stack, Link as MuiLink,
   TextField, InputAdornment, Divider, ToggleButton, ToggleButtonGroup,
-  FormControl, Select, MenuItem
+  FormControl, Select, MenuItem, useTheme, useMediaQuery
 } from '@mui/material';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -58,7 +58,8 @@ const providerUrls: { [key: string]: string } = {
   'E-Control Austria': 'https://www.e-control.at/spritpreise'
 };
 
-const getProviderByCountryCode = (code?: CountryCode | null): string => {
+// Hilfsfunktion: Nimmt string oder null entgegen
+const getProviderByCountryCode = (code: string | null): string => {
     if (code === 'DE') return 'Tankerkönig';
     if (code === 'AT') return 'E-Control Austria';
     return 'Unbekannt';
@@ -68,6 +69,7 @@ const SUPPORTED_COUNTRIES: CountryCode[] = ['DE', 'AT'];
 const FAVORITES_LIMIT = 10;
 const PAGE_SIZE = 10;
 
+// Fix Leaflet Icon paths
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png',
@@ -81,6 +83,10 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
   const navigate = useNavigate();
   const { user } = useAuth();
   const { showSnackbar } = useSnackbar();
+  
+  // Theme & Mobile Check
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const [favorites, setFavorites] = useState<StationData[]>([]);
   const [allSearchResults, setAllSearchResults] = useState<StationData[]>([]);
@@ -250,11 +256,13 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
         await apiClient.delete(`/api/users/favorites/${station.external_id}?widgetType=${widgetTypeKey}`);
         showSnackbar('Favorit entfernt', 'info');
       } else {
+        // FIX: Typescript Fehler durch ?? null behoben.
+        // country_code kann undefined sein, wir wandeln es sicher in null um.
         const stationWithProvider = {
           ...station,
-          provider: getProviderByCountryCode(station.country_code)
+          provider: getProviderByCountryCode(station.country_code ?? null)
         };
-        await apiClient.post('/api/users/favorites', { widgetType: widgetTypeKey, favorite: stationWithProvider });
+        await apiClient.post('/api/users/favorites', { widgetType: widgetTypeKey, favorite: stationWithProvider as any });
         showSnackbar('Favorit hinzugefügt', 'success');
       }
       fetchFavoritesFromDB();
@@ -315,9 +323,18 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
         providerName = getProviderByCountryCode(selectedCountry);
         isTrusted = allSearchResults.length > 0 ? !!allSearchResults[0].is_trusted_source : false;
     } else if (favorites.length > 0) {
-        const uniqueProviders = [...new Set(favorites.map(f => f.provider).filter(Boolean))];
+        // favorites.provider ist optional (string | null | undefined).
+        // filter(Boolean) narrowt in TypeScript nicht zuverlässig auf string.
+        const uniqueProviders = [
+          ...new Set(
+            favorites
+              .map(f => f.provider)
+              .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+          ),
+        ];
         if (uniqueProviders.length === 1) {
-            providerName = uniqueProviders[0];
+            // TS: uniqueProviders[0] kann theoretisch undefined sein -> absichern.
+            providerName = uniqueProviders[0] ?? null;
             isTrusted = favorites.every(f => f.is_trusted_source);
         } else if (uniqueProviders.length > 1) {
             return <Typography variant="caption" color="text.secondary">Quellen: {uniqueProviders.join(', ')}</Typography>;
@@ -418,7 +435,11 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
         </ToggleButtonGroup>
       </Box>
       
-      <Box sx={{ maxHeight: 250, overflowY: 'auto' }}>
+      {/* Mobile Scroll-Logik */}
+      <Box sx={{ 
+          maxHeight: isMobile ? 'none' : 250, 
+          overflowY: isMobile ? 'visible' : 'auto' 
+      }}>
         {viewMode === 'favorites' && (
           loading ? <CircularProgress sx={{ display: 'block', mx: 'auto', my: 2 }}/> : (
             <List dense sx={{ p: 0 }}>
@@ -446,21 +467,46 @@ const FuelPricesWidget: React.FC<FuelPricesWidgetProps> = ({
       )}
       
       <Divider />
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ p: 1 }}>
-        <Button size="small" startIcon={viewMode === 'favorites' ? <AddCircleOutlineIcon/> : <ArrowBackIcon />} onClick={() => { setAllSearchResults([]); setDisplayedResults([]); setSearchTerm(''); setViewMode(viewMode === 'favorites' ? 'search' : 'favorites'); }}>
+      
+      {/* Mobile Footer Ansicht (Vertical Stack) */}
+      <Stack 
+        direction={isMobile ? 'column' : 'row'} 
+        justifyContent="space-between" 
+        alignItems="center" 
+        spacing={isMobile ? 1 : 0}
+        sx={{ p: 1 }}
+      >
+        <Button 
+            size="small" 
+            fullWidth={isMobile}
+            variant={isMobile ? "outlined" : "text"}
+            startIcon={viewMode === 'favorites' ? <AddCircleOutlineIcon/> : <ArrowBackIcon />} 
+            onClick={() => { setAllSearchResults([]); setDisplayedResults([]); setSearchTerm(''); setViewMode(viewMode === 'favorites' ? 'search' : 'favorites'); }}
+        >
           {viewMode === 'favorites' ? `Hinzufügen (${favorites.length}/${FAVORITES_LIMIT})` : 'Zurück'}
         </Button>
-        {renderProviderAttribution()}
-        <Stack direction="column" alignItems="flex-end" spacing={0}>
+        
+        {!isMobile && renderProviderAttribution()}
+        
+        <Stack direction="column" alignItems={isMobile ? "center" : "flex-end"} spacing={0} width={isMobile ? "100%" : "auto"}>
           {lastPriceUpdate && (
             <Typography variant="caption" color="text.secondary" sx={{fontSize: '0.65rem'}}>
               {lastPriceUpdate}
             </Typography>
           )}
-          <Button size="small" startIcon={<RefreshIcon />} onClick={handleRefreshPrices} disabled={loading || viewMode === 'search' || favorites.length === 0}>
+          <Button 
+            size="small" 
+            fullWidth={isMobile}
+            variant={isMobile ? "outlined" : "text"}
+            startIcon={<RefreshIcon />} 
+            onClick={handleRefreshPrices} 
+            disabled={loading || viewMode === 'search' || favorites.length === 0}
+          >
             Preise aktualisieren
           </Button>
         </Stack>
+
+        {isMobile && <Box sx={{mt: 1}}>{renderProviderAttribution()}</Box>}
       </Stack>
     </WidgetPaper>
   );

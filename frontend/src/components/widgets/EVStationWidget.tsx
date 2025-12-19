@@ -30,10 +30,13 @@ import { useSnackbar } from '../../context/SnackbarContext';
 type ViewMode = 'favorites' | 'search';
 type CountryCode = 'DE' | 'AT' | string;
 
-interface EVStationWidgetProps extends BaseWidgetProps {
+// ✅ FIXED: isPublic hinzugefügt und onDelete/isRemovable optional gemacht
+interface EVStationWidgetProps extends Partial<BaseWidgetProps> {
   icon?: React.ReactNode;
   title: string;
   widgetTypeKey: string;
+  widgetId: string; // ID bleibt required für WidgetPaper
+  isPublic?: boolean;
 }
 
 interface StationData {
@@ -50,10 +53,11 @@ const FAVORITES_LIMIT = 10;
 const PAGE_SIZE = 10;
 
 const providerUrls: { [key: string]: string } = {
-  'E-Control': 'https://www.e-control.at/ladestellen', // Behalten wir für alte Favoriten
+  'E-Control': 'https://www.e-control.at/ladestellen',
   'OpenChargeMap': 'https://openchargemap.org/site'
 };
 
+// Leaflet Icon Fix
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png',
@@ -62,7 +66,7 @@ L.Icon.Default.mergeOptions({
 });
 
 const EVStationWidget: React.FC<EVStationWidgetProps> = ({
-  onDelete, widgetId, isRemovable, icon, title, widgetTypeKey
+  onDelete, widgetId, isRemovable, icon, title, widgetTypeKey, isPublic = false
 }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -84,7 +88,18 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const markersRef = useRef<L.FeatureGroup>(new L.FeatureGroup());
 
+  // ✅ FIXED: Im Public Mode nicht laden
   const fetchFavoritesFromDB = useCallback(async () => {
+    if (isPublic) {
+        // Mock Daten für Public Mode (z.B. Wien Zentrum)
+        setFavorites([
+            { id: 'mock1', external_id: 'mock1', name: 'Wien City Charging', lat: 48.2082, lng: 16.3738, operator_name: 'Wien Energie', power_kw: 150, charge_point_count: 4, connector_types: ['CCS2'], is_trusted_source: true, city: 'Wien', street: 'Stephansplatz' },
+            { id: 'mock2', external_id: 'mock2', name: 'Public Park Charger', lat: 48.2100, lng: 16.3700, operator_name: 'Smatrics', power_kw: 50, charge_point_count: 2, connector_types: ['Type 2'], city: 'Wien', street: 'Am Hof' }
+        ]);
+        setLoading(false);
+        return;
+    }
+
     if (!user) { setFavorites([]); setLoading(false); return; }
     setLoading(true); setError(null);
     try {
@@ -95,28 +110,38 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [user, widgetTypeKey]);
+  }, [user, widgetTypeKey, isPublic]);
 
   useEffect(() => {
     fetchFavoritesFromDB();
-    if (user?.regions && user.regions.length > 0) {
+    if (!isPublic && user?.regions && user.regions.length > 0) {
         const defaultRegion = user.regions.find(r => !!r.is_default) || user.regions[0];
         setSelectedRegion(defaultRegion);
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => showSnackbar("Standort konnte nicht ermittelt werden.", "info")
-    );
-  }, [fetchFavoritesFromDB, showSnackbar, user?.regions]);
+    // Location nur abfragen wenn nicht Public (Datenschutz/UX beim Laden der Landingpage)
+    if (!isPublic) {
+        navigator.geolocation.getCurrentPosition(
+            (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            () => { /* Silent fail on landing page */ if(!isPublic) showSnackbar("Standort konnte nicht ermittelt werden.", "info") }
+        );
+    }
+  }, [fetchFavoritesFromDB, showSnackbar, user?.regions, isPublic]);
   
+  // Karte Initialisieren
   useEffect(() => {
     if (mapContainerRef.current && !mapRef.current) {
-        mapRef.current = L.map(mapContainerRef.current, { attributionControl: false }).setView([51.16, 10.45], 5);
+        // Public Default View: Wien
+        const defaultLat = isPublic ? 48.2082 : 51.16;
+        const defaultLng = isPublic ? 16.3738 : 10.45;
+        const defaultZoom = isPublic ? 13 : 5;
+
+        mapRef.current = L.map(mapContainerRef.current, { attributionControl: false }).setView([defaultLat, defaultLng], defaultZoom);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapRef.current);
         markersRef.current.addTo(mapRef.current);
     }
-  }, []);
+  }, [isPublic]);
 
+  // Resize Observer
   useEffect(() => {
     if (!mapRef.current || !mapContainerRef.current) return;
     const map = mapRef.current;
@@ -127,6 +152,7 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
     return () => ro.disconnect();
   }, []);
 
+  // Marker Update
   useEffect(() => {
     if (!mapRef.current) return;
     const map = mapRef.current;
@@ -147,6 +173,7 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
   }, [favorites, displayedResults, viewMode]);
 
   const handleSearch = async (useLocation: boolean = false) => {
+    if (isPublic) return; // Suche deaktiviert im Public Mode
     if (!selectedRegion) return showSnackbar("Bitte wählen Sie ein Land.", "warning");
     if (!useLocation && !searchTerm.trim()) return showSnackbar("Bitte einen Suchbegriff eingeben.", "info");
     if (useLocation && !userLocation) return showSnackbar("Standort nicht verfügbar.", "warning");
@@ -179,6 +206,7 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
   const isFavorite = useCallback((externalId: string) => favorites.some(f => f.external_id === externalId), [favorites]);
 
   const toggleFavorite = useCallback(async (station: StationData) => {
+    if (isPublic) return; // Read only
     const fav = isFavorite(station.external_id);
     if (!fav && favorites.length >= FAVORITES_LIMIT) {
       showSnackbar(`Maximale Anzahl von ${FAVORITES_LIMIT} Favoriten erreicht.`, 'warning');
@@ -196,42 +224,33 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
     } catch (err) {
       showSnackbar('Aktion fehlgeschlagen', 'error');
     }
-  }, [isFavorite, widgetTypeKey, fetchFavoritesFromDB, showSnackbar, favorites.length]);
+  }, [isFavorite, widgetTypeKey, fetchFavoritesFromDB, showSnackbar, favorites.length, isPublic]);
   
 
-  // --- START: KORRIGIERTER BLOCK ---
-  // Diese Funktion wurde überarbeitet, um die E-Control-Logik zu entfernen
-  // und den TypeScript-Fehler zu beheben.
   const renderProviderAttribution = () => {
     let providerName: string | null = null;
     const stationsToShow = viewMode === 'favorites' ? favorites : displayedResults;
 
     if (stationsToShow.length > 0) {
-        // KORREKTUR: Wir leiten die Anbieter aus den *Daten* ab, nicht aus der Region.
-        // Wir beheben den TS-Fehler, indem wir explizit nach Strings filtern.
         const uniqueProviders = [...new Set(
             stationsToShow.map(f => f.provider).filter((p): p is string => !!p)
         )];
         
         if (uniqueProviders.length === 1) {
-            providerName = uniqueProviders[0]; // z.B. "OpenChargeMap"
+            providerName = uniqueProviders[0];
         } else if (uniqueProviders.length > 1) {
-            // Zeigt "Quellen: OpenChargeMap, E-Control" an, falls alte Favoriten vorhanden sind
             return <Typography variant="caption" color="text.secondary">Quellen: {uniqueProviders.join(', ')}</Typography>;
         }
     }
 
-    // Fallback: Wenn die Daten keinen Anbieter haben, aber wir im Suchmodus sind,
-    // wissen wir, dass es OCM sein muss (gemäß unserem Backend).
     if (viewMode === 'search' && !providerName && displayedResults.length > 0) {
         providerName = 'OpenChargeMap';
     }
 
-    if (!providerName) return null; // Nichts anzeigen, wenn keine Daten da sind
+    if (!providerName) return null;
     
     const url = providerUrls[providerName];
     if (!url) {
-        // Fallback, falls der Name (z.B. von alten Favoriten) nicht in unserer URL-Liste ist
         return <Typography variant="caption" color="text.secondary">Quelle: {providerName}</Typography>;
     }
 
@@ -241,20 +260,26 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
         </Typography>
     );
   };
-  // --- ENDE: KORRIGIERTER BLOCK ---
 
 
   const renderListItem = (station: StationData) => {
     const fullAddress = `${station.street || ''}, ${station.post_code || ''} ${station.city || ''}`.trim().replace(/^,|,$/g, '');
     
     return (
-      <ListItem key={station.external_id} divider button onClick={() => setSelectedStation(station)}
+      <ListItem 
+        key={station.external_id} 
+        divider 
+        // ✅ FIXED: Im Public Mode nicht klickbar (bzw. öffnet nur Map Dialog)
+        button={!isPublic as any} 
+        onClick={() => setSelectedStation(station)}
         secondaryAction={
-            <Tooltip title={isFavorite(station.external_id) ? "Favorit entfernen" : "Zu Favoriten hinzufügen"}>
-                <IconButton onClick={(e) => { e.stopPropagation(); toggleFavorite(station); }} edge="end">
-                {isFavorite(station.external_id) ? <StarIcon color="warning" /> : <StarBorderIcon />}
-                </IconButton>
-            </Tooltip>
+            !isPublic && ( // Favoriten-Stern nur wenn nicht public
+                <Tooltip title={isFavorite(station.external_id) ? "Favorit entfernen" : "Zu Favoriten hinzufügen"}>
+                    <IconButton onClick={(e) => { e.stopPropagation(); toggleFavorite(station); }} edge="end">
+                    {isFavorite(station.external_id) ? <StarIcon color="warning" /> : <StarBorderIcon />}
+                    </IconButton>
+                </Tooltip>
+            )
         }
       >
         <ListItemIcon sx={{minWidth: 36}}>
@@ -266,7 +291,7 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
                 <Typography variant="body2" sx={{ fontWeight: 'bold' }}>{station.name}</Typography>
                 {station.is_trusted_source && (
                     <Tooltip title="Info zu geprüften Quellen">
-                        <IconButton size="small" sx={{p:0}} onClick={(e) => { e.stopPropagation(); navigate('/trusted-sources'); }}>
+                        <IconButton size="small" sx={{p:0}} onClick={(e) => { e.stopPropagation(); if(!isPublic) navigate('/trusted-sources'); }}>
                             <VerifiedUserIcon sx={{ fontSize: 16, color: 'success.main' }} />
                         </IconButton>
                     </Tooltip>
@@ -296,10 +321,12 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
       title={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>{icon}<Typography variant="h6">{title}</Typography></Box>}
       widgetId={widgetId} onDelete={onDelete} isRemovable={isRemovable} 
       widgetTitle={title} widgetTypeKey={widgetTypeKey} noPadding
+      isPublic={isPublic} // ✅ FIXED: Weiterreichen
     >
       <Box sx={{ p: 2, pb: 1, height: 150, position: 'relative', bgcolor: 'grey.200' }} ref={mapContainerRef} />
 
-      {viewMode === 'search' && (
+      {/* Suchleiste nur anzeigen wenn NICHT public und im Suchmodus */}
+      {viewMode === 'search' && !isPublic && (
         <Box sx={{ p: 2, pt: 1 }}>
           <Stack direction="row" spacing={1} alignItems="center">
             {user?.regions && (
@@ -332,7 +359,7 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
           loading ? <CircularProgress sx={{ display: 'block', mx: 'auto', my: 2 }}/> : (
             <List dense sx={{ p: 0 }}>
               {favorites.length > 0 ? favorites.map(fav => renderListItem(fav)) : (
-                <Typography sx={{ p: 2, textAlign: 'center' }} color="text.secondary">Keine Favoriten gespeichert.</Typography>
+                <Typography sx={{ p: 2, textAlign: 'center' }} color="text.secondary">{isPublic ? 'Lade Demo-Daten...' : 'Keine Favoriten gespeichert.'}</Typography>
               )}
             </List>
           )
@@ -358,14 +385,22 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
       )}
       
       <Divider />
+      
+      {/* Footer Actions nur wenn NICHT public */}
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ p: 1 }}>
-        <Button size="small" startIcon={viewMode === 'favorites' ? <AddCircleOutlineIcon/> : <ArrowBackIcon />} onClick={() => { setAllSearchResults([]); setDisplayedResults([]); setSearchTerm(''); setError(null); setViewMode(viewMode === 'favorites' ? 'search' : 'favorites'); }}>
-          {viewMode === 'favorites' ? `Hinzufügen (${favorites.length}/${FAVORITES_LIMIT})` : 'Zurück'}
-        </Button>
+        {!isPublic ? (
+            <Button size="small" startIcon={viewMode === 'favorites' ? <AddCircleOutlineIcon/> : <ArrowBackIcon />} onClick={() => { setAllSearchResults([]); setDisplayedResults([]); setSearchTerm(''); setError(null); setViewMode(viewMode === 'favorites' ? 'search' : 'favorites'); }}>
+              {viewMode === 'favorites' ? `Hinzufügen (${favorites.length}/${FAVORITES_LIMIT})` : 'Zurück'}
+            </Button>
+        ) : (
+            // Im Public Mode ein Platzhalter oder Link zur Registrierung
+            <Box></Box>
+        )}
         {renderProviderAttribution()}
       </Stack>
 
       <Dialog open={!!selectedStation} onClose={() => setSelectedStation(null)} fullWidth maxWidth="sm">
+        {/* ... Dialog Content unverändert ... */}
         <DialogTitle sx={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
             <Typography variant="h6" component="div">{selectedStation?.name}</Typography>
             <IconButton onClick={() => setSelectedStation(null)}><CloseIcon/></IconButton>
@@ -380,7 +415,7 @@ const EVStationWidget: React.FC<EVStationWidgetProps> = ({
                     <Typography variant="overline" color="text.secondary">Betreiber</Typography>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <Typography>{selectedStation?.operator_name}</Typography>
-                        {selectedStation?.is_trusted_source && (
+                        {selectedStation?.is_trusted_source && !isPublic && (
                           <Tooltip title="Info zu geprüften Quellen">
                                 <IconButton size="small" sx={{p:0}} onClick={(e) => { e.stopPropagation(); navigate('/trusted-sources'); }}>
                                     <VerifiedUserIcon sx={{ fontSize: 16, color: 'success.main' }} />
