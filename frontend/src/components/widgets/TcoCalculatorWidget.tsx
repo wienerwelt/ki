@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
   Box, Button, Grid, Paper, TextField, Typography, ToggleButtonGroup, ToggleButton,
-  InputAdornment, Slider, Alert, FormControlLabel, Switch, useTheme, useMediaQuery
+  InputAdornment, Slider, Alert, CircularProgress, FormControlLabel, Switch, useTheme, useMediaQuery
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import AddIcon from '@mui/icons-material/Add';
@@ -80,7 +80,10 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
   const [results, setResults] = useState<TcoResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [chartType, setChartType] = useState<'bar' | 'pie'>('bar');
-  const [includeLogo, setIncludeLogo] = useState<boolean>(true);
+  const [includeLogo, setIncludeLogo] = useState(true);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const integerFormatter = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
@@ -144,6 +147,9 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
   const handleDownloadPdf = async () => {
     const input = resultsRef.current;
     if (!input || !results) return;
+
+    setPdfError(null);
+    setIsDownloading(true);    
 
     // OPTIMIERUNG: Vorübergehendes Styling für PDF-Generierung im Dark Mode
     const originalColor = input.style.color;
@@ -234,11 +240,13 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
         pdf.text(`Seite 1 von 1`, pdfWidth - margin, footerY + 8, { align: 'right' });
 
         pdf.save(`TCO-Analyse-${new Date().toISOString().split('T')[0]}.pdf`);
-    } catch (e) {
-        console.error(e);
-        // Reset color in case of error
-        input.style.color = originalColor;
-    }
+        } catch (e: any) {
+          console.error(e);
+          input.style.color = originalColor;
+          setPdfError(e?.message || 'PDF konnte nicht erstellt werden.');
+        } finally {
+          setIsDownloading(false);
+        }
   };
 
   const renderDriveSpecificFields = (vehicle: VehicleInputState, index: number) => {
@@ -399,13 +407,26 @@ const TcoCalculatorWidget: React.FC<TcoWidgetProps> = ({ widgetId, onDelete, isR
               </Box>
             </Box>
           </Paper>
-          <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 2, flexDirection: isMobile ? 'column' : 'row' }}>
-            <Button startIcon={<DownloadIcon />} onClick={handleDownloadPdf} fullWidth={isMobile}>
-              Ergebnis als PDF speichern
+          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1 }}>
+            {pdfError && <Alert severity="error" sx={{ py: 0.5, mr: 1 }}>{pdfError}</Alert>}
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={isDownloading ? <CircularProgress size={16} /> : <DownloadIcon />}
+              onClick={handleDownloadPdf}
+              disabled={isDownloading || !results}
+            >
+              {isDownloading ? 'Exportiere...' : 'PDF Export'}
             </Button>
-            <FormControlLabel control={<Switch checked={includeLogo} onChange={(e) => setIncludeLogo(e.target.checked)} />}
-              label="Logo im PDF" />
           </Box>
+
+          <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center' }}>
+            <FormControlLabel
+              control={<Switch checked={includeLogo} onChange={(e) => setIncludeLogo(e.target.checked)} />}
+              label="Logo im PDF"
+            />
+          </Box>
+
         </Box>
       )}
     </WidgetPaper>

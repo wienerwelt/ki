@@ -27,6 +27,12 @@ export const commoditiesConfig: Record<string, CommodityConfig> = {
         color: '#ffc658',
         unit: '%'
     },
+        'SWAP_10Y': {
+        name: 'Swap 10J',
+        formatOptions: { style: 'decimal', minimumFractionDigits: 3, maximumFractionDigits: 3 },
+        color: '#6f42c1',
+        unit: '%'
+    },
     'KVLPI_GESAMT': {
         name: 'KVLPI',
         formatOptions: { style: 'decimal', minimumFractionDigits: 1, maximumFractionDigits: 1 },

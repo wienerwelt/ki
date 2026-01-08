@@ -345,70 +345,74 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
     }, [category]);
 
     // --- Fetch Logic ---
-    const fetchData = useCallback(async (currentPage: number, currentSortBy: string, region: Region | null, search: string, subFilter: string, currentFilterMode: string, loadMore = false) => {
-        if (!category) {
-            setIsLoading(false);
-            setError("Keine Kategorie im Widget-Typ konfiguriert.");
-            setItems([]);
-            return;
+const fetchData = useCallback(async (
+    currentPage: number,
+    currentSortBy: string,
+    region: Region | null,
+    search: string,
+    subFilter: string,
+    currentFilterMode: string,
+    loadMore = false
+) => {
+    if (!category) {
+        setIsLoading(false);
+        setError("Keine Kategorie im Widget-Typ konfiguriert.");
+        setItems([]);
+        return;
+    }
+
+    if (loadMore) setIsLoadingMore(true);
+    else setIsLoading(true);
+    setError(null);
+
+    const token = localStorage.getItem('jwt_token');
+    const itemParams = new URLSearchParams({
+        page: String(currentPage),
+        limit: '10',
+        sortBy: currentSortBy,
+        region: region ? region.name : 'all',
+        category,
+        tag: subFilter,
+        filter: currentFilterMode
+    });
+    if (search) itemParams.append('search', search);
+
+    try {
+        const contentRes = await apiClient.get(
+            `/api/data/scraped-content?${itemParams.toString()}`,
+            { headers: { 'x-auth-token': token } }
+        );
+
+        const newItems = contentRes.data?.data || [];
+
+        setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
+        setActiveGlobalTags(contentRes.data?.activeFilters?.tags || []);
+
+        // ✅ counts + totalPages kommen jetzt direkt mit
+        setTotalPages(contentRes.data?.totalPages || 0);
+        setCounts(contentRes.data?.counts || { unread: 0, new: 0 });
+
+        // Action (nur einmal pro Filter-Session auf Seite 1)
+        if (currentPage === 1 && !hasLoadedAction.current) {
+            hasLoadedAction.current = true;
+            apiClient.get(
+                `/api/data/relevant-action?category=${category}&region=${region?.name || 'all'}`,
+                { headers: { 'x-auth-token': token } }
+            )
+            .then(actionRes => setRelevantAction(actionRes.data))
+            .catch(() => {});
         }
 
-        if (loadMore) setIsLoadingMore(true);
-        else setIsLoading(true);
-        setError(null);
+    } catch (err: any) {
+        console.error("Fehler beim Laden:", err);
+        setError(err.response?.data?.message || `Inhalte konnten nicht geladen werden.`);
+    } finally {
+        setIsLoading(false);
+        setIsLoadingMore(false);
+    }
+}, [category]);
 
-        const token = localStorage.getItem('jwt_token');
-        const itemParams = new URLSearchParams({
-            page: String(currentPage),
-            limit: '10',
-            sortBy: currentSortBy,
-            region: region ? region.name : 'all',
-            category,
-            tag: subFilter,
-            filter: currentFilterMode
-        });
-        if (search) itemParams.append('search', search);
 
-        try {
-            // 1. Content Laden
-            const contentRes = await apiClient.get(`/api/data/scraped-content?${itemParams.toString()}`, { headers: { 'x-auth-token': token } });
-            const newItems = contentRes.data?.data || [];
-            
-            setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
-            setActiveGlobalTags(contentRes.data?.activeFilters?.tags || []);
-
-            // 2. Action Laden (Nur einmalig auf Seite 1)
-            if (currentPage === 1 && !hasLoadedAction.current) {
-                hasLoadedAction.current = true;
-                apiClient.get(`/api/data/relevant-action?category=${category}&region=${region?.name || 'all'}`, { headers: { 'x-auth-token': token } })
-                    .then(actionRes => setRelevantAction(actionRes.data))
-                    .catch(() => {}); 
-            }
-
-        } catch (err: any) {
-            console.error("Fehler beim Laden:", err);
-            setError(err.response?.data?.message || `Inhalte konnten nicht geladen werden.`);
-        } finally {
-            setIsLoading(false);
-            setIsLoadingMore(false);
-        }
-
-        // 3. Counts Laden (Non-blocking)
-        try {
-            const countParams = new URLSearchParams({
-                limit: '10',
-                sortBy: currentSortBy,
-                region: region ? region.name : 'all',
-                category,
-                tag: subFilter,
-                filter: currentFilterMode
-            });
-            if (search) countParams.append('search', search);
-            const countsRes = await apiClient.get(`/api/data/scraped-content-counts?${countParams.toString()}`, { headers: { 'x-auth-token': token } });
-            setTotalPages(countsRes.data?.totalPages || 0);
-            setCounts(countsRes.data?.counts || { unread: 0, new: 0 });
-        } catch (e) { /* Ignore count errors */ }
-    }, [category]); 
 
     useEffect(() => { 
         setPage(1);

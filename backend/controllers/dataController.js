@@ -617,7 +617,7 @@ exports.getFleetAssociationNews = async (req, res) => {
 
 exports.getCommodityPrices = async (req, res) => {
     try {
-        const indicators = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'KVLPI_GESAMT']; 
+        const indicators = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'SWAP_10Y', 'KVLPI_GESAMT'];
         const results = {};
 
         for (const indicator of indicators) {
@@ -1564,111 +1564,261 @@ exports.getTagsForCategory = async (req, res) => {
 
 
 exports.getScrapedContent = async (req, res) => {
-    // NEU: token_issued_at nutzen
+    // token_issued_at nutzen für stabile "Neu"-Zahlen während der Session
     const { id: userId, token_issued_at, last_login_at, business_partner_id: businessPartnerId } = req.user;
     const stableLastLogin = token_issued_at || last_login_at || new Date(0);
 
     const {
-        page = 1, limit = 10, sortBy = 'date', category, region, search,
-        tag, mainFilter, filter
+        page = 1,
+        limit = 10,
+        sortBy = 'date',
+        category,
+        region,
+        search,
+        tag,
+        mainFilter,
+        filter
     } = req.query;
-    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 10;
+    const offset = (pageNum - 1) * limitNum;
 
     try {
-        const userSettingsResult = await db.query('SELECT article_score_min, article_score_max FROM users WHERE id = $1', [userId]);
+        // User Score-Filter
+        const userSettingsResult = await db.query(
+            'SELECT article_score_min, article_score_max FROM users WHERE id = $1',
+            [userId]
+        );
         const { article_score_min, article_score_max } = userSettingsResult.rows[0] || {};
-        
-        // Optimierung: Tags nur laden, wenn wir sie wirklich zum Filtern brauchen, sonst sparen wir die Query
-        const userTagsResult = await db.query('SELECT tag_name FROM user_saved_tags WHERE user_id = $1', [userId]);
+
+        // Saved Tags (für activeFilters + saved-tag filtering)
+        const userTagsResult = await db.query(
+            'SELECT tag_name FROM user_saved_tags WHERE user_id = $1',
+            [userId]
+        );
         const userSavedTags = userTagsResult.rows.map(row => row.tag_name);
 
-        const queryParams = [];
-        let whereClauses = [];
-        let paramIndex = 1;
+        // --- BASE FILTER (ohne "filter" unread/new) für counts/totalPages ---
+        const baseParams = [];
+        const baseWhere = [];
+        let p = 1;
 
         if (userSavedTags.length > 0) {
-            whereClauses.push(`EXISTS (SELECT 1 FROM scraped_content_tags sct JOIN tags t ON sct.tag_id = t.id WHERE sct.scraped_content_id = sc.id AND t.name = ANY($${paramIndex}::text[]))`);
-            queryParams.push(userSavedTags);
-            paramIndex++;
+            baseWhere.push(`
+                EXISTS (
+                    SELECT 1
+                    FROM scraped_content_tags sct
+                    JOIN tags t ON sct.tag_id = t.id
+                    WHERE sct.scraped_content_id = sc.id
+                      AND t.name = ANY($${p}::text[])
+                )
+            `);
+            baseParams.push(userSavedTags);
+            p++;
         }
 
         if (category) {
             if (category.startsWith('businesspartner_')) {
-                if (!businessPartnerId) return res.json({ data: [], activeFilters: { tags: [] } });
-                whereClauses.push(`sc.source_identifier = $${paramIndex++}`);
-                queryParams.push(`${businessPartnerId}_${category.split('_')[1]}`);
+                if (!businessPartnerId) {
+                    return res.json({
+                        source: 'Scraped Content Feed',
+                        timestamp: new Date().toISOString(),
+                        data: [],
+                        activeFilters: { tags: userSavedTags },
+                        totalPages: 0,
+                        counts: { unread: 0, new: 0 }
+                    });
+                }
+                baseWhere.push(`sc.source_identifier = $${p++}`);
+                baseParams.push(`${businessPartnerId}_${category.split('_')[1]}`);
             } else {
-                whereClauses.push(`sc.category = $${paramIndex++}`);
-                queryParams.push(category);
+                baseWhere.push(`sc.category = $${p++}`);
+                baseParams.push(category);
             }
         }
-        
-        if (category === 'fleet_podcasts') whereClauses.push(`sc.original_url ~* '\\.(mp3|m4a|aac|ogg|wav)(\\?|$)'`);
-        if (region && region !== 'all') { whereClauses.push(`sc.region = $${paramIndex++}`); queryParams.push(region); }
-        if (search) { whereClauses.push(`(sc.title ILIKE $${paramIndex} OR sc.summary ILIKE $${paramIndex})`); queryParams.push(`%${search}%`); paramIndex++; }
-        if (mainFilter) { whereClauses.push(`EXISTS (SELECT 1 FROM scraped_content_tags sct JOIN tags t ON sct.tag_id = t.id WHERE sct.scraped_content_id = sc.id AND t.name = $${paramIndex})`); queryParams.push(mainFilter); paramIndex++; }
-        if (tag && tag !== 'all') { whereClauses.push(`EXISTS (SELECT 1 FROM scraped_content_tags sct JOIN tags t ON sct.tag_id = t.id WHERE sct.scraped_content_id = sc.id AND t.name = $${paramIndex})`); queryParams.push(tag); paramIndex++; }
-        if (article_score_min != null) { whereClauses.push(`sc.relevance_score >= $${paramIndex++}`); queryParams.push(article_score_min); }
-        if (article_score_max != null) { whereClauses.push(`sc.relevance_score <= $${paramIndex++}`); queryParams.push(article_score_max); }
-        
-        // Filter: Unread / New
+
+        if (category === 'fleet_podcasts') {
+            baseWhere.push(`sc.original_url ~* '\\.(mp3|m4a|aac|ogg|wav)(\\?|$)'`);
+        }
+
+        if (region && region !== 'all') {
+            baseWhere.push(`sc.region = $${p++}`);
+            baseParams.push(region);
+        }
+
+        if (search) {
+            baseWhere.push(`(sc.title ILIKE $${p} OR sc.summary ILIKE $${p})`);
+            baseParams.push(`%${search}%`);
+            p++;
+        }
+
+        if (mainFilter) {
+            baseWhere.push(`
+                EXISTS (
+                    SELECT 1
+                    FROM scraped_content_tags sct
+                    JOIN tags t ON sct.tag_id = t.id
+                    WHERE sct.scraped_content_id = sc.id
+                      AND t.name = $${p}
+                )
+            `);
+            baseParams.push(mainFilter);
+            p++;
+        }
+
+        if (tag && tag !== 'all') {
+            baseWhere.push(`
+                EXISTS (
+                    SELECT 1
+                    FROM scraped_content_tags sct
+                    JOIN tags t ON sct.tag_id = t.id
+                    WHERE sct.scraped_content_id = sc.id
+                      AND t.name = $${p}
+                )
+            `);
+            baseParams.push(tag);
+            p++;
+        }
+
+        if (article_score_min != null) {
+            baseWhere.push(`sc.relevance_score >= $${p++}`);
+            baseParams.push(article_score_min);
+        }
+        if (article_score_max != null) {
+            baseWhere.push(`sc.relevance_score <= $${p++}`);
+            baseParams.push(article_score_max);
+        }
+
+        const baseWhereString = baseWhere.length > 0 ? `WHERE ${baseWhere.join(' AND ')}` : '';
+
+        // --- COUNTS + TOTALPAGES (gleiche Logik wie bisheriger /scraped-content-counts) ---
+        // Hinweis: counts ignoriert bewusst den UI-Filter (all/new/unread), damit Badges stabil bleiben.
+        const totalQuery = `
+            SELECT COUNT(sc.id) as total_items
+            FROM scraped_content sc
+            ${baseWhereString}
+        `;
+        const totalResult = await db.query(totalQuery, baseParams);
+        const totalItems = parseInt(totalResult.rows[0]?.total_items || '0', 10);
+        const totalPages = Math.ceil(totalItems / limitNum);
+
+        const unreadQuery = `
+            SELECT COUNT(*) as cnt FROM (
+                SELECT sc.id
+                FROM scraped_content sc
+                ${baseWhereString ? baseWhereString + ' AND ' : 'WHERE '}
+                sc.created_at > NOW() - INTERVAL '30 days'
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM user_read_scraped_content ursc
+                    WHERE ursc.scraped_content_id = sc.id
+                      AND ursc.user_id = $${p}
+                )
+                LIMIT 11
+            ) sub
+        `;
+
+        const newQuery = `
+            SELECT COUNT(*) as cnt FROM (
+                SELECT sc.id
+                FROM scraped_content sc
+                ${baseWhereString ? baseWhereString + ' AND ' : 'WHERE '}
+                sc.created_at > $${p}
+                LIMIT 11
+            ) sub
+        `;
+
+        const unreadParams = [...baseParams, userId];
+        const newParams = [...baseParams, stableLastLogin];
+
+        const [unreadRes, newRes] = await Promise.all([
+            db.query(unreadQuery, unreadParams),
+            db.query(newQuery, newParams)
+        ]);
+
+        const counts = {
+            unread: parseInt(unreadRes.rows[0]?.cnt || '0', 10),
+            new: parseInt(newRes.rows[0]?.cnt || '0', 10)
+        };
+
+        // --- DATA QUERY (mit UI-Filter all/new/unread) ---
+        const dataParams = [...baseParams];
+        const dataWhere = [...baseWhere];
+        let pd = p;
+
         if (filter === 'unread') {
-             // Index idx_user_read_scraped_content_user_sc_id greift hier
-             whereClauses.push(`NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex})`);
-             queryParams.push(userId);
-             paramIndex++;
+            dataWhere.push(`
+                NOT EXISTS (
+                    SELECT 1
+                    FROM user_read_scraped_content ursc
+                    WHERE ursc.scraped_content_id = sc.id
+                      AND ursc.user_id = $${pd}
+                )
+            `);
+            dataParams.push(userId);
+            pd++;
         } else if (filter === 'new') {
-            whereClauses.push(`sc.created_at > $${paramIndex}`);
-            queryParams.push(stableLastLogin); 
-            paramIndex++;
+            dataWhere.push(`sc.created_at > $${pd}`);
+            dataParams.push(stableLastLogin);
+            pd++;
         }
 
-        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-        
-        let orderByClause = 'ORDER BY sc.published_date DESC, sc.scraped_at DESC';
+        const dataWhereString = dataWhere.length > 0 ? `WHERE ${dataWhere.join(' AND ')}` : '';
+
+        let orderByClause = 'ORDER BY sc.published_date DESC NULLS LAST, sc.event_date DESC NULLS LAST, sc.scraped_at DESC';
         if (sortBy === 'relevance') {
-            orderByClause = 'ORDER BY sc.relevance_score DESC, sc.published_date DESC';
+            orderByClause = 'ORDER BY sc.relevance_score DESC, sc.published_date DESC NULLS LAST, sc.scraped_at DESC';
         }
 
-        // OPTIMIERUNG:
-        // 1. LEFT(sc.summary, 400): Reduziert die Datenmenge drastisch. Das Frontend zeigt eh nur ~120 Zeichen.
-        // 2. Kein Join auf content_relevance_votes wenn wir nur die Liste anzeigen (spart Zeit). 
-        //    Wir holen user_vote nur, wenn es extrem wichtig ist, oder lassen es 0, da das Widget keine Votes anzeigt.
-        //    Hier lassen wir den Join drin, falls du Votes später brauchst, aber optimiert.
-        
         const dataQuery = `
             SELECT
-                sc.id, sc.title, 
-                LEFT(sc.summary, 400) as summary, -- DATENMENGE REDUZIERT
-                sc.original_url, sc.published_date,
-                sc.event_date, sc.category, sc.scraped_at, sc.relevance_score, 
-                sc.region, sc.thumbnail_url,
+                sc.id,
+                sc.title,
+                LEFT(sc.summary, 400) as summary,
+                sc.original_url,
+                sc.published_date,
+                sc.event_date,
+                sc.category,
+                sc.scraped_at,
+                sc.relevance_score,
+                sc.region,
+                sc.thumbnail_url,
                 s.status = 'approved' AS is_trusted_source,
-                EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex}) as is_read,
+                EXISTS (
+                    SELECT 1
+                    FROM user_read_scraped_content ursc
+                    WHERE ursc.scraped_content_id = sc.id
+                      AND ursc.user_id = $${pd}
+                ) as is_read,
                 COALESCE(crv.vote, 0) as user_vote
             FROM scraped_content sc
             LEFT JOIN sources s ON sc.original_url LIKE s.url || '%'
-            LEFT JOIN content_relevance_votes crv ON crv.content_id = sc.id AND crv.user_id = $${paramIndex}
-            ${whereString}
+            LEFT JOIN content_relevance_votes crv ON crv.content_id = sc.id AND crv.user_id = $${pd}
+            ${dataWhereString}
             ${orderByClause}
-            LIMIT $${paramIndex + 1} OFFSET $${paramIndex + 2}
+            LIMIT $${pd + 1} OFFSET $${pd + 2}
         `;
 
-        const finalParams = [...queryParams, userId, parseInt(limit, 10), offset];
-        const result = await db.query(dataQuery, finalParams);
-        
+        const finalDataParams = [...dataParams, userId, limitNum, offset];
+        const result = await db.query(dataQuery, finalDataParams);
+
+        // ✅ Alles in EINEM Response
         res.json({
             source: 'Scraped Content Feed',
             timestamp: new Date().toISOString(),
             data: result.rows,
-            activeFilters: { tags: userSavedTags } 
+            activeFilters: { tags: userSavedTags },
+            totalPages,
+            counts
         });
-
     } catch (err) {
         console.error(`Error fetching scraped content:`, err.message);
         res.status(500).json({ message: 'Error fetching scraped content', data: [] });
     }
 };
+
+
 
 
 

@@ -17,10 +17,9 @@ import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import CommodityChart from '../CommodityChart';
 import { commoditiesConfig } from '../CommoditiesConfig';
-import { useTranslation } from 'react-i18next'; // ✅ NEU
-import { format } from 'date-fns'; // ✅ NEU: Für Datumsanzeige
+import { useTranslation } from 'react-i18next';
+import { format } from 'date-fns';
 
-// --- Interfaces & Mappings ---
 
 interface CommodityPricesWidgetProps extends Partial<BaseWidgetProps> {
     icon?: React.ReactNode;
@@ -178,6 +177,16 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({
                             currentPrice: 1.08, unit: 'USD', lastUpdate: new Date().toISOString(), source: 'ecb.europa.eu', trend: 'stable', countryCode: 'eu', is_trusted_source: true,
                             historical: { weekAgo: 1.08, monthAgo: 1.07, yearAgo: 1.05 }
                         },
+                        'SWAP_10Y': {
+                            currentPrice: 2.85,
+                            unit: '%',
+                            lastUpdate: new Date().toISOString(),
+                            source: 'ecb.europa.eu',
+                            trend: 'stable',
+                            countryCode: 'eu',
+                            is_trusted_source: true,
+                            historical: { weekAgo: 2.82, monthAgo: 2.75, yearAgo: 3.10 }
+                        },                        
                         'CO2_PRICE': {
                             currentPrice: 65.20, unit: 'Tonne', lastUpdate: new Date().toISOString(), source: 'tradingeconomics.com', trend: 'down', countryCode: 'eu', is_trusted_source: true,
                             historical: { weekAgo: 68.00, monthAgo: 70.50, yearAgo: 85.00 }
@@ -245,7 +254,7 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({
     };
 
     const sortedDataEntries = data ? Object.entries(data).sort(([keyA], [keyB]) => {
-        const order = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'CO2_PRICE', 'KVLPI_GESAMT'];
+        const order = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'SWAP_10Y', 'CO2_PRICE', 'KVLPI_GESAMT'];
         return order.indexOf(keyA) - order.indexOf(keyB);
     }) : [];
 

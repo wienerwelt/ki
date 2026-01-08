@@ -82,11 +82,6 @@ const fetchAndStoreOilPrice = async () => {
 };
 
 
-/**
- * === KORRIGIERTE FUNKTION ===
- * Zurück auf MONATLICHE Daten (FM.M...), da der tägliche Endpunkt (FM.D...) 
- * einen 404-Fehler verursacht.
- */
 const fetchAndStoreEuriborRate = async () => {
     try {
         // Stabile, monatliche API der EZB
@@ -140,6 +135,60 @@ const fetchAndStoreEuriborRate = async () => {
         throw new Error(`Euribor-Update (monatlich) fehlgeschlagen: ${errorMessage}`);
     }
 };
+
+
+
+const fetchAndStoreSwap10YRate = async () => {
+    try {
+        const seriesKey = 'B.U2._X._Z.S1ZV._Z.O._X.WR._X.FL._Z._Z.EUR._Z';
+        const url = `https://data-api.ecb.europa.eu/service/data/MMSR/${seriesKey}?lastNObservations=1&detail=dataonly&format=jsondata`;
+
+        const response = await axios.get(url, { headers: { 'Accept': 'application/json' } });
+
+        const dataSet = response.data?.dataSets?.[0];
+        if (!dataSet?.series) {
+            throw new Error('Keine OIS/SWAP-Datensätze in der EZB-Antwort gefunden.');
+        }
+
+        const firstSeriesKey = Object.keys(dataSet.series)[0];
+        const series = dataSet.series[firstSeriesKey];
+        if (!series?.observations) {
+            throw new Error('Keine OIS/SWAP-Beobachtungen in der EZB-Antwort gefunden.');
+        }
+
+        const observationKeys = Object.keys(series.observations);
+        if (observationKeys.length === 0) {
+            throw new Error('Keine neuen OIS/SWAP-Beobachtungen gefunden.');
+        }
+
+        const obsIndex = observationKeys[0];
+        const value = series.observations[obsIndex][0];
+
+        const timeDim = response.data?.structure?.dimensions?.observation?.find(dim => dim.id === 'TIME_PERIOD');
+        const timeObj = timeDim?.values?.[obsIndex];
+        const dateStr = timeObj?.id || timeObj?.name; // daily meistens YYYY-MM-DD
+
+        const timestamp = new Date(dateStr);
+        if (!dateStr || isNaN(timestamp.getTime())) {
+            throw new Error(`Ungültiges Datumsformat von der EZB erhalten: ${dateStr}`);
+        }
+
+        await upsertIndicator({
+            name: 'SWAP_10Y',
+            value: value,
+            unit: '%',
+            timestamp: timestamp,
+            source: 'ecb.europa.eu',
+            countryCode: 'EU'
+        });
+
+    } catch (error) {
+        const errorMessage = error.response ? `Status ${error.response.status}` : error.message;
+        throw new Error(`SWAP/OIS 10Y Update fehlgeschlagen: ${errorMessage}`);
+    }
+};
+
+
 
 
 const fetchAndStoreKVLPI = async () => {
@@ -471,6 +520,7 @@ const updateDailyIndicators = async () => {
     const results = await Promise.allSettled([
         fetchAndStoreCurrencyRates(),
         fetchAndStoreOilPrice(),
+        fetchAndStoreSwap10YRate(),
         // fetchAndStoreCO2Price(),
         // fetchAndStoreEuriborRate(), // Entfernt
     ]);
