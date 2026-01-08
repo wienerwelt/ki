@@ -122,3 +122,4 @@ backend/.env*
 frontend/.env*.local
 .env
 /ecosystem.config.js
+ecosystem.config.js
