@@ -1,125 +1,109 @@
-# Logs
-logs
-*.log
+# =========================================================
+# Node
+# =========================================================
+node_modules/
+**/node_modules/
+
+# npm / yarn logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-lerna-debug.log*
 
-# Diagnostic reports
-report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+# =========================================================
+# Environment files
+# =========================================================
+.env
+.env.*
+!.env.example
 
-# Runtime data
+/backend/.env*
+/frontend/.env*.local
+
+# =========================================================
+# Build output
+# =========================================================
+dist/
+build/
+frontend/dist/
+frontend/build/
+
+.next
+out
+.nuxt
+.svelte-kit
+.vuepress/dist
+**/.vitepress/dist
+
+# =========================================================
+# Cache
+# =========================================================
+.cache
+.parcel-cache
+.nyc_output
+coverage
+
+# =========================================================
+# TypeScript
+# =========================================================
+*.tsbuildinfo
+
+# =========================================================
+# Logs
+# =========================================================
+logs
+*.log
+
+# =========================================================
+# Runtime
+# =========================================================
 pids
 *.pid
 *.seed
 *.pid.lock
 
-# Coverage directory
-coverage
-*.lcov
-.nyc_output
+# =========================================================
+# Docker (optional local volumes)
+# =========================================================
+docker-data/
 
-# Dependency directories
-**/node_modules/
-/backend/node_modules/
-/frontend/node_modules/
+# =========================================================
+# Database backups (lokal)
+# =========================================================
+pg-rescue/
+*.sql
+*.dump
 
-# TypeScript cache
-*.tsbuildinfo
+# =========================================================
+# IDE / Editor
+# =========================================================
+.vscode/*
+!.vscode/extensions.json
+.idea/
 
-# dotenv environment variable files
-/backend/.env
-.env
-.env.*
-!.env.example
+# =========================================================
+# OS files
+# =========================================================
+.DS_Store
+Thumbs.db
 
-# Output of 'npm pack'
+# =========================================================
+# Package artifacts
+# =========================================================
 *.tgz
 
-# =================================================================
-# === NEU: Build-Output-Ordner (WICHTIGSTE ERGÄNZUNG) ===
-# =================================================================
-# Ignoriert den Build-Ordner von Vite, Create React App etc. im gesamten Projekt
-/dist
-/build
-# Spezifisch für Ihr Frontend, falls es in einem Unterordner liegt
-/frontend/dist
-/frontend/build
+# =========================================================
+# Vite temporary files
+# =========================================================
+vite.config.*.timestamp-*
 
-# =================================================================
-# === NEU: Lokale Editor-Konfigurationen ===
-# =================================================================
-# Ignoriert lokale VS Code Einstellungen (sehr empfohlen)
-.vscode/
-!.vscode/extensions.json
+# =========================================================
+# Project specific
+# =========================================================
+Startanleitung.txt
 
-# =================================================================
-# === Bestehende Einträge (bereits korrekt) ===
-# =================================================================
-
-# parcel-bundler cache
-.cache
-.parcel-cache
-
-# Next.js build output
-.next
-out
-
-# Nuxt.js build / generate output
-.nuxt
-# dist # (wird bereits von der allgemeinen /dist-Regel oben abgedeckt)
-
-# Gatsby files
-.cache/
-# public
-
-# vuepress build output
-.vuepress/dist
-
-# Sveltekit cache directory
-.svelte-kit/
-
-# vitepress build output
-**/.vitepress/dist
-
-# vitepress cache directory
-**/.vitepress/cache
-
-# Docusaurus cache and generated files
-.docusaurus
-
-# Serverless directories
-.serverless/
-
-# Firebase cache directory
-.firebase/
-
-# Optional REPL history
-.node_repl_history
-
-# yarn v3
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/sdks
-!.yarn/versions
-
-# Vite logs files
-vite.config.js.timestamp-*
-vite.config.ts.timestamp-*
-
-# Anleitung
-/Startanleitung.txt
-
-# sql directory
+# optional SQL working directory
 /sql/
 
-# env
-backend/.env*
-frontend/.env*.local
-.env
-/ecosystem.config.js
+# PM2
 ecosystem.config.js
+/ecosystem.config.js

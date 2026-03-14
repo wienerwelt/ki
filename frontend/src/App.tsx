@@ -11,8 +11,8 @@ import { SnackbarProvider } from './context/SnackbarContext';
 import DashboardLayout from './components/DashboardLayout';
 
 // Öffentliche Seiten
-// import LandingPage from './pages/LandingPage'; // <-- Nicht mehr benötigt
-import PublicPortalPage from './pages/PublicPortalPage'; 
+import PublicPortalPageA from './pages/PublicPortalPageA';
+import PublicPortalPageB from './pages/PublicPortalPageB'; 
 
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
@@ -60,6 +60,8 @@ import AdminBpTrackedArticlesPage from './pages/AdminBpTrackedArticlesPage';
 import CommunityPage from './pages/CommunityPage';
 import AdminCommunityPage from './pages/AdminCommunityPage';
 import AdminLegalMonitorPage from './pages/AdminLegalMonitorPage';
+import AdminEditorialBriefingPage from './pages/AdminEditorialBriefingPage';
+import PublicPortalPageA from './pages/PublicPortalPageA';
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
@@ -153,10 +155,11 @@ function App() {
       <Router>
         <Routes>
           {/* ✅ UPDATE: Startseite zeigt jetzt auf das neue Public Portal */}
-          <Route path="/" element={<PublicPortalPage />} />
+          <Route path="/" element={<PublicPortalPageA />} />
+          <Route path="/B" element={<PublicPortalPageB />} />
           
-          <Route path="/login" element={<PublicPortalPage />} />
-          <Route path="/register" element={<PublicPortalPage isRegister={true} />} />
+          <Route path="/login" element={<PublicPortalPageA />} />
+          <Route path="/register" element={<PublicPortalPageA isRegister={true} />} />
           
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
@@ -187,6 +190,8 @@ function App() {
               <Route path="/admin/surveys" element={<AdminSurveysPage />} />
               <Route path="/admin/community" element={<AdminCommunityPage />} />
               <Route path="admin/legal-monitor" element={<AdminLegalMonitorPage />} />
+              <Route path="/admin/legal-monitor" element={<AdminLegalMonitorPage />} />
+              <Route path="/admin/briefing-editorial" element={<AdminEditorialBriefingPage />} />
             </Route>
 
             <Route path="/admin" element={<AdminRoutes />}>

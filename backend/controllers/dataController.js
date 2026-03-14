@@ -10,6 +10,7 @@ const ECONTROL_API_KEY     = process.env.ECONTROL_API_KEY;
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 const toStr  = (v) => (v === null || v === undefined) ? '' : String(v);
 const normNum = (v) => (v === null || v === undefined) ? null : Number(v);
+const fs = require('fs');
 
 const getDistance = (lat1, lon1, lat2, lon2) => {
     const R = 6371;
@@ -135,6 +136,41 @@ function normalizeDEDetail(detail, priceObj) {
     status: priceObj?.status || null,
   };
 }
+
+
+exports.getDailyBriefingPdfByToken = async (req, res) => {
+  const token = String(req.query.token || '').trim();
+  if (!token) return res.status(400).json({ message: 'token fehlt' });
+
+  try {
+    const exportRes = await db.query(
+      `SELECT pdf_path, expires_at
+       FROM business_partner_daily_briefing_exports
+       WHERE token = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [token]
+    );
+
+    if (exportRes.rows.length === 0) return res.status(404).json({ message: 'PDF nicht gefunden' });
+
+    const row = exportRes.rows[0];
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      return res.status(410).json({ message: 'Link abgelaufen' });
+    }
+
+    if (!fs.existsSync(row.pdf_path)) {
+      return res.status(404).json({ message: 'PDF-Datei fehlt am Server' });
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="fuhrpark-daily.pdf"');
+    fs.createReadStream(row.pdf_path).pipe(res);
+  } catch (err) {
+    console.error('PDF download error:', err.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
 
 function normalizeATStation(station) {
   const priceMap = {};
@@ -617,7 +653,7 @@ exports.getFleetAssociationNews = async (req, res) => {
 
 exports.getCommodityPrices = async (req, res) => {
     try {
-        const indicators = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'SWAP_10Y', 'KVLPI_GESAMT'];
+        const indicators = ['BRENT_OIL', 'EUR_USD', 'EURIBOR_3M', 'SWAP_10Y', 'CO2_PRICE', 'KVLPI_GESAMT' ];
         const results = {};
 
         for (const indicator of indicators) {
@@ -2654,59 +2690,47 @@ exports.getRelevantAction = async (req, res) => {
 };
 
 
+const getPartnerBranding = async (bpId) => {
+    const sql = `
+      SELECT bp.dashboard_title, bp.logo_url, cs.*
+      FROM business_partners bp
+      LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id
+      WHERE bp.id = $1`;
+    const { rows } = await db.query(sql, [bpId]);
+    return rows[0] || {};
+};
 
 exports.getDailyBriefing = async (req, res) => {
-    const { business_partner_id: businessPartnerId } = req.user;
-    if (!businessPartnerId) {
-        return res.status(404).json({ message: "Benutzer ist keinem Business Partner zugeordnet." });
-    }
+  const { business_partner_id: bpId, id: userId } = req.user;
+  if (!bpId) return res.status(404).json({ message: "Kein Partner zugeordnet." });
 
-    try {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+  try {
+    const today = new Date().toISOString().slice(0, 10);
 
-        // Alle drei Abfragen werden parallel ausgeführt, um die Ladezeit zu optimieren
-        const [marketBriefingRes, salesTriggersRes, linkableNamesRes] = await Promise.all([
-            // 1. Markt-Briefing des Tages holen (unverändert)
-            db.query(
-                `SELECT headline, analysis_summary as summary, prognosis 
-                 FROM business_partner_intelligence_briefings
-                 WHERE business_partner_id = $1 AND briefing_type = 'market' AND created_at >= $2
-                 ORDER BY created_at DESC LIMIT 1`,
-                [businessPartnerId, today]
-            ),
-            // 2. Sales Trigger des Tages holen (unverändert)
-            db.query(
-                `SELECT brief.id, brief.account_id, brief.headline, brief.analysis_summary, 
-                        brief.talking_point, acc.name as account_name 
-                 FROM business_partner_intelligence_briefings brief
-                 JOIN business_partner_accounts acc ON brief.account_id = acc.id
-                 WHERE brief.business_partner_id = $1 AND brief.briefing_type = 'account_specific' AND brief.created_at >= $2
-                 ORDER BY brief.created_at DESC`,
-                [businessPartnerId, today]
-            ),
-            // 3. NEU: Eine vollständige Liste aller Accounts und Wettbewerber dieses Partners holen
-            db.query(
-                `(SELECT name FROM business_partner_accounts WHERE business_partner_id = $1)
-                 UNION
-                 (SELECT bpc.name FROM business_partner_competitors bpc
-                  JOIN business_partner_accounts bpa ON bpc.account_id = bpa.id
-                  WHERE bpa.business_partner_id = $1)`,
-                [businessPartnerId]
-            )
-        ]);
+    // Wir holen das Briefing UND prüfen, ob der User heute schon beim Sentiment abgestimmt hat
+    const [briefingRes, sentimentRes] = await Promise.all([
+      db.query(
+        `SELECT briefing_json FROM business_partner_intelligence_briefings 
+         WHERE business_partner_id = $1 AND created_at = $2 LIMIT 1`,
+        [bpId, today]
+      ),
+      db.query(
+        `SELECT EXISTS(SELECT 1 FROM survey_responses sr 
+         JOIN survey_questions sq ON sr.question_id = sq.id
+         JOIN surveys s ON sq.survey_id = s.id
+         WHERE sr.user_id = $1 AND s.title = 'Markt-Barometer' AND s.business_partner_id = $2 
+         AND sr.created_at >= CURRENT_DATE) as "hasVotedToday"`,
+        [userId, bpId]
+      )
+    ]);
 
-        res.json({
-            market_briefing: marketBriefingRes.rows[0] || null,
-            sales_triggers: salesTriggersRes.rows,
-            // NEU: Die Liste der Namen wird an das Frontend gesendet
-            linkable_names: linkableNamesRes.rows.map(r => r.name)
-        });
-
-    } catch (err) {
-        console.error('Error fetching daily briefing:', err.message);
-        res.status(500).send('Server error');
-    }
+    res.json({
+      market_briefing: briefingRes.rows[0]?.briefing_json || null,
+      hasVotedToday: sentimentRes.rows[0]?.hasVotedToday || false
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Fehler beim Laden des Briefings' });
+  }
 };
 
 

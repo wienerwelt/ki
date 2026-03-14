@@ -256,37 +256,34 @@ const fetchAndStoreKVLPI = async () => {
 
 
 const fetchAndStoreCO2Price = async () => {
+    if (!OILPRICE_API_KEY) throw new Error('OILPRICE_API_KEY nicht gefunden.');
+    
     try {
-        const url = 'https://tradingeconomics.com/commodity/carbon';
-
-        const { data: html } = await axios.get(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36'
-            }
+        // Wir nutzen den Endpoint für EU Carbon Credits (EUR)
+        const response = await axios.get('https://api.oilpriceapi.com/v1/prices/latest', {
+            headers: { 'Authorization': `Token ${OILPRICE_API_KEY}` },
+            params: { by_code: 'EU_CARBON_EUR' }
         });
 
-        const $ = cheerio.load(html);
-
-        const priceStr = $('#p').text().trim();
-        const unitStr = $('#unit').text().trim();
-
-        const price = parseFloat(priceStr);
-
-        if (isNaN(price)) {
-            throw new Error(`Gelesener CO2-Preis "${priceStr}" von TradingEconomics ist keine gültige Zahl.`);
+        if (!response.data?.data?.price) {
+            throw new Error("CO2-Preis (EU Carbon) konnte nicht in der API-Antwort gefunden werden.");
         }
+
+        // Timestamp aus der API nehmen oder Fallback auf Jetzt
+        const timestamp = response.data.data.updated_at ? new Date(response.data.data.updated_at) : new Date();
 
         await upsertIndicator({
             name: 'CO2_PRICE',
-            value: price,
-            unit: unitStr || 'EUR/tCO2',
-            timestamp: new Date(),
-            source: 'tradingeconomics.com',
-            countryCode: null
+            value: response.data.data.price,
+            unit: 'EUR/tCO2',
+            timestamp: timestamp,
+            source: 'oilpriceapi.com', // Neue Quelle
+            countryCode: 'EU'
         });
 
     } catch (error) {
-        throw new Error(`CO2-Preis-Update von TradingEconomics fehlgeschlagen: ${error.message}`);
+        const errorMessage = error.response?.data?.error?.message || error.message;
+        throw new Error(`CO2-Preis-Update (OilPriceAPI) fehlgeschlagen: ${errorMessage}`);
     }
 };
 
@@ -521,8 +518,7 @@ const updateDailyIndicators = async () => {
         fetchAndStoreCurrencyRates(),
         fetchAndStoreOilPrice(),
         fetchAndStoreSwap10YRate(),
-        // fetchAndStoreCO2Price(),
-        // fetchAndStoreEuriborRate(), // Entfernt
+        fetchAndStoreCO2Price(),
     ]);
 
     const failures = results.filter(result => result.status === 'rejected');
@@ -550,7 +546,7 @@ const updateMonthlyIndicators = async () => {
     console.log('[data-update] Aktualisierung der monatlichen Wirtschaftsdaten erfolgreich abgeschlossen.');
 };
 
-// Exportiere die neuen Funktionen für den Worker und Scheduler
+
 module.exports = { 
     updateDailyIndicators, 
     updateMonthlyIndicators 

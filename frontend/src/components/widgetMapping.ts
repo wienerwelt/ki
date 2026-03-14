@@ -29,4 +29,5 @@ export const WIDGET_COMPONENTS: { [key: string]: React.LazyExoticComponent<React
     user_profile: React.lazy(() => import('./widgets/UserProfileWidget')),
     sentiment_widget: React.lazy(() => import('./widgets/SentimentWidget')),
     CurrencyConverter: React.lazy(() => import('./widgets/CurrencyConverterWidget')),
+    CO2CalculatorWidget: React.lazy(() => import('./widgets/Co2FleetCalculatorWidget')),
 };

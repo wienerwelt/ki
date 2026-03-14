@@ -83,7 +83,7 @@ const CommodityChart: React.FC<CommodityChartProps> = ({
             if (selectedIndicators.length === 0) {
                 // Filtere nur Keys, die wir auch in der Config kennen
                 const initialSelection = historicalKeys.filter(key => commoditiesConfig[key]); 
-                setSelectedIndicators(initialSelection.slice(0, 5));
+                setSelectedIndicators(initialSelection.slice(0, 10));
             } else {
                  setSelectedIndicators(prev => prev.filter(key => historicalKeys.includes(key)));
             }

@@ -25,7 +25,8 @@ import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import PollIcon from '@mui/icons-material/Poll';
 import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
 import GavelIcon from '@mui/icons-material/Gavel';
-import ForumIcon from '@mui/icons-material/Forum'; // ✅ NEU: Icon für Community
+import ForumIcon from '@mui/icons-material/Forum';
+import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
 
 const AdminDashboardPage: React.FC = () => {
     return (
@@ -39,7 +40,15 @@ const AdminDashboardPage: React.FC = () => {
                 </Typography>
 
                 <Grid container spacing={3}>
-                    {/* ... (Bestehende Kacheln) ... */}
+                    {/* ✅ NEU: Tages-Briefing Redaktion (Ganz oben/vorne, da täglich genutzt) */}
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <HistoryEduIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
+                            <Typography variant="h6" component="h2" gutterBottom>Briefing Redaktion</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>KI-Entwürfe prüfen, veredeln und für Mandanten freigeben.</Typography>
+                            <Button component={Link} to="/admin/briefing-editorial" variant="contained" color="primary">Zum Redaktions-Tool</Button>
+                        </Paper>
+                    </Grid>
                     
                     {/* ✅ NEU: Community Moderation Kachel */}
                     <Grid item xs={12} sm={6} md={4}>

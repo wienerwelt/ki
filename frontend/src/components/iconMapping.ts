@@ -34,6 +34,7 @@ import SpeedIcon from '@mui/icons-material/Speed';
 import RadarIcon from '@mui/icons-material/Radar';
 import RocketIcon from '@mui/icons-material/Rocket';
 import CurrencyExchangeIcon from '@mui/icons-material/CurrencyExchange';
+import Co2Icon from '@mui/icons-material/Co2';
 
 export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     SpaIcon: SpaIcon,
@@ -67,6 +68,8 @@ export const ICON_MAP: { [key: string]: React.ElementType<any> } = {
     SpeedIcon: SpeedIcon,
     RocketIcon: RocketIcon,
     CurrencyExchangeIcon: CurrencyExchangeIcon,
+    Co2Icon: Co2Icon,
+
 };
 
 // === GEÄNDERT: Die Funktion ist jetzt ein einfacher, direkter Lookup ===

@@ -4,7 +4,7 @@ import {
     AppBar, Toolbar, Typography, Box, Drawer, List, ListItem, ListItemText,
     IconButton, Divider, Menu, MenuItem, Tooltip, Chip,
     useTheme, useMediaQuery, Dialog, DialogContent, DialogTitle,
-    Avatar, Badge // ✅ NEU: Badge importiert
+    Avatar, Badge
 } from '@mui/material';
 
 // Icons
@@ -39,7 +39,8 @@ import InsightsIcon from '@mui/icons-material/Insights';
 import CloseIcon from '@mui/icons-material/Close';
 import GavelIcon from '@mui/icons-material/Gavel';
 import ForumIcon from '@mui/icons-material/Forum';
-import NotificationsIcon from '@mui/icons-material/Notifications'; // ✅ NEU
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -69,7 +70,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const { t } = useTranslation();
     const navigate = useNavigate();
     const { showSnackbar } = useSnackbar();
-    
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
     const [ad, setAd] = useState<{ id: string; content: string } | null>(null);
@@ -77,18 +77,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [historyModalOpen, setHistoryModalOpen] = useState(false);
     const [briefingOpen, setBriefingOpen] = useState(false);
-
-    // ✅ NEU: Notification State
     const [notifAnchorEl, setNotifAnchorEl] = useState<null | HTMLElement>(null);
     const [notifications, setNotifications] = useState<any[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
-    
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-
     const token = localStorage.getItem('jwt_token');
-
-    // --- Benachrichtigungen laden ---
     const fetchNotifications = useCallback(async () => {
         if (!user) return;
         try {
@@ -250,6 +244,10 @@ const handleLogout = () => {
                 <Divider sx={{ my: 1 }} />
                 {user?.role === 'assistenz' && (
                    <>
+                        <ListItem button component={RouterLink} to="/admin/briefing-editorial">
+                            <HistoryEduIcon sx={{ mr: 2, color: theme.palette.primary.main }} />
+                            <ListItemText primary="Briefing Redaktion" />
+                        </ListItem>
                         <ListItem button component={RouterLink} to="/admin/users"><GroupIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.userManagement')} /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/surveys"><PollIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.surveys')} /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/community"><ForumIcon sx={{ mr: 2 }} /><ListItemText primary="Community Moderation" /></ListItem>
@@ -259,7 +257,11 @@ const handleLogout = () => {
                 {user?.role === 'admin' && (
                     <>
                         <ListItem button component={RouterLink} to="/admin"><SettingsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.adminArea')} /></ListItem>
-                        <List component="div" disablePadding sx={{ pl: 4 }}>
+                            <List component="div" disablePadding sx={{ pl: 4 }}>
+                            <ListItem button component={RouterLink} to="/admin/briefing-editorial">
+                                <HistoryEduIcon sx={{ mr: 2 }} />
+                                <ListItemText primary="Briefing Redaktion" />
+                            </ListItem>
                             <ListItem button component={RouterLink} to="/admin/business-partners"><BusinessIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.businessPartners')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/users"><GroupIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.users')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/widget-types"><WidgetsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.widgetTypes')} /></ListItem>
@@ -311,31 +313,32 @@ const handleLogout = () => {
                       to="/dashboard"
                       style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center' }}
                     >
-                      {businessPartner?.logo_url && (
+                    {businessPartner?.logo_url && (
                     <Box
-                      sx={{
-                        height: 40,
-                        maxWidth: 160,
+                        sx={{
+                        height: 40, // Konstante Höhe für das AppBar-Alignment
+                        maxWidth: { xs: 140, sm: 220, md: 300 }, // Dynamische Breite für rechteckige Logos
                         mr: 2,
                         display: 'flex',
                         alignItems: 'center',
-                        overflow: 'hidden',
-                        lineHeight: 0,
-                      }}
+                        justifyContent: 'flex-start'
+                        }}
                     >
-                      <Box
+                        <Box
                         component="img"
                         src={businessPartner?.logo_url}
                         alt={businessPartner?.name ?? 'Logo'}
                         sx={{
-                          height: '100%',
-                          width: 'auto',
-                          objectFit: 'contain',
-                          display: 'block',
+                            maxHeight: '100%', // Nutzt die vollen 40px Höhe aus
+                            maxWidth: '100%',  // Verhindert das Ausbrechen bei breiten Logos
+                            objectFit: 'contain', // Das wichtigste Attribut gegen Abschneiden
+                            width: 'auto',
+                            height: 'auto',
+                            display: 'block'
                         }}
-                      />
+                        />
                     </Box>
-                      )}
+                    )}
 
                       <Typography variant="h6" noWrap component="div" sx={{ display: { xs: 'none', sm: 'block' } }}>
                         {dashboardTitle}

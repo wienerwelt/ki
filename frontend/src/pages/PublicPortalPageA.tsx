@@ -18,7 +18,7 @@ interface PublicPortalPageProps {
     isRegister?: boolean;
 }
 
-const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false }) => {
+const PublicPortalPageA: React.FC<PublicPortalPageProps> = ({ isRegister = false }) => {
     const [searchParams, setSearchParams] = useSearchParams();
     const partnerCode = searchParams.get('partner');
     const [publicContext, setPublicContext] = useState<any>(null);
@@ -325,4 +325,4 @@ useEffect(() => {
     );
 };
 
-export default PublicPortalPage;
+export default PublicPortalPageA;

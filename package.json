@@ -1,0 +1,15 @@
+{
+  "name": "mobiliti-dashboard-dev",
+  "private": true,
+  "scripts": {
+    "dev:infra": "docker compose up -d",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:all": "concurrently \"npm run dev:infra\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:stop": "docker compose down",
+    "dev:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

@@ -90,6 +90,7 @@ interface AuthContextType {
   refreshUser: () => Promise<void>;  
   userTags: string[];
   refreshUserTags: () => Promise<void>;
+  setPartnerByCode: (code: string) => Promise<void>; // ✅ NEU hinzugefügt
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -126,7 +127,7 @@ function extractUserFromDecoded(decoded: DecodedTokenAny): Partial<UserPayload> 
     regions: rawUser.regions ?? [],
     preferred_theme: rawUser.preferred_theme,
     preferred_language: rawUser.preferred_language,
-    contribution_score: rawUser.contribution_score ?? 0, // <-- DIESE ZEILE HINZUFÜGEN
+    contribution_score: rawUser.contribution_score ?? 0,
   } as Partial<UserPayload>;
 }
 
@@ -162,7 +163,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
   }, []);
 
-const refreshUserTags = useCallback(async () => {
+  const refreshUserTags = useCallback(async () => {
     if (!user) {
        setUserTags([]);
        return;
@@ -174,32 +175,44 @@ const refreshUserTags = useCallback(async () => {
         console.error('Fehler beim Laden der globalen User-Tags:', error);
         setUserTags([]);
     }
-  }, [user]); // Abhängig von `user`  
+  }, [user]);
 
-const fetchBusinessPartnerData = useCallback(async () => {
+  const fetchBusinessPartnerData = useCallback(async () => {
     if (!user) return;
-
     try {
-      // ALT: const { businessPartner: bp, user: freshUserData } = response.data;
-      // NEU: 'freshUserData' wird nicht mehr deklariert
       const response = await apiClient.get('/api/data/dashboard/config');
-      const { businessPartner: bp } = response.data; // Nur 'bp' extrahieren
-      
+      const { businessPartner: bp } = response.data; 
       setBusinessPartner(bp || null);
-
-      // Der problematische Block (der die Warnung auslöste) bleibt auskommentiert/entfernt
-      /*
-      if (freshUserData) {
-        updateUser({ ... });
-      }
-      */
-
     } catch (error) {
       console.error('Fehler beim Laden der Dashboard-Konfiguration:', error);
       setBusinessPartner(null);
     }
-  }, [user, updateUser]); // 'updateUser' kann hier bleiben, es ist in Ordnung
+  }, [user]);
 
+// frontend/src/context/AuthContext.tsx
+
+const setPartnerByCode = useCallback(async (code: string) => {
+  if (!code) return;
+  try {
+    // Wir nutzen den Endpoint, den wir gerade im publicController gefunden haben
+    const { data } = await apiClient.get(`/api/public/context?partnerCode=${code}`);
+    
+    if (data && data.partner) {
+      // WICHTIG: Dein Backend liefert das Schema als "theme". 
+      // Dein Frontend erwartet es aber (laut DashboardLayout) unter "color_scheme".
+      // Wir "verheiraten" beide hier:
+      const fullPartnerData = {
+        ...data.partner,
+        color_scheme: data.theme // Wir mappen "theme" auf "color_scheme"
+      };
+      
+      setBusinessPartner(fullPartnerData);
+      console.log("Branding erfolgreich geladen:", fullPartnerData);
+    }
+  } catch (error) {
+    console.error('Fehler beim Laden des öffentlichen Partner-Kontexts:', error);
+  }
+}, []);
 
   const initializeFromToken = useCallback(async (token: string) => {
     try {
@@ -223,55 +236,46 @@ const fetchBusinessPartnerData = useCallback(async () => {
 
 
   const refreshUser = useCallback(async () => {
-        try {
-            const { data: refreshedUser } = await apiClient.get<UserPayload>('/api/users/me');
-            if (refreshedUser) {
-                updateUser(refreshedUser);
-            }
-        } catch (error) {
-            console.error("Fehler beim Aktualisieren der Benutzerdaten:", error);
+    try {
+        const { data: refreshedUser } = await apiClient.get<UserPayload>('/api/users/me');
+        if (refreshedUser) {
+            updateUser(refreshedUser);
         }
+    } catch (error) {
+        console.error("Fehler beim Aktualisieren der Benutzerdaten:", error);
+    }
   }, [updateUser]);
 
 
-useEffect(() => {
+  useEffect(() => {
     const bootstrap = async () => {
       setIsLoading(true);
       setConfigLoaded(false);
-      setUserTags([]); // Sicherstellen, dass Tags leer sind
+      setUserTags([]); 
       const token = getStoredToken();
       if (token) {
-        // Schritt 1: User *initial* aus Token laden (wie bisher)
         await initializeFromToken(token);
-        
-        // --- NEU: Schritt 2: Sofort aktuelle Daten holen ---
-        // Ruft /api/users/me auf, um den Score und andere Daten zu aktualisieren
-        // bevor die App als "geladen" gilt.
-        if (getStoredToken()) { // Nur wenn Token noch gültig ist
+        if (getStoredToken()) { 
              try {
-                 await refreshUser(); // Holt frische User-Daten inkl. Score
+                 await refreshUser(); 
              } catch (refreshError) {
                   console.error("Fehler beim initialen User-Refresh:", refreshError);
-                  // Optional: Bei Fehler hier ausloggen? logout();
              }
         }
-        // --- ENDE NEU ---
-
       }
       setIsLoading(false); 
     };
     bootstrap();
-  }, [initializeFromToken, refreshUser]); // <-- refreshUser als Abhängigkeit hinzugefügt
+  }, [initializeFromToken, refreshUser]);
 
   useEffect(() => {
      if (user && !isLoading && !configLoaded) {
-       // Lädt BP-Daten und Tags NACHDEM der User (inkl. aktuellem Score) geladen ist
        Promise.all([fetchBusinessPartnerData(), refreshUserTags()]).then(() => {
          setConfigLoaded(true);
        });
      } else if (!user && !isLoading) {
-       setBusinessPartner(null);
-       setUserTags([]); 
+       // Hier laden wir keine BP-Daten automatisch, da dies nun 
+       // ggf. durch setPartnerByCode in der LoginForm getriggert wird.
      }
   }, [user, isLoading, configLoaded, fetchBusinessPartnerData, refreshUserTags]);
 
@@ -330,7 +334,8 @@ useEffect(() => {
     triggerDashboardRefresh,    
     refreshUser, 
     userTags,
-    refreshUserTags,   
+    refreshUserTags,
+    setPartnerByCode, // ✅ Hier im Provider-Value registriert
   };
 
   return (

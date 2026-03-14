@@ -1,75 +1,123 @@
-// backend/workers/emailWorker.js
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
-
-console.log('[DEBUG emailWorker] REDIS_PORT ist:', process.env.REDIS_PORT);
-console.log('[DEBUG emailWorker] NODE_ENV ist:', process.env.NODE_ENV);
 
 process.title = 'emailWorker';
 const workerName = 'emailWorker';
 
 const { Worker } = require('bullmq');
-const { connection: redisClient, heartbeatRedisClient } = require('../services/queueService');
-const { 
-    generateAndSendDailyReport, 
-    generateAndSendWeeklyReport, 
-    generateAndSendMonthlyReport,
-    generateAndSendBriefingNewsletters
+const {
+  connection: redisClient,
+  heartbeatRedisClient,
+  connectRedisClients,
+} = require('../services/queueService');
+
+const {
+  generateAndSendDailyReport,
+  generateAndSendWeeklyReport,
+  generateAndSendMonthlyReport,
+  generateAndSendBriefingNewsletters
 } = require('../services/reportingService');
+
 const { processSavedSearchNotifications } = require('../services/notificationService');
-const { sendEmail } = require('../services/emailService');
 
-console.log('[mail] Worker-Prozess startet...');
+function logWorkerBoot() {
+  console.log('==================================================');
+  console.log(`[mail] ${workerName} startet...`);
+  console.log('[mail] NODE_ENV:', process.env.NODE_ENV || 'undefined');
+  console.log('[mail] REDIS_HOST:', process.env.REDIS_HOST || '127.0.0.1');
+  console.log('[mail] REDIS_PORT:', process.env.REDIS_PORT || '6379');
+  console.log('[mail] REDIS_URL gesetzt:', process.env.REDIS_URL ? 'ja' : 'nein');
+  console.log('==================================================');
+}
 
-const worker = new Worker('emails', async (job) => {
-    console.log(`[mail] Verarbeite Job ${job.id} (${job.name})`);
-    
-    try {
+async function startWorker() {
+  try {
+    logWorkerBoot();
+
+    console.log('[mail] Prüfe Redis-Verbindungen...');
+    await connectRedisClients();
+    console.log('[mail] Redis-Verbindungen sind bereit.');
+
+    const worker = new Worker('emails', async (job) => {
+      console.log(`[mail] Verarbeite Job ${job.id} (${job.name})`);
+
+      try {
         switch (job.name) {
-            case 'daily-briefing':
-                console.log(`[mail] Starte generateAndSendBriefingNewsletters...`);
-                await generateAndSendBriefingNewsletters();
-                break;            
-            case 'daily-report':
-                console.log(`[mail] Starte generateAndSendDailyReport...`);
-                await generateAndSendDailyReport();
-                break;
-            case 'weekly-report':
-                console.log(`[mail] Starte generateAndSendWeeklyReport...`);
-                await generateAndSendWeeklyReport();
-                break;
-            case 'monthly-report':
-                console.log(`[mail] Starte generateAndSendMonthlyReport...`);
-                // HINWEIS: Du musst die Funktion generateAndSendMonthlyReport im reportingService erstellen.
-                await generateAndSendMonthlyReport();
-                break;
+          case 'daily-briefing':
+            console.log('[mail] Starte generateAndSendBriefingNewsletters...');
+            await generateAndSendBriefingNewsletters();
+            break;
 
-            case 'saved-search-notifications':
-                console.log(`[mail] Starte processSavedSearchNotifications...`);
-                await processSavedSearchNotifications();
-                break;
+          case 'daily-report':
+            console.log('[mail] Starte generateAndSendDailyReport...');
+            await generateAndSendDailyReport();
+            break;
 
-            default:
-                throw new Error(`Unbekannter E-Mail-Job-Typ: ${job.name}`);
+          case 'weekly-report':
+            console.log('[mail] Starte generateAndSendWeeklyReport...');
+            await generateAndSendWeeklyReport();
+            break;
+
+          case 'monthly-report':
+            console.log('[mail] Starte generateAndSendMonthlyReport...');
+            await generateAndSendMonthlyReport();
+            break;
+
+          case 'saved-search-notifications':
+            console.log('[mail] Starte processSavedSearchNotifications...');
+            await processSavedSearchNotifications();
+            break;
+
+          default:
+            throw new Error(`Unbekannter E-Mail-Job-Typ: ${job.name}`);
         }
 
         console.log(`[mail] Job "${job.name}" erfolgreich abgeschlossen.`);
-    } catch (err) {
+      } catch (err) {
         console.error(`[mail] Fehler bei Job ${job.id} (${job.name}):`, err?.stack || err?.message || err);
-        throw err; // Wichtig: Job als 'failed' markieren
-    }
-}, {
-    connection: redisClient,
-    concurrency: 3,
-    limiter: { max: 10, duration: 1000 },
+        throw err;
+      }
+    }, {
+      connection: redisClient,
+      concurrency: 3,
+      limiter: { max: 10, duration: 1000 },
+    });
+
+    worker.on('ready', () => console.log('[mail] Worker ready'));
+    worker.on('active', (job) => console.log(`[mail] active ${job.id} (${job.name})`));
+    worker.on('completed', (job) => console.log(`[mail] completed ${job.id} (${job.name})`));
+    worker.on('failed', (job, err) => console.error(`[mail] failed ${job?.id} (${job?.name}):`, err?.message));
+    worker.on('error', (err) => console.error('[mail] Worker error:', err.message));
+    worker.on('closing', () => console.warn('[mail] Worker closing'));
+    worker.on('closed', () => console.warn('[mail] Worker closed'));
+    worker.on('stalled', (jobId) => console.warn(`[mail] Job stalled: ${jobId}`));
+
+    console.log('[mail] Worker läuft und wartet auf Jobs...');
+
+    setInterval(async () => {
+      try {
+        const key = `worker_heartbeat:${workerName}`;
+        const value = new Date().toISOString();
+        await heartbeatRedisClient.set(key, value, 'EX', 60);
+        console.log(`[mail-heartbeat] OK -> ${key} = ${value}`);
+      } catch (err) {
+        console.error('[mail-heartbeat] FEHLER:', err.message);
+      }
+    }, 15000);
+
+  } catch (err) {
+    console.error('[mail] Kritischer Fehler beim Worker-Start:', err);
+    process.exit(1);
+  }
+}
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[mail] Unhandled Rejection:', reason);
 });
 
-worker.on('completed', (job) => console.log(`[mail] completed ${job.id} (${job.name})`));
-worker.on('failed', (job, err) => console.error(`[mail] failed ${job?.id} (${job?.name}):`, err?.message));
-console.log('[mail] Worker läuft und wartet auf Jobs...');
+process.on('uncaughtException', (err) => {
+  console.error('[mail] Uncaught Exception:', err);
+});
 
-setInterval(() => {
-  heartbeatRedisClient.set(`worker_heartbeat:${workerName}`, new Date().toISOString(), 'EX', 60)
-    .catch(err => console.error(`[mail-Heartbeat] FEHLER:`, err.message));
-}, 15000);
+startWorker();

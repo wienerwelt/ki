@@ -52,8 +52,9 @@ router.get('/daily-briefing', dataController.getDailyBriefing);
 router.get('/notifications/count', dataController.getNotificationCounts);
 router.get('/monitor-entries', dataController.getMonitorEntries);
 router.get('/bp-members-preview', dataController.getBusinessPartnerMembersPreview);
+router.get('/daily-briefing', authMiddleware, dataController.getDailyBriefing);
+router.get('/daily-briefing/pdf', dataController.getDailyBriefingPdfByToken);
 
-// NEU: Sentiment Barometer
 router.get('/sentiment', dataController.getMarketSentiment);
 router.post('/sentiment/vote', dataController.voteSentiment);
 

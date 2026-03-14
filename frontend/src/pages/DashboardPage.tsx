@@ -316,23 +316,35 @@ const DashboardPage: React.FC = () => {
         </Menu>
 
         <ErrorBoundary>
-            <ResponsiveGridLayout
-                className="layout"
-                layouts={dashboardConfig.layouts}
-                onLayoutChange={onLayoutChange}
-                breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
-                cols={{ lg: 12, md: 10, sm: 6, xs: 1 }}
-                margin={{ lg: [15, 15], md: [10, 10], sm: [8, 8], xs: [8, 8] }}
-                rowHeight={30}
-                isDroppable
-                draggableHandle=".widget-drag-handle"
+<ResponsiveGridLayout
+    className="layout"
+    layouts={dashboardConfig.layouts}
+    onLayoutChange={onLayoutChange}
+    breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
+    cols={{ lg: 12, md: 10, sm: 6, xs: 1 }}
+    margin={{ lg: [15, 15], md: [10, 10], sm: [8, 8], xs: [8, 8] }}
+    rowHeight={30}
+    isDroppable
+    draggableHandle=".widget-drag-handle"
+>
+    {dashboardConfig.widgets.map((widget: WidgetConfig) => {
+        // ✅ NEU: Metadaten finden, um den Namen für die ErrorBoundary zu erhalten
+        const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widget.type);
+        const widgetName = widgetTypeMeta?.name || widget.type || 'Unbekanntes Widget';
+
+        return (
+            <div 
+                key={widget.id} 
+                data-grid={dashboardConfig.layouts.lg?.find((l: Layout) => l.i === widget.id) || {x:0, y:Infinity, w:4, h:8}}
             >
-            {dashboardConfig.widgets.map((widget: WidgetConfig) => (
-                <div key={widget.id} data-grid={dashboardConfig.layouts.lg?.find((l: Layout) => l.i === widget.id) || {x:0, y:Infinity, w:4, h:8}}>
-                    <ErrorBoundary>{renderWidgetContent(widget)}</ErrorBoundary>
-                </div>
-            ))}
-            </ResponsiveGridLayout>
+                {/* ✅ GLOBALER SCHUTZ: Jedes Widget wird einzeln isoliert */}
+                <ErrorBoundary name={widgetName}>
+                    {renderWidgetContent(widget)}
+                </ErrorBoundary>
+            </div>
+        );
+    })}
+</ResponsiveGridLayout>
         </ErrorBoundary>
 
         {isMobile && (
