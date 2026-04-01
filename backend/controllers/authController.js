@@ -3,6 +3,8 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const zxcvbn = require('zxcvbn');
+const { OAuth2Client } = require('google-auth-library');
+const axios = require('axios');
 
 const db = require('../config/db');
 const { logActivity } = require('../services/auditLogService');
@@ -21,8 +23,11 @@ const {
 // ============================
 
 function isValidEmail(email) {
-  // solide, pragmatische E-Mail-Prüfung
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(email || '').trim());
+}
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
 }
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,30}$/;
@@ -36,11 +41,11 @@ async function usernameExists(username) {
 }
 
 function suggestUsernames(base) {
-  // generiert 10 einfache Vorschläge
   const clean = (base || '').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 25) || 'user';
   const rand = () => Math.floor(100 + Math.random() * 900);
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2);
+
   return [
     `${clean}${yy}`,
     `${clean}_${yy}`,
@@ -55,52 +60,45 @@ function suggestUsernames(base) {
   ];
 }
 
-// ✅ UPDATE: Holt jetzt Branding-Infos für E-Mails & Frontend
 async function resolveBusinessPartnerId(voucher) {
-  // Fall 1: Kein Voucher -> Standard-User (Kein Partner)
   if (!voucher || typeof voucher !== 'string' || voucher.trim() === '') {
-      return { partner: null, error: null };
+    return { partner: null, error: null };
   }
-  
+
   const cleanVoucher = voucher.trim().toLowerCase();
-  
+
   try {
-    // Wir holen ID, Status, Abo-Enddatum UND Branding-Infos
     const r = await db.query(
-      `SELECT id, name, logo_url, dashboard_title, is_active, subscription_end_date 
-       FROM business_partners 
-       WHERE LOWER(RIGHT(id::text, 8)) = $1 LIMIT 1`,
+      `SELECT id, name, logo_url, dashboard_title, is_active, subscription_end_date
+       FROM business_partners
+       WHERE LOWER(RIGHT(id::text, 8)) = $1
+       LIMIT 1`,
       [cleanVoucher]
     );
 
-    // Fall 2: Voucher existiert nicht
     if (r.rows.length === 0) {
-        return { partner: null, error: 'Der eingegebene Einladungscode ist ungültig.' };
+      return { partner: null, error: 'Der eingegebene Einladungscode ist ungültig.' };
     }
 
     const partner = r.rows[0];
 
-    // Fall 3: Partner ist inaktiv (vom Admin deaktiviert)
     if (partner.is_active === false) {
-        return { partner: null, error: 'Dieser Einladungscode gehört zu einem deaktivierten Partner-Konto.' };
+      return { partner: null, error: 'Dieser Einladungscode gehört zu einem deaktivierten Partner-Konto.' };
     }
 
-    // Fall 4: Abo abgelaufen
     if (partner.subscription_end_date) {
-        const endDate = new Date(partner.subscription_end_date);
-        const now = new Date();
-        now.setHours(0, 0, 0, 0); // Zeitanteil entfernen für fairen Vergleich
-        
-        if (endDate < now) {
-            return { partner: null, error: 'Das Abonnement für diesen Einladungscode ist abgelaufen.' };
-        }
+      const endDate = new Date(partner.subscription_end_date);
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+
+      if (endDate < now) {
+        return { partner: null, error: 'Das Abonnement für diesen Einladungscode ist abgelaufen.' };
+      }
     }
 
-    // Alles OK -> Partner-Objekt zurückgeben
-    return { partner: partner, error: null };
-
+    return { partner, error: null };
   } catch (err) {
-    console.error("Fehler bei der Voucher-Auflösung:", err);
+    console.error('Fehler bei der Voucher-Auflösung:', err);
     return { partner: null, error: 'Technischer Fehler bei der Überprüfung des Codes.' };
   }
 }
@@ -113,7 +111,9 @@ function issueJwt(user) {
     email: user.email,
     role: user.role || 'user',
     business_partner_id: user.business_partner_id || null,
+    business_partner_category: user.business_partner_category || null,
     contribution_score: user.contribution_score ?? 0,
+    has_completed_onboarding: user.has_completed_onboarding
   };
 
   return jwt.sign(payload, secret, { expiresIn: '7d' });
@@ -130,29 +130,43 @@ function safeFrontendRedirect(res, path, qs = {}) {
 // Auth Controller
 // ============================
 
-// === Register ===
 exports.register = async (req, res) => {
-  const { email, password, username, firstName, voucher, consentGiven, newsletterOptIn } = req.body || {};
+  const {
+    email,
+    password,
+    username,
+    firstName,
+    voucher,
+    consentGiven,
+    newsletterOptIn,
+    legalMeta,
+  } = req.body || {};
 
-  // 1. Validierungen
+  const normalizedEmail = normalizeEmail(email);
+
   if (!consentGiven) {
-    return res.status(400).json({ message: 'Den DSGVO-Bestimmungen muss zugestimmt werden.' });
+    return res.status(400).json({
+      message: 'Bitte akzeptieren Sie die Nutzungsbedingungen und bestätigen Sie Datenschutz sowie Disclaimer.',
+    });
   }
-  if (!email || !password) {
+
+  if (!normalizedEmail || !password) {
     return res.status(400).json({ message: 'E-Mail und Passwort sind erforderlich.' });
   }
-  if (!isValidEmail(email)) {
+
+  if (!isValidEmail(normalizedEmail)) {
     return res.status(400).json({ message: 'Bitte geben Sie eine gültige E-Mail-Adresse an.' });
   }
 
-  const chosenUsername = (username && username.trim()) ? username.trim() : email.split('@')[0];
+  const chosenUsername =
+    username && username.trim() ? username.trim() : normalizedEmail.split('@')[0];
+
   if (!USERNAME_REGEX.test(chosenUsername)) {
     return res.status(400).json({
       message: 'Ungültiger Benutzername. Erlaubt sind Buchstaben, Zahlen und Unterstriche, 3–30 Zeichen.',
     });
   }
 
-  // Passwort-Policy
   const strength = zxcvbn(password);
   if (strength.score < 3) {
     return res.status(400).json({
@@ -162,11 +176,11 @@ exports.register = async (req, res) => {
   }
 
   try {
-    // 2. Duplikate prüfen (Email & Username)
     const emailCheck = await db.query(
       'SELECT 1 FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
-      [email]
+      [normalizedEmail]
     );
+
     if (emailCheck.rows.length > 0) {
       return res.status(409).json({ message: 'Diese E-Mail-Adresse wird bereits verwendet.' });
     }
@@ -174,28 +188,27 @@ exports.register = async (req, res) => {
     if (await usernameExists(chosenUsername)) {
       const initial = suggestUsernames(chosenUsername);
       const available = [];
+
       for (const candidate of initial) {
         if (await usernameExists(candidate)) continue;
         available.push(candidate);
         if (available.length >= 5) break;
       }
+
       while (available.length < 3) {
         const candidate = `${chosenUsername}${Math.floor(100 + Math.random() * 900)}`;
         if (!(await usernameExists(candidate))) available.push(candidate);
       }
+
       return res.status(409).json({
         message: 'Dieser Benutzername ist bereits vergeben. Bitte wählen Sie eine Alternative.',
         suggestions: available,
       });
     }
 
-    // 3. Business Partner & Hashes (MIT BRANDING CHECK)
-    // ✅ Check auf active und subscription_end_date, returniert ganzes Partner-Objekt
     const { partner, error: voucherError } = await resolveBusinessPartnerId(voucher);
-
-    // Wenn ein Fehler zurückkam (z.B. Abo abgelaufen), Registrierung abbrechen
     if (voucherError) {
-        return res.status(400).json({ message: voucherError });
+      return res.status(400).json({ message: voucherError });
     }
 
     const businessPartnerId = partner ? partner.id : null;
@@ -204,15 +217,15 @@ exports.register = async (req, res) => {
     const password_hash = await bcrypt.hash(password, salt);
 
     const emailToken = crypto.randomBytes(32).toString('hex');
+    const emailVerificationExpires = new Date(Date.now() + 72 * 60 * 60 * 1000);
 
     let optInToken = null;
     let optInExpires = null;
     if (newsletterOptIn) {
       optInToken = crypto.randomBytes(32).toString('hex');
-      optInExpires = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 Tage
+      optInExpires = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     }
 
-    // 4. Benutzer erstellen
     const columns = [
       'username',
       'email',
@@ -222,76 +235,91 @@ exports.register = async (req, res) => {
       'business_partner_id',
       'consent_timestamp',
       'email_verification_token',
+      'email_verification_expires',
       'is_email_verified',
       'newsletter_opt_in',
       'newsletter_opt_in_token',
       'newsletter_opt_in_expires',
     ];
+
     const values = [
       chosenUsername,
-      email,
+      normalizedEmail,
       firstName || null,
       password_hash,
       'user',
-      businessPartnerId, // Ist entweder eine gültige UUID oder NULL
+      businessPartnerId,
       new Date(),
       emailToken,
+      emailVerificationExpires,
       false,
       false,
       optInToken,
       optInExpires,
     ];
+
     const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
-    const insertSql =
-      `INSERT INTO users (${columns.join(', ')})
-       VALUES (${placeholders})
-       RETURNING id, email, username`;
+    const insertSql = `
+      INSERT INTO users (${columns.join(', ')})
+      VALUES (${placeholders})
+      RETURNING id, email, username
+    `;
 
     const created = await db.query(insertSql, values);
     const user = created.rows[0];
 
-    // --- 5. NEU: STANDARD-DASHBOARD ERSTELLEN ---
+    await logActivity({
+      userId: user.id,
+      username: user.username,
+      actionType: 'REGISTER_LEGAL_ACCEPTED',
+      status: 'success',
+      ipAddress: req.ip,
+      details: {
+        consent_timestamp: new Date().toISOString(),
+        legal_meta: legalMeta || null,
+        business_partner_id: businessPartnerId || null,
+      },
+    });
+
     try {
-        const defaultConfig = {
-            name: 'Mein Dashboard',
-            widgets: [
-                { id: 'default-bp-info', type: 'BusinessPartnerInfo' },
-                { id: 'default-user-profile', type: 'user_activity' }
-            ],
-            layouts: {
-                lg: [
-                    { i: 'default-bp-info', x: 0, y: 0, w: 8, h: 8 },
-                    { i: 'default-user-profile', x: 8, y: 0, w: 4, h: 8 }
-                ],
-                md: [
-                    { i: 'default-bp-info', x: 0, y: 0, w: 6, h: 8 },
-                    { i: 'default-user-profile', x: 6, y: 0, w: 4, h: 8 }
-                ],
-                sm: [
-                    { i: 'default-bp-info', x: 0, y: 0, w: 6, h: 8 },
-                    { i: 'default-user-profile', x: 0, y: 8, w: 6, h: 8 }
-                ]
-            }
-        };
+      const defaultConfig = {
+        name: 'Mein Dashboard',
+        widgets: [
+          { id: 'default-bp-info', type: 'BusinessPartnerInfo' },
+          { id: 'default-user-profile', type: 'user_activity' },
+        ],
+        layouts: {
+          lg: [
+            { i: 'default-bp-info', x: 0, y: 0, w: 8, h: 8 },
+            { i: 'default-user-profile', x: 8, y: 0, w: 4, h: 8 },
+          ],
+          md: [
+            { i: 'default-bp-info', x: 0, y: 0, w: 6, h: 8 },
+            { i: 'default-user-profile', x: 6, y: 0, w: 4, h: 8 },
+          ],
+          sm: [
+            { i: 'default-bp-info', x: 0, y: 0, w: 6, h: 8 },
+            { i: 'default-user-profile', x: 0, y: 8, w: 6, h: 8 },
+          ],
+        },
+      };
 
-        await db.query(
-            `INSERT INTO dashboard_configurations (user_id, name, config, is_default) 
-             VALUES ($1, $2, $3, $4)`,
-            [user.id, 'Mein Dashboard', JSON.stringify(defaultConfig), true]
-        );
+      await db.query(
+        `INSERT INTO dashboard_configurations (user_id, name, config, is_default)
+         VALUES ($1, $2, $3, $4)`,
+        [user.id, 'Mein Dashboard', JSON.stringify(defaultConfig), true]
+      );
     } catch (dashErr) {
-        console.error('Fehler beim Erstellen des Default-Dashboards für User:', user.id, dashErr.message);
+      console.error('Fehler beim Erstellen des Default-Dashboards für User:', user.id, dashErr.message);
     }
-    // ---------------------------------------------
 
-    // 6. E-Mails senden
     const verifyUrl = buildVerifyUrl(emailToken);
     try {
       await sendVerificationEmail({
-        to: email,
-        username: chosenUsername,
+        to: normalizedEmail,
+        username: user.username,
         verifyUrl,
-        partner: partner // <--- NEU: Branding-Daten übergeben
+        partner: partner || null,
       });
     } catch (mailErr) {
       console.error('E-Mail-Versand (Verify) fehlgeschlagen:', mailErr);
@@ -305,7 +333,7 @@ exports.register = async (req, res) => {
       try {
         const confirmUrl = buildNewsletterConfirmUrl(optInToken);
         await sendNewsletterOptInEmail({
-          to: email,
+          to: normalizedEmail,
           username: chosenUsername,
           confirmUrl,
         });
@@ -331,33 +359,44 @@ exports.login = async (req, res) => {
   }
 
   try {
-    // 1. Benutzer suchen
+    const normalizedIdentifier = String(identifier).trim().toLowerCase();
+
+    // HIER WURDE category_name ZUM SELECT HINZUGEFÜGT (1. Branche des BPs)
     const r = await db.query(
       `SELECT
           u.id, u.username, u.email, u.role, u.password_hash,
           u.is_email_verified, u.contribution_score, u.profile_image_url,
-          u.business_partner_id,
-          bp.name as business_partner_name, bp.dashboard_title
+          u.business_partner_id, u.has_completed_onboarding,
+          bp.name as business_partner_name,
+          bp.dashboard_title,
+          bp.is_active as business_partner_is_active,
+          bp.subscription_end_date as business_partner_subscription_end_date,
+          (
+             SELECT c.name 
+             FROM business_partner_categories bpc
+             JOIN categories c ON bpc.category_id = c.id
+             WHERE bpc.business_partner_id = u.business_partner_id
+             ORDER BY c.name ASC LIMIT 1
+          ) as business_partner_category
         FROM users u
         LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
         WHERE LOWER(u.email) = LOWER($1) OR LOWER(u.username) = LOWER($1)
         LIMIT 1`,
-      [identifier]
+      [normalizedIdentifier]
     );
 
     if (r.rows.length === 0) {
       await logActivity({
         actionType: 'LOGIN_FAILURE',
         status: 'failure',
-        details: { reason: 'User not found', identifier },
-        ipAddress: req.ip
+        details: { reason: 'User not found', identifier: normalizedIdentifier },
+        ipAddress: req.ip,
       });
       return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
     }
 
     const user = r.rows[0];
 
-    // 2. Passwort prüfen
     const ok = await bcrypt.compare(password, user.password_hash || '');
     if (!ok) {
       await logActivity({
@@ -366,69 +405,81 @@ exports.login = async (req, res) => {
         actionType: 'LOGIN_FAILURE',
         status: 'failure',
         details: { reason: 'Invalid password' },
-        ipAddress: req.ip
+        ipAddress: req.ip,
       });
       return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
     }
 
-    // 3. E-Mail Verifizierung prüfen (optional per ENV)
-    if (process.env.REQUIRE_EMAIL_VERIFIED === 'true' && !user.is_email_verified) {
-      return res.status(403).json({ message: 'Bitte verifizieren Sie Ihre E-Mail-Adresse, bevor Sie sich anmelden.' });
+    if (user.business_partner_id) {
+      if (user.business_partner_is_active === false) {
+        return res.status(403).json({
+          message: 'Ihr Mandantenkonto ist derzeit deaktiviert. Bitte wenden Sie sich an den Administrator.',
+        });
+      }
+
+      if (user.business_partner_subscription_end_date) {
+        const endDate = new Date(user.business_partner_subscription_end_date);
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+
+        if (endDate < now) {
+          return res.status(403).json({
+            message: 'Das Mandantenabonnement ist abgelaufen. Bitte wenden Sie sich an den Administrator.',
+          });
+        }
+      }
     }
 
-    // --- 4. NEU: Login-Zeitstempel, Zähler UND PUNKTE aktualisieren ---
-    
-    // a) User-Tabelle updaten (+1 Punkt)
+    if (process.env.REQUIRE_EMAIL_VERIFIED === 'true' && !user.is_email_verified) {
+      return res.status(403).json({
+        message: 'Bitte verifizieren Sie Ihre E-Mail-Adresse, bevor Sie sich anmelden.',
+      });
+    }
+
     const pointsForLogin = 1;
     await db.query(
-        `UPDATE users 
-         SET last_login_at = CURRENT_TIMESTAMP, 
-             login_count = login_count + 1,
-             contribution_score = contribution_score + $2
-         WHERE id = $1`,
-        [user.id, pointsForLogin]
+      `UPDATE users
+       SET last_login_at = CURRENT_TIMESTAMP,
+           login_count = login_count + 1,
+           contribution_score = contribution_score + $2
+       WHERE id = $1`,
+      [user.id, pointsForLogin]
     );
 
-    // b) Log-Eintrag für die Punkte erstellen
-    const loginEventId = crypto.randomUUID(); 
-    
+    const loginEventId = crypto.randomUUID();
     await db.query(
-        `INSERT INTO user_score_logs (id, reference_id, user_id, points_change, action_type, description) 
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-            crypto.randomUUID(), 
-            loginEventId,        
-            user.id,             
-            pointsForLogin,      
-            'LOGIN_REWARD',      
-            'Täglicher Login-Bonus' 
-        ]
+      `INSERT INTO user_score_logs (id, reference_id, user_id, points_change, action_type, description)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        crypto.randomUUID(),
+        loginEventId,
+        user.id,
+        pointsForLogin,
+        'LOGIN_REWARD',
+        'Täglicher Login-Bonus',
+      ]
     );
-    // ----------------------------------------------------------
 
-    // 5. Token ausstellen
     user.contribution_score = (user.contribution_score || 0) + pointsForLogin;
 
     const token = issueJwt(user);
 
     await logActivity({
-        userId: user.id,
-        username: user.username,
-        actionType: 'LOGIN_SUCCESS',
-        status: 'success',
-        ipAddress: req.ip
+      userId: user.id,
+      username: user.username,
+      actionType: 'LOGIN_SUCCESS',
+      status: 'success',
+      ipAddress: req.ip,
     });
 
-    // 6. Cookie setzen
     res.cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 Tage
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    // 7. Antwort senden
-  return res.status(200).json({
+    return res.status(200).json({
       token,
       user: {
         id: user.id,
@@ -437,31 +488,35 @@ exports.login = async (req, res) => {
         role: user.role || 'user',
         business_partner_id: user.business_partner_id || null,
         business_partner_name: user.business_partner_name || null,
+        business_partner_category: user.business_partner_category || null, // NEU HINZUGEFÜGT
         dashboard_title: user.dashboard_title || null,
         contribution_score: user.contribution_score ?? 0,
         profile_image_url: user.profile_image_url || null,
-        last_login_at: new Date()
+        last_login_at: new Date(),
+        has_completed_onboarding: user.has_completed_onboarding
       },
     });
-
   } catch (err) {
     console.error('Login error:', err);
     await logActivity({
-        actionType: 'LOGIN_FAILURE',
-        status: 'failure',
-        details: { error: err.message },
-        ipAddress: req.ip
+      actionType: 'LOGIN_FAILURE',
+      status: 'failure',
+      details: { error: err.message },
+      ipAddress: req.ip,
     });
     return res.status(500).json({ message: 'Serverfehler' });
   }
 };
 
-// === Logout ===
 exports.logout = async (req, res) => {
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+  });
   return res.json({ message: 'Abgemeldet.' });
 };
 
-// === E-Mail verifizieren ===
 exports.verifyEmail = async (req, res) => {
   const { token } = req.params || {};
   if (!token || typeof token !== 'string' || token.length < 8) {
@@ -469,11 +524,15 @@ exports.verifyEmail = async (req, res) => {
   }
 
   try {
-    // GEÄNDERT: Wir holen direkt die business_partner_id mit
     const r = await db.query(
-      `SELECT id, business_partner_id FROM users WHERE email_verification_token = $1 LIMIT 1`,
+      `SELECT id, business_partner_id
+       FROM users
+       WHERE email_verification_token = $1
+         AND (email_verification_expires IS NULL OR email_verification_expires > NOW())
+       LIMIT 1`,
       [token]
     );
+
     if (r.rows.length === 0) {
       return safeFrontendRedirect(res, '/login', { verified: 0 });
     }
@@ -483,24 +542,22 @@ exports.verifyEmail = async (req, res) => {
     await db.query(
       `UPDATE users
           SET is_email_verified = TRUE,
-              email_verification_token = NULL
+              email_verification_token = NULL,
+              email_verification_expires = NULL
         WHERE id = $1`,
       [user.id]
     );
 
-    // NEU: Redirect Logik bestimmen
-    let redirectParams = { verified: 1 };
+    const redirectParams = { verified: 1 };
 
-    // Wenn der User zu einem Partner gehört, ermitteln wir den "Code" (letzte 8 Stellen der UUID)
-    // damit das Frontend weiß, welches Branding es laden soll.
     if (user.business_partner_id) {
-        const bpRes = await db.query(
-            'SELECT RIGHT(id::text, 8) as code FROM business_partners WHERE id = $1',
-            [user.business_partner_id]
-        );
-        if (bpRes.rows.length > 0) {
-            redirectParams.partner = bpRes.rows[0].code; // Key = 'partner', nicht partnerCode
-        }
+      const bpRes = await db.query(
+        'SELECT RIGHT(id::text, 8) as code FROM business_partners WHERE id = $1',
+        [user.business_partner_id]
+      );
+      if (bpRes.rows.length > 0) {
+        redirectParams.partner = bpRes.rows[0].code;
+      }
     }
 
     return safeFrontendRedirect(res, '/login', redirectParams);
@@ -510,43 +567,46 @@ exports.verifyEmail = async (req, res) => {
   }
 };
 
-// === Resend Verification ===
 exports.resendVerification = async (req, res) => {
-  const { email } = req.body || {};
-  if (!email) {
+  const normalizedEmail = normalizeEmail(req.body?.email);
+  if (!normalizedEmail) {
     return res.status(400).json({ message: 'E-Mail-Adresse ist erforderlich.' });
   }
 
   try {
     const r = await db.query(
       'SELECT id, username, is_email_verified FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
-      [email]
+      [normalizedEmail]
     );
+
     if (r.rows.length === 0) {
-      return res.json({ message: 'Wenn ein Konto mit dieser E-Mail existiert, wurde eine neue Bestätigungsmail gesendet.' });
+      return res.json({
+        message: 'Wenn ein Konto mit dieser E-Mail existiert, wurde eine neue Bestätigungsmail gesendet.',
+      });
     }
 
     const user = r.rows[0];
     if (user.is_email_verified) {
-      return res.json({ message: 'Ihre E-Mail-Adresse wurde bereits bestätigt. Sie können sich anmelden.' });
+      return res.json({
+        message: 'Ihre E-Mail-Adresse wurde bereits bestätigt. Sie können sich anmelden.',
+      });
     }
 
     const newToken = crypto.randomBytes(32).toString('hex');
+    const newExpires = new Date(Date.now() + 72 * 60 * 60 * 1000);
+
     await db.query(
-      'UPDATE users SET email_verification_token = $1 WHERE id = $2',
-      [newToken, user.id]
+      'UPDATE users SET email_verification_token = $1, email_verification_expires = $2 WHERE id = $3',
+      [newToken, newExpires, user.id]
     );
 
     const verifyUrl = buildVerifyUrl(newToken);
-    
-    // An dieser Stelle könnte man theoretisch auch den Partner neu laden,
-    // aber bei Resend gehen wir meist vom Standard aus oder müssten den Partner vom User laden.
-    // Der Einfachheit halber hier Standard (oder TODO: Partner nachladen).
+
     await sendVerificationEmail({
-      to: email,
+      to: normalizedEmail,
       username: user.username,
       verifyUrl,
-      // partner: ... (optional nachladen)
+      partner: null,
     });
 
     return res.json({
@@ -558,25 +618,26 @@ exports.resendVerification = async (req, res) => {
   }
 };
 
-// === Passwort vergessen ===
 exports.forgotPassword = async (req, res) => {
-  const { email } = req.body || {};
-  if (!email || !isValidEmail(email)) {
+  const normalizedEmail = normalizeEmail(req.body?.email);
+
+  if (!normalizedEmail || !isValidEmail(normalizedEmail)) {
     return res.status(400).json({ message: 'Bitte eine gültige E-Mail-Adresse angeben.' });
   }
 
   try {
     const r = await db.query(
       'SELECT id, username FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
-      [email]
+      [normalizedEmail]
     );
+
     if (r.rows.length === 0) {
       return res.json({ message: 'Wenn ein Konto existiert, wurde eine E-Mail gesendet.' });
     }
 
     const user = r.rows[0];
     const token = crypto.randomBytes(32).toString('hex');
-    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1h
+    const expires = new Date(Date.now() + 60 * 60 * 1000);
 
     await db.query(
       `UPDATE users
@@ -589,7 +650,7 @@ exports.forgotPassword = async (req, res) => {
     const resetUrl = buildResetUrl(token);
     try {
       await sendPasswordResetEmail({
-        to: email,
+        to: normalizedEmail,
         username: user.username,
         resetUrl,
       });
@@ -604,7 +665,6 @@ exports.forgotPassword = async (req, res) => {
   }
 };
 
-// === Passwort zurücksetzen ===
 exports.resetPassword = async (req, res) => {
   const { token } = req.params || {};
   const { password } = req.body || {};
@@ -612,6 +672,7 @@ exports.resetPassword = async (req, res) => {
   if (!token || typeof token !== 'string' || token.length < 8) {
     return res.status(400).json({ message: 'Ungültiger oder fehlender Token.' });
   }
+
   if (!password) {
     return res.status(400).json({ message: 'Neues Passwort ist erforderlich.' });
   }
@@ -627,11 +688,14 @@ exports.resetPassword = async (req, res) => {
   try {
     const now = new Date();
     const r = await db.query(
-      `SELECT id FROM users
-        WHERE password_reset_token = $1 AND (password_reset_expires IS NULL OR password_reset_expires > $2)
-        LIMIT 1`,
+      `SELECT id
+       FROM users
+       WHERE password_reset_token = $1
+         AND (password_reset_expires IS NULL OR password_reset_expires > $2)
+       LIMIT 1`,
       [token, now]
     );
+
     if (r.rows.length === 0) {
       return res.status(400).json({ message: 'Ungültiger oder abgelaufener Token.' });
     }
@@ -655,7 +719,6 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
-// === Newsletter: Confirm Double-Opt-In ===
 exports.confirmNewsletterOptIn = async (req, res) => {
   const { token } = req.params || {};
   if (!token || typeof token !== 'string' || token.length < 8) {
@@ -704,18 +767,19 @@ exports.confirmNewsletterOptIn = async (req, res) => {
   }
 };
 
-// === Newsletter: Start Double-Opt-In (optional API) ===
 exports.startNewsletterOptIn = async (req, res) => {
-  const { email } = req.body || {};
-  if (!email || !isValidEmail(email)) {
+  const normalizedEmail = normalizeEmail(req.body?.email);
+
+  if (!normalizedEmail || !isValidEmail(normalizedEmail)) {
     return res.status(400).json({ message: 'Bitte eine gültige E-Mail-Adresse angeben.' });
   }
 
   try {
     const r = await db.query(
       'SELECT id, username, newsletter_opt_in FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
-      [email]
+      [normalizedEmail]
     );
+
     if (r.rows.length === 0) {
       return res.json({ message: 'Wenn ein Konto existiert, wurde eine E-Mail gesendet.' });
     }
@@ -739,7 +803,7 @@ exports.startNewsletterOptIn = async (req, res) => {
     const confirmUrl = buildNewsletterConfirmUrl(token);
     try {
       await sendNewsletterOptInEmail({
-        to: email,
+        to: normalizedEmail,
         username: user.username,
         confirmUrl,
       });
@@ -754,7 +818,199 @@ exports.startNewsletterOptIn = async (req, res) => {
   }
 };
 
-// === Google Login (Platzhalter, falls Route aktiv ist) ===
-exports.googleLogin = async (req, res) => {
-  return res.status(501).json({ message: 'Google Login ist (noch) nicht implementiert.' });
+async function handleSSOLoginOrRegister(res, profile, partnerCode) {
+    try {
+        const normalizedEmail = normalizeEmail(profile.email);
+        
+        // HIER WURDE category_name ZUM SELECT HINZUGEFÜGT
+        const r = await db.query(
+            `SELECT u.*, bp.name as business_partner_name, bp.dashboard_title, bp.is_active as business_partner_is_active,
+             (
+                 SELECT c.name 
+                 FROM business_partner_categories bpc
+                 JOIN categories c ON bpc.category_id = c.id
+                 WHERE bpc.business_partner_id = u.business_partner_id
+                 ORDER BY c.name ASC LIMIT 1
+             ) as business_partner_category
+             FROM users u 
+             LEFT JOIN business_partners bp ON u.business_partner_id = bp.id 
+             WHERE LOWER(u.email) = $1 LIMIT 1`,
+            [normalizedEmail]
+        );
+
+        let user;
+        let isNewUser = false;
+
+        if (r.rows.length > 0) {
+            // ---> LOGIN
+            user = r.rows[0];
+            
+            if (user.business_partner_id && user.business_partner_is_active === false) {
+                return safeFrontendRedirect(res, '/login', { error: 'account_disabled' });
+            }
+
+            await db.query(
+                `UPDATE users SET last_login_at = CURRENT_TIMESTAMP, login_count = login_count + 1 WHERE id = $1`,
+                [user.id]
+            );
+
+        } else {
+            // ---> REGISTRIERUNG
+            isNewUser = true;
+            let businessPartnerId = process.env.DEMO_BUSINESS_PARTNER_ID || null;
+
+            if (partnerCode && partnerCode !== 'null' && partnerCode !== '') {
+                const { partner } = await resolveBusinessPartnerId(partnerCode);
+                if (partner && partner.is_active !== false) {
+                    businessPartnerId = partner.id;
+                }
+            }
+
+            const randomPassword = crypto.randomBytes(32).toString('hex');
+            const salt = await bcrypt.genSalt(10);
+            const password_hash = await bcrypt.hash(randomPassword, salt);
+
+            let chosenUsername = profile.given_name ? `${profile.given_name.toLowerCase()}${Math.floor(100+Math.random()*900)}` : normalizedEmail.split('@')[0];
+            if (await usernameExists(chosenUsername)) {
+                chosenUsername = `${chosenUsername}_${Date.now().toString().slice(-4)}`;
+            }
+
+            const insertSql = `
+                INSERT INTO users (
+                    username, email, first_name, last_name, profile_image_url, 
+                    password_hash, role, business_partner_id, is_email_verified, consent_timestamp
+                ) VALUES ($1, $2, $3, $4, $5, $6, 'user', $7, true, NOW())
+                RETURNING *
+            `;
+            const created = await db.query(insertSql, [
+                chosenUsername, normalizedEmail, profile.given_name || null, profile.family_name || null, 
+                profile.picture || null, password_hash, businessPartnerId
+            ]);
+            user = created.rows[0];
+
+            const defaultConfig = { name: 'Mein Dashboard', widgets: [], layouts: { lg: [], md: [], sm: [] } };
+            await db.query(
+                `INSERT INTO dashboard_configurations (user_id, name, config, is_default) VALUES ($1, $2, $3, true)`,
+                [user.id, 'Mein Dashboard', JSON.stringify(defaultConfig)]
+            );
+        }
+
+        const token = issueJwt(user);
+
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+
+        if (isNewUser) {
+            return safeFrontendRedirect(res, `/onboarding?token=${token}`);
+        } else {
+            return safeFrontendRedirect(res, `/dashboard?token=${token}`);
+        }
+
+    } catch (err) {
+        console.error('SSO Fehler:', err);
+        return safeFrontendRedirect(res, '/login', { error: 'sso_failed' });
+    }
+}
+
+// 1. Hilfsfunktion: Baut den Client dynamisch für jeden Request
+const getDynamicGoogleClient = (req) => {
+    const dynamicRedirectUri = `${req.protocol}://${req.get('host')}/api/auth/google/callback`;
+    
+    // Wichtig: 'OAuth2Client' muss natürlich oben in deiner Datei require/importiert sein
+    return new OAuth2Client(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        dynamicRedirectUri
+    );
+};
+
+exports.googleAuth = (req, res) => {
+    const partnerCode = req.query.partner || '';
+    
+    // 2. Dynamischen Client holen
+    const googleClient = getDynamicGoogleClient(req);
+
+    const authorizeUrl = googleClient.generateAuthUrl({
+        access_type: 'offline',
+        scope: ['https://www.googleapis.com/auth/userinfo.profile', 'https://www.googleapis.com/auth/userinfo.email'],
+        state: partnerCode
+    });
+    res.redirect(authorizeUrl);
+};
+
+exports.googleCallback = async (req, res) => {
+    const { code, state: partnerCode } = req.query;
+    
+    // 3. Auch hier den dynamischen Client nutzen, damit der Token-Exchange die gleiche URL benutzt
+    const googleClient = getDynamicGoogleClient(req);
+
+    try {
+        const { tokens } = await googleClient.getToken(code);
+        const ticket = await googleClient.verifyIdToken({
+            idToken: tokens.id_token,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload(); 
+        
+        await handleSSOLoginOrRegister(res, payload, partnerCode);
+    } catch (err) {
+        console.error('Google Callback Fehler:', err);
+        safeFrontendRedirect(res, '/login', { error: 'google_auth_failed' });
+    }
+};
+
+// === LINKEDIN ===
+exports.linkedinAuth = (req, res) => {
+    const partnerCode = req.query.partner || '';
+    
+    // 1. Dynamische URL aus dem Request zusammenbauen
+    const dynamicRedirectUri = `${req.protocol}://${req.get('host')}/api/auth/linkedin/callback`;
+    const redirectUri = encodeURIComponent(dynamicRedirectUri);
+    
+    const scope = encodeURIComponent('openid profile email');
+    const url = `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${process.env.LINKEDIN_CLIENT_ID}&redirect_uri=${redirectUri}&state=${partnerCode}&scope=${scope}`;
+    res.redirect(url);
+};
+
+exports.linkedinCallback = async (req, res) => {
+    const { code, state: partnerCode } = req.query;
+    
+    // 2. Auch hier die dynamische URL für den Token-Austausch generieren
+    // (Muss für LinkedIn zwingend mit der URL aus Schritt 1 übereinstimmen)
+    const dynamicRedirectUri = `${req.protocol}://${req.get('host')}/api/auth/linkedin/callback`;
+
+    try {
+        const tokenRes = await axios.post('https://www.linkedin.com/oauth/v2/accessToken', null, {
+            params: {
+                grant_type: 'authorization_code',
+                code,
+                client_id: process.env.LINKEDIN_CLIENT_ID,
+                client_secret: process.env.LINKEDIN_CLIENT_SECRET,
+                redirect_uri: dynamicRedirectUri // <--- HIER dynamisch übergeben
+            },
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+        
+        const accessToken = tokenRes.data.access_token;
+
+        const profileRes = await axios.get('https://api.linkedin.com/v2/userinfo', {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+
+        const profile = {
+            email: profileRes.data.email,
+            given_name: profileRes.data.given_name,
+            family_name: profileRes.data.family_name,
+            picture: profileRes.data.picture
+        };
+
+        await handleSSOLoginOrRegister(res, profile, partnerCode);
+    } catch (err) {
+        console.error('LinkedIn Callback Fehler:', err.response?.data || err.message);
+        safeFrontendRedirect(res, '/login', { error: 'linkedin_auth_failed' });
+    }
 };

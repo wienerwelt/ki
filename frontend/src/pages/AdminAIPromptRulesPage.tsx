@@ -23,7 +23,8 @@ interface AIPromptRule {
     purpose: 'content_generation' | 'funding_discovery';
 }
 interface Region { id: string; name: string; }
-interface Category { id: string; name: string; }
+// HINZUGEFÜGT: category_type zum Interface hinzugefügt
+interface Category { id: string; name: string; category_type: string; }
 interface FormState {
     name: string; promptPersona: string; promptTask: string; promptFormat: string; ai_provider: string;
     output_format: string; keywords: string[]; region: string; schedule: string | null; is_active: boolean;
@@ -277,6 +278,11 @@ const AdminAIPromptRulesPage: React.FC = () => {
         );
     }, [rules, searchTerm]);
 
+    // HINZUGEFÜGT: Filtere die Kategorien, sodass nur content-Kategorien zur Auswahl stehen
+    const contentCategories = useMemo(() => {
+        return categories.filter(c => c.category_type === 'content');
+    }, [categories]);
+
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
@@ -348,7 +354,13 @@ const AdminAIPromptRulesPage: React.FC = () => {
                                 </Grid>
                                 <Grid item xs={12}><Autocomplete multiple freeSolo options={[]} value={formState.keywords} onChange={(_event, val) => setFormState(p => ({...p, keywords: val}))} renderInput={(params) => <TextField {...params} label="Keywords für Recherche" />} /></Grid>
                                 <Grid item xs={6}><TextField select name="region" label="Region" fullWidth value={formState.region} onChange={e => setFormState(p => ({...p, region: e.target.value}))}>{regions.map(r => <MenuItem key={r.id} value={r.name}>{r.name}</MenuItem>)}</TextField></Grid>
-                                <Grid item xs={6}><TextField select name="category_id" label="Standard-Kategorie" fullWidth value={formState.category_id || ''} onChange={e => setFormState(p => ({...p, category_id: e.target.value}))}><MenuItem value=""><em>Keine</em></MenuItem>{categories.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</TextField></Grid>
+                                <Grid item xs={6}>
+                                    {/* HINZUGEFÜGT: Dropdown greift jetzt auf contentCategories zu */}
+                                    <TextField select name="category_id" label="Standard-Kategorie" fullWidth value={formState.category_id || ''} onChange={e => setFormState(p => ({...p, category_id: e.target.value}))}>
+                                        <MenuItem value=""><em>Keine</em></MenuItem>
+                                        {contentCategories.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+                                    </TextField>
+                                </Grid>
                                 <Grid item xs={12}><AdminScheduleSelector value={formState.schedule} onChange={(cron) => setFormState(p => ({...p, schedule: cron}))} /></Grid>
                                 <Grid item xs={12}><FormControlLabel control={<Switch checked={formState.is_active} name="is_active" onChange={(e) => setFormState(p => ({...p, is_active: e.target.checked}))} />} label="Cronjob aktiv" /></Grid>
                             </Grid>
@@ -357,7 +369,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
                             <Box>
                                 <TextField name="promptPersona" label="Rolle der KI" fullWidth multiline rows={4} value={formState.promptPersona} onChange={e => setFormState(p => ({...p, promptPersona: e.target.value}))} onFocus={() => setActivePromptField('promptPersona')} inputRef={inputRefs.promptPersona} required />
                                 <TextField name="promptTask" label="Haupt-Aufgabe" fullWidth multiline rows={5} value={formState.promptTask} onChange={e => setFormState(p => ({...p, promptTask: e.target.value}))} onFocus={() => setActivePromptField('promptTask')} inputRef={inputRefs.promptTask} sx={{mt: 2}} required />
-                                <TextField name="promptFormat" label="Formatierung (optional)" fullWidth multiline rows={3} value={formState.promptFormat} onChange={e => setFormState(p => ({...p, promptFormat: e.target.value}))} onFocus={() => setActivePromptField('promptFormat')} inputRef={inputRefs.promptFormat} sx={{mt: 2}} />
+                                <TextField name="promptFormat" label="Formatierung (optional)" fullWidth multiline rows={3} value={formState.promptFormat} onChange={e => setFormState(p => ({...p, promptFormat: e.target.value}))} onFocus={() => setActivePromptField('promptFormat')} inputRef={inputRefs.promptFormat} sx={{mt: 2}} helperText="Tipp: Erwähne das Wort 'JSON' in diesem Feld, um eine streng strukturierte Daten-Antwort der KI zu erzwingen." />
                                 <Box sx={{ mt: 1 }}>
                                     <Stack direction="row" spacing={1} component="span">
                                         {placeholders.map(p => (<Chip key={p} label={p} onClick={() => handleInsertPlaceholder(p)} size="small" variant="outlined" clickable />))}

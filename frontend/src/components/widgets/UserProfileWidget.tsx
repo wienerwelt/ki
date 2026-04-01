@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import {
-    Box, Typography, Avatar, Button, Divider, Grid, Skeleton, Chip, useTheme, Stack, Tooltip, IconButton
+    Box, Typography, Avatar, Button, Divider, Grid, Skeleton, Chip, useTheme, Stack, Tooltip, IconButton,
+    Dialog, DialogTitle, DialogContent
 } from '@mui/material';
+import { QRCodeSVG } from 'qrcode.react';
 import {
     Event as EventIcon,
     EmojiEvents as EmojiEventsIcon,
@@ -12,7 +14,8 @@ import {
     Edit as EditIcon,
     QrCode as QrCodeIcon,
     Person as PersonIcon,
-    Visibility as VisibilityIcon
+    Visibility as VisibilityIcon,
+    Close as CloseIcon // NEU
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import WidgetPaper from './WidgetPaper';
@@ -33,6 +36,9 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
     
     const [stats, setStats] = useState<UserStats | null>(null);
     const [loading, setLoading] = useState(true);
+    
+    // NEU: State für das QR-Code Modal
+    const [qrOpen, setQrOpen] = useState(false);
 
     useEffect(() => {
         const fetchStats = async () => {
@@ -57,11 +63,10 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
         if (user) fetchStats();
     }, [user]);
 
-    const handleEditProfile = () => {
-        navigate('/profile');
-    };
-
     if (!user) return null;
+
+    // NEU: Die URL zusammenbauen, die im QR Code stecken soll
+    const publicProfileUrl = `${window.location.origin}/p/${user.id}`;
 
     return (
         <WidgetPaper
@@ -87,7 +92,7 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                 {/* 1. HEADER BANNER */}
                 <Box sx={{ 
                     height: 80, 
-                    width: '100%', // Sicherstellen, dass der Banner die volle Breite nimmt
+                    width: '100%',
                     background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`,
                     position: 'relative'
                 }}>
@@ -96,15 +101,8 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                             component="img" 
                             src={businessPartner.logo_url} 
                             sx={{ 
-                                position: 'absolute', 
-                                right: 15, 
-                                top: 15, 
-                                height: 32,
-                                maxWidth: 120,
-                                objectFit: 'contain',
-                                bgcolor: 'rgba(255,255,255,0.9)',
-                                p: 0.5,
-                                borderRadius: 1
+                                position: 'absolute', right: 15, top: 15, height: 32, maxWidth: 120,
+                                objectFit: 'contain', bgcolor: 'rgba(255,255,255,0.9)', p: 0.5, borderRadius: 1
                             }} 
                         />
                     )}
@@ -116,15 +114,9 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                         <Avatar 
                             src={user.profile_image_url || undefined} 
                             sx={{ 
-                                width: 80, height: 80, 
-                                border: `4px solid ${theme.palette.background.paper}`,
-                                boxShadow: theme.shadows[3],
-                                fontSize: '2.5rem',
-                                bgcolor: 'grey.300',
-                                color: 'text.primary', // Bessere Sichtbarkeit der Initialen
-                                // WICHTIG: position relative sorgt dafür, dass der Avatar ÜBER dem Banner liegt
-                                position: 'relative', 
-                                zIndex: 2 
+                                width: 80, height: 80, border: `4px solid ${theme.palette.background.paper}`,
+                                boxShadow: theme.shadows[3], fontSize: '2.5rem', bgcolor: 'grey.300',
+                                color: 'text.primary', position: 'relative', zIndex: 2 
                             }}
                         >
                             {user.first_name ? user.first_name.charAt(0).toUpperCase() : user.username.charAt(0).toUpperCase()}
@@ -132,7 +124,7 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                         
                         {/* Schnellzugriff Bearbeiten */}
                         <Tooltip title="Profil bearbeiten">
-                            <IconButton size="small" onClick={handleEditProfile} sx={{ mb: 0.5, bgcolor: 'action.hover' }}>
+                            <IconButton size="small" onClick={() => navigate('/profile')} sx={{ mb: 0.5, bgcolor: 'action.hover' }}>
                                 <EditIcon fontSize="small" />
                             </IconButton>
                         </Tooltip>
@@ -151,9 +143,7 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                             <Chip 
                                 icon={<VerifiedUserIcon fontSize="small" />} 
                                 label={user.membership_level} 
-                                size="small" 
-                                color="primary" 
-                                variant="outlined" 
+                                size="small" color="primary" variant="outlined" 
                                 sx={{ mt: 1, height: 24 }}
                             />
                         )}
@@ -208,12 +198,13 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                 {/* 4. FOOTER ACTIONS */}
                 <Box sx={{ p: 2, mt: 'auto', borderTop: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
                     <Stack direction="row" spacing={1} alignItems="center">
+                        {/* HIER GEÄNDERT: Öffnet nun das QR-Code Modal! */}
                         <Button 
                             variant="outlined" 
                             startIcon={<QrCodeIcon />} 
                             fullWidth 
                             size="small"
-                            onClick={() => navigate('/profile')} 
+                            onClick={() => setQrOpen(true)} 
                             sx={{ bgcolor: 'background.paper', flexGrow: 1 }}
                         >
                             Visitenkarte
@@ -224,12 +215,7 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                                 size="small"
                                 href={`/p/${user.id}`} 
                                 target="_blank"
-                                sx={{ 
-                                    border: 1, 
-                                    borderColor: 'divider', 
-                                    bgcolor: 'background.paper', 
-                                    borderRadius: 1 
-                                }}
+                                sx={{ border: 1, borderColor: 'divider', bgcolor: 'background.paper', borderRadius: 1 }}
                             >
                                 <VisibilityIcon color="action" />
                             </IconButton>
@@ -241,12 +227,7 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                                     size="small"
                                     href={user.linkedin_url} 
                                     target="_blank"
-                                    sx={{ 
-                                        border: 1, 
-                                        borderColor: 'divider', 
-                                        bgcolor: 'background.paper', 
-                                        borderRadius: 1 
-                                    }}
+                                    sx={{ border: 1, borderColor: 'divider', bgcolor: 'background.paper', borderRadius: 1 }}
                                 >
                                     <LinkedInIcon color="primary" />
                                 </IconButton>
@@ -255,6 +236,31 @@ const UserProfileWidget: React.FC<BaseWidgetProps> = ({ widgetId, onDelete, isRe
                     </Stack>
                 </Box>
             </Box>
+
+            {/* NEU: QR-CODE DIALOG */}
+            <Dialog open={qrOpen} onClose={() => setQrOpen(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 4 } }}>
+                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
+                    <Typography variant="h6" fontWeight="bold">Kontakt teilen</Typography>
+                    <IconButton onClick={() => setQrOpen(false)} size="small" sx={{ bgcolor: 'action.hover' }}>
+                        <CloseIcon />
+                    </IconButton>
+                </DialogTitle>
+                <DialogContent sx={{ textAlign: 'center', pb: 4, pt: 2 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                        Lassen Sie diesen Code scannen, um Ihre virtuelle Visitenkarte weiterzugeben.
+                    </Typography>
+                    
+                    <Box sx={{ bgcolor: 'white', p: 2, display: 'inline-block', borderRadius: 2, boxShadow: theme.shadows[2] }}>
+                        <QRCodeSVG 
+                            value={publicProfileUrl} 
+                            size={200}
+                            level="H" 
+                            fgColor={theme.palette.primary.main} 
+                        />
+                    </Box>
+                </DialogContent>
+            </Dialog>
+
         </WidgetPaper>
     );
 };

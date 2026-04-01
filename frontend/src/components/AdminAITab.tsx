@@ -1,6 +1,6 @@
 // src/components/AdminAITab.tsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router-dom';
 import {
     Box, Typography, CircularProgress, Alert, Paper, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Tooltip, Chip, Link as MuiLink, TextField, InputAdornment, Snackbar, Checkbox, Button, TableSortLabel, Dialog, DialogTitle, DialogContent, DialogActions, MenuItem, Autocomplete, Switch
@@ -100,7 +100,6 @@ const headCells: { id: AIJobKey; label: string; sortable: boolean }[] = [
 
 
 const AdminAITab: React.FC = () => {
-    const navigate = useNavigate();
     const [jobs, setJobs] = useState<ScheduledAIJob[]>([]);
     const [regions, setRegions] = useState<Region[]>([]);
     const [loading, setLoading] = useState(true);
@@ -185,7 +184,7 @@ const AdminAITab: React.FC = () => {
             await apiClient.delete(`/api/admin/cronjobs/ai-subscriptions`, { 
                 headers: { 'x-auth-token': token },
                 data: { ids: selectedIds }
-            });
+            } as any);
             setJobs(prevJobs => prevJobs.filter(job => !selectedIds.includes(job.id)));
             setSnackbar({ open: true, message: `${selectedIds.length} Abonnement(s) gelöscht.` });
             setSelectedIds([]);
@@ -326,7 +325,7 @@ const AdminAITab: React.FC = () => {
                     <Typography variant="subtitle1" gutterBottom>{editingJob?.user_email}</Typography>
                     <Autocomplete
                         multiple freeSolo options={[]} value={editingJob?.keywords || []}
-                        onChange={(event, newValue) => setEditingJob(prev => prev ? { ...prev, keywords: newValue } : null)}
+                        onChange={(_, newValue) => setEditingJob(prev => prev ? { ...prev, keywords: newValue } : null)}
                         renderTags={(value, getTagProps) => value.map((option, index) => (<Chip variant="outlined" label={option} {...getTagProps({ index })} />))}
                         renderInput={(params) => (<TextField {...params} variant="outlined" label="Hot Topic / Keyword" margin="normal" />)}
                     />

@@ -1,11 +1,7 @@
 // backend/controllers/adminMonitorController.js
 const db = require('../config/db');
-// NEU: Import für Geolocation
 const geoip = require('geoip-lite');
 
-/**
- * Ruft Aktivitätsprotokolle ab und fügt Geodaten hinzu.
- */
 exports.getActivityLogs = async (req, res) => {
     const { page = 1, limit = 20, actionType, username, startDate, endDate, sortBy = 'timestamp', sortOrder = 'desc' } = req.query;
     const offset = (page - 1) * limit;
@@ -18,6 +14,7 @@ exports.getActivityLogs = async (req, res) => {
     try {
         let countQuery = 'SELECT COUNT(*) FROM activity_log';
         let dataQuery = 'SELECT * FROM activity_log';
+        let statsQuery = 'SELECT status, COUNT(*) as count FROM activity_log'; // NEU: Statistik-Query
         
         const whereClauses = [];
         const queryParams = [];
@@ -44,42 +41,58 @@ exports.getActivityLogs = async (req, res) => {
             const whereString = ` WHERE ${whereClauses.join(' AND ')}`;
             countQuery += whereString;
             dataQuery += whereString;
+            statsQuery += whereString; // Filter auch auf Statistiken anwenden
         }
+
+        statsQuery += ' GROUP BY status'; // Nach Erfolg/Fehler gruppieren
 
         dataQuery += ` ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
         const dataParams = [...queryParams, limit, offset];
 
-        const totalResult = await db.query(countQuery, queryParams);
-        const logsResult = await db.query(dataQuery, dataParams);
+        // Alle drei Abfragen parallel ausführen für maximale Geschwindigkeit
+        const [totalResult, logsResult, statsResult] = await Promise.all([
+            db.query(countQuery, queryParams),
+            db.query(dataQuery, dataParams),
+            db.query(statsQuery, queryParams)
+        ]);
 
-        // --- NEU: IP-Adressen auflösen ---
+        // Statistiken auswerten
+        let successCount = 0;
+        let failCount = 0;
+        statsResult.rows.forEach(row => {
+            // Wandelt z.B. "SUCCESS", "Success", "success" immer in "success" um
+            const stat = String(row.status || '').toLowerCase();
+            
+            if (stat === 'success') {
+                successCount += parseInt(row.count, 10);
+            } else {
+                failCount += parseInt(row.count, 10);
+            }
+        });
+
+        // IP-Adressen auflösen
         const enrichedLogs = logsResult.rows.map(log => {
             let location = 'Unbekannt';
-            
-            // Lokale IPs abfangen
             if (log.ip_address === '127.0.0.1' || log.ip_address === '::1') {
                 location = 'Lokales Netzwerk';
             } else if (log.ip_address) {
-                // GeoIP Lookup
                 const geo = geoip.lookup(log.ip_address);
                 if (geo) {
                     location = `${geo.city || ''} ${geo.country || ''}`.trim();
                 }
             }
-
             return {
                 ...log,
-                // Wir hängen den Ort direkt an die IP-Adresse im Frontend, 
-                // damit du die Tabelle nicht umbauen musst: "1.2.3.4 (Wien, AT)"
                 ip_address: location !== 'Unbekannt' ? `${log.ip_address} (${location})` : log.ip_address
             };
         });
 
         res.json({
-            logs: enrichedLogs, // Sende die angereicherten Logs
+            logs: enrichedLogs,
             totalPages: Math.ceil(parseInt(totalResult.rows[0].count, 10) / limit),
             currentPage: parseInt(page, 10),
-            totalItems: parseInt(totalResult.rows[0].count, 10)
+            totalItems: parseInt(totalResult.rows[0].count, 10),
+            globalStats: { success: successCount, failed: failCount } // NEU: Globale Stats mitsenden
         });
     } catch (err) {
         console.error('Error fetching activity logs:', err.message);
@@ -88,7 +101,6 @@ exports.getActivityLogs = async (req, res) => {
 };
 
 exports.deleteLogs = async (req, res) => {
-    // ... (Dieser Teil bleibt unverändert wie in deinem Upload)
     const { beforeDate } = req.query;
     if (!beforeDate || !/^\d{4}-\d{2}-\d{2}$/.test(beforeDate)) {
         return res.status(400).json({ message: 'Bitte geben Sie ein gültiges Datum im Format YYYY-MM-DD an.' });

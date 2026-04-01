@@ -49,7 +49,7 @@ exports.getAllUsers = async (req, res) => {
                 u.id, u.username, u.first_name, u.last_name, u.organization_name, u.email, 
                 u.linkedin_url, u.login_count, u.membership_level,
                 u.role, u.is_active, u.created_at, u.updated_at, u.last_login_at,
-                u.profile_image_url, 
+                u.profile_image_url, u.newsletter_opt_in,  -- <--- HIER EINGEFÜGT
                 bp.name AS business_partner_name, bp.id AS business_partner_id
             FROM users u
             LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
@@ -93,7 +93,7 @@ exports.getUserById = async (req, res) => {
                 u.id, u.username, u.first_name, u.last_name, u.organization_name, u.email, 
                 u.linkedin_url, u.login_count, u.membership_level,
                 u.role, u.is_active, u.created_at, u.updated_at, u.last_login_at,
-                u.profile_image_url,
+                u.profile_image_url, u.newsletter_opt_in,  -- <--- HIER EINGEFÜGT
                 bp.name AS business_partner_name, bp.id AS business_partner_id
              FROM users u
              LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
@@ -720,5 +720,151 @@ exports.getImportTemplate = async (req, res) => {
     } catch (err) {
         console.error('Fehler beim Erstellen der Import-Vorlage:', err.message);
         res.status(500).send('Serverfehler');
+    }
+};
+
+
+// --- NEU: Widget aus der Dashboard Config eines Nutzers entfernen ---
+// --- NEU: Widget aus ALLEN Dashboards eines Nutzers entfernen ---
+exports.removeWidgetFromUserDashboard = async (req, res) => {
+    const { userId, widgetTypeKey } = req.params;
+
+    if (!isValidUUID(userId) || !widgetTypeKey) {
+        return res.status(400).json({ message: 'Invalid user ID or missing widgetTypeKey.' });
+    }
+
+    try {
+        // 1. Hole ALLE Dashboards des Nutzers (KEIN "LIMIT 1" mehr!)
+        const configResult = await db.query(
+            'SELECT id, config FROM dashboard_configurations WHERE user_id = $1',
+            [userId]
+        );
+
+        if (configResult.rows.length === 0) {
+            return res.status(404).json({ message: 'Keine Dashboard-Konfiguration für diesen Nutzer gefunden.' });
+        }
+
+        let removedCount = 0;
+
+        // 2. Gehe durch JEDES Dashboard des Nutzers
+        for (const row of configResult.rows) {
+            let dashboardConfig = row.config;
+
+            // Überspringen, falls das JSON defekt ist oder keine Widgets hat
+            if (!dashboardConfig || !Array.isArray(dashboardConfig.widgets)) continue;
+
+            // Finde die IDs des zu löschenden Widget-Typs in diesem spezifischen Dashboard
+            const widgetsToRemove = dashboardConfig.widgets
+                .filter(w => w.type === widgetTypeKey)
+                .map(w => w.id);
+
+            // Wenn das Widget in diesem Dashboard gar nicht existiert -> nächstes Dashboard prüfen
+            if (widgetsToRemove.length === 0) continue;
+
+            // 3. Entferne das Widget aus dem "widgets" Array
+            dashboardConfig.widgets = dashboardConfig.widgets.filter(w => w.type !== widgetTypeKey);
+
+            // 4. Entferne das Widget aus allen Responsive-Layouts
+            if (dashboardConfig.layouts) {
+                Object.keys(dashboardConfig.layouts).forEach(breakpoint => {
+                    dashboardConfig.layouts[breakpoint] = dashboardConfig.layouts[breakpoint].filter(
+                        l => !widgetsToRemove.includes(l.i)
+                    );
+                });
+            }
+            
+            // 4b. Fallback für ältere Configs (die nur "layout" statt "layouts" nutzen)
+            if (dashboardConfig.layout) {
+                 dashboardConfig.layout = dashboardConfig.layout.filter(
+                     l => !widgetsToRemove.includes(l.i)
+                 );
+            }
+
+            // 5. Aktualisierte Config wieder in die DB speichern
+            await db.query(
+                'UPDATE dashboard_configurations SET config = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+                [JSON.stringify(dashboardConfig), row.id]
+            );
+            
+            removedCount++;
+        }
+
+        if (removedCount === 0) {
+            return res.status(400).json({ message: 'Dieses Widget war auf keinem Dashboard des Nutzers installiert.' });
+        }
+
+        // Optionales Logging
+        const { logActivity } = require('../services/auditLogService');
+        await logActivity({
+            userId: req.user.id,
+            username: req.user.username,
+            actionType: 'WIDGET_REMOVED_FROM_USER',
+            status: 'success',
+            targetId: userId,
+            targetType: 'user',
+            details: { removedWidgetType: widgetTypeKey, removedFromDashboardsCount: removedCount },
+            ipAddress: req.ip
+        });
+
+        res.json({ message: `Widget erfolgreich aus ${removedCount} Dashboards des Nutzers entfernt.` });
+
+    } catch (err) {
+        console.error('Error removing widget from user dashboard:', err.message);
+        res.status(500).send('Serverfehler beim Entfernen des Widgets.');
+    }
+};
+
+// --- NEU: Detaillierte Statistiken für das Admin-Profil-Modal ---
+exports.getUserStatistics = async (req, res) => {
+    const { userId } = req.params;
+
+    if (!isValidUUID(userId)) {
+        return res.status(400).json({ message: 'Ungültige User-ID.' });
+    }
+
+    try {
+        // 1. Basis-User-Daten holen (Punkte, Datum, etc.)
+        const userResult = await db.query(`
+            SELECT created_at, last_login_at, contribution_score, linkedin_url
+            FROM users WHERE id = $1
+        `, [userId]);
+
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ message: 'User nicht gefunden.' });
+        }
+        const userData = userResult.rows[0];
+
+        // 2. Installierte Widgets aus ALLEN Dashboards des Nutzers extrahieren und gruppieren
+        const widgetQuery = `
+            SELECT 
+                wt.name AS widget_name,
+                wt.type_key,
+                COUNT(*) AS count
+            FROM dashboard_configurations dc,
+            LATERAL jsonb_array_elements(
+                CASE WHEN jsonb_typeof(dc.config -> 'widgets') = 'array' THEN dc.config -> 'widgets' ELSE '[]'::jsonb END
+            ) AS w
+            JOIN widget_types wt ON (w ->> 'type') = wt.type_key
+            WHERE dc.user_id = $1
+            GROUP BY wt.name, wt.type_key
+            ORDER BY count DESC, wt.name ASC;
+        `;
+        const widgetResult = await db.query(widgetQuery, [userId]);
+
+        const installedWidgets = widgetResult.rows;
+        const totalWidgetsCount = installedWidgets.reduce((sum, w) => sum + Number(w.count), 0);
+
+        res.json({
+            registered_at: userData.created_at,
+            last_login_at: userData.last_login_at,
+            contribution_score: userData.contribution_score,
+            linkedin_url: userData.linkedin_url,
+            total_widgets: totalWidgetsCount,
+            installed_widgets: installedWidgets
+        });
+
+    } catch (err) {
+        console.error('Fehler beim Abrufen der Nutzer-Statistiken:', err.message);
+        res.status(500).send('Serverfehler beim Laden der Statistiken.');
     }
 };

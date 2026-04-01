@@ -4,6 +4,11 @@ if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
 
+console.log("--- ENVIRONMENT CHECK ---");
+console.log("DATABASE_URL:", process.env.DATABASE_URL);
+console.log("DB_HOST:", process.env.DB_HOST);
+console.log("-------------------------");
+
 // --- 1. IMPORTE ---
 const express = require('express');
 const app = express();
@@ -80,6 +85,7 @@ const communityRoutes = require('./routes/communityRoutes');
 const updateLastActive = require('./middleware/activityLogger');
 const adminBriefingRoutes = require('./routes/adminBriefingEditorialRoutes');
 
+
 // --- 2. HILFSFUNKTIONEN / BOOT-LOGS ---
 function logBootConfig() {
   console.log('==================================================');
@@ -125,10 +131,23 @@ createBullBoard({
 });
 
 // --- 3. MIDDLEWARE ---
-const allowedOrigins = ['http://localhost:5173', 'https://dashboard.mobiliti.at'];
+const allowedOrigins = [
+  'http://localhost:5173', 
+  'https://dashboard.mobiliti.at',
+  'https://mobiliti.at',         // NEU: Hauptdomain erlauben
+  'https://www.mobiliti.at'      // NEU: Hauptdomain (mit www) erlauben
+];
 
 app.use(cors({
-  origin: allowedOrigins,
+  origin: function (origin, callback) {
+    // Erlaubt Requests ohne Origin (z.B. Server-to-Server oder Postman) 
+    // und Origins, die in unserer Liste stehen.
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization'],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -136,6 +155,9 @@ app.use(cors({
 
 app.use(express.json());
 app.use(cookieParser());
+
+app.use('/logos', express.static(path.join(__dirname, 'public', 'logos')));
+app.use('/api/logos', express.static(path.join(__dirname, 'public', 'logos')));
 
 // Request-Logging verbessert
 app.use((req, res, next) => {
@@ -198,6 +220,7 @@ app.use('/api/admin-legal-monitor', adminLegalMonitorRoutes);
 app.use('/api/community', communityRoutes);
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/admin/briefing', adminBriefingRoutes);
+app.use('/api/onboarding', require('./routes/onboardingRoutes'));
 
 // Debug-Routen
 app.get('/api/debug/db-inspector', async (req, res) => {

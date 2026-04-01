@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     Box, Paper, Typography, CircularProgress, Alert, Rating, Link as MuiLink,
-    TextField, InputAdornment, Grid, Autocomplete, Chip
+    TextField, InputAdornment, Grid, Autocomplete, Chip, Avatar
 } from '@mui/material';
 import apiClient from '../apiClient';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
@@ -16,15 +16,37 @@ interface ApprovedSource {
     average_rating: number;
     vote_count: number;
     category_name: string | null;
-    category_name_lang: string | null; // NEU
+    category_name_lang: string | null;
+    logo_url: string | null; 
     created_at: string;
 }
 
 interface Category {
     id: string;
     name: string;
-    name_lang: string | null; // NEU
+    name_lang: string | null;
 }
+
+// Hilfsfunktion zur Bildgenerierung (inkl. Fallback-Port)
+const getImageUrl = (url: string | null) => {
+    if (!url) return '';
+    if (url.startsWith('http')) return url;
+    // KORREKTUR: Hier fehlte der Fallback auf deinen Backend-Port!
+    const baseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5001').replace(/\/$/, '');
+    let cleanPath = url.startsWith('/') ? url : `/${url}`;
+    cleanPath = cleanPath.replace(/^\/public\//, '/');
+    return `${baseUrl}${cleanPath}`;
+};
+
+// Hilfsfunktion für den Fallback-Avatar (Erster Buchstabe der Domain)
+const getDomainInitial = (url: string) => {
+    try {
+        const domain = new URL(url).hostname.replace('www.', '');
+        return domain.charAt(0).toUpperCase();
+    } catch {
+        return url.charAt(0).toUpperCase();
+    }
+};
 
 export const BrowseSourcesList: React.FC = () => {
     const [sources, setSources] = useState<ApprovedSource[]>([]);
@@ -35,7 +57,7 @@ export const BrowseSourcesList: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
 
-useEffect(() => {
+    useEffect(() => {
         const fetchData = async () => {
             setLoading(true);
             setError(null);
@@ -61,71 +83,105 @@ useEffect(() => {
                 source.url.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 (source.description && source.description.toLowerCase().includes(searchTerm.toLowerCase()));
             
-            // Filterlogik nutzt jetzt den Namen der ausgewählten Kategorie
-            const matchesCategory = !selectedCategory || (source.category_name_lang === selectedCategory.name_lang) || (source.category_name === selectedCategory.name);
+            const matchesCategory = !selectedCategory || 
+                (source.category_name_lang === selectedCategory.name_lang) || 
+                (source.category_name === selectedCategory.name);
 
             return matchesSearch && matchesCategory;
         });
     }, [sources, searchTerm, selectedCategory]);
 
-    if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box>;
-    if (error) return <Alert severity="error">{error}</Alert>;
+    if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', p: 6 }}><CircularProgress /></Box>;
+    if (error) return <Alert severity="error" sx={{ borderRadius: 2 }}>{error}</Alert>;
 
     return (
         <Box>
-            <Paper sx={{ p: 2, mb: 3, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                <TextField 
-                    variant="outlined" 
-                    size="small" 
-                    placeholder="Suche nach URL oder Beschreibung..." 
-                    value={searchTerm} 
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    sx={{ flexGrow: 1, minWidth: '250px' }}
-                    InputProps={{ 
-                        startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), 
-                    }} 
-                />
-                <Autocomplete
-                    options={allCategories}
-                    // HIER DIE ÄNDERUNG: Nutze name_lang für die Anzeige im Filter
-                    getOptionLabel={(option) => option.name_lang || option.name}
-                    value={selectedCategory}
-                    onChange={(event, newValue) => setSelectedCategory(newValue)}
-                    sx={{ width: 250 }}
-                    renderInput={(params) => <TextField {...params} label="Kategorie filtern" size="small" />}
-                />
+            <Paper variant="outlined" sx={{ p: 2, mb: 4, borderRadius: 2, bgcolor: 'background.default' }}>
+                <Grid container spacing={2} alignItems="center">
+                    <Grid item xs={12} md={7}>
+                        <TextField 
+                            fullWidth
+                            variant="outlined" 
+                            placeholder="Suchen nach Domain, Name oder Beschreibung..." 
+                            value={searchTerm} 
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            InputProps={{ 
+                                startAdornment: (<InputAdornment position="start"><SearchIcon color="action" /></InputAdornment>), 
+                                sx: { bgcolor: 'background.paper' }
+                            }} 
+                        />
+                    </Grid>
+                    <Grid item xs={12} md={5}>
+                        <Autocomplete
+                            fullWidth
+                            options={allCategories}
+                            getOptionLabel={(option) => option.name_lang || option.name}
+                            value={selectedCategory}
+                            // KORREKTUR: Unterstrich vor _event hinzugefügt
+                            onChange={(_event, newValue) => setSelectedCategory(newValue)}
+                            renderInput={(params) => <TextField {...params} label="Nach Kategorie filtern" sx={{ bgcolor: 'background.paper' }} />}
+                        />
+                    </Grid>
+                </Grid>
             </Paper>
 
-            <Grid container spacing={2}>
+            <Grid container spacing={3}>
                 {filteredSources.length > 0 ? filteredSources.map(source => (
-                    <Grid item xs={12} sm={6} md={4} key={source.id}>
-                        <Paper variant="outlined" sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
-                            <Box sx={{ flexGrow: 1 }}>
-                                {/* HIER DIE ÄNDERUNG: Nutze name_lang für die Anzeige im Chip */}
-                                {(source.category_name_lang || source.category_name) && <Chip label={source.category_name_lang || source.category_name} size="small" sx={{ mb: 1 }} />}
-                                <Typography variant="body1" sx={{ fontWeight: 'bold', wordBreak: 'break-all' }}>
-                                    {source.url}
-                                </Typography>
-                                <Typography variant="body2" color="text.secondary" sx={{ my: 1 }}>
-                                    {source.description || 'Keine Beschreibung.'}
+                    <Grid item xs={12} sm={6} lg={4} key={source.id}>
+                        <Paper elevation={2} sx={{ p: 3, height: '100%', display: 'flex', flexDirection: 'column', borderRadius: 3, transition: 'transform 0.2s, box-shadow 0.2s', '&:hover': { transform: 'translateY(-4px)', boxShadow: 6 } }}>
+                            
+                            {/* Header: Logo & URL */}
+                            <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', mb: 2 }}>
+                                {source.logo_url ? (
+                                    <Box 
+                                        component="img" 
+                                        src={getImageUrl(source.logo_url)} 
+                                        alt="Logo" 
+                                        sx={{ width: 48, height: 48, objectFit: 'contain', bgcolor: 'grey.50', p: 0.5, borderRadius: 1, border: '1px solid', borderColor: 'divider' }} 
+                                    />
+                                ) : (
+                                    <Avatar variant="rounded" sx={{ width: 48, height: 48, bgcolor: 'primary.main', fontWeight: 'bold' }}>
+                                        {getDomainInitial(source.url)}
+                                    </Avatar>
+                                )}
+                                
+                                <Box sx={{ overflow: 'hidden' }}>
+                                    <MuiLink href={source.url} target="_blank" rel="noopener noreferrer" underline="hover" sx={{ display: 'flex', alignItems: 'center', fontWeight: 'bold', color: 'text.primary', mb: 0.5 }}>
+                                        <Typography noWrap sx={{ fontWeight: 'bold', fontSize: '1.1rem' }}>
+                                            {source.url.replace(/^https?:\/\//, '')}
+                                        </Typography>
+                                        <OpenInNewIcon sx={{ ml: 0.5, fontSize: '1rem', color: 'primary.main', flexShrink: 0 }} />
+                                    </MuiLink>
+                                    {(source.category_name_lang || source.category_name) && (
+                                        <Chip label={source.category_name_lang || source.category_name} size="small" variant="outlined" color="primary" sx={{ height: 20, fontSize: '0.7rem' }} />
+                                    )}
+                                </Box>
+                            </Box>
+
+                            {/* Body: Description */}
+                            <Box sx={{ flexGrow: 1, mb: 2 }}>
+                                <Typography variant="body2" color="text.secondary" sx={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                    {source.description || 'Keine Beschreibung vorhanden.'}
                                 </Typography>
                             </Box>
-                            <Box sx={{ mt: 2, pt: 1, borderTop: 1, borderColor: 'divider' }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+
+                            {/* Footer: Rating */}
+                            <Box sx={{ pt: 2, borderTop: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Box>
+                                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>Community-Trust</Typography>
                                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
                                         <Rating value={source.average_rating} precision={0.1} readOnly size="small" />
-                                        <Typography variant="body2" sx={{ ml: 1 }}>({source.vote_count} Stimmen)</Typography>
                                     </Box>
-                                    <MuiLink href={source.url} target="_blank" rel="noopener noreferrer">
-                                        <OpenInNewIcon fontSize="small" />
-                                    </MuiLink>
                                 </Box>
+                                <Typography variant="body2" fontWeight="bold" color="text.secondary">
+                                    {source.vote_count} {source.vote_count === 1 ? 'Stimme' : 'Stimmen'}
+                                </Typography>
                             </Box>
                         </Paper>
                     </Grid>
                 )) : (
                     <Grid item xs={12}>
-                        <Alert severity="info">Keine Quellen für deine Filterauswahl gefunden.</Alert>
+                        <Alert severity="info" sx={{ borderRadius: 2 }}>Keine Quellen für deine Filterauswahl gefunden.</Alert>
                     </Grid>
                 )}
             </Grid>

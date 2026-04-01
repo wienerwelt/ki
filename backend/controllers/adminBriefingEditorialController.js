@@ -1,11 +1,29 @@
 const db = require('../config/db');
+const { Queue } = require('bullmq');
+const { connection } = require('../services/queueService');
+const aiQueue = new Queue('ai-content-generation', { connection });
 
-const { generateBriefingsForAllPartners } = require('../services/marketBriefingService');
+const { sendDailyBriefing } = require('../services/emailService');
+
+// Hilfsfunktion: Wandelt String/Array sicher in ein Array um
+function extractSources(related_articles) {
+    if (!related_articles) return [];
+    if (Array.isArray(related_articles)) return related_articles;
+    if (typeof related_articles === 'string') {
+        try {
+            const parsed = JSON.parse(related_articles);
+            if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+            if (related_articles.trim().startsWith('http')) return [related_articles.trim()];
+        }
+    }
+    return [];
+}
 
 exports.getAllPartners = async (req, res) => {
     try {
         const result = await db.query(
-            `SELECT id, name, dashboard_title FROM business_partners WHERE is_active = TRUE ORDER BY name ASC`
+            `SELECT id, name, dashboard_title, is_active, allow_automated_newsletter FROM business_partners ORDER BY name ASC`
         );
         res.json(result.rows);
     } catch (err) {
@@ -18,90 +36,100 @@ exports.getDebugStatus = async (req, res) => {
     if (!bpId) return res.status(400).json({ message: "Keine BP-ID übergeben" });
 
     try {
-        // A. Partner Name (UUID Cast hinzugefügt)
-        const configRes = await db.query(
-            `SELECT name FROM business_partners WHERE id = $1::uuid`, [bpId]);
+        const configRes = await db.query(`SELECT name, briefing_frequency, auto_approve_briefings FROM business_partners WHERE id = $1::uuid`, [bpId]);
+        const freq = configRes.rows[0]?.briefing_frequency || 'daily';
         
-        // B. Kategorien (UUID Cast hinzugefügt)
+        let interval = '3 days';
+        if (freq === 'weekly') interval = '7 days';
+        else if (freq === 'biweekly') interval = '14 days';
+        else if (freq === 'monthly') interval = '30 days';
+
         const catRes = await db.query(
             `SELECT c.name FROM categories c 
              JOIN business_partner_categories bpc ON c.id = bpc.category_id
              WHERE bpc.business_partner_id = $1::uuid AND c.category_type = 'industry'`, [bpId]);
 
-        // C. News Status (Optimiertes Subquery)
+        // OFFENER REGEX-TÜRSTEHER FÜR DAS DASHBOARD
         const newsRes = await db.query(
-            `SELECT COUNT(*) as count_3d, MAX(sc.created_at) as last_news_at
+            `SELECT COUNT(*) as count_period
              FROM scraped_content sc
-             WHERE sc.category_id IN (
-                SELECT category_id FROM business_partner_categories WHERE business_partner_id = $1::uuid
+             WHERE (
+                 sc.source_identifier = $1
+                 OR sc.source_identifier = $2
+                 -- Lässt alle allgemeinen News (wie audi_news, bmw_news) durch:
+                 OR sc.source_identifier !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}_(news|events)$'
              )
-             AND sc.published_date >= NOW() - INTERVAL '3 days'`, [bpId]);
+             AND (
+                 -- Sicherheitsnetz für das Datum
+                 COALESCE(sc.published_date, DATE(sc.created_at)) >= NOW() - INTERVAL '${interval}' 
+                 OR sc.event_date >= CURRENT_DATE
+             )`, 
+             [`${bpId}_news`, `${bpId}_events`]
+        );
 
-        // D. Historie
-        const historyRes = await db.query(
-            `SELECT created_at, headline, briefing_type FROM business_partner_intelligence_briefings
-             WHERE business_partner_id = $1::uuid ORDER BY created_at DESC LIMIT 10`, [bpId]);
-
-        // E. Empfänger
-        const recRes = await db.query(
-            `SELECT COUNT(*) FROM users WHERE business_partner_id = $1::uuid AND newsletter_opt_in = TRUE`, [bpId]);
+        const historyRes = await db.query(`SELECT created_at, headline, briefing_type FROM business_partner_intelligence_briefings WHERE business_partner_id = $1::uuid ORDER BY created_at DESC LIMIT 10`, [bpId]);
+        const recRes = await db.query(`SELECT COUNT(*) FROM users WHERE business_partner_id = $1::uuid AND newsletter_opt_in = TRUE AND is_active = TRUE`, [bpId]);
+        const jobRes = await db.query(`SELECT COUNT(*) FROM ai_jobs WHERE status = 'running' AND updated_at >= NOW() - INTERVAL '15 minutes'`);
 
         res.json({
             bpName: configRes.rows[0]?.name || 'Unbekannt',
+            briefing_frequency: freq,
+            auto_approve_briefings: configRes.rows[0]?.auto_approve_briefings || false,
             categories: catRes.rows.map(r => r.name),
-            newsCount3d: parseInt(newsRes.rows[0]?.count_3d || 0),
-            lastNewsAt: newsRes.rows[0]?.last_news_at,
+            newsCount3d: parseInt(newsRes.rows[0]?.count_period || 0),
             potentialRecipients: parseInt(recRes.rows[0]?.count || 0),
-            history: historyRes.rows
+            history: historyRes.rows,
+            is_generating: parseInt(jobRes.rows[0].count) > 0
         });
+
     } catch (err) {
-        logSqlError("getDebugStatus", err);
-        res.status(500).json({ error: "Fehler in der Diagnose-Abfrage", details: err.message });
+        console.error("Fehler in getDebugStatus:", err.message);
+        res.status(500).json({ error: "Diagnose fehlgeschlagen" });
     }
 };
 
-exports.triggerManualGeneration = async (req, res) => {
+exports.updateBriefingSettings = async (req, res) => {
+    const { bpId, frequency, autoApprove } = req.body;
+    const targetBpId = req.user.role === 'admin' ? bpId : req.user.business_partner_id;
+
     try {
-        await generateBriefingsForAllPartners();
-        res.json({ message: "KI-Generierung wurde manuell gestartet und abgeschlossen." });
+        await db.query(
+            `UPDATE business_partners SET briefing_frequency = $1, auto_approve_briefings = $2 WHERE id = $3::uuid`,
+            [frequency, autoApprove, targetBpId]
+        );
+        res.json({ message: "Einstellungen gespeichert." });
     } catch (err) {
-        res.status(500).json({ message: "Fehler bei der manuellen Generierung: " + err.message });
+        console.error("updateBriefingSettings", err);
+        res.status(500).json({ message: "Fehler beim Speichern der Einstellungen." });
     }
-};
-
-const logSqlError = (context, err) => {
-    console.error(`[SQL Error in ${context}]:`, err.message);
-    if (err.detail) console.error(`Detail: ${err.detail}`);
-    if (err.hint) console.error(`Hint: ${err.hint}`);
 };
 
 exports.getBriefingDraft = async (req, res) => {
     const bpId = req.query.bpId || req.user.business_partner_id;
     try {
         const result = await db.query(
-            `SELECT id, headline, analysis_summary, prognosis, talking_point, briefing_type, created_at
+            `SELECT id, headline, analysis_summary, prognosis, talking_point, briefing_type, related_articles, created_at
              FROM business_partner_intelligence_briefings 
              WHERE business_partner_id = $1::uuid 
-             AND created_at::date = CURRENT_DATE
-             ORDER BY created_at DESC`, [bpId]
+             AND status = 'draft'
+             ORDER BY created_at ASC`, [bpId]
         );
         res.json(result.rows || []);
     } catch (err) {
-        logSqlError("getBriefingDraft", err);
         res.status(500).json({ error: "Datenbankfehler beim Laden der Entwürfe" });
     }
 };
 
 exports.updateBriefingDraft = async (req, res) => {
     const { id } = req.params;
-    const { headline, analysis_summary, prognosis, talking_point } = req.body;
+    const { headline, analysis_summary, prognosis, talking_point, related_articles } = req.body;
 
     try {
         await db.query(
             `UPDATE business_partner_intelligence_briefings 
-             SET headline = $1, analysis_summary = $2, prognosis = $3, talking_point = $4
-             WHERE id = $5`,
-            [headline, analysis_summary, prognosis, talking_point, id]
+             SET headline = $1, analysis_summary = $2, prognosis = $3, talking_point = $4, related_articles = $5
+             WHERE id = $6`,
+            [headline, analysis_summary, prognosis, talking_point, related_articles, id]
         );
         res.json({ message: "Erfolgreich aktualisiert." });
     } catch (err) {
@@ -120,80 +148,173 @@ exports.publishBriefing = async (req, res) => {
 };
 
 exports.triggerManualGeneration = async (req, res) => {
-    // Timeout für diese spezifische Anfrage erhöhen (auf 2 Minuten)
-    req.setTimeout(120000); 
-
     try {
-        console.log(`[KI-Lauf] Manuelle Generierung gestartet für Partner: ${req.body.bpId || 'Alle'}`);
-        
-        // WICHTIG: Prüfe ob der Service korrekt importiert wurde
-        if (typeof generateBriefingsForAllPartners !== 'function') {
-            throw new Error("Service-Funktion 'generateBriefingsForAllPartners' nicht gefunden.");
-        }
-
-        await generateBriefingsForAllPartners();
-        
-        console.log("[KI-Lauf] Erfolgreich abgeschlossen.");
-        res.json({ message: "Generierung abgeschlossen" });
+        const targetBpId = req.body.bpId || null;
+        await aiQueue.add('generate-editorial-briefings', { bpId: targetBpId });
+        res.json({ message: "KI-Generierung wurde im Hintergrund gestartet." });
     } catch (err) {
-        // HIER loggen wir den echten Fehler in die Konsole!
-        console.error("[KI-Lauf] KRITISCHER FEHLER:", err.message);
-        console.error(err.stack);
-
-        res.status(500).json({ 
-            message: "KI-Fehler: " + err.message,
-            stack: process.env.NODE_ENV === 'development' ? err.stack : undefined 
-        });
+        console.error("Fehler beim Starten der KI:", err.message);
+        res.status(500).json({ message: "Fehler beim Starten der KI." });
     }
 };
-
 
 exports.publishBulkBriefing = async (req, res) => {
     const { bpId, itemIds } = req.body;
 
     try {
-        // 1. Hole die Daten der Briefings
-        const briefingRes = await db.query(
-            `SELECT * FROM business_partner_intelligence_briefings WHERE id = ANY($1)`,
-            [itemIds]
-        );
+        const briefingRes = await db.query(`SELECT * FROM business_partner_intelligence_briefings WHERE id = ANY($1)`, [itemIds]);
         const items = briefingRes.rows;
 
         if (items.length === 0) return res.status(404).json({ message: "Keine Inhalte zum Versenden gefunden." });
 
-        // 2. Hole Partner-Name
-        const partnerRes = await db.query(`SELECT name FROM business_partners WHERE id = $1`, [bpId]);
-        const partnerName = partnerRes.rows[0].name;
+        const partnerRes = await db.query(`
+            SELECT bp.*, row_to_json(cs.*) as color_scheme 
+            FROM business_partners bp LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id 
+            WHERE bp.id = $1`, [bpId]);
+        const partner = partnerRes.rows[0];
 
-        // 3. Hole alle berechtigten Empfänger (Opt-In gesetzt)
         const userRes = await db.query(
-            `SELECT email, first_name FROM users 
-             WHERE business_partner_id = $1 AND newsletter_opt_in = TRUE AND is_active = TRUE`,
+            `SELECT email, first_name, last_name FROM users WHERE business_partner_id = $1 AND newsletter_opt_in = TRUE AND is_active = TRUE`,
             [bpId]
         );
         const recipients = userRes.rows;
 
-        // 4. Status auf 'published' setzen
-        await db.query(
-            `UPDATE business_partner_intelligence_briefings SET status = 'published' WHERE id = ANY($1)`,
-            [itemIds]
-        );
+        await db.query(`UPDATE business_partner_intelligence_briefings SET status = 'published', created_at = NOW() WHERE id = ANY($1)`, [itemIds]);
 
-        // 5. Versand starten (Asynchron im Hintergrund)
-        // Hinweis: Bei sehr vielen Usern (>500) sollte hier eine Queue (wie BullMQ) genutzt werden
+        const briefingForEmail = {
+            top_insights: items.filter(i => i.briefing_type === 'top_insight').map(i => ({ 
+                title: i.headline, what_changed: i.analysis_summary, so_what: i.prognosis, action: i.talking_point, sources: extractSources(i.related_articles)
+            })),
+            regulation_and_funding: items.filter(i => i.briefing_type === 'regulation').map(i => {
+                const parsedSources = extractSources(i.related_articles);
+                return { title: i.headline, summary: i.analysis_summary, action: i.talking_point, source: parsedSources[0] || null };
+            }),
+            recommended_actions: items.filter(i => i.briefing_type === 'action_plan').map(i => i.headline)
+        };
+
+        const eventRes = await db.query(`
+            SELECT title, event_date, original_url, summary
+            FROM scraped_content sc
+            WHERE sc.event_date >= CURRENT_DATE
+            AND (
+                sc.source_identifier = $1 
+                OR sc.source_identifier !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}_(news|events)$'
+            )
+            ORDER BY sc.event_date ASC LIMIT 1
+        `, [`${bpId}_events`]);
+        const nextEvent = eventRes.rows[0] || null;
+
         recipients.forEach(user => {
-            sendBriefingEmail(user, partnerName, items).catch(err => 
-                console.error(`Fehler beim Senden an ${user.email}:`, err)
-            );
+            sendDailyBriefing({ to: user.email, user, partner, briefing: briefingForEmail, nextEvent }).catch(e => console.error(e));
         });
 
-        res.json({ 
-            message: "Versandvorgang gestartet.", 
-            recipientCount: recipients.length 
-        });
-
+        res.json({ message: "Versandvorgang gestartet.", recipientCount: recipients.length });
     } catch (err) {
         console.error("Fehler beim Bulk-Publish:", err);
         res.status(500).json({ message: "Interner Fehler beim Versand." });
+    }
+};
+
+exports.sendTestEmail = async (req, res) => {
+    const { bpId, email, items } = req.body;
+    try {
+        const partnerRes = await db.query(`
+            SELECT bp.*, row_to_json(cs.*) as color_scheme 
+            FROM business_partners bp LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id 
+            WHERE bp.id = $1`, [bpId]);
+        const partner = partnerRes.rows[0];
+
+        const briefing = {
+            top_insights: items.filter(i => i.briefing_type === 'top_insight').map(i => ({ 
+                title: i.headline, what_changed: i.analysis_summary, so_what: i.prognosis, action: i.talking_point, sources: extractSources(i.related_articles)
+            })),
+            regulation_and_funding: items.filter(i => i.briefing_type === 'regulation').map(i => {
+                const parsedSources = extractSources(i.related_articles);
+                return { title: i.headline, summary: i.analysis_summary, action: i.talking_point, source: parsedSources[0] || null };
+            }),
+            recommended_actions: items.filter(i => i.briefing_type === 'action_plan').map(i => i.headline)
+        };
+
+        const eventRes = await db.query(`
+            SELECT title, event_date, original_url, summary
+            FROM scraped_content sc
+            WHERE sc.event_date >= CURRENT_DATE
+            AND (
+                sc.source_identifier = $1 
+                OR sc.source_identifier !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}_(news|events)$'
+            )
+            ORDER BY sc.event_date ASC LIMIT 1
+        `, [`${bpId}_events`]);
+        const nextEvent = eventRes.rows[0] || null;
+
+        await sendDailyBriefing({ to: email, user: { email, first_name: 'Test', last_name: 'Empfänger' }, partner, briefing, nextEvent });
+        res.json({ message: "Test E-Mail wurde versendet." });
+    } catch (err) {
+        console.error("Test-Mail Fehler:", err);
+        res.status(500).json({ message: "Fehler beim Test-Versand." });
+    }
+};
+
+exports.deleteBriefingItem = async (req, res) => {
+    try {
+        await db.query(`DELETE FROM business_partner_intelligence_briefings WHERE id = $1`, [req.params.id]);
+        res.json({ message: "Erfolgreich gelöscht." });
+    } catch (err) {
+        res.status(500).json({ message: "Fehler beim Löschen." });
+    }
+};
+
+// OFFENER REGEX-TÜRSTEHER FÜR DAS MODAL
+exports.getRawData = async (req, res) => {
+    const bpId = req.query.bpId || req.user.business_partner_id;
+    try {
+        const partnerRes = await db.query(`SELECT briefing_frequency FROM business_partners WHERE id = $1`, [bpId]);
+        const freq = partnerRes.rows[0]?.briefing_frequency || 'daily';
+        
+        let interval = '3 days';
+        if (freq === 'weekly') interval = '7 days';
+        else if (freq === 'biweekly') interval = '14 days';
+        else if (freq === 'monthly') interval = '30 days';
+
+        const result = await db.query(
+            `SELECT title, summary, original_url, published_date, event_date 
+             FROM scraped_content sc
+             WHERE (
+                 sc.source_identifier = $1
+                 OR sc.source_identifier = $2
+                 OR sc.source_identifier !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}_(news|events)$'
+             )
+             AND (
+                 COALESCE(sc.published_date, DATE(sc.created_at)) >= NOW() - INTERVAL '${interval}' 
+                 OR sc.event_date >= CURRENT_DATE
+             )
+             ORDER BY COALESCE(sc.published_date, sc.event_date) DESC`, 
+             [`${bpId}_news`, `${bpId}_events`]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error("Fehler beim Laden der Rohdaten:", err);
+        res.status(500).json({ error: "Fehler beim Laden der Rohdaten" });
+    }
+};
+
+exports.getRecipients = async (req, res) => {
+    const bpId = req.query.bpId || req.user.business_partner_id;
+    if (!bpId) return res.status(400).json({ message: "Keine BP-ID übergeben" });
+
+    try {
+        const result = await db.query(
+            `SELECT first_name, last_name, email 
+             FROM users 
+             WHERE business_partner_id = $1::uuid 
+               AND newsletter_opt_in = TRUE 
+               AND is_active = TRUE
+             ORDER BY last_name ASC, first_name ASC`,
+            [bpId]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error("Fehler beim Laden der Empfängerliste:", err);
+        res.status(500).json({ error: "Fehler beim Laden der Empfänger" });
     }
 };

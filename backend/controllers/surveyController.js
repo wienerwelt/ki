@@ -1,12 +1,36 @@
 // backend/controllers/surveyController.js
 const db = require('../config/db');
 
+// --- HILFSFUNKTION: Auto-Close abgelaufener Umfragen ---
+// Diese Funktion stellt sicher, dass die Datenbank immer aktuell ist, ohne Cronjob.
+const autoCloseExpiredSurveys = async () => {
+    try {
+        await db.query(`
+            UPDATE surveys 
+            SET status = 'closed', updated_at = NOW() 
+            WHERE status = 'active' AND end_date IS NOT NULL AND end_date < NOW()
+        `);
+    } catch (err) {
+        console.error('Fehler beim Auto-Close von Umfragen:', err.message);
+    }
+};
+
 // Holt alle Umfragen für die Admin-Ansicht eines Business Partners
 exports.getSurveysForAdmin = async (req, res) => {
     const { role, business_partner_id } = req.user;
     
     try {
-        let query = 'SELECT s.*, bp.name as business_partner_name FROM surveys s JOIN business_partners bp ON s.business_partner_id = bp.id';
+        // Erst aufräumen (abgelaufene schließen)
+        await autoCloseExpiredSurveys();
+
+        let query = `
+            SELECT 
+                s.*, 
+                bp.name as business_partner_name,
+                (SELECT COUNT(DISTINCT user_id) FROM survey_responses sr WHERE sr.survey_id = s.id)::int as participant_count
+            FROM surveys s 
+            JOIN business_partners bp ON s.business_partner_id = bp.id
+        `;
         const params = [];
 
         if (role === 'assistenz') {
@@ -27,14 +51,20 @@ exports.getSurveysForAdmin = async (req, res) => {
 exports.getArchivedSurveysForUser = async (req, res) => {
     const { id: userId } = req.user;
     try {
+        await autoCloseExpiredSurveys(); // Auch hier kurz aufräumen
+        
         const query = `
-            SELECT s.id, s.title, s.description,
+            SELECT s.id, s.title, s.description, s.status,
                    (SELECT MAX(sr.created_at) FROM survey_responses sr WHERE sr.survey_id = s.id AND sr.user_id = $1) as completed_at
             FROM surveys s
-            WHERE EXISTS (
-                SELECT 1 FROM survey_responses sr WHERE sr.survey_id = s.id AND sr.user_id = $1
-            )
-            ORDER BY completed_at DESC;
+            WHERE 
+                -- Bedingung 1: User hat teilgenommen
+                EXISTS (
+                    SELECT 1 FROM survey_responses sr WHERE sr.survey_id = s.id AND sr.user_id = $1
+                )
+                -- ODER Bedingung 2: Umfrage ist offiziell beendet
+                OR s.status = 'closed'
+            ORDER BY COALESCE(completed_at, s.end_date, s.created_at) DESC;
         `;
         const { rows } = await db.query(query, [userId]);
         res.json(rows);
@@ -48,15 +78,10 @@ exports.createSurvey = async (req, res) => {
     const { business_partner_id: user_bp_id, role } = req.user;
     const { title, description, questions, start_date, end_date, status, target_bp_id } = req.body;
 
-    let final_bp_id;
-    if (role === 'assistenz') {
-        final_bp_id = user_bp_id;
-    } else if (role === 'admin') {
-        final_bp_id = target_bp_id;
-    }
+    let final_bp_id = role === 'admin' ? target_bp_id : user_bp_id;
 
     if (!final_bp_id) {
-        return res.status(403).json({ message: 'Die Zuordnung zu einem Business Partner ist ungültig oder fehlt.' });
+        return res.status(400).json({ message: 'Die Zuordnung zu einem Business Partner fehlt.' });
     }
 
     if (!title || !questions || !Array.isArray(questions) || questions.length === 0) {
@@ -93,24 +118,25 @@ exports.createSurvey = async (req, res) => {
 
 // Holt aktive Umfragen für das Dashboard-Widget
 exports.getActiveSurveysForWidget = async (req, res) => {
-    const { id: userId } = req.user;
+    const { id: userId, business_partner_id } = req.user; 
+    
     try {
+        await autoCloseExpiredSurveys(); // Auch hier kurz aufräumen
+
         const { rows: surveys } = await db.query(
             `SELECT s.id, s.title, s.description
              FROM surveys s
              WHERE s.status = 'active'
+             AND s.business_partner_id = $2
              AND (s.start_date IS NULL OR s.start_date <= NOW())
-             AND (s.end_date IS NULL OR s.end_date >= NOW())
              AND NOT EXISTS (
                  SELECT 1 FROM survey_responses sr WHERE sr.survey_id = s.id AND sr.user_id = $1
              )
              ORDER BY s.created_at DESC LIMIT 5`,
-            [userId]
+            [userId, business_partner_id]
         );
 
-        if (surveys.length === 0) {
-            return res.json([]);
-        }
+        if (surveys.length === 0) return res.json([]);
 
         const surveyIds = surveys.map(s => s.id);
         const { rows: questions } = await db.query(
@@ -130,10 +156,10 @@ exports.getActiveSurveysForWidget = async (req, res) => {
     }
 };
 
-// Speichert die Antworten eines Nutzers zu einer Umfrage
+// Speichert die Antworten
 exports.submitSurveyResponse = async (req, res) => {
     const { id: userId } = req.user;
-    const { surveyId, responses } = req.body; // responses = { questionId: "antwort", ... }
+    const { surveyId, responses } = req.body;
 
     if (!surveyId || !responses || Object.keys(responses).length === 0) {
         return res.status(400).json({ message: 'Antworten sind erforderlich.' });
@@ -144,7 +170,11 @@ exports.submitSurveyResponse = async (req, res) => {
         await client.query('BEGIN');
 
         for (const questionId in responses) {
-            const responseText = responses[questionId];
+            let responseText = responses[questionId];
+            if (Array.isArray(responseText)) {
+                responseText = JSON.stringify(responseText);
+            }
+
             await client.query(
                 `INSERT INTO survey_responses (survey_id, question_id, user_id, response_text)
                  VALUES ($1, $2, $3, $4)
@@ -164,7 +194,7 @@ exports.submitSurveyResponse = async (req, res) => {
     }
 };
 
-// Holt die aggregierten Ergebnisse einer Umfrage für die grafische Darstellung
+// Holt die aggregierten Ergebnisse einer Umfrage
 exports.getSurveyResults = async (req, res) => {
     const { id } = req.params;
     try {
@@ -176,36 +206,37 @@ exports.getSurveyResults = async (req, res) => {
         const results = [];
         for (const q of questions) {
             let questionResult;
-            if (q.question_type === 'multiple-choice') {
-                const { rows: counts } = await db.query(
-                    `SELECT response_text, COUNT(*) as count
-                     FROM survey_responses
-                     WHERE question_id = $1
-                     GROUP BY response_text`,
-                    [q.id]
-                );
-                questionResult = { ...q, results: counts };
-            } else { // 'free-text'
-                const { rows: texts } = await db.query(
+            
+            if (q.question_type === 'single-choice' || q.question_type === 'multiple-choice') {
+                const { rows } = await db.query(
                     'SELECT response_text FROM survey_responses WHERE question_id = $1',
                     [q.id]
                 );
-                // WORTWOLKEN-Logik: Zähle die Worthäufigkeiten
-                const wordCounts = texts.reduce((acc, { response_text }) => {
-                    if (!response_text) return acc;
-                    // Einfache Normalisierung: Kleinschreibung, Satzzeichen entfernen, unwichtige Wörter filtern
-                    const stopWords = new Set(['und', 'oder', 'der', 'die', 'das', 'ein', 'eine', 'ist', 'sind', 'ich', 'wir', 'es', 'nicht', 'mit', 'zu', 'im']);
-                    const words = response_text.toLowerCase().replace(/[.,!?;:"()]/g, '').split(/\s+/);
-                    words.forEach(word => {
-                        if (word && !stopWords.has(word) && word.length > 2) {
-                            acc[word] = (acc[word] || 0) + 1;
-                        }
-                    });
-                    return acc;
-                }, {});
+                
+                // Da wir in `submitSurveyResponse` ein ON CONFLICT auf (question_id, user_id) haben,
+                // entspricht rows.length genau der Anzahl an einzigartigen Usern!
+                const unique_users = rows.length; 
 
-                const wordCloudData = Object.entries(wordCounts).map(([text, value]) => ({ text, value }));
-                questionResult = { ...q, results: wordCloudData };
+                const tally = {};
+                rows.forEach(row => {
+                    if (!row.response_text) return;
+                    let answers = [];
+                    try {
+                        const parsed = JSON.parse(row.response_text);
+                        answers = Array.isArray(parsed) ? parsed : [row.response_text];
+                    } catch(e) {
+                        answers = [row.response_text];
+                    }
+                    answers.forEach(ans => { tally[ans] = (tally[ans] || 0) + 1; });
+                });
+
+                const counts = Object.keys(tally).map(key => ({ response_text: key, count: tally[key] }));
+                questionResult = { ...q, results: counts, unique_users };
+                
+            } else { 
+                // FREITEXT: Frontend erwartet die echten Texte, keine Wort-Zählung!
+                const { rows } = await db.query('SELECT response_text FROM survey_responses WHERE question_id = $1 AND response_text IS NOT NULL', [q.id]);
+                questionResult = { ...q, results: rows, unique_users: rows.length };
             }
             results.push(questionResult);
         }
@@ -215,7 +246,6 @@ exports.getSurveyResults = async (req, res) => {
         res.status(500).send('Serverfehler');
     }
 };
-
 
 exports.getSurveyForEdit = async (req, res) => {
     const { id } = req.params;
@@ -236,12 +266,9 @@ exports.getSurveyForEdit = async (req, res) => {
     }
 };
 
-
 exports.updateSurvey = async (req, res) => {
     const { id } = req.params;
     const { title, description, questions, start_date, end_date, status } = req.body;
-
-    // ... (Hier könnte eine Berechtigungsprüfung für den User erfolgen) ...
 
     const client = await db.connect();
     try {
@@ -252,7 +279,6 @@ exports.updateSurvey = async (req, res) => {
             [title, description, status, start_date || null, end_date || null, id]
         );
         
-        // Alte Fragen löschen und neue einfügen (einfachster Weg für Updates)
         await client.query('DELETE FROM survey_questions WHERE survey_id = $1', [id]);
 
         for (let i = 0; i < questions.length; i++) {
@@ -274,4 +300,24 @@ exports.updateSurvey = async (req, res) => {
     }
 };
 
+// NEU: Umfrage löschen
+exports.deleteSurvey = async (req, res) => {
+    const { id } = req.params;
+    const { role, business_partner_id } = req.user;
 
+    try {
+        const check = await db.query('SELECT business_partner_id FROM surveys WHERE id = $1', [id]);
+        if (check.rows.length === 0) return res.status(404).json({ message: 'Umfrage nicht gefunden.' });
+
+        if (role !== 'admin' && (role !== 'assistenz' || check.rows[0].business_partner_id !== business_partner_id)) {
+            return res.status(403).json({ message: 'Keine Berechtigung zum Löschen.' });
+        }
+
+        // Durch ON DELETE CASCADE auf den Foreign Keys werden Fragen und Antworten automatisch mitgelöscht
+        await db.query('DELETE FROM surveys WHERE id = $1', [id]);
+        res.json({ message: 'Umfrage erfolgreich gelöscht.' });
+    } catch (err) {
+        console.error('Fehler beim Löschen der Umfrage:', err.message);
+        res.status(500).send('Serverfehler');
+    }
+};

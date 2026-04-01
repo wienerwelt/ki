@@ -12,9 +12,14 @@ async function renderPdfFromHtml(html, options = {}) {
     printBackground = true,
   } = options;
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+const browser = await puppeteer.launch({
+    headless: true, // 'new' ist in aktuellen Puppeteer-Versionen obsolet, 'true' ist der Standard
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null, // Greift den Docker-Pfad ab
+    args: [
+      '--no-sandbox', 
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage' // Wichtig für Docker: Verhindert Abstürze bei großen PDFs
+    ],
   });
 
   try {

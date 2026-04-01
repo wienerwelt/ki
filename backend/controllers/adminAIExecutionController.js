@@ -19,6 +19,7 @@ exports.executeRule = async (req, res) => {
         
         res.status(202).json({ jobId });
 
+        // Hintergrundprozess
         (async () => {
             try {
                 let categoryName = null;
@@ -27,34 +28,67 @@ exports.executeRule = async (req, res) => {
                     if (categoryRes.rows.length > 0) categoryName = categoryRes.rows[0].name;
                 }
                 
-                const { finalPrompt, aiResultString } = await generateAIContent({
-                    promptTemplate: rule.prompt_template, inputText: inputText, region: region,
-                    category: categoryName, ai_provider: rule.ai_provider, jobId: jobId,
-                    focusPage: focus_page, keywords: keywords // NEU
-                });
+                // NEU: Smarte Erkennung, ob der Prompt JSON anfordert
+                const isJsonRequested = rule.prompt_template.toLowerCase().includes('json');
+                const aiOptions = {
+                    promptTemplate: rule.prompt_template, 
+                    inputText: inputText, 
+                    region: region,
+                    category: categoryName, 
+                    ai_provider: rule.ai_provider, 
+                    jobId: jobId,
+                    focusPage: focus_page, 
+                    keywords: keywords
+                };
 
-                let contentToStore = aiResultString, finalCategoryId = categoryId, title = `Generiert von "${rule.name}"`;
+                // Wenn JSON im Prompt gefordert wird, nutze den nativen JSON-Mode (unterstützt von OpenAI/Gemini)
+                if (isJsonRequested) {
+                    aiOptions.responseFormat = { type: "json_object" };
+                }
+                
+                // aiResultString ist der rohe String, finalPrompt ist der zusammengebaute Text (wird in aiExecutionService erzeugt, aber aktuell nicht retouniert. Wir nutzen rule.prompt_template stattdessen)
+                const { aiResultString } = await generateAIContent(aiOptions);
+
+                let contentToStore = aiResultString;
+                let finalCategoryId = categoryId;
+                let title = `Generiert von "${rule.name}"`;
                 let finalKeywords = keywords || [];
 
-                try {
-                    const parsedResult = JSON.parse(aiResultString);
-                    contentToStore = parsedResult.content || contentToStore;
-                    title = parsedResult.title || title;
-                    finalKeywords = parsedResult.keywords || finalKeywords;
-                    if (parsedResult.category) {
-                        const foundCategoryRes = await db.query('SELECT id FROM categories WHERE name ILIKE $1', [parsedResult.category.trim()]);
-                        if (foundCategoryRes.rows.length > 0) {
-                            finalCategoryId = foundCategoryRes.rows[0].id;
+                // OPTIMIERT: Robusteres JSON Parsing, auch wenn der Native Mode nicht gegriffen hat
+                if (isJsonRequested || aiResultString.includes('{')) {
+                    try {
+                        let jsonString = aiResultString;
+                        // Falls Markdown-Ticks vorhanden sind, bereinigen (nützlich als Fallback)
+                        const firstBrace = aiResultString.indexOf('{');
+                        const lastBrace = aiResultString.lastIndexOf('}');
+                        
+                        if (firstBrace !== -1 && lastBrace !== -1) {
+                            jsonString = aiResultString.substring(firstBrace, lastBrace + 1);
                         }
+
+                        const parsedResult = JSON.parse(jsonString);
+                        
+                        // Zuweisung, falls die Felder im JSON existieren
+                        contentToStore = parsedResult.content || contentToStore;
+                        title = parsedResult.title || title;
+                        finalKeywords = parsedResult.keywords || finalKeywords;
+                        
+                        if (parsedResult.category) {
+                            const foundCategoryRes = await db.query('SELECT id FROM categories WHERE name ILIKE $1', [parsedResult.category.trim()]);
+                            if (foundCategoryRes.rows.length > 0) {
+                                finalCategoryId = foundCategoryRes.rows[0].id;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn(`[Job ${jobId}] Konnte Antwort nicht als JSON parsen, speichere als reinen Text.`);
                     }
-                } catch (e) {
-                    // Ist kein JSON
                 }
                 
                 await db.query(
                     `INSERT INTO ai_generated_content (id, ai_prompt_rule_id, job_id, category_id, region, title, generated_output, source_input_text, source_reference, output_format, prompt_snapshot, focus_page, keywords) 
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-                    [uuidv4(), ruleId, jobId, finalCategoryId, region, title, contentToStore, inputText, source_reference, 'text', finalPrompt, focus_page, finalKeywords]
+                    // HINWEIS: Wir speichern rule.prompt_template als Snapshot, da generateAIContent den finalPrompt aktuell nicht zurückgibt
+                    [uuidv4(), ruleId, jobId, finalCategoryId, region, title, contentToStore, inputText, source_reference, 'text', rule.prompt_template, focus_page, finalKeywords]
                 );
                 await db.query(`UPDATE ai_jobs SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);
 
@@ -73,6 +107,7 @@ exports.executeRule = async (req, res) => {
 };
 
 exports.getJobStatusAndLogs = async (req, res) => {
+    // Bleibt unverändert
     const { jobId } = req.params;
     if (!isValidUUID(jobId)) {
         return res.status(400).json({ message: 'Invalid Job ID format.' });

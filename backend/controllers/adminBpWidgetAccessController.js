@@ -8,8 +8,16 @@ exports.getAllBpWidgetAccess = async (req, res) => {
     try {
         const result = await db.query(
             `SELECT bpwa.business_partner_id, bp.name AS business_partner_name,
-                    bpwa.widget_type_id, wt.name AS widget_type_name,
-                    bpwa.access_granted_at
+                    bpwa.widget_type_id, wt.name AS widget_type_name, wt.type_key AS widget_type_key,
+                    bpwa.access_granted_at,
+                    (
+                        SELECT COUNT(DISTINCT dc.user_id)
+                        FROM dashboard_configurations dc
+                        JOIN users u ON dc.user_id = u.id,
+                        LATERAL jsonb_array_elements(dc.config -> 'widgets') AS w
+                        WHERE u.business_partner_id = bpwa.business_partner_id
+                          AND w ->> 'type' = wt.type_key
+                    )::INTEGER AS user_install_count
              FROM business_partner_widget_access bpwa
              JOIN business_partners bp ON bpwa.business_partner_id = bp.id
              JOIN widget_types wt ON bpwa.widget_type_id = wt.id
@@ -30,8 +38,16 @@ exports.getBpWidgetAccessByBpId = async (req, res) => {
     try {
         const result = await db.query(
             `SELECT bpwa.business_partner_id, bp.name AS business_partner_name,
-                    bpwa.widget_type_id, wt.name AS widget_type_name,
-                    bpwa.access_granted_at
+                    bpwa.widget_type_id, wt.name AS widget_type_name, wt.type_key AS widget_type_key,
+                    bpwa.access_granted_at,
+                    (
+                        SELECT COUNT(DISTINCT dc.user_id)
+                        FROM dashboard_configurations dc
+                        JOIN users u ON dc.user_id = u.id,
+                        LATERAL jsonb_array_elements(dc.config -> 'widgets') AS w
+                        WHERE u.business_partner_id = bpwa.business_partner_id
+                          AND w ->> 'type' = wt.type_key
+                    )::INTEGER AS user_install_count
              FROM business_partner_widget_access bpwa
              JOIN business_partners bp ON bpwa.business_partner_id = bp.id
              JOIN widget_types wt ON bpwa.widget_type_id = wt.id
@@ -66,7 +82,7 @@ exports.grantWidgetAccess = async (req, res) => {
         res.status(201).json(newAccess.rows[0]);
     } catch (err) {
         console.error('Error granting widget access:', err.message);
-        if (err.code === '23505') { // unique_violation
+        if (err.code === '23505') { 
             return res.status(409).json({ message: 'Widget access already granted for this Business Partner and Widget Type.' });
         }
         res.status(500).send('Server error');
@@ -75,7 +91,6 @@ exports.grantWidgetAccess = async (req, res) => {
 
 // REVOKE widget access (DELETE entry)
 exports.revokeWidgetAccess = async (req, res) => {
-    // KORREKTUR: IDs aus den URL-Parametern (req.params) lesen
     const { bpId: business_partner_id, widgetId: widget_type_id } = req.params;
 
     if (!business_partner_id || !widget_type_id) {
@@ -96,6 +111,42 @@ exports.revokeWidgetAccess = async (req, res) => {
         res.json({ message: 'Widget access revoked successfully', revoked: result.rows[0] });
     } catch (err) {
         console.error('Error revoking widget access:', err.message);
+        res.status(500).send('Server error');
+    }
+};
+
+// --- NEU: GET konkrete User-Installationen für ein Widget/BP Paar ---
+exports.getWidgetInstallationsByBp = async (req, res) => {
+    const { bpId, widgetId } = req.params;
+
+    if (!isValidUUID(bpId) || !isValidUUID(widgetId)) {
+        return res.status(400).json({ message: 'Invalid ID format.' });
+    }
+
+    try {
+        // Zuerst den type_key des Widgets ermitteln
+        const wtResult = await db.query('SELECT type_key FROM widget_types WHERE id = $1', [widgetId]);
+        if (wtResult.rows.length === 0) {
+            return res.status(404).json({ message: 'Widget Type not found.' });
+        }
+        const typeKey = wtResult.rows[0].type_key;
+
+        // Alle User dieses BPs holen, die den type_key in ihrer Config haben
+        const query = `
+            SELECT DISTINCT u.id, u.first_name || ' ' || u.last_name AS name, u.email AS detail
+            FROM dashboard_configurations dc
+            JOIN users u ON dc.user_id = u.id,
+            LATERAL jsonb_array_elements(dc.config -> 'widgets') AS widget_element
+            WHERE u.business_partner_id = $1
+              AND widget_element ->> 'type' = $2
+            ORDER BY name ASC;
+        `;
+
+        const result = await db.query(query, [bpId, typeKey]);
+        res.json(result.rows);
+
+    } catch (err) {
+        console.error('Error fetching widget installations for BP:', err.message);
         res.status(500).send('Server error');
     }
 };

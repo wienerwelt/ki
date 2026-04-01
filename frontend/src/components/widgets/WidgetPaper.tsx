@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Paper, Box, Tooltip, IconButton, CircularProgress, Alert,
-    Menu, MenuItem, useTheme, useMediaQuery, Button
+    Menu, MenuItem, useTheme, useMediaQuery, Button, alpha
 } from '@mui/material';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import CloseIcon from '@mui/icons-material/Close';
@@ -42,19 +42,13 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
     const navigate = useNavigate();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+    
     const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
     const open = Boolean(anchorEl);
-
-    // NEU: State für Mobile-Expand (Standardmäßig eingeklappt)
     const [mobileExpanded, setMobileExpanded] = useState(false);
 
-    const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
-        setAnchorEl(event.currentTarget);
-    };
-
-    const handleMenuClose = () => {
-        setAnchorEl(null);
-    };
+    const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget);
+    const handleMenuClose = () => setAnchorEl(null);
 
     const handleFeedbackClick = () => {
         navigate('/feedback', {
@@ -64,15 +58,14 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
     };
     
     const handleDelete = () => {
-        if (onDelete) {
-           onDelete(widgetId, widgetTypeKey);
-        }
+        if (onDelete) onDelete(widgetId, widgetTypeKey);
         handleMenuClose();
     };
 
     const renderActions = () => {
         if (isPublic) return null;
 
+        // Mobile: Drei-Punkte-Menü
         if (isMobile) {
             return (
                 <Box onMouseDown={(e) => e.stopPropagation()} sx={{ display: 'flex', alignItems: 'center' }}>
@@ -93,16 +86,17 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
             );
         }
         
+        // Desktop: Inline-Icons (Werden über CSS im Header ein-/ausgeblendet)
         return (
-            <Box onMouseDown={(e) => e.stopPropagation()} sx={{ display: 'flex', alignItems: 'center' }}>
+            <Box className="widget-actions" onMouseDown={(e) => e.stopPropagation()} sx={{ display: 'flex', alignItems: 'center', transition: 'opacity 0.2s', opacity: 0 }}>
                 <Tooltip title="Feedback geben">
-                    <IconButton size="small" onClick={handleFeedbackClick} sx={{ opacity: 0.6, '&:hover': { opacity: 1 } }}>
+                    <IconButton size="small" onClick={handleFeedbackClick} sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main', bgcolor: 'action.hover' } }}>
                         <FeedbackOutlinedIcon fontSize="small" />
                     </IconButton>
                 </Tooltip>
                 {onDelete && isRemovable && (
                     <Tooltip title="Entfernen">
-                        <IconButton size="small" onClick={handleDelete} sx={{ opacity: 0.6, '&:hover': { opacity: 1, color: 'error.main' } }}>
+                        <IconButton size="small" onClick={handleDelete} sx={{ color: 'text.secondary', '&:hover': { color: 'error.main', bgcolor: 'error.lighter' } }}>
                             <CloseIcon fontSize="small" />
                         </IconButton>
                     </Tooltip>
@@ -115,35 +109,34 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
         <Paper 
             elevation={isPublic ? 0 : 3}
             sx={{ 
-                // UPDATE: Auf Mobile Höhe automatisch, damit das Widget wachsen kann
                 height: isMobile ? 'auto' : '100%', 
                 display: 'flex', 
                 flexDirection: 'column',
                 overflow: 'hidden',
-                border: theme.palette.mode === 'dark' ? '1px solid rgba(255, 255, 255, 0.08)' : 'none',
+                borderRadius: 2, // Etwas weichere Ecken
+                border: theme.palette.mode === 'dark' ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0,0,0,0.04)',
                 ...(isPublic && {
                     backgroundColor: 'rgba(255,255,255,0.6)', 
                     backdropFilter: 'blur(10px)',
                     border: '1px solid rgba(255,255,255,0.3)',
                     transition: 'all 0.3s ease'
-                })
+                }),
+                // Desktop Hover-Logik: Header-Elemente sichtbar machen
+                '&:hover .widget-actions': { opacity: 1 },
+                '&:hover .widget-drag-handle': { opacity: 0.5 }
             }} 
             {...rest}
         >
+            {/* WIDGET HEADER */}
             <Box 
                 sx={{ 
                     display: 'flex', 
                     alignItems: 'center', 
-                    p: isMobile ? '8px 12px' : '12px 16px',
+                    p: isMobile ? '8px 12px' : '10px 16px',
                     borderBottom: '1px solid',
                     borderColor: 'divider',
-                    backgroundColor: (theme) => {
-                        if (isPublic) return 'transparent';
-                        return theme.palette.mode === 'dark' 
-                            ? theme.palette.background.default 
-                            : theme.palette.grey[50];
-                    },
-                    minHeight: isMobile ? 44 : 52,
+                    backgroundColor: isPublic ? 'transparent' : (theme.palette.mode === 'dark' ? 'background.paper' : '#f8fafc'), // Sanftes Grau im Light-Mode
+                    minHeight: isMobile ? 44 : 48,
                 }}
             >
                 {!isMobile && !isPublic && (
@@ -152,11 +145,12 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                         sx={{ 
                             cursor: 'grab', 
                             mr: 1, 
-                            color: 'text.disabled',
+                            opacity: 0, // Standardmäßig unsichtbar
+                            transition: 'opacity 0.2s',
                             display: 'flex',
                             alignItems: 'center',
-                            '&:hover': { color: 'text.primary' },
-                            '& svg': { mr: 0, fontSize: '1.2rem' }
+                            '&:hover': { opacity: '1 !important', color: 'primary.main' },
+                            '& svg': { fontSize: '1.2rem', color: 'text.disabled' }
                         }}
                     >
                         <DragIndicatorIcon />
@@ -170,22 +164,17 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                     overflow: 'hidden', 
                     mr: 1,
                     '& .MuiTypography-h6': {
-                        fontSize: isMobile ? '1.1rem' : '1.25rem',
+                        fontSize: isMobile ? '1rem' : '1.1rem',
                         fontWeight: 600,
-                        lineHeight: 1.2,
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
-                        color: isPublic ? theme.palette.text.secondary : 'inherit'
+                        color: isPublic ? 'text.secondary' : 'text.primary'
                     },
                     '& svg': {
-                        fontSize: isMobile ? '1.2rem' : '1.4rem',
+                        fontSize: '1.2rem',
                         marginRight: '8px',
-                        color: isMobile || isPublic ? theme.palette.text.secondary : theme.palette.primary.main
-                    },
-                    '& .MuiIconButton-root svg, & .MuiInputAdornment-root svg': {
-                        color: theme.palette.text.secondary,
-                        mr: 0 
+                        color: 'text.secondary'
                     }
                 }}>
                     {title}
@@ -194,64 +183,64 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                 {renderActions()}
             </Box>
             
+            {/* WIDGET CONTENT */}
             <Box sx={{ 
                 flexGrow: 1, 
-                // UPDATE: Auf Mobile Overflow verstecken (kein interner Scrollbalken), Desktop wie gewohnt
                 overflowY: isMobile ? 'hidden' : 'auto', 
                 overflowX: 'hidden',
                 p: noPadding ? 0 : { xs: 1.5, sm: 2 }, 
                 display: 'flex', 
                 flexDirection: 'column',
                 position: 'relative',
-                // NEU: Max-Height Logik für Mobile "Show More"
                 maxHeight: isMobile && !mobileExpanded ? '380px' : 'none',
-                transition: 'max-height 0.4s ease-in-out'
+                transition: 'max-height 0.4s ease-in-out',
+                bgcolor: 'background.paper'
             }}>
                 {loading ? (
                     <Box sx={{ 
                         position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, 
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        bgcolor: 'rgba(255,255,255,0.5)', zIndex: 1 
+                        bgcolor: alpha(theme.palette.background.paper, 0.7), zIndex: 1 
                     }}>
-                        <CircularProgress size={30} />
+                        <CircularProgress size={30} disableShrink />
                     </Box>
                 ) : error ? (
-                    <Alert severity="error" sx={{ m: 1 }}>{error}</Alert>
+                    <Alert severity="error" variant="outlined" sx={{ m: 1, border: 'none' }}>{error}</Alert>
                 ) : (
                     children
                 )}
 
-                {/* NEU: Fade-Out Effekt am Boden, wenn eingeklappt */}
+                {/* Theme-kompatibler Fade-Out Effekt */}
                 {isMobile && !mobileExpanded && !loading && !error && (
                     <Box sx={{ 
                         position: 'absolute', 
                         bottom: 0, left: 0, right: 0, 
                         height: '60px', 
-                        background: theme.palette.mode === 'dark' 
-                            ? 'linear-gradient(to top, rgba(30,30,30,1), transparent)' 
-                            : 'linear-gradient(to top, rgba(255,255,255,1), transparent)',
+                        background: `linear-gradient(to top, ${theme.palette.background.paper} 10%, transparent 100%)`,
                         pointerEvents: 'none',
                         zIndex: 2
                     }} />
                 )}
             </Box>
 
-            {/* NEU: Show More / Show Less Button für Mobile */}
+            {/* DEZENTER MOBILE EXPAND BUTTON */}
             {isMobile && !loading && !error && (
                 <Button 
                     fullWidth 
+                    size="small"
                     onClick={() => setMobileExpanded(!mobileExpanded)}
                     sx={{ 
                         borderRadius: 0, 
                         borderTop: '1px solid', 
                         borderColor: 'divider',
-                        py: 1,
+                        py: 0.75,
                         textTransform: 'none',
+                        fontSize: '0.85rem',
                         color: 'text.secondary',
-                        bgcolor: theme.palette.background.paper,
-                        '&:hover': { bgcolor: theme.palette.action.hover }
+                        bgcolor: 'background.paper',
+                        '&:hover': { bgcolor: 'action.hover' }
                     }}
-                    endIcon={mobileExpanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                    endIcon={mobileExpanded ? <KeyboardArrowUpIcon fontSize="small" /> : <KeyboardArrowDownIcon fontSize="small" />}
                 >
                     {mobileExpanded ? 'Weniger anzeigen' : 'Mehr anzeigen'}
                 </Button>

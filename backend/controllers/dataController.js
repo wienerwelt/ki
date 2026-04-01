@@ -7,6 +7,7 @@ const { generateAIContent } = require('../services/aiExecutionService');
 const { logToDb } = require('../services/aiExecutionService'); 
 const TANKERKOENIG_API_KEY = process.env.TANKERKOENIG_API_KEY;
 const ECONTROL_API_KEY     = process.env.ECONTROL_API_KEY;
+const ECONTROL_BASE_URL    = process.env.ECONTROL_BASE_URL;
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 const toStr  = (v) => (v === null || v === undefined) ? '' : String(v);
 const normNum = (v) => (v === null || v === undefined) ? null : Number(v);
@@ -16,7 +17,12 @@ const getDistance = (lat1, lon1, lat2, lon2) => {
     const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) *
+        Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
 };
@@ -87,35 +93,39 @@ function mapFuelKeyAT(k) {
 }
 
 async function upsertFavoritesPriceCache(userId, stationsToUpdate) {
-  if (!userId || !stationsToUpdate?.length) return;
-  const client = await db.connect();
-  try {
-    const sql = `
-      UPDATE public.user_favorites
-      SET
-        last_diesel   = $3,
-        last_e5       = $4,
-        last_e10      = $5,
-        last_status   = $6,
-        last_price_ts = NOW(),
-        updated_at    = NOW()
-      WHERE
-        user_id = $1 AND external_id = $2;
-    `;
-    for (const station of stationsToUpdate) {
-      const params = [
-        userId,
-        station.id,
-        station.diesel ?? null,
-        station.e5 ?? null,
-        station.e10 ?? null,
-        station.status ?? null
-      ];
-      await client.query(sql, params);
+    if (!userId || !stationsToUpdate?.length) return;
+
+    const client = await db.connect();
+    try {
+        const sql = `
+            UPDATE public.user_favorites
+            SET
+                last_diesel   = $3,
+                last_e5       = $4,
+                last_e10      = $5,
+                last_status   = $6,
+                last_price_ts = NOW(),
+                updated_at    = NOW()
+            WHERE
+                user_id = $1
+                AND favorite_type = 'FuelPrices'
+                AND external_id = $2;
+        `;
+
+        for (const station of stationsToUpdate) {
+            const params = [
+                userId,
+                station.id,
+                station.diesel ?? null,
+                station.e5 ?? null,
+                station.e10 ?? null,
+                station.status ?? null
+            ];
+            await client.query(sql, params);
+        }
+    } finally {
+        client.release();
     }
-  } finally {
-    client.release();
-  }
 }
 
 function normalizeDEDetail(detail, priceObj) {
@@ -135,6 +145,108 @@ function normalizeDEDetail(detail, priceObj) {
     e10:    priceObj?.e10 ?? null,
     status: priceObj?.status || null,
   };
+}
+
+function normalizeATStation(station) {
+    const priceMap = {};
+
+    (station.prices || []).forEach((p) => {
+        const key = mapFuelKeyAT(p.fuelType);
+        if (key) priceMap[key] = p.amount;
+    });
+
+    const addr = station.location?.address || '';
+    let street = addr;
+    let houseNumber = null;
+
+    const m = addr.match(/^(.+?)\s+(\d+[a-zA-Z]?)$/);
+    if (m) {
+        street = m[1];
+        houseNumber = m[2];
+    }
+
+    return {
+        id: `AT-${station.id}`,
+        external_id: `AT-${station.id}`,
+        raw_id: String(station.id),
+        name: station.name || null,
+        brand: (station.name || '').split(' ')[0] || null,
+        street: street || null,
+        house_no: houseNumber,
+        post_code: station.location?.postalCode ? String(station.location.postalCode) : null,
+        city: station.location?.city || null,
+        lat: Number.isFinite(Number(station.location?.latitude)) ? Number(station.location.latitude) : null,
+        lng: Number.isFinite(Number(station.location?.longitude)) ? Number(station.location.longitude) : null,
+        last_diesel: priceMap.diesel ?? null,
+        last_e5: priceMap.e5 ?? null,
+        last_e10: null,
+        last_status: station.open ? 'open' : 'closed',
+        last_price_ts: new Date().toISOString(),
+        country_code: 'AT',
+        provider: 'E-Control Austria',
+        distance: Number.isFinite(Number(station.distance)) ? Number(station.distance) : null,
+        opening_hours: Array.isArray(station.openingHours) ? station.openingHours : []
+    };
+}
+
+function mergeATStations(dieselList = [], superList = []) {
+    const merged = new Map();
+
+    for (const s of [...dieselList, ...superList]) {
+        const key = String(s.id);
+
+        if (!merged.has(key)) {
+            merged.set(key, {
+                ...s,
+                prices: Array.isArray(s.prices) ? [...s.prices] : []
+            });
+            continue;
+        }
+
+        const existing = merged.get(key);
+
+        existing.prices = [
+            ...(existing.prices || []),
+            ...(Array.isArray(s.prices) ? s.prices : [])
+        ];
+
+        if (typeof existing.open !== 'boolean' && typeof s.open === 'boolean') {
+            existing.open = s.open;
+        }
+
+        existing.distance = existing.distance ?? s.distance;
+        existing.location = existing.location || s.location;
+        existing.name = existing.name || s.name;
+        existing.openingHours = existing.openingHours || s.openingHours;
+    }
+
+    return [...merged.values()];
+}
+
+async function fetchATStationsByCoords(lat, lng, includeClosed = true) {
+    const commonParams = {
+        latitude: lat,
+        longitude: lng,
+        includeClosed
+    };
+
+    const [dieselResp, superResp] = await Promise.all([
+        axios.get(`${ECONTROL_BASE_URL}/search/gas-stations/by-address`, {
+            params: { ...commonParams, fuelType: 'DIE' },
+            headers: { accept: 'application/json' },
+            timeout: 10000
+        }),
+        axios.get(`${ECONTROL_BASE_URL}/search/gas-stations/by-address`, {
+            params: { ...commonParams, fuelType: 'SUP' },
+            headers: { accept: 'application/json' },
+            timeout: 10000
+        })
+    ]);
+
+    const dieselList = Array.isArray(dieselResp.data) ? dieselResp.data : [];
+    const superList = Array.isArray(superResp.data) ? superResp.data : [];
+
+    return mergeATStations(dieselList, superList);
 }
 
 
@@ -174,169 +286,360 @@ exports.getDailyBriefingPdfByToken = async (req, res) => {
 
 function normalizeATStation(station) {
   const priceMap = {};
-  (station.prices || []).forEach(p => {
+
+  (station.prices || []).forEach((p) => {
     const key = mapFuelKeyAT(p.fuelType);
     if (key) priceMap[key] = p.amount;
   });
+
   const addr = station.location?.address || '';
   let street = addr;
   let houseNumber = null;
+
   const m = addr.match(/^(.+?)\s+(\d+[a-zA-Z]?)$/);
-  if (m) { street = m[1]; houseNumber = m[2]; }
+  if (m) {
+    street = m[1];
+    houseNumber = m[2];
+  }
 
   return {
-    id: toStr(station.id),
-    countryCode: 'AT',
+    id: `AT-${station.id}`,
+    external_id: `AT-${station.id}`,
+    raw_id: String(station.id),
     name: station.name || null,
     brand: (station.name || '').split(' ')[0] || null,
-    street,
-    houseNumber,
-    postCode: station.location?.postalCode ? String(station.location.postalCode) : null,
+    street: street || null,
+    house_no: houseNumber,
+    post_code: station.location?.postalCode ? String(station.location.postalCode) : null,
     city: station.location?.city || null,
-    lat: normNum(station.location?.latitude),
-    lng: normNum(station.location?.longitude),
-    diesel: priceMap.diesel ?? null,
-    e5:     priceMap.e5 ?? null,
-    e10:    null,
-    status: 'open'
+    lat: Number.isFinite(Number(station.location?.latitude)) ? Number(station.location.latitude) : null,
+    lng: Number.isFinite(Number(station.location?.longitude)) ? Number(station.location.longitude) : null,
+    last_diesel: priceMap.diesel ?? null,
+    last_e5: priceMap.e5 ?? null,
+    last_e10: null,
+    last_status: station.open ? 'open' : 'closed',
+    last_price_ts: new Date().toISOString(),
+    country_code: 'AT',
+    provider: 'E-Control Austria',
+    distance: Number.isFinite(Number(station.distance)) ? Number(station.distance) : null,
+    opening_hours: Array.isArray(station.openingHours) ? station.openingHours : []
   };
 }
 
 exports.fuelSearch = async (req, res) => {
-  const { country, lat: latStr, lng: lngStr, radius: radStr, query } = req.query;
-  const targetCountry = (country || 'DE').toString().toUpperCase();
-  let lat = Number(latStr);
-  let lng = Number(lngStr);
-  const radius = Math.min(Math.max(Number(radStr) || 25, 1), 25);
-  const searchTerm = query ? query.toString().trim() : '';
+    const { country, lat: latStr, lng: lngStr, radius: radStr, query } = req.query;
 
-  try {
-    if (query && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
-      console.log(`[Backend] Geocoding required for query: "${query}"`);
-      try {
-        const geocodeResp = await axios.get('https://nominatim.openstreetmap.org/search', {
-          params: { q: query, countrycodes: country.toLowerCase(), format: 'json', limit: 1 },
-          headers: { 'User-Agent': 'MobilitiDashboard/1.0 (Ihre-Echte-Email@ihredomain.de)' },
-          timeout: 7000
-        });
-        if (geocodeResp.data && geocodeResp.data.length > 0) {
-          lat = parseFloat(geocodeResp.data[0].lat);
-          lng = parseFloat(geocodeResp.data[0].lon);
-          console.log(`[Backend] Geocoding successful: lat=${lat}, lng=${lng}`);
-        } else {
-          return res.status(404).json({ ok: false, message: `Der Ort "${query}" konnte nicht gefunden werden.` });
+    const targetCountry = (country || 'DE').toString().toUpperCase();
+    let lat = Number(latStr);
+    let lng = Number(lngStr);
+    const radius = Math.min(Math.max(Number(radStr) || 25, 1), 25);
+    const searchTerm = query ? query.toString().trim() : '';
+
+    try {
+        // Geocoding falls Suchbegriff statt Koordinaten
+        if (searchTerm && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
+            console.log(`[Backend] Geocoding required for query: "${searchTerm}" (${targetCountry})`);
+
+            try {
+                const geocodeResp = await axios.get('https://nominatim.openstreetmap.org/search', {
+                    params: {
+                        q: searchTerm,
+                        countrycodes: targetCountry.toLowerCase(),
+                        format: 'json',
+                        limit: 1
+                    },
+                    headers: {
+                        'User-Agent': 'MobilitiDashboard/1.0 (office@yourdomain.tld)'
+                    },
+                    timeout: 7000
+                });
+
+                if (Array.isArray(geocodeResp.data) && geocodeResp.data.length > 0) {
+                    lat = parseFloat(geocodeResp.data[0].lat);
+                    lng = parseFloat(geocodeResp.data[0].lon);
+                    console.log(`[Backend] Geocoding successful: lat=${lat}, lng=${lng}`);
+                } else {
+                    return res.status(404).json({
+                        ok: false,
+                        message: `Der Ort "${searchTerm}" konnte nicht gefunden werden.`
+                    });
+                }
+            } catch (geoError) {
+                console.error('[Backend] Geocoding FAILED:', geoError.message);
+                return res.status(502).json({
+                    ok: false,
+                    message: 'Die Adress-Suche ist fehlgeschlagen.'
+                });
+            }
+        } else if (!searchTerm && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
+            return res.status(400).json({
+                ok: false,
+                message: 'Gültige Koordinaten oder ein Suchbegriff sind erforderlich.'
+            });
         }
-      } catch (geoError) {
-        console.error('[Backend] Geocoding FAILED:', geoError.message);
-        return res.status(502).json({ ok: false, message: 'Die Adress-Suche ist fehlgeschlagen.' });
-      }
-    } else if (!query && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
-      return res.status(400).json({ ok: false, message: 'Gültige Koordinaten oder ein Suchbegriff sind erforderlich.' });
+
+        let stations = [];
+
+        // DE: Tankerkönig
+        if (targetCountry === 'DE') {
+            console.log(`[Backend] Searching Tankerkönig with lat=${lat}, lng=${lng}, radius=${radius}`);
+
+            const apiKey = process.env.TANKERKOENIG_API_KEY;
+            if (!apiKey) {
+                return res.status(500).json({
+                    ok: false,
+                    message: 'API-Key für Tankerkönig fehlt in der Server-Konfiguration.'
+                });
+            }
+
+            const tkResp = await axios.get('https://creativecommons.tankerkoenig.de/json/list.php', {
+                params: {
+                    lat,
+                    lng,
+                    rad: radius,
+                    sort: 'dist',
+                    type: 'all',
+                    apikey: apiKey
+                },
+                timeout: 10000
+            });
+
+            if (!tkResp.data?.ok || tkResp.data?.status !== 'ok') {
+                console.error('[Backend] Tankerkönig API returned an error:', tkResp.data?.message);
+                throw new Error(`Tankerkönig API Fehler: ${tkResp.data?.message || 'Unbekannter Fehler'}`);
+            }
+
+            stations = (tkResp.data.stations || []).map(normalizeDEStation);
+        }
+
+        // AT: E-Control
+        else if (targetCountry === 'AT') {
+            console.log(`[Backend] Searching E-Control with lat=${lat}, lng=${lng}`);
+
+            const rawStations = await fetchATStationsByCoords(lat, lng, true);
+
+            stations = rawStations
+                .map(normalizeATStation)
+                .filter(Boolean)
+                .filter((s) => {
+                    if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return false;
+                    return getDistance(lat, lng, s.lat, s.lng) <= radius;
+                })
+                .sort((a, b) => {
+                    const da = Number.isFinite(a.distance) ? a.distance : Number.MAX_VALUE;
+                    const db = Number.isFinite(b.distance) ? b.distance : Number.MAX_VALUE;
+                    return da - db;
+                });
+        }
+
+        else {
+            return res.status(400).json({
+                ok: false,
+                message: 'Ungültiger Ländercode.'
+            });
+        }
+
+        console.log(`[Backend] Found ${stations.length} stations for ${targetCountry}.`);
+
+        return res.status(200).json({
+            ok: true,
+            stations
+        });
+
+    } catch (err) {
+        const errorMessage =
+            err?.response?.data?.message ||
+            err?.response?.data?.error ||
+            err.message ||
+            'Unbekannter Fehler bei der Tankstellensuche.';
+
+        console.error('[Backend] Fuel search final catch block error:', errorMessage);
+
+        return res.status(500).json({
+            ok: false,
+            message: errorMessage
+        });
     }
-
-    let stations = [];
-    
-    if (country === 'DE') {
-      console.log(`[Backend] Searching Tankerkönig with lat=${lat}, lng=${lng}`);
-      const apiKey = process.env.TANKERKOENIG_API_KEY;
-      if (!apiKey) {
-        return res.status(500).json({ ok: false, message: 'API-Key für Tankerkönig fehlt in der Server-Konfiguration.' });
-      }
-      const tkResp = await axios.get('https://creativecommons.tankerkoenig.de/json/list.php', {
-        params: { 
-            lat, 
-            lng, 
-            rad: radius, 
-            sort: 'dist', 
-            type: 'all', 
-            apikey: apiKey 
-        },
-        timeout: 10000
-      });
-
-      if (!tkResp.data.ok || tkResp.data.status !== 'ok') {
-        console.error('[Backend] Tankerkönig API returned an error:', tkResp.data.message);
-        throw new Error(`Tankerkönig API Fehler: ${tkResp.data.message}`);
-      }
-
-      stations = (tkResp.data.stations || []).map(s => ({
-        external_id: s.id, name: s.name, brand: s.brand, street: s.street,
-        house_no: s.houseNo, 
-        post_code: s.postcode, 
-        city: s.place,
-        lat: s.lat, lng: s.lng, last_diesel: s.diesel, last_e5: s.e5, last_e10: s.e10,
-        last_status: s.isOpen ? 'open' : 'closed',
-        last_price_ts: new Date().toISOString(), country_code: 'DE'
-      }));
-    } else if (country === 'AT') {
-      console.log(`[Backend] Searching E-Control with lat=${lat}, lng=${lng}`);
-      stations = [];
-    } else {
-      return res.status(400).json({ ok: false, message: 'Ungültiger Ländercode.' });
-    }
-
-    console.log(`[Backend] Found ${stations.length} stations.`);
-    res.status(200).json({ ok: true, stations });
-
-  } catch (err) {
-    const errorMessage = err?.response?.data?.message || err.message || 'Unbekannter Fehler bei der Tankstellensuche.';
-    console.error(`[Backend] Fuel search final catch block error:`, errorMessage);
-    res.status(500).json({ ok: false, message: errorMessage });
-  }
 };
 
 exports.getPricesByIds = async (req, res) => {
-    const { country, ids } = req.body || {}; // userId entfernt
-    const { id: userId } = req.user; // <-- NEU: userId sicher aus dem Token holen
+    const { country, ids } = req.body || {};
+    const { id: userId } = req.user;
 
     try {
         if (!country || !Array.isArray(ids) || ids.length === 0) {
-            return res.status(400).json({ ok: false, message: 'Land und eine Liste von IDs sind erforderlich.' });
+            return res.status(400).json({
+                ok: false,
+                message: 'Land und eine Liste von IDs sind erforderlich.'
+            });
         }
+
         const cc = String(country).toUpperCase();
         let stationsToUpdate = [];
 
+        // -----------------------------------
+        // DE: direkter Preisabruf via Tankerkönig
+        // -----------------------------------
         if (cc === 'DE') {
             const apiKey = TANKERKOENIG_API_KEY;
             if (!apiKey) throw new Error('Tankerkönig API-Key fehlt');
-            
+
             const idList = ids.map(String).filter(isValidUUID);
-            if (idList.length === 0) return res.json({ ok: true });
+            if (idList.length === 0) {
+                return res.json({
+                    ok: true,
+                    message: 'Keine gültigen DE-IDs übergeben.'
+                });
+            }
 
-            const priceResp = await axios.get('https://creativecommons.tankerkoenig.de/json/prices.php', { 
-                params: { ids: idList.join(','), apikey: apiKey }, 
-                timeout: 10000 
-            });
+            const priceResp = await axios.get(
+                'https://creativecommons.tankerkoenig.de/json/prices.php',
+                {
+                    params: {
+                        ids: idList.join(','),
+                        apikey: apiKey
+                    },
+                    timeout: 10000
+                }
+            );
 
-            if (!priceResp.data?.ok) throw new Error(`Tankerkönig Preis-API Fehler: ${priceResp.data?.message}`);
-            
+            if (!priceResp.data?.ok) {
+                throw new Error(`Tankerkönig Preis-API Fehler: ${priceResp.data?.message || 'Unbekannter Fehler'}`);
+            }
+
             for (const id in priceResp.data.prices) {
                 const priceInfo = priceResp.data.prices[id];
                 stationsToUpdate.push({
-                    id: id,
+                    id,
                     diesel: priceInfo.diesel ?? null,
                     e5: priceInfo.e5 ?? null,
                     e10: priceInfo.e10 ?? null,
-                    status: priceInfo.status ?? null,
+                    status: priceInfo.status ?? null
                 });
             }
         }
-        
+
+        // -----------------------------------
+        // AT: Refresh über gespeicherte Favoriten-Koordinaten
+        // -----------------------------------
+        else if (cc === 'AT') {
+            if (!userId) {
+                return res.status(401).json({
+                    ok: false,
+                    message: 'Authentifizierung erforderlich.'
+                });
+            }
+
+            const externalIds = ids.map(String).filter(Boolean);
+
+            if (externalIds.length === 0) {
+                return res.json({
+                    ok: true,
+                    message: 'Keine gültigen AT-IDs übergeben.'
+                });
+            }
+
+            const favRes = await db.query(
+                `
+                SELECT external_id, lat, lng, country_code
+                FROM public.user_favorites
+                WHERE user_id = $1
+                  AND favorite_type = 'FuelPrices'
+                  AND country_code = 'AT'
+                  AND external_id = ANY($2::text[])
+                `,
+                [userId, externalIds]
+            );
+
+            const favorites = favRes.rows || [];
+
+            if (favorites.length === 0) {
+                return res.json({
+                    ok: true,
+                    message: 'Keine passenden AT-Favoriten mit Koordinaten gefunden.'
+                });
+            }
+
+            for (const fav of favorites) {
+                const favLat = Number(fav.lat);
+                const favLng = Number(fav.lng);
+
+                if (!Number.isFinite(favLat) || !Number.isFinite(favLng)) {
+                    continue;
+                }
+
+                try {
+                    const nearbyStations = await fetchATStationsByCoords(favLat, favLng, true);
+                    const normalized = nearbyStations.map(normalizeATStation).filter(Boolean);
+
+                    // Primärmatch über external_id
+                    let matched = normalized.find((s) => s.external_id === fav.external_id);
+
+                    // Fallback über minimale Distanz
+                    if (!matched) {
+                        const sortedByDistance = normalized
+                            .map((s) => ({
+                                station: s,
+                                distKm:
+                                    Number.isFinite(s.lat) && Number.isFinite(s.lng)
+                                        ? getDistance(favLat, favLng, s.lat, s.lng)
+                                        : Number.MAX_VALUE
+                            }))
+                            .sort((a, b) => a.distKm - b.distKm);
+
+                        if (sortedByDistance.length > 0 && sortedByDistance[0].distKm <= 0.25) {
+                            matched = sortedByDistance[0].station;
+                        }
+                    }
+
+                    if (matched) {
+                        stationsToUpdate.push({
+                            id: fav.external_id,
+                            diesel: matched.last_diesel ?? null,
+                            e5: matched.last_e5 ?? null,
+                            e10: null,
+                            status: matched.last_status ?? null
+                        });
+                    }
+                } catch (singleErr) {
+                    console.warn(`[AT Refresh] Favorit ${fav.external_id} konnte nicht aktualisiert werden:`, singleErr.message);
+                }
+            }
+        }
+
+        else {
+            return res.status(400).json({
+                ok: false,
+                message: 'Ungültiger Ländercode.'
+            });
+        }
+
         if (userId && stationsToUpdate.length > 0) {
             await upsertFavoritesPriceCache(userId, stationsToUpdate);
         }
 
-        return res.json({ ok: true, message: 'Preise aktualisiert.' });
+        return res.json({
+            ok: true,
+            message:
+                stationsToUpdate.length > 0
+                    ? `${stationsToUpdate.length} Preise aktualisiert.`
+                    : 'Keine Preise konnten aktualisiert werden.'
+        });
+
     } catch (err) {
         console.error('--- getPricesByIds FAILED ---');
         if (axios.isAxiosError(err)) {
-            console.error('API Request URL:', err.config.url);
+            console.error('API Request URL:', err.config?.url);
             console.error('API Response Status:', err.response?.status);
             console.error('API Response Data:', err.response?.data);
         } else {
             console.error('Generic Error:', err.message);
         }
-        return res.status(500).json({ ok: false, message: 'Interner Serverfehler beim Abrufen der Preisdetails.' });
+
+        return res.status(500).json({
+            ok: false,
+            message: 'Interner Serverfehler beim Abrufen der Preisdetails.'
+        });
     }
 };
 
@@ -580,10 +883,12 @@ exports.getEvents = async (req, res) => {
             queryParams.push(`${businessPartnerId}_events`);
         }
 
+        // --- KORREKTUR HIER: s.logo_url HINZUGEFÜGT ---
         const dataQuery = `
             SELECT
                 sc.id, sc.title, sc.event_date AS date, sc.summary,
                 sc.original_url AS url, sc.region, sc.full_text,
+                s.logo_url,
                 s.status = 'approved' AS is_trusted_source,
                 EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $1) as is_read,
                 (SELECT COUNT(*) FROM content_relevance_votes WHERE content_id = sc.id AND vote = 1)::INTEGER AS participants,
@@ -615,6 +920,7 @@ exports.getEvents = async (req, res) => {
     }
 };
 
+/*
 exports.getFleetAssociationNews = async (req, res) => {
     try {
         const { id: userId } = req.user;
@@ -650,6 +956,8 @@ exports.getFleetAssociationNews = async (req, res) => {
         });
     }
 };
+
+*/
 
 exports.getCommodityPrices = async (req, res) => {
     try {
@@ -891,37 +1199,123 @@ exports.getBpScrapedContent = async (req, res) => {
     if (!businessPartnerId) {
         return res.status(400).json({ message: 'Business Partner ID is required.' });
     }
+
     if (!category || (category !== 'news' && category !== 'events')) {
         return res.status(400).json({ message: 'A valid category ("news" or "events") is required.' });
     }
 
     const sourceIdentifier = `${businessPartnerId}_${category}`;
 
-    const orderByClause = category === 'events'
-        ? 'ORDER BY sc.event_date DESC, sc.scraped_at DESC'
-        : 'ORDER BY sc.published_date DESC, sc.scraped_at DESC';
-
     try {
-        // OPTIMIERUNG: LEFT(sc.summary, 300)
-        const query = `
-            SELECT
-                sc.id, sc.title, LEFT(sc.summary, 300) as summary, sc.original_url, sc.published_date,
-                sc.event_date, sc.category, sc.scraped_at, sc.region, sc.relevance_score,
-                COALESCE(crv.vote, 0) as user_vote
-            FROM scraped_content sc
-            LEFT JOIN content_relevance_votes crv ON crv.content_id = sc.id AND crv.user_id = $2
-            WHERE sc.source_identifier = $1
-            ${orderByClause}
-            LIMIT 5
-        `;
-        const queryParams = [sourceIdentifier, userId];
+        let query;
+        let queryParams;
+
+        if (category === 'events') {
+            query = `
+                SELECT
+                    sc.id,
+                    sc.title,
+                    LEFT(sc.summary, 300) as summary,
+                    sc.original_url,
+                    sc.published_date,
+                    sc.event_date,
+                    sc.category,
+                    sc.scraped_at,
+                    sc.region,
+                    sc.relevance_score,
+                    COALESCE(crv.vote, 0) as user_vote
+                FROM scraped_content sc
+                LEFT JOIN content_relevance_votes crv
+                    ON crv.content_id = sc.id AND crv.user_id = $2
+                WHERE
+                    sc.source_identifier = $1
+                    AND sc.category = 'businesspartner_events'
+                    AND sc.event_date IS NOT NULL
+                    AND sc.event_date >= CURRENT_DATE
+                ORDER BY sc.event_date ASC, sc.scraped_at DESC
+            `;
+            queryParams = [sourceIdentifier, userId];
+        } else {
+            query = `
+                SELECT
+                    sc.id,
+                    sc.title,
+                    LEFT(sc.summary, 300) as summary,
+                    sc.original_url,
+                    sc.published_date,
+                    sc.event_date,
+                    sc.category,
+                    sc.scraped_at,
+                    sc.region,
+                    sc.relevance_score,
+                    COALESCE(crv.vote, 0) as user_vote
+                FROM scraped_content sc
+                LEFT JOIN content_relevance_votes crv
+                    ON crv.content_id = sc.id AND crv.user_id = $2
+                WHERE sc.source_identifier = $1
+                ORDER BY sc.published_date DESC, sc.scraped_at DESC
+                LIMIT 5
+            `;
+            queryParams = [sourceIdentifier, userId];
+        }
 
         const result = await db.query(query, queryParams);
+        let items = result.rows;
+
+        if (category === 'events' && items.length > 0) {
+            const eventIds = items.map(e => e.id);
+
+            const votesQuery = `
+                SELECT 
+                    v.content_id,
+                    v.vote,
+                    u.id,
+                    u.first_name,
+                    u.last_name,
+                    u.profile_image_url,
+                    u.last_login_at
+                FROM content_relevance_votes v
+                JOIN users u ON v.user_id = u.id
+                WHERE v.content_id = ANY($1::uuid[])
+            `;
+
+            const votesResult = await db.query(votesQuery, [eventIds]);
+
+            items = items.map(item => {
+                const itemVotes = votesResult.rows.filter(v => v.content_id === item.id);
+
+                const participants = itemVotes
+                    .filter(v => v.vote === 1)
+                    .map(v => ({
+                        id: v.id,
+                        first_name: v.first_name,
+                        last_name: v.last_name,
+                        profile_image_url: v.profile_image_url,
+                        last_login_at: v.last_login_at
+                    }));
+
+                const maybeParticipants = itemVotes
+                    .filter(v => v.vote === 0)
+                    .map(v => ({
+                        id: v.id,
+                        first_name: v.first_name,
+                        last_name: v.last_name,
+                        profile_image_url: v.profile_image_url,
+                        last_login_at: v.last_login_at
+                    }));
+
+                return {
+                    ...item,
+                    participants,
+                    maybeParticipants
+                };
+            });
+        }
 
         res.json({
             source: `Scraped Content for BP ${businessPartnerId} (Source: ${sourceIdentifier})`,
             timestamp: new Date().toISOString(),
-            data: result.rows,
+            data: items,
         });
 
     } catch (err) {
@@ -1628,14 +2022,13 @@ exports.getScrapedContent = async (req, res) => {
         );
         const { article_score_min, article_score_max } = userSettingsResult.rows[0] || {};
 
-        // Saved Tags (für activeFilters + saved-tag filtering)
+        // Saved Tags
         const userTagsResult = await db.query(
             'SELECT tag_name FROM user_saved_tags WHERE user_id = $1',
             [userId]
         );
         const userSavedTags = userTagsResult.rows.map(row => row.tag_name);
 
-        // --- BASE FILTER (ohne "filter" unread/new) für counts/totalPages ---
         const baseParams = [];
         const baseWhere = [];
         let p = 1;
@@ -1657,14 +2050,7 @@ exports.getScrapedContent = async (req, res) => {
         if (category) {
             if (category.startsWith('businesspartner_')) {
                 if (!businessPartnerId) {
-                    return res.json({
-                        source: 'Scraped Content Feed',
-                        timestamp: new Date().toISOString(),
-                        data: [],
-                        activeFilters: { tags: userSavedTags },
-                        totalPages: 0,
-                        counts: { unread: 0, new: 0 }
-                    });
+                    return res.json({ data: [], totalPages: 0, counts: { unread: 0, new: 0 } });
                 }
                 baseWhere.push(`sc.source_identifier = $${p++}`);
                 baseParams.push(`${businessPartnerId}_${category.split('_')[1]}`);
@@ -1690,108 +2076,43 @@ exports.getScrapedContent = async (req, res) => {
         }
 
         if (mainFilter) {
-            baseWhere.push(`
-                EXISTS (
-                    SELECT 1
-                    FROM scraped_content_tags sct
-                    JOIN tags t ON sct.tag_id = t.id
-                    WHERE sct.scraped_content_id = sc.id
-                      AND t.name = $${p}
-                )
-            `);
+            baseWhere.push(`EXISTS (SELECT 1 FROM scraped_content_tags sct JOIN tags t ON sct.tag_id = t.id WHERE sct.scraped_content_id = sc.id AND t.name = $${p})`);
             baseParams.push(mainFilter);
             p++;
         }
 
         if (tag && tag !== 'all') {
-            baseWhere.push(`
-                EXISTS (
-                    SELECT 1
-                    FROM scraped_content_tags sct
-                    JOIN tags t ON sct.tag_id = t.id
-                    WHERE sct.scraped_content_id = sc.id
-                      AND t.name = $${p}
-                )
-            `);
+            baseWhere.push(`EXISTS (SELECT 1 FROM scraped_content_tags sct JOIN tags t ON sct.tag_id = t.id WHERE sct.scraped_content_id = sc.id AND t.name = $${p})`);
             baseParams.push(tag);
             p++;
         }
 
-        if (article_score_min != null) {
-            baseWhere.push(`sc.relevance_score >= $${p++}`);
-            baseParams.push(article_score_min);
-        }
-        if (article_score_max != null) {
-            baseWhere.push(`sc.relevance_score <= $${p++}`);
-            baseParams.push(article_score_max);
-        }
+        if (article_score_min != null) { baseWhere.push(`sc.relevance_score >= $${p++}`); baseParams.push(article_score_min); }
+        if (article_score_max != null) { baseWhere.push(`sc.relevance_score <= $${p++}`); baseParams.push(article_score_max); }
 
         const baseWhereString = baseWhere.length > 0 ? `WHERE ${baseWhere.join(' AND ')}` : '';
 
-        // --- COUNTS + TOTALPAGES (gleiche Logik wie bisheriger /scraped-content-counts) ---
-        // Hinweis: counts ignoriert bewusst den UI-Filter (all/new/unread), damit Badges stabil bleiben.
-        const totalQuery = `
-            SELECT COUNT(sc.id) as total_items
-            FROM scraped_content sc
-            ${baseWhereString}
-        `;
+        // Counts holen
+        const totalQuery = `SELECT COUNT(sc.id) as total_items FROM scraped_content sc ${baseWhereString}`;
         const totalResult = await db.query(totalQuery, baseParams);
         const totalItems = parseInt(totalResult.rows[0]?.total_items || '0', 10);
         const totalPages = Math.ceil(totalItems / limitNum);
 
-        const unreadQuery = `
-            SELECT COUNT(*) as cnt FROM (
-                SELECT sc.id
-                FROM scraped_content sc
-                ${baseWhereString ? baseWhereString + ' AND ' : 'WHERE '}
-                sc.created_at > NOW() - INTERVAL '30 days'
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM user_read_scraped_content ursc
-                    WHERE ursc.scraped_content_id = sc.id
-                      AND ursc.user_id = $${p}
-                )
-                LIMIT 11
-            ) sub
-        `;
-
-        const newQuery = `
-            SELECT COUNT(*) as cnt FROM (
-                SELECT sc.id
-                FROM scraped_content sc
-                ${baseWhereString ? baseWhereString + ' AND ' : 'WHERE '}
-                sc.created_at > $${p}
-                LIMIT 11
-            ) sub
-        `;
-
         const unreadParams = [...baseParams, userId];
+        const unreadQuery = `SELECT COUNT(*) as cnt FROM (SELECT sc.id FROM scraped_content sc ${baseWhereString ? baseWhereString + ' AND ' : 'WHERE '} sc.created_at > NOW() - INTERVAL '30 days' AND NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${p}) LIMIT 11) sub`;
+        
         const newParams = [...baseParams, stableLastLogin];
+        const newQuery = `SELECT COUNT(*) as cnt FROM (SELECT sc.id FROM scraped_content sc ${baseWhereString ? baseWhereString + ' AND ' : 'WHERE '} sc.created_at > $${p} LIMIT 11) sub`;
 
-        const [unreadRes, newRes] = await Promise.all([
-            db.query(unreadQuery, unreadParams),
-            db.query(newQuery, newParams)
-        ]);
+        const [unreadRes, newRes] = await Promise.all([db.query(unreadQuery, unreadParams), db.query(newQuery, newParams)]);
 
-        const counts = {
-            unread: parseInt(unreadRes.rows[0]?.cnt || '0', 10),
-            new: parseInt(newRes.rows[0]?.cnt || '0', 10)
-        };
-
-        // --- DATA QUERY (mit UI-Filter all/new/unread) ---
+        // Daten Query
         const dataParams = [...baseParams];
         const dataWhere = [...baseWhere];
         let pd = p;
 
         if (filter === 'unread') {
-            dataWhere.push(`
-                NOT EXISTS (
-                    SELECT 1
-                    FROM user_read_scraped_content ursc
-                    WHERE ursc.scraped_content_id = sc.id
-                      AND ursc.user_id = $${pd}
-                )
-            `);
+            dataWhere.push(`NOT EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${pd})`);
             dataParams.push(userId);
             pd++;
         } else if (filter === 'new') {
@@ -1801,11 +2122,8 @@ exports.getScrapedContent = async (req, res) => {
         }
 
         const dataWhereString = dataWhere.length > 0 ? `WHERE ${dataWhere.join(' AND ')}` : '';
-
         let orderByClause = 'ORDER BY sc.published_date DESC NULLS LAST, sc.event_date DESC NULLS LAST, sc.scraped_at DESC';
-        if (sortBy === 'relevance') {
-            orderByClause = 'ORDER BY sc.relevance_score DESC, sc.published_date DESC NULLS LAST, sc.scraped_at DESC';
-        }
+        if (sortBy === 'relevance') orderByClause = 'ORDER BY sc.relevance_score DESC, sc.published_date DESC NULLS LAST, sc.scraped_at DESC';
 
         const dataQuery = `
             SELECT
@@ -1820,6 +2138,7 @@ exports.getScrapedContent = async (req, res) => {
                 sc.relevance_score,
                 sc.region,
                 sc.thumbnail_url,
+                s.logo_url, -- ✅ HIER ERGÄNZT
                 s.status = 'approved' AS is_trusted_source,
                 EXISTS (
                     SELECT 1
@@ -1836,17 +2155,12 @@ exports.getScrapedContent = async (req, res) => {
             LIMIT $${pd + 1} OFFSET $${pd + 2}
         `;
 
-        const finalDataParams = [...dataParams, userId, limitNum, offset];
-        const result = await db.query(dataQuery, finalDataParams);
+        const result = await db.query(dataQuery, [...dataParams, userId, limitNum, offset]);
 
-        // ✅ Alles in EINEM Response
         res.json({
-            source: 'Scraped Content Feed',
-            timestamp: new Date().toISOString(),
             data: result.rows,
-            activeFilters: { tags: userSavedTags },
             totalPages,
-            counts
+            counts: { unread: parseInt(unreadRes.rows[0]?.cnt || '0', 10), new: parseInt(newRes.rows[0]?.cnt || '0', 10) }
         });
     } catch (err) {
         console.error(`Error fetching scraped content:`, err.message);
@@ -2207,10 +2521,17 @@ exports.getCalendarEvents = async (req, res) => {
     }
 };
 
+const normalizeCalendarCategory = (value) => {
+    const v = String(value || '').trim();
+    if (!v) return null;
+    if (v === 'businesspartner_events') return 'events';
+    return v;
+};
+
 exports.getEnhancedCalendarEvents = async (req, res) => {
-    const { id: userId } = req.user;
-    // KORREKTUR 1: 'category' aus dem Request lesen
-    const { page = 1, limit = 50, category } = req.query; 
+    const userId = req.user ? req.user.id : null;
+    const businessPartnerId = req.user ? req.user.business_partner_id : null; 
+    const { page = 1, limit = 50, category, region } = req.query;
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
     try {
@@ -2218,43 +2539,88 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
         let whereClauses = [];
         let paramIndex = 1;
 
-        // KORREKTUR 2: Nur Events anzeigen, die heute oder in der Zukunft sind (ODER z.B. max 30 Tage alt)
-        // Wenn du 'Anstehend' priorisieren willst, filtern wir alte Events raus.
-        // Falls du auch vergangene sehen willst, müsste man die Logik komplexer machen (z.B. 2 Queries).
-        // Hier: Wir holen alles ab HEUTE.
-        whereClauses.push(`sc.event_date >= CURRENT_DATE`); 
+        // 1. Nur heutige und zukünftige Events
+        whereClauses.push(`sc.event_date >= CURRENT_DATE`);
+        whereClauses.push(`sc.event_date IS NOT NULL`);
 
-        // KORREKTUR 3: Auf die spezifische Kategorie filtern, falls vorhanden
+        // 2. Kategorie und Business-Partner Logik
+        let categoryWhere = "";
+        
         if (category) {
-            whereClauses.push(`sc.category = $${paramIndex}`);
-            queryParams.push(category);
-            paramIndex++;
+            const categoryArray = String(category)
+                .split(',')
+                .map(c => normalizeCalendarCategory(c))
+                .filter(Boolean);
+
+            const uniqueCategories = [...new Set(categoryArray)];
+
+            if (uniqueCategories.length === 1) {
+                categoryWhere = `sc.category = $${paramIndex}`;
+                queryParams.push(uniqueCategories[0]);
+                paramIndex++;
+            } else if (uniqueCategories.length > 1) {
+                categoryWhere = `sc.category = ANY($${paramIndex}::text[])`;
+                queryParams.push(uniqueCategories);
+                paramIndex++;
+            }
+
+            if (businessPartnerId) {
+                const bpSourceIdentifier = `${businessPartnerId}_events`;
+                
+                categoryWhere = `(${categoryWhere} OR (sc.source_identifier = $${paramIndex} AND sc.category = 'businesspartner_events'))`;
+                queryParams.push(bpSourceIdentifier);
+                paramIndex++;
+            }
+            
+            whereClauses.push(`(${categoryWhere})`);
+            
         } else {
-            // Fallback auf dein altes Muster, falls keine Kategorie kommt
-            whereClauses.push(`sc.category LIKE '%_events'`); 
+            whereClauses.push(`(sc.category LIKE '%_events' OR sc.category = 'events')`);
         }
 
-        whereClauses.push(`sc.event_date IS NOT NULL`);
+        if (region && String(region).toLowerCase() !== 'all') {
+            whereClauses.push(`(
+                sc.region ILIKE $${paramIndex} 
+                OR sc.region IN (SELECT name FROM regions WHERE code ILIKE $${paramIndex})
+                OR sc.region IS NULL 
+                OR sc.region = ''
+            )`);
+            queryParams.push(region);
+            paramIndex++;
+        }
 
         const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
-        // Zähle nur die relevanten Items
+        // --- ZÄHLEN ---
         const countQuery = `
-            SELECT COUNT(sc.id) as total_items 
+            SELECT COUNT(sc.id) as total_items
             FROM scraped_content sc
             LEFT JOIN sources s ON sc.original_url LIKE s.url || '%'
             ${whereString}
         `;
         const totalResult = await db.query(countQuery, queryParams);
         const totalItems = parseInt(totalResult.rows[0].total_items, 10);
-        const totalPages = Math.ceil(totalItems / limit);
+        const totalPages = Math.ceil(totalItems / parseInt(limit, 10));
 
+        // --- DATEN HOLEN (KORREKTUR HIER: s.logo_url HINZUGEFÜGT) ---
         const dataQuery = `
             SELECT 
-                sc.id, sc.title, sc.event_date AS date, sc.summary, 
-                sc.original_url AS url, sc.region, sc.full_text,
+                sc.id,
+                sc.title,
+                sc.event_date AS date,
+                sc.summary,
+                sc.original_url AS url,
+                sc.region,
+                sc.full_text,
+                sc.category,
+                s.logo_url,
                 s.status = 'approved' AS is_trusted_source,
-                EXISTS (SELECT 1 FROM user_read_scraped_content ursc WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $${paramIndex}) as is_read,
+                EXISTS (
+                    SELECT 1
+                    FROM user_read_scraped_content ursc
+                    WHERE ursc.scraped_content_id = sc.id
+                      AND ursc.user_id = $${paramIndex}
+                ) as is_read,
                 (
                     SELECT COALESCE(json_agg(json_build_object(
                         'id', u.id,
@@ -2279,7 +2645,11 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
                     JOIN users u ON crv.user_id = u.id
                     WHERE crv.content_id = sc.id AND crv.vote = 0
                 ) AS maybe_participants_data,
-                COALESCE((SELECT vote FROM content_relevance_votes WHERE content_id = sc.id AND user_id = $${paramIndex}), NULL) AS "userVote"
+                COALESCE((
+                    SELECT vote
+                    FROM content_relevance_votes
+                    WHERE content_id = sc.id AND user_id = $${paramIndex}
+                ), NULL) AS "userVote"
             FROM scraped_content sc
             LEFT JOIN sources s ON sc.original_url LIKE s.url || '%'
             ${whereString}
@@ -2287,23 +2657,27 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
             LIMIT $${paramIndex + 1} OFFSET $${paramIndex + 2}
         `;
 
-        // Parameter zusammenbauen: [category?, userId, limit, offset]
         const finalParams = [...queryParams, userId, parseInt(limit, 10), offset];
-        
         const { rows: events } = await db.query(dataQuery, finalParams);
 
-        // Regionen Logik beibehalten
+        // --- REGIONEN FÜR DAS DROPDOWN IM FRONTEND ---
         const availableRegions = [...new Set(events.map(e => e.region).filter(Boolean))];
         let regionsData = [];
+
         if (availableRegions.length > 0) {
-            const regionQuery = 'SELECT name, code FROM regions WHERE name = ANY($1::text[])';
+            const regionQuery = `
+                SELECT name, code
+                FROM regions
+                WHERE name = ANY($1::text[])
+                   OR code = ANY($1::text[])
+            `;
             const regionsResult = await db.query(regionQuery, [availableRegions]);
             regionsData = regionsResult.rows;
         }
 
         res.json({
-            events: events,
-            totalPages: totalPages,
+            events,
+            totalPages,
             currentPage: parseInt(page, 10),
             availableRegions: regionsData
         });
@@ -2340,34 +2714,68 @@ if (req.user.role === 'demo') {
 };
 
 exports.shareEventByEmail = async (req, res) => {  
-if (req.user.role === 'demo') {
+    if (req.user.role === 'demo') {
         return res.status(403).json({ message: 'E-Mail-Versand ist im Demo-Modus deaktiviert.' });
     }    
+    
     const { title, date, url, summary, recipientEmail } = req.body;
     const { name: senderName } = req.user;
 
     if (!title || !recipientEmail) {
         return res.status(400).json({ message: 'Titel und Empfänger sind erforderlich.' });
     }
+    
     try {
-        const subject = `Interessante Veranstaltung: ${title}`;
-        const htmlBody = `
+        // 1. Branding des Business Partners laden (für Logo & Name)
+        let fromName = 'mobiliti Dashboard';
+        let brandLogoUrl = toAbsoluteUrl('/logos/de-mobiliti.png');
+        try {
+            const bpId = req.user?.business_partner_id;
+            if (bpId) {
+                const { rows } = await db.query(
+                    `SELECT dashboard_title, logo_url FROM business_partners WHERE id = $1 LIMIT 1`,
+                    [bpId]
+                );
+                if (rows.length) {
+                    if (rows[0].dashboard_title) fromName = rows[0].dashboard_title;
+                    if (rows[0].logo_url) brandLogoUrl = toAbsoluteUrl(rows[0].logo_url);
+                }
+            }
+        } catch (e) {
+            console.error('Fehler beim Laden des Partner-Brandings für Event-E-Mail:', e);
+        }
+
+        // 2. Den inneren HTML-Inhalt zusammenbauen
+        const formattedDate = new Date(date).toLocaleDateString('de-DE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        const contentHtml = `
             <p>Hallo,</p>
             <p><strong>${senderName}</strong> hat folgende Veranstaltung mit Ihnen geteilt:</p>
-            <hr>
-            <h3>${title}</h3>
-            <p><strong>Datum:</strong> ${new Date(date).toLocaleDateString('de-DE')}</p>
-            <p>${summary || ''}</p>
-            <p>Weitere Informationen finden Sie hier: <a href="${url}">${url}</a></p>
-            <hr>
-            <p style="font-size: 0.8em; color: #777;"><em>Diese E-Mail wurde über das KI-Dashboard versendet.</em></p>
+            <hr style="border:none;border-top:1px solid #e5e7eb;margin:12px 0;">
+            <h3 style="margin:0 0 8px;">${title}</h3>
+            <p><strong>Wann:</strong> ${formattedDate}</p>
+            <div style="white-space:pre-wrap; margin-bottom: 16px;">${summary || ''}</div>
         `;
+
+        // 3. Das schöne Template anwenden (emailTemplates.js wird hier genutzt!)
+        const subject = `Interessante Veranstaltung: ${title}`;
+        const htmlBody = renderLayout({
+            preheader: `Einladung zu: ${title}`,
+            title: fromName,
+            contentHtml,
+            ctaLabel: url ? 'Anmeldung & Details' : undefined,
+            ctaUrl: url || undefined,
+            footerText: `Gesendet von ${fromName} über das KI-Dashboard.`,
+            brandLogoUrl,
+        });
+
+        // 4. E-Mail versenden (emailService.js wird hier genutzt!)
         await sendEmail({
             to: recipientEmail,
             subject: subject,
             html: htmlBody,
-            fromName: "KI-Dashboard"
+            fromName: fromName
         });
+        
         res.status(200).json({ message: `Event erfolgreich an ${recipientEmail} gesendet.` });
     } catch (error) {
         console.error('Fehler beim Teilen des Events:', error);
@@ -2389,6 +2797,11 @@ exports.getDashboardConfig = async (req, res) => {
         bp.storage_tier, bp.storage_limit_bytes, bp.storage_usage_bytes,
         bp.dashboard_title, bp.url_businesspartner,
         bp.level_1_name, bp.level_2_name, bp.level_3_name,
+        
+        -- NEU HINZUGEFÜGT:
+        bp.allow_automated_newsletter,
+        bp.dashboard_focus,
+        
         cs.id as cs_id, cs.name as cs_name,
         cs.primary_color, cs.primary_text_color,
         cs.secondary_color,
@@ -2455,6 +2868,9 @@ exports.getDashboardConfig = async (req, res) => {
         level_1_name: r.level_1_name,
         level_2_name: r.level_2_name,
         level_3_name: r.level_3_name,
+        allow_automated_newsletter: r.allow_automated_newsletter,
+        dashboard_focus: r.dashboard_focus,
+        
         color_scheme,
       },
     });
@@ -2701,36 +3117,88 @@ const getPartnerBranding = async (bpId) => {
 };
 
 exports.getDailyBriefing = async (req, res) => {
-  const { business_partner_id: bpId, id: userId } = req.user;
-  if (!bpId) return res.status(404).json({ message: "Kein Partner zugeordnet." });
+    const { business_partner_id: bpId, id: userId } = req.user;
+    
+    if (!bpId) {
+        return res.status(404).json({ message: "Kein Partner zugeordnet." });
+    }
 
-  try {
-    const today = new Date().toISOString().slice(0, 10);
+    try {
+        console.log(`\n--- [DEBUG getDailyBriefing] Starte Abfrage ---`);
+        console.log(`User: ${userId} | BP: ${bpId}`);
 
-    // Wir holen das Briefing UND prüfen, ob der User heute schon beim Sentiment abgestimmt hat
-    const [briefingRes, sentimentRes] = await Promise.all([
-      db.query(
-        `SELECT briefing_json FROM business_partner_intelligence_briefings 
-         WHERE business_partner_id = $1 AND created_at = $2 LIMIT 1`,
-        [bpId, today]
-      ),
-      db.query(
-        `SELECT EXISTS(SELECT 1 FROM survey_responses sr 
-         JOIN survey_questions sq ON sr.question_id = sq.id
-         JOIN surveys s ON sq.survey_id = s.id
-         WHERE sr.user_id = $1 AND s.title = 'Markt-Barometer' AND s.business_partner_id = $2 
-         AND sr.created_at >= CURRENT_DATE) as "hasVotedToday"`,
-        [userId, bpId]
-      )
-    ]);
+        // =========================================================
+        // 1. DIAGNOSE: Was liegt überhaupt in der Datenbank?
+        // =========================================================
+        const diagRes = await db.query(
+            `SELECT status, COUNT(*) as cnt, MAX(created_at) as last_created 
+             FROM business_partner_intelligence_briefings 
+             WHERE business_partner_id = $1 
+             GROUP BY status`,
+            [bpId]
+        );
+        
+        if (diagRes.rows.length === 0) {
+            console.log(`[DIAGNOSE] ❌ Absolut KEINE Briefings für diesen BP in der Datenbank gefunden! (Weder Draft noch Published)`);
+        } else {
+            console.log(`[DIAGNOSE] ✅ Gefundene Einträge für diesen BP:`);
+            diagRes.rows.forEach(row => {
+                console.log(`  -> Status: '${row.status}' | Anzahl: ${row.cnt} | Neuestes: ${new Date(row.last_created).toLocaleString('de-DE')}`);
+            });
+        }
 
-    res.json({
-      market_briefing: briefingRes.rows[0]?.briefing_json || null,
-      hasVotedToday: sentimentRes.rows[0]?.hasVotedToday || false
-    });
-  } catch (err) {
-    res.status(500).json({ message: 'Fehler beim Laden des Briefings' });
-  }
+        // =========================================================
+        // 2. EIGENTLICHE ABFRAGE (Entschärft!)
+        // =========================================================
+        // Wir suchen die neuesten PUBLISHED Briefings der letzten 48 Stunden, 
+        // damit nächtliche Cronjobs (z.B. um 23:55 Uhr) am nächsten Morgen nicht verschwunden sind.
+        const briefingQuery = `
+            WITH LatestBriefing AS (
+                SELECT DATE(MAX(created_at)) as max_date
+                FROM business_partner_intelligence_briefings
+                WHERE business_partner_id = $1 
+                AND status = 'published'
+                AND created_at >= NOW() - INTERVAL '48 hours'
+            )
+            SELECT id, briefing_type, headline, analysis_summary, prognosis, talking_point, related_articles 
+            FROM business_partner_intelligence_briefings 
+            WHERE business_partner_id = $1 
+            AND status = 'published'
+            AND DATE(created_at) = (SELECT max_date FROM LatestBriefing)
+            ORDER BY id ASC
+        `;
+        
+        // Sentiment (Umfrage) - Hier erlauben wir auch 48h Kulanz für den Test
+        const sentimentQuery = `
+            SELECT EXISTS(
+                SELECT 1 FROM survey_responses sr 
+                JOIN survey_questions sq ON sr.question_id = sq.id
+                JOIN surveys s ON sq.survey_id = s.id
+                WHERE sr.user_id = $1 AND s.title = 'Markt-Barometer' AND s.business_partner_id = $2 
+                AND sr.created_at >= NOW() - INTERVAL '48 hours'
+            ) as "hasVotedToday"
+        `;
+
+        const [briefingRes, sentimentRes] = await Promise.all([
+            db.query(briefingQuery, [bpId]),
+            db.query(sentimentQuery, [userId, bpId])
+        ]);
+
+        console.log(`[getDailyBriefing] Sende ${briefingRes.rows.length} PUBLISHED Items an das Frontend.`);
+        console.log(`-------------------------------------------------\n`);
+
+        res.json({
+            items: briefingRes.rows, 
+            hasVotedToday: sentimentRes.rows[0]?.hasVotedToday || false,
+            sales_triggers: [], 
+            linkable_names: []  
+        });
+
+    } catch (err) {
+        console.error("--- SQL FEHLER IN getDailyBriefing ---");
+        console.error(err.message);
+        res.status(500).json({ message: 'Fehler beim Laden des Briefings' });
+    }
 };
 
 
@@ -3044,29 +3512,34 @@ exports.getBusinessPartnerMembersPreview = async (req, res) => {
 
 
 exports.getMarketSentiment = async (req, res) => {
-    const { id: userId, business_partner_id: bpId } = req.user;
+    // 1. SICHERER ZUGRIFF: Prüfen ob User existiert (Gast = null)
+    const userId = req.user ? req.user.id : null;
+    const bpId = req.user ? req.user.business_partner_id : null;
 
     try {
-        if (!bpId) {
-            return res.json({ active: false, message: "Kein Business Partner zugeordnet" });
-        }
+        let surveyRes;
 
-        // 1. Finde die Barometer-Umfrage DES PARTNERS
-        const surveyRes = await db.query(
-            "SELECT id FROM surveys WHERE title = 'Markt-Barometer' AND business_partner_id = $1 AND is_active = TRUE LIMIT 1",
-            [bpId]
-        );
+        // 2. SURVEY SUCHEN (Partner-Spezifisch ODER Global für Gäste)
+        if (bpId) {
+            // Variante A: Eingeloggter User -> Suche das Barometer SEINES Partners
+            surveyRes = await db.query(
+                "SELECT id FROM surveys WHERE title = 'Markt-Barometer' AND business_partner_id = $1 AND is_active = TRUE LIMIT 1",
+                [bpId]
+            );
+        } else {
+            // Variante B: Public Landingpage Gast -> Suche das globale Barometer 
+            // (Nimmt einfach das erste aktive Barometer, z.B. vom Hauptverband)
+            surveyRes = await db.query(
+                "SELECT id FROM surveys WHERE title = 'Markt-Barometer' AND is_active = TRUE LIMIT 1"
+            );
+        }
         
         if (surveyRes.rows.length === 0) {
-            return res.json({ active: false, message: "Kein Barometer für diesen Partner aktiv" });
+            return res.json({ active: false, message: "Kein aktives Barometer gefunden" });
         }
         const surveyId = surveyRes.rows[0].id;
 
-        // ... (Rest bleibt identisch: Neueste Frage holen, Votes prüfen, Statistik berechnen) ...
-        // Ab hier musst du nichts ändern, da die Logik auf 'surveyId' basiert, 
-        // und wir oben jetzt die korrekte surveyId (die des Partners) geholt haben.
-        
-        // Kopie des Rests zur Sicherheit:
+        // 3. Neueste Frage holen
         const questionRes = await db.query(`
             SELECT id, question_text, options 
             FROM survey_questions 
@@ -3076,18 +3549,22 @@ exports.getMarketSentiment = async (req, res) => {
         `, [surveyId]);
 
         if (questionRes.rows.length === 0) return res.json({ active: false });
-        
         const question = questionRes.rows[0];
 
-        // Prüfen ob User abgestimmt hat
-        const userVoteRes = await db.query(
-            "SELECT response_text FROM survey_responses WHERE question_id = $1 AND user_id = $2",
-            [question.id, userId]
-        );
-        const hasVoted = userVoteRes.rows.length > 0;
-        const userVote = hasVoted ? userVoteRes.rows[0].response_text : null;
+        // 4. Prüfen ob User abgestimmt hat (NUR wenn userId existiert!)
+        let hasVoted = false;
+        let userVote = null;
 
-        // Statistik
+        if (userId) {
+            const userVoteRes = await db.query(
+                "SELECT response_text FROM survey_responses WHERE question_id = $1 AND user_id = $2",
+                [question.id, userId]
+            );
+            hasVoted = userVoteRes.rows.length > 0;
+            userVote = hasVoted ? userVoteRes.rows[0].response_text : null;
+        }
+
+        // 5. Statistik berechnen (Diese Daten darf jeder sehen)
         const statsRes = await db.query(`
             SELECT response_text, COUNT(*) as count 
             FROM survey_responses 
@@ -3105,12 +3582,13 @@ exports.getMarketSentiment = async (req, res) => {
             else if (row.response_text === 'bearish') sentimentCounts.bearish = count;
         });
 
+        // 6. Antwort senden
         res.json({
             active: true,
             questionId: question.id,
             questionText: question.question_text,
-            hasVoted,
-            userVote,
+            hasVoted,    // Bei Gästen immer false
+            userVote,    // Bei Gästen immer null
             stats: {
                 total: totalVotes,
                 bullishPercent: totalVotes > 0 ? Math.round((sentimentCounts.bullish / totalVotes) * 100) : 0,

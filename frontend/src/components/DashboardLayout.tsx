@@ -2,13 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
     AppBar, Toolbar, Typography, Box, Drawer, List, ListItem, ListItemText,
-    IconButton, Divider, Menu, MenuItem, Tooltip, Chip,
+    IconButton, Divider, Menu, MenuItem, Tooltip, Chip, Switch,
     useTheme, useMediaQuery, Dialog, DialogContent, DialogTitle,
     Avatar, Badge
 } from '@mui/material';
 
 // Icons
 import MenuIcon from '@mui/icons-material/Menu';
+import EmailIcon from '@mui/icons-material/Email';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import SettingsIcon from '@mui/icons-material/Settings';
 import BusinessIcon from '@mui/icons-material/Business';
@@ -52,7 +53,7 @@ import GlobalSearchBar from '../components/GlobalSearchBar';
 import { useSnackbar } from '../context/SnackbarContext';
 import ContributionHistoryModal from '../components/ContributionHistoryModal';
 import DailyBriefingContent from './DailyBriefingContent';
-
+import OnboardingFlow from '../components/OnboardingFlow';
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -63,13 +64,16 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
       user, 
       businessPartner, 
       logout, 
+      updateUser,
       triggerDashboardRefresh, 
       userTags, 
       refreshUserTags 
     } = useAuth();
+    
     const { t } = useTranslation();
     const navigate = useNavigate();
     const { showSnackbar } = useSnackbar();
+    
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
     const [ad, setAd] = useState<{ id: string; content: string } | null>(null);
@@ -80,9 +84,44 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [notifAnchorEl, setNotifAnchorEl] = useState<null | HTMLElement>(null);
     const [notifications, setNotifications] = useState<any[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
+    
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
     const token = localStorage.getItem('jwt_token');
+    
+    // --- NEWSLETTER STATUS ---
+    const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in);
+    const isNewsletterAllowed = businessPartner?.allow_automated_newsletter !== false;
+    const effectiveSubscription = isNewsletterAllowed && isSubscribed;
+
+    useEffect(() => {
+        setIsSubscribed(!!user?.newsletter_opt_in);
+    }, [user?.newsletter_opt_in]);
+
+    const handleNewsletterToggle = async (e: React.MouseEvent) => {
+        e.stopPropagation(); // Verhindert, dass das Menü sich schließt
+        if (!isNewsletterAllowed) {
+            showSnackbar('Ihr Unternehmen unterstützt derzeit keinen E-Mail-Versand.', 'warning');
+            return;
+        }
+        const newValue = !isSubscribed;
+        setIsSubscribed(newValue);
+        
+        // State im Context direkt updaten, damit alle Widgets sofort reagieren
+        updateUser({ newsletter_opt_in: newValue }); 
+
+        try {
+            await apiClient.put('/api/users/me', { newsletter_opt_in: newValue });
+            showSnackbar(`E-Mail Briefing ${newValue ? 'aktiviert' : 'deaktiviert'}.`, 'success');
+        } catch {
+            // Bei Fehler: Fallback auf alten Wert
+            setIsSubscribed(!newValue);
+            updateUser({ newsletter_opt_in: !newValue });
+            showSnackbar('Fehler beim Speichern der Einstellung.', 'error');
+        }
+    };
+
+    // --- NOTIFICATIONS ---
     const fetchNotifications = useCallback(async () => {
         if (!user) return;
         try {
@@ -94,14 +133,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         }
     }, [user]);
 
-    // Polling für Notifications (alle 60 Sekunden)
     useEffect(() => {
         fetchNotifications();
         const interval = setInterval(fetchNotifications, 60000);
         return () => clearInterval(interval);
     }, [fetchNotifications]);
 
-    // --- Advertisement ---
+    // --- ADVERTISEMENT ---
     const fetchAd = useCallback(async () => {
         try {
             const { data } = await apiClient.get('/api/data/active-advertisement');
@@ -115,37 +153,23 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     }, []);
 
     useEffect(() => {
-        if (token) {
-            fetchAd();
-        }
+        if (token) fetchAd();
     }, [token, user, fetchAd]);
 
-    const handleCloseAd = async () => {
-        setIsAdVisible(false);
-    };
+    const handleCloseAd = async () => setIsAdVisible(false);
 
-    // --- Menü Handler ---
-    const handleMenu = (event: React.MouseEvent<HTMLElement>) => {
-        setAnchorEl(event.currentTarget);
-    };
+    // --- MENU HANDLERS ---
+    const handleMenu = (event: React.MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget);
+    const handleClose = () => setAnchorEl(null);
 
-    const handleClose = () => {
-        setAnchorEl(null);
-    };
-
-    // --- Notification Handler ---
-    const handleNotifClick = (event: React.MouseEvent<HTMLElement>) => {
-        setNotifAnchorEl(event.currentTarget);
-    };
-
+    const handleNotifClick = (event: React.MouseEvent<HTMLElement>) => setNotifAnchorEl(event.currentTarget);
+    
     const handleNotifClose = async () => {
         setNotifAnchorEl(null);
-        // Beim Schließen markieren wir alles als gelesen, wenn es ungelesene gab
         if (unreadCount > 0) {
             try {
                 await apiClient.put('/api/notifications/read', {});
                 setUnreadCount(0);
-                // Lokal als gelesen markieren für die UI
                 setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
             } catch (e) { console.error(e); }
         }
@@ -153,14 +177,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
     const handleNotifItemClick = (notif: any) => {
         handleNotifClose();
-        // Typen prüfen
         if (['community_comment', 'community_like', 'community_mention'].includes(notif.type)) {
             navigate('/community'); 
         } else if (notif.type === 'file_upload') {
             navigate('/files');
         }
     };
-
 
     const handleProfile = () => {
         navigate('/profile');
@@ -174,18 +196,20 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         setDrawerOpen(open);
     };
 
-const handleLogout = () => {
-        // 1. Partner-Code sichern, BEVOR wir ausloggen (sonst sind die Daten weg)
+    const handleLogout = () => {
+        // 1. Partner-Code sichern, BEVOR wir ausloggen
         const partnerCode = businessPartner?.id ? businessPartner.id.slice(-8) : null;
 
-        // 2. Ausloggen (löscht Token und User-State)
-        logout();
+        // 2. WICHTIG: Event tracken, BEVOR posthog durch logout() resettet wird!
         posthog.capture('user_logged_out');
+
+        // 3. Ausloggen (löscht Token, User-State und macht den PostHog Reset)
+        logout();
         
-        // 3. Ziel-URL bestimmen (mit Partner-Parameter, falls vorhanden)
+        // 4. Ziel-URL mit dem korrekten Code-Parameter zusammensetzen
         const targetUrl = partnerCode ? `/login?partner=${partnerCode}` : '/login';
 
-        // 4. Weiterleiten mit Feedback-Nachricht
+        // 5. Weiterleiten mit Feedback-Nachricht
         navigate(targetUrl, { 
             state: { 
                 snackbarMessage: 'Sie wurden erfolgreich abgemeldet.',
@@ -208,31 +232,16 @@ const handleLogout = () => {
         }
     };
     
-    const handleSearchOpen = () => {
-        setSearchOpen(true);
-    };
+    const handleSearchOpen = () => setSearchOpen(true);
+    const handleSearchClose = () => setSearchOpen(false);
+    const handleBriefingOpen = () => setBriefingOpen(true);
+    const handleBriefingClose = () => setBriefingOpen(false);
 
-    const handleSearchClose = () => {
-        setSearchOpen(false);
-    };
-
-    const handleBriefingOpen = () => {
-        setBriefingOpen(true);
-    };
-    const handleBriefingClose = () => {
-        setBriefingOpen(false);
-    };
-
-    const dashboardTitle = businessPartner?.dashboard_title || businessPartner?.name || 'Fleet KI-Dashboard';
-
+    const dashboardTitle = businessPartner?.dashboard_title || businessPartner?.name || 'KI-Dashboard';
+    const showOnboarding = user && user.has_completed_onboarding === false && user.role !== 'demo';
 
     const drawerContent = (
-        <Box
-            sx={{ width: 250 }}
-            role="presentation"
-            onClick={toggleDrawer(false)}
-            onKeyDown={toggleDrawer(false)}
-        >
+        <Box sx={{ width: 250 }} role="presentation" onClick={toggleDrawer(false)} onKeyDown={toggleDrawer(false)}>
             <Toolbar />
             <Divider />
             <List>
@@ -244,10 +253,7 @@ const handleLogout = () => {
                 <Divider sx={{ my: 1 }} />
                 {user?.role === 'assistenz' && (
                    <>
-                        <ListItem button component={RouterLink} to="/admin/briefing-editorial">
-                            <HistoryEduIcon sx={{ mr: 2, color: theme.palette.primary.main }} />
-                            <ListItemText primary="Briefing Redaktion" />
-                        </ListItem>
+                        <ListItem button component={RouterLink} to="/admin/briefing-editorial"><HistoryEduIcon sx={{ mr: 2 }} /><ListItemText primary="Briefing Redaktion" /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/users"><GroupIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.userManagement')} /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/surveys"><PollIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.surveys')} /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/community"><ForumIcon sx={{ mr: 2 }} /><ListItemText primary="Community Moderation" /></ListItem>
@@ -316,8 +322,8 @@ const handleLogout = () => {
                     {businessPartner?.logo_url && (
                     <Box
                         sx={{
-                        height: 40, // Konstante Höhe für das AppBar-Alignment
-                        maxWidth: { xs: 140, sm: 220, md: 300 }, // Dynamische Breite für rechteckige Logos
+                        height: 40,
+                        maxWidth: { xs: 140, sm: 220, md: 300 },
                         mr: 2,
                         display: 'flex',
                         alignItems: 'center',
@@ -329,9 +335,9 @@ const handleLogout = () => {
                         src={businessPartner?.logo_url}
                         alt={businessPartner?.name ?? 'Logo'}
                         sx={{
-                            maxHeight: '100%', // Nutzt die vollen 40px Höhe aus
-                            maxWidth: '100%',  // Verhindert das Ausbrechen bei breiten Logos
-                            objectFit: 'contain', // Das wichtigste Attribut gegen Abschneiden
+                            maxHeight: '100%',
+                            maxWidth: '100%',  
+                            objectFit: 'contain', 
                             width: 'auto',
                             height: 'auto',
                             display: 'block'
@@ -357,11 +363,7 @@ const handleLogout = () => {
                             <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
                                 <Box sx={{ flexGrow: 1, maxWidth: '50%' }}><GlobalSearchBar /></Box>
                                 <Tooltip title="Tägliches Briefing anzeigen">
-                                    <IconButton
-                                        color="inherit"
-                                        onClick={handleBriefingOpen}
-                                        sx={{ ml: 2 }}
-                                    >
+                                    <IconButton color="inherit" onClick={handleBriefingOpen} sx={{ ml: 2 }}>
                                         <InsightsIcon />
                                     </IconButton>
                                 </Tooltip>
@@ -387,13 +389,7 @@ const handleLogout = () => {
                                 </Box>
                                 </Tooltip>
                                 <Tooltip title="Meine Themen im Profil bearbeiten">
-                                    <IconButton
-                                        component={RouterLink}
-                                        to="/profile#my-tags"
-                                        color="inherit"
-                                        size="small"
-                                        sx={{ ml: 1 }}
-                                    >
+                                    <IconButton component={RouterLink} to="/profile#my-tags" color="inherit" size="small" sx={{ ml: 1 }}>
                                         <TuneIcon />
                                     </IconButton>
                                 </Tooltip>
@@ -417,7 +413,6 @@ const handleLogout = () => {
                             </Tooltip>
                             )}
 
-                            {/* ✅ NEU: BENACHRICHTIGUNGEN (GLOCKE) */}
                             <IconButton color="inherit" onClick={handleNotifClick} sx={{ mr: 1 }}>
                                 <Badge badgeContent={unreadCount} color="error">
                                     <NotificationsIcon />
@@ -462,7 +457,6 @@ const handleLogout = () => {
                                     ))
                                 )}
                             </Menu>
-                            {/* ----------------------------------- */}
                             
                             <IconButton 
                                 size="large" 
@@ -497,8 +491,33 @@ const handleLogout = () => {
                                         <Divider />
                                     </Box>
                                 )}
+                                
+                                <MenuItem onClick={handleNewsletterToggle} disabled={!isNewsletterAllowed}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', gap: 3 }}>
+                                        <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <EmailIcon fontSize="small" color="action" />
+                                            E-Mail Briefing
+                                        </Typography>
+                                        <Switch 
+                                            size="small" 
+                                            checked={effectiveSubscription} 
+                                            disableRipple
+                                            sx={{ pointerEvents: 'none' }}
+                                        />
+                                    </Box>
+                                </MenuItem>
+                                {!isNewsletterAllowed && (
+                                    <Typography variant="caption" color="error" sx={{ px: 2, pb: 1, display: 'block', maxWidth: 220, whiteSpace: 'normal', lineHeight: 1.2 }}>
+                                        Der automatische Versand wurde durch Ihre Organisation deaktiviert.
+                                    </Typography>
+                                )}
+                                
+                                <Divider sx={{ my: 1 }} />
+                                
                                 <MenuItem onClick={handleProfile}>{t('layout.myProfile')} {user.role && `(${user.role})`}</MenuItem>
-                                <MenuItem onClick={handleLogout}>{t('layout.logout')} </MenuItem>
+                                <MenuItem onClick={handleLogout} sx={{ color: 'error.main' }}>
+                                    <LogoutIcon fontSize="small" sx={{ mr: 1 }} /> {t('layout.logout')} 
+                                </MenuItem>
                             </Menu>
                         </div>
                     )}
@@ -568,7 +587,15 @@ const handleLogout = () => {
                 open={historyModalOpen} 
                 onClose={() => setHistoryModalOpen(false)} 
                 currentUserScore={user?.contribution_score || 0}
-            />            
+            />      
+            {showOnboarding && (
+                <OnboardingFlow 
+                    open={showOnboarding} 
+                    onComplete={() => {
+                        triggerDashboardRefresh(); 
+                    }} 
+                />
+            )}      
         </Box>
     );
 };

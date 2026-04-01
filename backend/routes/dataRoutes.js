@@ -16,7 +16,7 @@ router.get('/ai-content', dataController.getAiContent);
 router.get('/scraped-content', dataController.getScrapedContent);
 router.get('/scraped-content-counts', dataController.getScrapedContentCounts);
 router.get('/tax-changes', dataController.getTaxChanges);
-router.get('/fleet-news', dataController.getFleetAssociationNews);
+// router.get('/fleet-news', dataController.getFleetAssociationNews);
 router.get('/traffic-regions', dataController.getUniqueTrafficRegions);
 router.get('/bp-scraped-content', dataController.getBpScrapedContent);
 router.get('/vignettes', dataController.getVignettePrices);

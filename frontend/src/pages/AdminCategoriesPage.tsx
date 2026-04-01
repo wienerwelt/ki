@@ -12,19 +12,17 @@ import SearchIcon from '@mui/icons-material/Search';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 
-// KORREKTUR 1: Interface erweitern
 interface Category {
     id: string;
     name: string;
     name_lang: string | null;
     name_lang_en: string | null;
     description: string | null;
-    category_type: 'industry' | 'content' | 'community'; // <--- community HINZUGEFÜGT
+    category_type: 'industry' | 'content' | 'community'; 
     created_at: string;
     updated_at: string;
 }
 
-// ... (Sortier-Helferfunktionen bleiben unverändert) ...
 type Order = 'asc' | 'desc';
 
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
@@ -51,18 +49,19 @@ const AdminCategoriesPage: React.FC = () => {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingCategory, setEditingCategory] = useState<Category | null>(null);
     
-    // KORREKTUR 2: State-Typdefinition erweitern
     const [formState, setFormState] = useState({ 
         name: '', 
         name_lang: '', 
         name_lang_en: '', 
         description: '', 
-        category_type: 'content' as 'industry' | 'content' | 'community' // <--- Typ hier auch anpassen!
+        category_type: 'content' as 'industry' | 'content' | 'community' 
     });
     
     const [dialogError, setDialogError] = useState<string | null>(null);
 
+    // Filter & Sortierung
     const [searchTerm, setSearchTerm] = useState('');
+    const [typeFilter, setTypeFilter] = useState<string>('all'); // NEU: State für Typ-Filter
     const [order, setOrder] = useState<Order>('asc');
     const [orderBy, setOrderBy] = useState<keyof Category>('name');
 
@@ -154,23 +153,46 @@ const AdminCategoriesPage: React.FC = () => {
     };
 
     const sortedAndFilteredCategories = useMemo(() => {
-        let filtered = categories.filter(category =>
-            category.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (category.name_lang || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (category.name_lang_en || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (category.description || '').toLowerCase().includes(searchTerm.toLowerCase())
-        );
+        let filtered = categories.filter(category => {
+            const matchesSearch = 
+                category.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (category.name_lang || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (category.name_lang_en || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (category.description || '').toLowerCase().includes(searchTerm.toLowerCase());
+            
+            // NEU: Typen-Filter anwenden
+            const matchesType = typeFilter === 'all' || category.category_type === typeFilter;
+
+            return matchesSearch && matchesType;
+        });
+
         return filtered.sort(getComparator(order, orderBy));
-    }, [categories, searchTerm, order, orderBy]);
+    }, [categories, searchTerm, typeFilter, order, orderBy]);
 
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
                     <Typography variant="h4" component="h1">
-                        Kategorien-Verwaltung ({categories.length})
+                        Kategorien-Verwaltung ({sortedAndFilteredCategories.length})
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 2 }}>
+                        
+                        {/* NEU: Dropdown Filter für den Kategorie-Typ */}
+                        <TextField
+                            select
+                            variant="outlined"
+                            size="small"
+                            value={typeFilter}
+                            onChange={(e) => setTypeFilter(e.target.value)}
+                            sx={{ minWidth: 160 }}
+                        >
+                            <MenuItem value="all">Alle Typen</MenuItem>
+                            <MenuItem value="content">Content</MenuItem>
+                            <MenuItem value="industry">Branche</MenuItem>
+                            <MenuItem value="community">Community</MenuItem>
+                        </TextField>
+
                         <TextField
                             variant="outlined" size="small" placeholder="Suchen..."
                             value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
@@ -188,7 +210,7 @@ const AdminCategoriesPage: React.FC = () => {
                                 <TableHead>
                                     <TableRow>
                                         <TableCell sortDirection={orderBy === 'name' ? order : false}>
-                                            <TableSortLabel active={orderBy === 'name'} direction={order} onClick={() => handleSortRequest('name')}>Name (Primär)</TableSortLabel>
+                                            <TableSortLabel active={orderBy === 'name'} direction={order} onClick={() => handleSortRequest('name')}>Name (Intern)</TableSortLabel>
                                         </TableCell>
                                         <TableCell sortDirection={orderBy === 'name_lang' ? order : false}>
                                             <TableSortLabel active={orderBy === 'name_lang'} direction={order} onClick={() => handleSortRequest('name_lang')}>Name (DE)</TableSortLabel>
@@ -196,6 +218,12 @@ const AdminCategoriesPage: React.FC = () => {
                                         <TableCell sortDirection={orderBy === 'name_lang_en' ? order : false}>
                                             <TableSortLabel active={orderBy === 'name_lang_en'} direction={order} onClick={() => handleSortRequest('name_lang_en')}>Name (EN)</TableSortLabel>
                                         </TableCell>
+                                        
+                                        {/* KORREKTUR: Überschrift für den Kategorie-Typ hinzugefügt */}
+                                        <TableCell sortDirection={orderBy === 'category_type' ? order : false}>
+                                            <TableSortLabel active={orderBy === 'category_type'} direction={order} onClick={() => handleSortRequest('category_type')}>Typ</TableSortLabel>
+                                        </TableCell>
+
                                         <TableCell>Beschreibung</TableCell>
                                         <TableCell align="right">Aktionen</TableCell>
                                     </TableRow>

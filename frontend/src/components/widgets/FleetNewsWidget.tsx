@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
-    Box, Typography, Chip, Link as MuiLink, Stack, Divider, 
+    Box, Typography, Chip, Stack, 
     useTheme, useMediaQuery, FormControl, Select, MenuItem, SelectChangeEvent 
 } from '@mui/material';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps, Region } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
@@ -25,7 +26,7 @@ interface FleetNewsWidgetProps extends BaseWidgetProps {
   widgetTypeKey: string;
 }
 
-// HELPER: Flagge (analog zu EconomicStatWidget/PodcastWidget)
+// HELPER: Flagge
 const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, alt, size = 20 }) => {
   if (!code) return null;
   const c = code.toUpperCase();
@@ -39,7 +40,7 @@ const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, 
 const safeDate = (dateStr: string | undefined) => {
     if (!dateStr) return null;
     const d = new Date(dateStr);
-    return isNaN(d.getTime()) ? null : d.toLocaleDateString('de-AT');
+    return isNaN(d.getTime()) ? null : d.toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
 const FleetNewsWidget: React.FC<FleetNewsWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey }) => {
@@ -71,7 +72,6 @@ const FleetNewsWidget: React.FC<FleetNewsWidgetProps> = ({ onDelete, widgetId, i
         setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
-            // Parameter dynamisch aufbauen
             const params = new URLSearchParams({
                 category,
                 limit: '5',
@@ -89,43 +89,48 @@ const FleetNewsWidget: React.FC<FleetNewsWidgetProps> = ({ onDelete, widgetId, i
         } finally {
             setLoading(false);
         }
-    }, [category, selectedRegion]); // Hängt jetzt von selectedRegion ab
+    }, [category, selectedRegion]);
 
-    useEffect(() => {
-        fetchData();
-    }, [fetchData]);
+    useEffect(() => { fetchData(); }, [fetchData]);
 
-    // Header Title Component mit Region-Selektor
+    // NEU: Extrem aufgeräumter Header mit nahtlosem Dropdown
     const widgetTitleComponent = (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
             {icon}
             <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>{title}</Typography>
             
-            {/* Regionen Auswahl */}
             {user?.regions && user.regions.length > 1 && (
-                 <FormControl size="small" sx={{ minWidth: 80 }} onMouseDown={(e) => e.stopPropagation()}>
+                 <FormControl size="small" onMouseDown={(e) => e.stopPropagation()}>
                     <Select
                         value={selectedRegion?.id || ''}
                         variant="standard"
                         disableUnderline
+                        IconComponent={KeyboardArrowDownIcon}
                         onChange={(e: SelectChangeEvent) => {
                             const region = user?.regions?.find(r => r.id === e.target.value);
                             setSelectedRegion(region || null);
                         }}
+                        sx={{
+                            color: 'text.secondary',
+                            fontSize: '0.85rem',
+                            fontWeight: 500,
+                            '& .MuiSelect-select': { py: 0.5, pl: 1, pr: '24px !important', display: 'flex', alignItems: 'center', gap: 1 },
+                            '& svg': { color: 'text.disabled', right: 0 }
+                        }}
                         renderValue={(value) => {
                             const region = user?.regions?.find(r => r.id === value);
                             return (
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <Flag code={region?.code} alt={region?.name} />
-                                    <Typography variant="body2">{region?.code}</Typography>
-                                </Box>
+                                <>
+                                    <Flag code={region?.code} alt={region?.name} size={14} />
+                                    {region?.code}
+                                </>
                             );
                         }}
                     >
                         {user?.regions?.map((region) => (
-                            <MenuItem key={region.id} value={region.id}>
-                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <Flag code={region.code} alt={region.name} />
+                            <MenuItem key={region.id} value={region.id} sx={{ fontSize: '0.9rem' }}>
+                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                    <Flag code={region.code} alt={region.name} size={16} />
                                     {region.name}
                                 </Box>
                             </MenuItem>
@@ -141,63 +146,104 @@ const FleetNewsWidget: React.FC<FleetNewsWidgetProps> = ({ onDelete, widgetId, i
             widgetId={widgetId} 
             widgetTitle={title} 
             widgetTypeKey={widgetTypeKey}
-            title={widgetTitleComponent} // Neuer Header
+            title={widgetTitleComponent} 
             onDelete={onDelete} 
             isRemovable={isRemovable}
             loading={loading}
             error={error}
-            noPadding // Analog zu den anderen Widgets für besseren Scroll-Look
+            noPadding // Wichtig für das Edge-to-Edge Design der Liste!
         >
-            <Box sx={{ 
-                display: 'flex', 
-                flexDirection: 'column', 
-                height: isMobile ? 'auto' : '100%' 
-            }}>
-                <Box sx={{ 
-                    flexGrow: 1, 
-                    overflowY: isMobile ? 'visible' : 'auto',
-                    p: 2 // Padding hier, da noPadding im Wrapper aktiv ist
-                }}>
-                    {items.length > 0 ? (
-                        <Stack spacing={2}>
-                            {items.map((item, index) => (
-                                <Box key={item.id}>
-                                    {index > 0 && <Divider sx={{ mb: 2 }} />}
-                                    <MuiLink 
-                                        href={item.original_url} 
-                                        target="_blank" 
-                                        rel="noopener noreferrer" 
-                                        underline="hover"
-                                        color="text.primary"
-                                        sx={{ display: 'block', mb: 0.5, '&:hover': { color: 'primary.main' } }}
+            {items.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                    {items.map((item, index) => (
+                        <Box 
+                            key={item.id}
+                            component="a" // Macht das ganze Element klickbar
+                            href={item.original_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ 
+                                display: 'block',
+                                textDecoration: 'none',
+                                color: 'inherit',
+                                position: 'relative',
+                                px: { xs: 2, sm: 3 },
+                                py: 2,
+                                borderBottom: index === items.length - 1 ? 'none' : '1px solid',
+                                borderColor: 'divider',
+                                transition: 'background-color 0.2s ease',
+                                '&:hover': { bgcolor: 'action.hover' }
+                            }}
+                        >
+                            {/* UNGELESEN INDIKATOR (blauer Punkt) */}
+                            {!item.is_read && (
+                                <Box sx={{ 
+                                    position: 'absolute', 
+                                    left: { xs: 6, sm: 12 }, 
+                                    top: 24, 
+                                    width: 6, 
+                                    height: 6, 
+                                    borderRadius: '50%', 
+                                    bgcolor: 'primary.main' 
+                                }} />
+                            )}
+
+                            <Stack spacing={0.5}>
+                                <Typography 
+                                    variant="subtitle2" 
+                                    sx={{ 
+                                        fontWeight: item.is_read ? 500 : 700, 
+                                        color: item.is_read ? 'text.primary' : 'text.primary',
+                                        lineHeight: 1.3
+                                    }}
+                                >
+                                    {item.title}
+                                </Typography>
+
+                                {item.summary && (
+                                    <Typography 
+                                        variant="body2" 
+                                        color="text.secondary" 
+                                        sx={{ 
+                                            // NEU: Perfektes Abschneiden nach 2 Zeilen (Responsive)
+                                            display: '-webkit-box',
+                                            WebkitLineClamp: 2,
+                                            WebkitBoxOrient: 'vertical',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            lineHeight: 1.4
+                                        }}
                                     >
-                                        <Typography variant="subtitle2" sx={{ fontWeight: item.is_read ? 'normal' : 'bold' }}>
-                                            {item.title}
-                                        </Typography>
-                                    </MuiLink>
-                                    {item.summary && (
-                                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                                            {item.summary.length > 120 ? `${item.summary.substring(0, 120)}...` : item.summary}
+                                        {item.summary}
+                                    </Typography>
+                                )}
+
+                                {/* DEZENTERE METADATEN */}
+                                <Stack direction="row" spacing={1} sx={{ mt: '8px !important', opacity: 0.8 }}>
+                                    {safeDate(item.event_date) && (
+                                        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
+                                            {safeDate(item.event_date)}
                                         </Typography>
                                     )}
-                                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                                        {safeDate(item.event_date) && (
-                                            <Chip label={`Datum: ${safeDate(item.event_date)}`} size="small" variant="outlined" />
-                                        )}
-                                        {item.category && (
-                                            <Chip label={item.category} size="small" />
-                                        )}
-                                    </Stack>
-                                </Box>
-                            ))}
-                        </Stack>
-                    ) : (
-                        <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', p: 2 }}>
-                            Keine Nachrichten oder Veranstaltungen gefunden.
-                        </Typography>
-                    )}
+                                    {item.category && (
+                                        <Chip 
+                                            label={item.category} 
+                                            size="small" 
+                                            sx={{ height: 18, fontSize: '0.65rem', bgcolor: 'action.selected' }} 
+                                        />
+                                    )}
+                                </Stack>
+                            </Stack>
+                        </Box>
+                    ))}
                 </Box>
-            </Box>
+            ) : (
+                <Box sx={{ p: 4, textAlign: 'center' }}>
+                    <Typography variant="body2" color="text.secondary">
+                        Keine Nachrichten in dieser Region gefunden.
+                    </Typography>
+                </Box>
+            )}
         </WidgetPaper>
     );
 };

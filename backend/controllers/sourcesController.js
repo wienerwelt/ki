@@ -15,7 +15,7 @@ exports.getAllApprovedSources = async (req, res) => {
     try {
         let query = `
             SELECT 
-                s.id, s.url, s.description, s.average_rating, s.vote_count, s.created_at, 
+                s.id, s.url, s.description, s.average_rating, s.vote_count, s.created_at, s.logo_url,
                 c.name as category_name, 
                 c.name_lang as category_name_lang 
             FROM sources s
@@ -53,7 +53,7 @@ exports.getPendingSourcesForVote = async (req, res) => {
     try {
         const query = `
             SELECT 
-                s.id, s.url, s.description, s.created_at, 
+                s.id, s.url, s.description, s.created_at, s.logo_url,
                 c.name as category_name, 
                 c.name_lang as category_name_lang
             FROM sources s
@@ -153,7 +153,6 @@ exports.createSource = async (req, res) => {
     if (description) {
         description = sanitizeHtml(description, { allowedTags: [], allowedAttributes: {} });
     }
-    // --- Ende der Validierung ---
 
     // --- NEU: Transaktion starten ---
     const client = await db.connect();

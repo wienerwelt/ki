@@ -1,10 +1,9 @@
-// frontend/src/pages/AdminWidgetTypesPage.tsx
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
-    TextField, MenuItem, Switch, FormControlLabel, Tooltip, Chip, Grid, TableSortLabel, InputAdornment
+    TextField, MenuItem, Switch, FormControlLabel, Tooltip, Chip, Grid, TableSortLabel, InputAdornment,
+    List, ListItem, ListItemAvatar, ListItemText, Avatar
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -13,6 +12,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import BusinessIcon from '@mui/icons-material/Business';
 import PersonIcon from '@mui/icons-material/Person';
 import ScienceIcon from '@mui/icons-material/Science';
+import CloseIcon from '@mui/icons-material/Close';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 import { Responsive, WidthProvider, Layout } from 'react-grid-layout';
@@ -27,6 +27,8 @@ interface WidgetType {
     id: string; name: string; type_key: string; description: string | null; icon_name: string | null; is_removable: boolean; is_resizable: boolean; is_draggable: boolean; default_width: number; default_height: number; default_min_width: number; default_min_height: number; allowed_roles: string[] | null; config: any; component_key: string | null; business_partner_install_count: number; user_install_count: number;
 }
 interface RoleOption { name: string; description: string; }
+interface InstallData { id: string; name: string; detail?: string; }
+
 type Order = 'asc' | 'desc';
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
     if (orderBy === 'user_install_count' || orderBy === 'business_partner_install_count') {
@@ -54,32 +56,64 @@ const AdminWidgetTypesPage: React.FC = () => {
     const [dialogError, setDialogError] = useState<string | null>(null);
     const [openDialog, setOpenDialog] = useState(false);
     const [editingWt, setEditingWt] = useState<WidgetType | null>(null);
+    
+    // Form States
     const [formName, setFormName] = useState(''); const [formTypeKey, setFormTypeKey] = useState(''); const [formDescription, setFormDescription] = useState(''); const [formIconName, setFormIconName] = useState(''); const [formIsRemovable, setFormIsRemovable] = useState(true); const [formIsResizable, setFormIsResizable] = useState(true); const [formIsDraggable, setFormIsDraggable] = useState(true); const [formDefaultWidth, setFormDefaultWidth] = useState(4); const [formDefaultHeight, setFormDefaultHeight] = useState(6); const [formDefaultMinWidth, setFormDefaultMinWidth] = useState(3); const [formDefaultMinHeight, setFormDefaultMinHeight] = useState(4); const [formAllowedRoles, setFormAllowedRoles] = useState<string[]>([]); const [formComponentKey, setFormComponentKey] = useState(''); const [formConfig, setFormConfig] = useState('');
+    
     const [searchTerm, setSearchTerm] = useState(''); const [order, setOrder] = useState<Order>('asc'); const [orderBy, setOrderBy] = useState<keyof WidgetType>('name');
+    
+    // Test Layout States
     const [testWidget, setTestWidget] = useState<WidgetType | null>(null);
     const [testLayout, setTestLayout] = useState<Layout>({ i: 'test', w: 6, h: 8, x: 0, y: 0 });
 
-const fetchInitialData = async () => {
-    setLoading(true); 
-    setError(null);
-    try {
-        const token = localStorage.getItem('jwt_token');
-        const [widgetRes, rolesRes] = await Promise.all([
-            apiClient.get('/api/admin/widget-types', { headers: { 'x-auth-token': token } }),
-            apiClient.get('/api/admin/roles', { headers: { 'x-auth-token': token } })
-        ]);
-        setWidgetTypes(Array.isArray(widgetRes.data) ? widgetRes.data : []);
-        setRoleOptions(Array.isArray(rolesRes.data) ? rolesRes.data : []);
-        
-    } catch (err: any) {
-        setError(err.response?.data?.message || 'Fehler beim Laden der Daten.');
-        setWidgetTypes([]);
-        setRoleOptions([]);
-    } finally {
-        setLoading(false);
-    }
-};
+    // NEU: States für Installations-Details
+    const [installModal, setInstallModal] = useState<{ open: boolean; widget: WidgetType | null; type: 'bp' | 'user' }>({ open: false, widget: null, type: 'bp' });
+    const [installData, setInstallData] = useState<InstallData[]>([]);
+    const [installLoading, setInstallLoading] = useState(false);
+
+    const fetchInitialData = async () => {
+        setLoading(true); 
+        setError(null);
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const [widgetRes, rolesRes] = await Promise.all([
+                apiClient.get('/api/admin/widget-types', { headers: { 'x-auth-token': token } }),
+                apiClient.get('/api/admin/roles', { headers: { 'x-auth-token': token } })
+            ]);
+            setWidgetTypes(Array.isArray(widgetRes.data) ? widgetRes.data : []);
+            setRoleOptions(Array.isArray(rolesRes.data) ? rolesRes.data : []);
+        } catch (err: any) {
+            setError(err.response?.data?.message || 'Fehler beim Laden der Daten.');
+            setWidgetTypes([]); setRoleOptions([]);
+        } finally {
+            setLoading(false);
+        }
+    };
     useEffect(() => { fetchInitialData(); }, []);
+
+const handleOpenInstallDetails = async (wt: WidgetType, type: 'bp' | 'user') => {
+        if (type === 'bp' && wt.business_partner_install_count === 0) return;
+        if (type === 'user' && wt.user_install_count === 0) return;
+
+        setInstallModal({ open: true, widget: wt, type });
+        setInstallLoading(true);
+        setInstallData([]);
+
+        try {
+            // Echter API Call an das Backend!
+            const token = localStorage.getItem('jwt_token');
+            const res = await apiClient.get(`/api/admin/widget-types/${wt.id}/installations?type=${type}`, { 
+                headers: { 'x-auth-token': token } 
+            });
+            setInstallData(res.data);
+        } catch (err) {
+            console.error("Fehler beim Laden der Installationsdaten", err);
+        } finally {
+            setInstallLoading(false);
+        }
+    };
+
+    const handleCloseInstallDetails = () => setInstallModal({ ...installModal, open: false });
 
     const handleOpenAddDialog = () => {
         setEditingWt(null); setFormName(''); setFormTypeKey(''); setFormDescription(''); setFormIconName(''); setFormIsRemovable(true); setFormIsResizable(true); setFormIsDraggable(true); setFormDefaultWidth(4); setFormDefaultHeight(6); setFormDefaultMinWidth(3); setFormDefaultMinHeight(4); setFormAllowedRoles([]); setFormComponentKey(''); setFormConfig(''); setOpenDialog(true);
@@ -88,13 +122,16 @@ const fetchInitialData = async () => {
         setEditingWt(wt); setFormName(wt.name); setFormTypeKey(wt.type_key); setFormDescription(wt.description || ''); setFormIconName(wt.icon_name || ''); setFormIsRemovable(wt.is_removable); setFormIsResizable(wt.is_resizable); setFormIsDraggable(wt.is_draggable); setFormDefaultWidth(wt.default_width); setFormDefaultHeight(wt.default_height); setFormDefaultMinWidth(wt.default_min_width); setFormDefaultMinHeight(wt.default_min_height); setFormAllowedRoles(wt.allowed_roles || []); setFormComponentKey(wt.component_key || ''); setFormConfig(wt.config ? JSON.stringify(wt.config, null, 2) : ''); setOpenDialog(true);
     };
     const handleCloseDialog = () => { setOpenDialog(false); setEditingWt(null); setDialogError(null); };
+    
     const handleSubmit = async () => {
         setDialogError(null); let configObject = null; if (formConfig && formConfig.trim() !== '') { try { configObject = JSON.parse(formConfig); } catch (e) { setDialogError('Das "Config"-Feld enthält ungültiges JSON.'); return; } }
         const token = localStorage.getItem('jwt_token'); const wtData = { name: formName, type_key: formTypeKey, description: formDescription || null, icon_name: formIconName || null, is_removable: formIsRemovable, is_resizable: formIsResizable, is_draggable: formIsDraggable, default_width: formDefaultWidth, default_height: formDefaultHeight, default_min_width: formDefaultMinWidth, default_min_height: formDefaultMinHeight, allowed_roles: formAllowedRoles.length > 0 ? formAllowedRoles : null, component_key: formComponentKey || null, config: configObject, };
         try { if (editingWt) { await apiClient.put(`/api/admin/widget-types/${editingWt.id}`, wtData, { headers: { 'x-auth-token': token } }); } else { await apiClient.post('/api/admin/widget-types', wtData, { headers: { 'x-auth-token': token } }); } handleCloseDialog(); fetchInitialData(); } catch (err: any) { setDialogError(err.response?.data?.message || 'Fehler beim Speichern.'); }
     };
+    
     const handleDelete = async (id: string) => { if (!window.confirm('Sind Sie sicher?')) return; try { const token = localStorage.getItem('jwt_token'); await apiClient.delete(`/api/admin/widget-types/${id}`, { headers: { 'x-auth-token': token } }); fetchInitialData(); } catch (err: any) { alert(err.response?.data?.message || 'Fehler beim Löschen.'); } };
     const handleSortRequest = (property: keyof WidgetType) => { const isAsc = orderBy === property && order === 'asc'; setOrder(isAsc ? 'desc' : 'asc'); setOrderBy(property); };
+    
     const sortedAndFilteredTypes = useMemo(() => {
         let filtered = [...widgetTypes]; if (searchTerm) { const lowercasedFilter = searchTerm.toLowerCase(); filtered = widgetTypes.filter(wt => wt.name.toLowerCase().includes(lowercasedFilter) || wt.type_key.toLowerCase().includes(lowercasedFilter) || (wt.description?.toLowerCase() || '').includes(lowercasedFilter) || (wt.component_key?.toLowerCase() || '').includes(lowercasedFilter)); } return filtered.sort(getComparator(order, orderBy));
     }, [widgetTypes, searchTerm, order, orderBy]);
@@ -104,9 +141,7 @@ const fetchInitialData = async () => {
         setTestLayout({ i: 'test-widget', x: 0, y: 0, w: wt.default_width, h: wt.default_height });
     };
     const handleCloseTestModal = () => setTestWidget(null);
-    const handleTestLayoutChange = (layout: Layout[]) => {
-        if (layout[0]) { setTestLayout(layout[0]); }
-    };
+    const handleTestLayoutChange = (layout: Layout[]) => { if (layout[0]) { setTestLayout(layout[0]); } };
     
     const WidgetToTest = testWidget?.type_key ? WIDGET_COMPONENTS[testWidget.type_key] : null;
 
@@ -146,10 +181,33 @@ const fetchInitialData = async () => {
                                         <Typography variant="body2" component="div">Default: <strong>{wt.default_width} / {wt.default_height}</strong></Typography>
                                         <Typography variant="caption" color="text.secondary" component="div">Min: {wt.default_min_width} / {wt.default_min_height}</Typography>
                                     </TableCell>
+                                    
+                                    {/* NEU: Klickbare Installation Chips */}
                                     <TableCell align="center">
-                                        <Tooltip title="Business Partner Installationen"><Chip icon={<BusinessIcon fontSize="small" />} label={wt.business_partner_install_count} size="small" sx={{ mr: 0.5, mb: 0.5 }} variant="outlined" /></Tooltip>
-                                        <Tooltip title="Nutzer Installationen"><Chip icon={<PersonIcon fontSize="small" />} label={wt.user_install_count} size="small" sx={{ mb: 0.5 }} variant="outlined" /></Tooltip>
+                                        <Tooltip title={wt.business_partner_install_count > 0 ? "Partner-Installationen ansehen" : "Keine Partner-Installationen"}>
+                                            <Chip 
+                                                icon={<BusinessIcon fontSize="small" />} 
+                                                label={wt.business_partner_install_count} 
+                                                size="small" 
+                                                sx={{ mr: 0.5, mb: 0.5, cursor: wt.business_partner_install_count > 0 ? 'pointer' : 'default' }} 
+                                                color={wt.business_partner_install_count > 0 ? "primary" : "default"}
+                                                variant="outlined" 
+                                                onClick={() => handleOpenInstallDetails(wt, 'bp')}
+                                            />
+                                        </Tooltip>
+                                        <Tooltip title={wt.user_install_count > 0 ? "Nutzer-Installationen ansehen" : "Keine Nutzer-Installationen"}>
+                                            <Chip 
+                                                icon={<PersonIcon fontSize="small" />} 
+                                                label={wt.user_install_count} 
+                                                size="small" 
+                                                sx={{ mb: 0.5, cursor: wt.user_install_count > 0 ? 'pointer' : 'default' }} 
+                                                color={wt.user_install_count > 0 ? "secondary" : "default"}
+                                                variant="outlined" 
+                                                onClick={() => handleOpenInstallDetails(wt, 'user')}
+                                            />
+                                        </Tooltip>
                                     </TableCell>
+
                                     <TableCell>
                                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxWidth: 180 }}>
                                             {(wt.allowed_roles || []).map((role) => (<Chip key={role} label={role} size="small" />))}
@@ -172,6 +230,7 @@ const fetchInitialData = async () => {
                     </Table></TableContainer></Paper>
                 )}
                 
+                {/* --- Dialog: Formular --- */}
                 <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
                     <DialogTitle>{editingWt ? 'Widget-Typ bearbeiten' : 'Neuen Widget-Typ hinzufügen'}</DialogTitle>
                     <DialogContent>
@@ -213,6 +272,7 @@ const fetchInitialData = async () => {
                     </DialogActions>
                 </Dialog>
 
+                {/* --- Dialog: Test Layout --- */}
                 <Dialog open={!!testWidget} onClose={handleCloseTestModal} fullWidth maxWidth="lg">
                     <DialogTitle>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -248,6 +308,39 @@ const fetchInitialData = async () => {
                     <DialogActions>
                         <Button onClick={handleCloseTestModal}>Schließen</Button>
                     </DialogActions>
+                </Dialog>
+
+                {/* --- NEU: Dialog: Installations-Details --- */}
+                <Dialog open={installModal.open} onClose={handleCloseInstallDetails} fullWidth maxWidth="sm">
+                    <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Typography variant="h6">
+                            Installationen: {installModal.widget?.name}
+                        </Typography>
+                        <IconButton onClick={handleCloseInstallDetails} size="small"><CloseIcon /></IconButton>
+                    </DialogTitle>
+                    <DialogContent dividers sx={{ minHeight: 200 }}>
+                        {installLoading ? (
+                            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress /></Box>
+                        ) : installData.length === 0 ? (
+                            <Typography color="text.secondary" align="center" sx={{ py: 4 }}>Keine Einträge gefunden.</Typography>
+                        ) : (
+                            <List>
+                                {installData.map((item) => (
+                                    <ListItem key={item.id} divider>
+                                        <ListItemAvatar>
+                                            <Avatar sx={{ bgcolor: installModal.type === 'bp' ? 'primary.main' : 'secondary.main' }}>
+                                                {installModal.type === 'bp' ? <BusinessIcon /> : <PersonIcon />}
+                                            </Avatar>
+                                        </ListItemAvatar>
+                                        <ListItemText 
+                                            primary={item.name} 
+                                            secondary={item.detail || `ID: ${item.id}`} 
+                                        />
+                                    </ListItem>
+                                ))}
+                            </List>
+                        )}
+                    </DialogContent>
                 </Dialog>
 
             </Container>

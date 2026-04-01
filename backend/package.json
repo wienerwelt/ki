@@ -40,7 +40,7 @@
     "dotenv": "^16.6.1",
     "express": "^4.19.2",
     "geoip-lite": "^1.4.10",
-    "google-auth-library": "^10.1.0",
+    "google-auth-library": "^10.6.2",
     "ioredis": "^5.7.0",
     "jsdom": "^26.1.0",
     "jsonwebtoken": "^9.0.2",

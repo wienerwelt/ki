@@ -26,7 +26,6 @@ exports.getSystemHealth = async (req, res) => {
         .catch(err => ({ status: 'offline', error: err.message }));
 
     // 3. Worker Check (mit DEBUGGING)
-    // HIER BITTE PRÜFEN: Heißen deine Worker-Dateien/Variablen exakt so?
     const workersToCheck = ['aiWorker', 'scrapeWorker', 'emailWorker', 'dataUpdateWorker', 'fundingWorker'];
     
     const workerPromise = (async () => {
@@ -72,8 +71,31 @@ exports.getSystemHealth = async (req, res) => {
             return errorResult;
         }
     })();
+
+    // --- NEU: 4. S3 Speicherplatz-Check über die eigene Datenbank ---
+    const s3Promise = (async () => {
+        try {
+            const s3StatsResult = await db.query(`
+                SELECT 
+                    COUNT(*) as file_count, 
+                    COALESCE(SUM(file_size), 0) as total_size_bytes 
+                FROM business_partner_files
+            `);
+            
+            const count = parseInt(s3StatsResult.rows[0].file_count, 10);
+            const totalSizeBytes = parseInt(s3StatsResult.rows[0].total_size_bytes, 10);
+            const sizeMb = totalSizeBytes / (1024 * 1024); // Umrechnung in MB
+            
+            return { count, sizeMb };
+        } catch (err) {
+            console.error('[StatusCheck] Fehler beim Abrufen der S3 Statistiken:', err.message);
+            // Fallback, damit das Dashboard nicht abstürzt, wenn die DB-Tabelle fehlt
+            return { count: 0, sizeMb: 0 }; 
+        }
+    })();
     
-    const [dbResult, redisResult, workerResult] = await Promise.all([dbPromise, redisPromise, workerPromise]);
+    // Alle 4 Checks parallel ausführen (maximale Performance)
+    const [dbResult, redisResult, workerResult, s3Result] = await Promise.all([dbPromise, redisPromise, workerPromise, s3Promise]);
     
     const uptimeInSeconds = process.uptime();
     const d = Math.floor(uptimeInSeconds / (3600*24));
@@ -88,7 +110,12 @@ exports.getSystemHealth = async (req, res) => {
             uptime: `${d}d ${h}h ${m}m`,
             memoryUsage: process.memoryUsage(),
             currentTime: new Date().toISOString(),
-            version: packageJson.version || '1.0.0'
+            version: packageJson.version || '1.0.0',
+            // --- NEU: Das Objekt für das Frontend einfügen ---
+            s3Storage: {
+                sizeMb: s3Result.sizeMb,
+                count: s3Result.count
+            }
         }
     });
 };

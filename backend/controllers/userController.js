@@ -1,14 +1,9 @@
 // backend/controllers/userController.js
 const db = require('../config/db');
 const bcrypt = require('bcryptjs');
-
-// NEU: Importiere S3-Abhängigkeiten (analog zu adminBpActionsController.js)
-// HINZUGEFÜGT: DeleteObjectCommand
 const { PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const s3Client = require("../config/s3Client.js");
 const { v4: uuidv4 } = require('uuid');
-
-// NEU: Sharp für die Bildkomprimierung importieren
 const sharp = require('sharp');
 
 
@@ -316,15 +311,25 @@ exports.getContributionHistory = async (req, res) => {
 
 // --- FAVORITEN-FUNKTIONEN ---
 exports.getFavorites = async (req, res) => {
-    // ... (Diese Funktion bleibt unverändert)
     const { id: userId } = req.user;
     const { widgetType } = req.query;
-    if (!widgetType) return res.status(400).json({ message: 'Widget-Typ ist erforderlich.' });
+
+    if (!widgetType) {
+        return res.status(400).json({ message: 'Widget-Typ ist erforderlich.' });
+    }
+
     try {
         const { rows } = await db.query(
-            `SELECT * FROM user_favorites WHERE user_id = $1 AND favorite_type = $2 ORDER BY created_at ASC`,
+            `
+            SELECT *
+            FROM user_favorites
+            WHERE user_id = $1
+              AND favorite_type = $2
+            ORDER BY updated_at DESC, created_at DESC
+            `,
             [userId, widgetType]
         );
+
         res.json(rows);
     } catch (err) {
         console.error('Fehler beim Abrufen der Benutzerfavoriten:', err.message);
@@ -334,35 +339,150 @@ exports.getFavorites = async (req, res) => {
 
 
 exports.addFavorite = async (req, res) => {
-    // ... (Diese Funktion bleibt unverändert)
     const { id: userId } = req.user;
     const { widgetType, favorite } = req.body;
+
     if (!widgetType || !favorite || !favorite.external_id) {
-        return res.status(400).json({ message: 'Widget-Typ und Favorit mit external_id sind erforderlich.' });
+        return res.status(400).json({
+            message: 'Widget-Typ und Favorit mit external_id sind erforderlich.'
+        });
     }
+
     try {
-        const {
-            external_id, name, country_code, brand, street,
-            house_no, post_code, city, lat, lng, provider,
-            operator_name, charge_point_count, power_kw, connector_types
-        } = favorite;
+        const favoriteType = String(widgetType).trim();
+        const external_id = String(favorite.external_id).trim();
+
+        const name = favorite.name ?? null;
+        const country_code = favorite.country_code ? String(favorite.country_code).toUpperCase() : null;
+        const brand = favorite.brand ?? null;
+        const street = favorite.street ?? null;
+        const house_no = favorite.house_no ?? null;
+        const post_code = favorite.post_code ?? null;
+        const city = favorite.city ?? null;
+
+        const lat = favorite.lat !== undefined && favorite.lat !== null ? Number(favorite.lat) : null;
+        const lng = favorite.lng !== undefined && favorite.lng !== null ? Number(favorite.lng) : null;
+
+        const last_diesel = favorite.last_diesel !== undefined && favorite.last_diesel !== null
+            ? Number(favorite.last_diesel)
+            : null;
+
+        const last_e5 = favorite.last_e5 !== undefined && favorite.last_e5 !== null
+            ? Number(favorite.last_e5)
+            : null;
+
+        const last_e10 = favorite.last_e10 !== undefined && favorite.last_e10 !== null
+            ? Number(favorite.last_e10)
+            : null;
+
+        const last_status = favorite.last_status ?? null;
+        const last_price_ts = favorite.last_price_ts ? new Date(favorite.last_price_ts) : new Date();
+
+        const provider = favorite.provider ?? null;
+
+        const operator_name = favorite.operator_name ?? null;
+        const charge_point_count = favorite.charge_point_count !== undefined && favorite.charge_point_count !== null
+            ? Number(favorite.charge_point_count)
+            : null;
+
+        const power_kw = favorite.power_kw !== undefined && favorite.power_kw !== null
+            ? Number(favorite.power_kw)
+            : null;
+
+        const connector_types = Array.isArray(favorite.connector_types)
+            ? favorite.connector_types
+            : null;
 
         const query = `
             INSERT INTO user_favorites (
-                user_id, favorite_type, external_id, name, country_code, brand,
-                street, house_no, post_code, city, lat, lng, provider,
-                operator_name, charge_point_count, power_kw, connector_types
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-            ON CONFLICT (user_id, favorite_type, external_id) DO NOTHING;
+                user_id,
+                favorite_type,
+                external_id,
+                name,
+                country_code,
+                brand,
+                street,
+                house_no,
+                post_code,
+                city,
+                lat,
+                lng,
+                last_diesel,
+                last_e5,
+                last_e10,
+                last_status,
+                last_price_ts,
+                provider,
+                operator_name,
+                charge_point_count,
+                power_kw,
+                connector_types,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16, $17, $18,
+                $19, $20, $21, $22,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (user_id, favorite_type, external_id)
+            DO UPDATE SET
+                name               = EXCLUDED.name,
+                country_code       = EXCLUDED.country_code,
+                brand              = EXCLUDED.brand,
+                street             = EXCLUDED.street,
+                house_no           = EXCLUDED.house_no,
+                post_code          = EXCLUDED.post_code,
+                city               = EXCLUDED.city,
+                lat                = EXCLUDED.lat,
+                lng                = EXCLUDED.lng,
+                last_diesel        = EXCLUDED.last_diesel,
+                last_e5            = EXCLUDED.last_e5,
+                last_e10           = EXCLUDED.last_e10,
+                last_status        = EXCLUDED.last_status,
+                last_price_ts      = EXCLUDED.last_price_ts,
+                provider           = EXCLUDED.provider,
+                operator_name      = EXCLUDED.operator_name,
+                charge_point_count = EXCLUDED.charge_point_count,
+                power_kw           = EXCLUDED.power_kw,
+                connector_types    = EXCLUDED.connector_types,
+                updated_at         = CURRENT_TIMESTAMP
+            RETURNING *;
         `;
+
         const params = [
-            userId, widgetType, external_id, name, country_code, brand,
-            street, house_no, post_code, city, lat, lng, provider,
-            operator_name, charge_point_count, power_kw, connector_types
+            userId,
+            favoriteType,
+            external_id,
+            name,
+            country_code,
+            brand,
+            street,
+            house_no,
+            post_code,
+            city,
+            Number.isFinite(lat) ? lat : null,
+            Number.isFinite(lng) ? lng : null,
+            Number.isFinite(last_diesel) ? last_diesel : null,
+            Number.isFinite(last_e5) ? last_e5 : null,
+            Number.isFinite(last_e10) ? last_e10 : null,
+            last_status,
+            last_price_ts,
+            provider,
+            operator_name,
+            Number.isFinite(charge_point_count) ? charge_point_count : null,
+            Number.isFinite(power_kw) ? power_kw : null,
+            connector_types
         ];
 
-        await db.query(query, params);
-        res.status(201).json({ message: 'Favorit hinzugefügt.' });
+        const { rows } = await db.query(query, params);
+
+        res.status(201).json({
+            message: 'Favorit gespeichert.',
+            favorite: rows[0]
+        });
     } catch (err) {
         console.error('Fehler beim Hinzufügen des Favoriten:', err.message);
         res.status(500).json({ message: 'Serverfehler.' });
@@ -371,18 +491,27 @@ exports.addFavorite = async (req, res) => {
 
 
 exports.removeFavorite = async (req, res) => {
-    // ... (Diese Funktion bleibt unverändert)
     const { id: userId } = req.user;
-    const { externalId } = req.params; // Name aus userRoutes.js
+    const { externalId } = req.params;
     const { widgetType } = req.query;
+
     if (!widgetType || !externalId) {
-        return res.status(400).json({ message: 'Widget-Typ und Favoriten-ID sind erforderlich.' });
+        return res.status(400).json({
+            message: 'Widget-Typ und Favoriten-ID sind erforderlich.'
+        });
     }
+
     try {
         await db.query(
-            'DELETE FROM user_favorites WHERE user_id = $1 AND favorite_type = $2 AND external_id = $3',
+            `
+            DELETE FROM user_favorites
+            WHERE user_id = $1
+              AND favorite_type = $2
+              AND external_id = $3
+            `,
             [userId, widgetType, externalId]
         );
+
         res.status(200).json({ message: 'Favorit entfernt.' });
     } catch (err) {
         console.error('Fehler beim Entfernen des Favoriten:', err.message);

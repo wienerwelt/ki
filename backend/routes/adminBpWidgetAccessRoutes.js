@@ -8,8 +8,12 @@ const adminBpWidgetAccessController = require('../controllers/adminBpWidgetAcces
 router.use(adminAuth);
 
 router.get('/', adminBpWidgetAccessController.getAllBpWidgetAccess);
-router.get('/:bpId', adminBpWidgetAccessController.getBpWidgetAccessByBpId); // Get all widgets for a specific BP
-router.post('/grant', adminBpWidgetAccessController.grantWidgetAccess); // Using /grant to distinguish from general GET
+
+// NEU: Route für die Installationsdetails (Muss vor den anderen IDs stehen um Konflikte zu vermeiden)
+router.get('/:bpId/widget/:widgetId/installations', adminBpWidgetAccessController.getWidgetInstallationsByBp);
+
+router.get('/:bpId', adminBpWidgetAccessController.getBpWidgetAccessByBpId); 
+router.post('/grant', adminBpWidgetAccessController.grantWidgetAccess); 
 router.delete('/revoke/:bpId/:widgetId', adminBpWidgetAccessController.revokeWidgetAccess);
 
 module.exports = router;

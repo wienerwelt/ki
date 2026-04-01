@@ -34,6 +34,7 @@ export interface UserPayload {
   role: string;
   business_partner_id: string | null;
   business_partner_name: string | null;
+  business_partner_category?: string | null; // <--- NEU HINZUGEFÜGT
   dashboard_title: string | null;
   regions: Region[] | null;
   contribution_score: number;
@@ -49,6 +50,7 @@ export interface UserPayload {
   preferred_language?: 'de' | 'en';
   newsletter_opt_in?: boolean;
   profile_image_url?: string | null;
+  has_completed_onboarding?: boolean;
 }
 
 export interface BusinessPartnerData {
@@ -63,6 +65,9 @@ export interface BusinessPartnerData {
   storage_usage_bytes: number;
   color_scheme: ColorScheme | null;
   dashboard_title?: string | null;
+  allow_automated_newsletter?: boolean;
+  dashboard_focus?: 'information' | 'sales';
+  favicon_url?: string;
 }
 
 interface DecodedTokenAny {
@@ -124,10 +129,12 @@ function extractUserFromDecoded(decoded: DecodedTokenAny): Partial<UserPayload> 
     username: rawUser.username || null,
     role: rawUser.role || 'user',
     business_partner_id: rawUser.business_partner_id ?? null,
+    business_partner_category: rawUser.business_partner_category ?? null,
     regions: rawUser.regions ?? [],
     preferred_theme: rawUser.preferred_theme,
     preferred_language: rawUser.preferred_language,
     contribution_score: rawUser.contribution_score ?? 0,
+    has_completed_onboarding: rawUser.has_completed_onboarding ?? false,
   } as Partial<UserPayload>;
 }
 
@@ -143,9 +150,41 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
   const [userTags, setUserTags] = useState<string[]>([]);
 
+useEffect(() => {
+    const syncPostHogConsent = () => {
+      const consentStr = localStorage.getItem('cookie_preferences');
+      if (consentStr) {
+        try {
+          const consent = JSON.parse(consentStr);
+          if (consent.analytics === true) {
+            posthog.opt_in_capturing(); // Tracking AN
+          } else {
+            posthog.opt_out_capturing(); // Tracking AUS
+          }
+        } catch (e) {
+          console.error("Fehler beim Lesen der Cookie-Präferenzen", e);
+        }
+      } else {
+        // Fallback: Wenn noch nichts bestätigt wurde, bleibt Tracking strikt aus
+        posthog.opt_out_capturing(); 
+      }
+    };
+
+    // 1. Direkt beim Start der App prüfen
+    syncPostHogConsent();
+
+    // 2. Auf Klicks im Cookie-Banner oder der Settings-Seite lauschen
+    window.addEventListener('cookie_consent_updated', syncPostHogConsent);
+
+    return () => {
+      window.removeEventListener('cookie_consent_updated', syncPostHogConsent);
+    };
+  }, []);
+  // ==========================================
+
   const triggerDashboardRefresh = () => {
     setDashboardRefreshKey(prevKey => prevKey + 1);
-  };  
+  };
 
   const updateUser = useCallback((newUserData: Partial<UserPayload>) => {
     setUser((prevUser) => {
@@ -189,7 +228,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [user]);
 
-// frontend/src/context/AuthContext.tsx
 
 const setPartnerByCode = useCallback(async (code: string) => {
   if (!code) return;
@@ -247,26 +285,38 @@ const setPartnerByCode = useCallback(async (code: string) => {
   }, [updateUser]);
 
 
-  useEffect(() => {
-    const bootstrap = async () => {
-      setIsLoading(true);
-      setConfigLoaded(false);
-      setUserTags([]); 
-      const token = getStoredToken();
-      if (token) {
-        await initializeFromToken(token);
-        if (getStoredToken()) { 
-             try {
-                 await refreshUser(); 
-             } catch (refreshError) {
-                  console.error("Fehler beim initialen User-Refresh:", refreshError);
-             }
-        }
-      }
-      setIsLoading(false); 
-    };
-    bootstrap();
-  }, [initializeFromToken, refreshUser]);
+useEffect(() => {
+    const bootstrap = async () => {
+      setIsLoading(true);
+      setConfigLoaded(false);
+      setUserTags([]); 
+
+      // === SSO TOKEN CATCHER ===
+      // Prüfen, ob wir gerade von Google/LinkedIn kommen und einen Token in der URL haben
+      const params = new URLSearchParams(window.location.search);
+      const urlToken = params.get('token');
+      if (urlToken) {
+        setStoredToken(urlToken); // Token in den localStorage retten
+        // URL sofort bereinigen (Token aus der Adressleiste des Browsers löschen)
+        window.history.replaceState({}, document.title, window.location.pathname); 
+      }
+      // ==========================
+
+      const token = getStoredToken();
+      if (token) {
+        await initializeFromToken(token);
+        if (getStoredToken()) { 
+             try {
+                 await refreshUser(); 
+             } catch (refreshError) {
+                  console.error("Fehler beim initialen User-Refresh:", refreshError);
+             }
+        }
+      }
+      setIsLoading(false); 
+    };
+    bootstrap();
+  }, [initializeFromToken, refreshUser]);
 
   useEffect(() => {
      if (user && !isLoading && !configLoaded) {

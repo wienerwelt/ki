@@ -19,7 +19,7 @@ function TabPanel(props: TabPanelProps) {
     const { children, value, index, ...other } = props;
     return (
         <div role="tabpanel" hidden={value !== index} {...other}>
-            {value === index && <Box sx={{ p: { xs: 1, sm: 2, md: 3 } }}>{children}</Box>}
+            {value === index && <Box sx={{ p: { xs: 2, sm: 3 } }}>{children}</Box>}
         </div>
     );
 }
@@ -48,59 +48,59 @@ const TrustedSourcesPage: React.FC = () => {
 
     useEffect(() => { refreshUserScore(); }, []);
 
-    const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
-        setTabIndex(newValue);
-    };
+const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
+    setTabIndex(newValue);
+};
 
     return (
         <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
             {/* Header Bereich */}
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
-                <Typography variant="h4" component="h1">
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
+                <Typography variant="h4" component="h1" fontWeight="bold">
                     Vertrauenswürdige Quellen
                 </Typography>
                 
                 {/* Info Box Stimmkraft */}
                 <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
                     <Tooltip title={`Mit ${contributionScore} Punkten zählt Ihre Stimme ${votePower}-fach.`}>
-                        <Paper elevation={2} sx={{ p: '4px 12px', borderRadius: '16px', display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Typography variant="h6" component="span" color="primary">
-                                Stimmkraft: <strong>x{votePower}</strong>
+                        <Paper elevation={1} sx={{ p: '6px 16px', borderRadius: 2, display: 'flex', alignItems: 'center', gap: 1, bgcolor: 'background.default' }}>
+                            <Typography variant="body1" component="span" fontWeight="medium" color="primary.main">
+                                Stimmkraft: <Box component="span" sx={{ fontSize: '1.1rem', fontWeight: 'bold' }}>x{votePower}</Box>
                             </Typography>
-                            <InfoOutlinedIcon fontSize="small" color="action" />
+                            <InfoOutlinedIcon fontSize="small" color="primary" />
                         </Paper>
                     </Tooltip>
                 </Box>
             </Box>
 
-            {/* Demo Alert (volle Breite über dem Content) */}
-            {isDemo && <Alert severity="info" sx={{ mb: 2 }}>Einige Funktionen sind im Demo-Modus deaktiviert.</Alert>}
+            {/* Demo Alert */}
+            {isDemo && <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>Einige Funktionen sind im Demo-Modus deaktiviert.</Alert>}
 
             {/* Hauptinhalt */}
-            <Paper>
-                <Tabs value={tabIndex} onChange={handleTabChange} centered variant="scrollable" scrollButtons="auto">
-                    <Tab label="Quellen durchsuchen" />
-                    <Tab label="Abstimmen" />
-                    <Tab label="Neue Quelle vorschlagen" />
-                </Tabs>
+            <Paper sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'background.default' }}>
+                    <Tabs value={tabIndex} onChange={handleTabChange} centered variant="scrollable" scrollButtons="auto">
+                        <Tab label="Quellen durchsuchen" sx={{ fontWeight: 'bold' }} />
+                        <Tab label="Abstimmen" sx={{ fontWeight: 'bold' }} />
+                        <Tab label="Neue Quelle vorschlagen" sx={{ fontWeight: 'bold' }} />
+                    </Tabs>
+                </Box>
                 
                 <TabPanel value={tabIndex} index={0}>
                     <BrowseSourcesList />
                 </TabPanel>
                 
                 <TabPanel value={tabIndex} index={1}>
-                    {/* Demo-Schutz für Abstimmung */}
                     {isDemo ? (
-                        <Alert severity="warning">Das Abstimmen über Quellen ist für Demo-Benutzer deaktiviert.</Alert>
+                        <Alert severity="warning" sx={{ borderRadius: 2 }}>Das Abstimmen über Quellen ist für Demo-Benutzer deaktiviert.</Alert>
                     ) : (
                         <VoteSourcesList />
                     )}
                 </TabPanel>
                 
                 <TabPanel value={tabIndex} index={2}>
-                    {/* Demo-Schutz für Vorschläge */}
                     {isDemo ? (
-                        <Alert severity="warning">Das Vorschlagen neuer Quellen ist für Demo-Benutzer deaktiviert.</Alert>
+                        <Alert severity="warning" sx={{ borderRadius: 2 }}>Das Vorschlagen neuer Quellen ist für Demo-Benutzer deaktiviert.</Alert>
                     ) : (
                         <ProposeSourceForm onSuccess={refreshUserScore} />
                     )}

@@ -1,0 +1,58 @@
+services:
+  postgres:
+    ports:
+      - "5434:5432"
+
+  redis:
+    ports:
+      - "6381:6379"
+
+  api:
+    command: npm run dev:api
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    env_file:
+      - .env
+
+  worker-ai:
+    command: npm run dev:ai
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    env_file:
+      - .env 
+
+  worker-scrape:
+    command: npm run dev:scrape
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    env_file:
+      - .env
+
+  worker-mail:
+    command: npm run dev:mail
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    env_file:
+      - .env
+
+  worker-data:
+    command: npm run dev:data
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    env_file:
+      - .env
+
+  worker-funding:
+    command: npm run dev:funding
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    env_file:
+      - .env

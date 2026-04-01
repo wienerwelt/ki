@@ -14,6 +14,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import LinkIcon from '@mui/icons-material/Link';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import ScienceIcon from '@mui/icons-material/Science';
+import ClearIcon from '@mui/icons-material/Clear';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
@@ -39,7 +40,7 @@ interface UnifiedContent {
 }
 
 interface ScrapingRuleOption { id: string; source_identifier: string; name?: string; }
-interface Category { id: string; name: string; }
+interface Category { id: string; name: string; category_type?: string; }
 interface Tag { id: string; name: string; }
 interface Region { id: string; name: string; }
 type Order = 'asc' | 'desc';
@@ -93,9 +94,13 @@ const AdminScrapedContentPage: React.FC = () => {
     const [formState, setFormState] = useState(initialFormState);
     const [page, setPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
+    
+    // Filter States
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [regionFilter, setRegionFilter] = useState('');
+    const [categoryFilter, setCategoryFilter] = useState(''); 
+    
     const query = useQuery();
     const sourceIdentifierFilter = query.get('source_identifier');
     const navigate = useNavigate();
@@ -132,6 +137,7 @@ const AdminScrapedContentPage: React.FC = () => {
             if (startDate) params.append('startDate', startDate);
             if (endDate) params.append('endDate', endDate);
             if (regionFilter) params.append('region', regionFilter);
+            if (categoryFilter) params.append('category_id', categoryFilter); 
 
             const contentRes = await apiClient.get(`/api/admin/scraped-content?${params.toString()}`, { headers: { 'x-auth-token': token } });
             const { data, total } = contentRes.data;
@@ -146,7 +152,7 @@ const AdminScrapedContentPage: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    }, [sourceIdentifierFilter, startDate, endDate, regionFilter]);
+    }, [sourceIdentifierFilter, startDate, endDate, regionFilter, categoryFilter]);
 
     useEffect(() => {
         fetchStaticData();
@@ -159,6 +165,16 @@ const AdminScrapedContentPage: React.FC = () => {
     const handleApplyFilter = () => {
         setContent([]);
         fetchContent(1, true);
+    };
+
+    const handleClearAllFilters = () => {
+        setSearchTerm('');
+        setStartDate('');
+        setEndDate('');
+        setRegionFilter('');
+        setCategoryFilter('');
+        if (sourceIdentifierFilter) navigate('/admin/scraped-content'); 
+        setTimeout(() => handleApplyFilter(), 0);
     };
     
     const handleLoadMore = () => {
@@ -325,6 +341,8 @@ const AdminScrapedContentPage: React.FC = () => {
         }
     };
 
+    const contentCategories = useMemo(() => allCategories.filter(c => c.category_type === 'content'), [allCategories]);
+
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
@@ -349,46 +367,46 @@ const AdminScrapedContentPage: React.FC = () => {
                     </Box>
                 </Box>
                 
-                <Paper sx={{ p: 2, mb: 3, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <TextField 
-                        variant="outlined" 
-                        size="small" 
-                        placeholder="Suchen..." 
-                        value={searchTerm} 
-                        onChange={(e) => setSearchTerm(e.target.value)} 
-                        InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>), }} 
-                        sx={{ flexGrow: 1, minWidth: '200px' }} 
-                    />
-                    <TextField 
-                        select 
-                        label="Region" 
-                        size="small" 
-                        value={regionFilter} 
-                        onChange={e => setRegionFilter(e.target.value)} 
-                        sx={{ minWidth: 180 }}
-                    >
-                        <MenuItem value=""><em>Alle Regionen</em></MenuItem>
-                        {(allRegions || []).map((region) => (
-                            <MenuItem key={region.id} value={region.name}>{region.name}</MenuItem>
-                        ))}
-                    </TextField>
-                    <TextField 
-                        label="Start-Datum" 
-                        type="date" 
-                        size="small" 
-                        InputLabelProps={{ shrink: true }} 
-                        value={startDate} 
-                        onChange={e => setStartDate(e.target.value)} 
-                    />
-                    <TextField 
-                        label="End-Datum" 
-                        type="date" 
-                        size="small" 
-                        InputLabelProps={{ shrink: true }} 
-                        value={endDate} 
-                        onChange={e => setEndDate(e.target.value)} 
-                    />
-                    <Button variant="contained" startIcon={<FilterListIcon />} onClick={handleApplyFilter}>Filtern</Button>
+                <Paper sx={{ p: 2, mb: 3 }}>
+                    <Grid container spacing={2} alignItems="center">
+                        <Grid item xs={12} sm={6} md={3}>
+                            <TextField 
+                                variant="outlined" size="small" placeholder="Suchen..." fullWidth
+                                value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} 
+                                InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }} 
+                            />
+                        </Grid>
+                        <Grid item xs={6} sm={3} md={2}>
+                            <TextField select label="Kategorie" size="small" fullWidth value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}>
+                                <MenuItem value=""><em>Alle Kategorien</em></MenuItem>
+                                {contentCategories.map((cat) => (
+                                    <MenuItem key={cat.id} value={cat.id}>{cat.name}</MenuItem>
+                                ))}
+                            </TextField>
+                        </Grid>
+                        <Grid item xs={6} sm={3} md={2}>
+                            <TextField select label="Region" size="small" fullWidth value={regionFilter} onChange={e => setRegionFilter(e.target.value)}>
+                                <MenuItem value=""><em>Alle Regionen</em></MenuItem>
+                                {(allRegions || []).map((region) => (
+                                    <MenuItem key={region.id} value={region.name}>{region.name}</MenuItem>
+                                ))}
+                            </TextField>
+                        </Grid>
+                        <Grid item xs={6} sm={3} md={1.5}>
+                            <TextField label="Start" type="date" size="small" fullWidth InputLabelProps={{ shrink: true }} value={startDate} onChange={e => setStartDate(e.target.value)} />
+                        </Grid>
+                        <Grid item xs={6} sm={3} md={1.5}>
+                            <TextField label="Ende" type="date" size="small" fullWidth InputLabelProps={{ shrink: true }} value={endDate} onChange={e => setEndDate(e.target.value)} />
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={2} sx={{ display: 'flex', gap: 1 }}>
+                            <Button variant="contained" fullWidth startIcon={<FilterListIcon />} onClick={handleApplyFilter}>Filtern</Button>
+                            <Tooltip title="Filter zurücksetzen">
+                                <IconButton onClick={handleClearAllFilters} color="default" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                                    <ClearIcon />
+                                </IconButton>
+                            </Tooltip>
+                        </Grid>
+                    </Grid>
                 </Paper>
 
                 {loading && content.length === 0 ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box> 
@@ -396,8 +414,9 @@ const AdminScrapedContentPage: React.FC = () => {
                 : (
                     <>
                     <Paper>
-                        <TableContainer sx={{ maxHeight: '70vh' }}>
-                            <Table stickyHeader>
+                        {/* KORREKTUR: maxHeight und stickyHeader entfernt -> Tabelle wächst natürlich */}
+                        <TableContainer>
+                            <Table size="small">
                                 <TableHead>
                                     <TableRow>
                                         <TableCell padding="checkbox">
@@ -407,14 +426,17 @@ const AdminScrapedContentPage: React.FC = () => {
                                                 onChange={handleSelectAllClick}
                                             />
                                         </TableCell>
-                                        <TableCell>Bild</TableCell>
-                                        <TableCell sortDirection={orderBy === 'source_identifier' ? order : false}><TableSortLabel active={orderBy === 'source_identifier'} direction={order} onClick={() => handleSortRequest('source_identifier')}>Quelle</TableSortLabel></TableCell>
-                                        <TableCell sortDirection={orderBy === 'title' ? order : false}><TableSortLabel active={orderBy === 'title'} direction={order} onClick={() => handleSortRequest('title')}>Titel</TableSortLabel></TableCell>
-                                        <TableCell sortDirection={orderBy === 'category' ? order : false}><TableSortLabel active={orderBy === 'category'} direction={order} onClick={() => handleSortRequest('category')}>Kategorie</TableSortLabel></TableCell>
+                                        <TableCell sortDirection={orderBy === 'title' ? order : false}>
+                                            <TableSortLabel active={orderBy === 'title'} direction={order} onClick={() => handleSortRequest('title')}>Beitrag</TableSortLabel>
+                                        </TableCell>
+                                        <TableCell sortDirection={orderBy === 'category' ? order : false}>
+                                            <TableSortLabel active={orderBy === 'category'} direction={order} onClick={() => handleSortRequest('category')}>Kategorie</TableSortLabel>
+                                        </TableCell>
                                         <TableCell>Tags</TableCell>
-                                        <TableCell align="center" sortDirection={orderBy === 'relevance_score' ? order : false}><TableSortLabel active={orderBy === 'relevance_score'} direction={order} onClick={() => handleSortRequest('relevance_score')}>Relevanz</TableSortLabel></TableCell>
-                                        <TableCell sortDirection={orderBy === 'published_date' ? order : false}><TableSortLabel active={orderBy === 'published_date'} direction={order} onClick={() => handleSortRequest('published_date')}>Datum</TableSortLabel></TableCell>
-                                        <TableCell>Aktionen</TableCell>
+                                        <TableCell sortDirection={orderBy === 'published_date' ? order : false}>
+                                            <TableSortLabel active={orderBy === 'published_date'} direction={order} onClick={() => handleSortRequest('published_date')}>Datum</TableSortLabel>
+                                        </TableCell>
+                                        <TableCell align="right">Aktionen</TableCell>
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
@@ -426,25 +448,52 @@ const AdminScrapedContentPage: React.FC = () => {
                                                     <Checkbox checked={isItemSelected} />
                                                 </TableCell>
                                                 <TableCell>
-                                                    {item.thumbnail_url && <Avatar variant="rounded" src={item.thumbnail_url} />}
+                                                    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                                                        {item.thumbnail_url ? (
+                                                            <Avatar variant="rounded" src={item.thumbnail_url} sx={{ width: 56, height: 56 }} />
+                                                        ) : (
+                                                            <Avatar variant="rounded" sx={{ width: 56, height: 56, bgcolor: 'action.hover' }} />
+                                                        )}
+                                                        <Box sx={{ maxWidth: 400 }}>
+                                                            <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} title={item.title}>
+                                                                {item.title}
+                                                            </Typography>
+                                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                                <Chip label={item.source_identifier} size="small" variant="outlined" color={item.data_type === 'traffic' ? 'secondary' : 'default'} sx={{ height: 20, fontSize: '0.7rem' }} />
+                                                                {item.region && <Typography variant="caption" color="text.secondary">• {item.region}</Typography>}
+                                                            </Box>
+                                                        </Box>
+                                                    </Box>
                                                 </TableCell>
-                                                <TableCell><Chip label={item.source_identifier} size="small" variant="outlined" color={item.data_type === 'traffic' ? 'secondary' : 'default'} /><Typography variant="caption" display="block" sx={{ mt: 0.5 }}>{item.rule_name || ''}</Typography></TableCell>
-                                                <TableCell sx={{ maxWidth: 350, wordBreak: 'break-word' }}>{item.title}</TableCell>
-                                                <TableCell><Chip label={item.category || '-'} size="small" /></TableCell>
-                                                <TableCell><Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{(item.tags || []).map(tag => (<Chip key={tag} label={tag} size="small" variant="filled" />))}</Box></TableCell>
-                                                <TableCell align="center">{item.relevance_score ?? '-'}</TableCell>
-                                                <TableCell>{new Date(item.published_date || item.scraped_at).toLocaleDateString('de-AT')}</TableCell>
                                                 <TableCell>
-                                                    <Tooltip title="Original-URL öffnen"><IconButton component="a" href={item.original_url} target="_blank" rel="noopener noreferrer"><LinkIcon /></IconButton></Tooltip>
-                                                    <Tooltip title="Inhalt bearbeiten"><span><IconButton onClick={() => handleOpenEditDialog(item)} disabled={item.data_type === 'traffic'}><EditIcon /></IconButton></span></Tooltip>
-                                                    <Tooltip title="KI Deep Dive: Als Förderung analysieren">
-                                                        <span>
-                                                            <IconButton onClick={() => handleDeepDive(item.id)} disabled={item.data_type === 'traffic'}>
-                                                                <ScienceIcon />
-                                                            </IconButton>
-                                                        </span>
+                                                    <Chip label={item.category || '-'} size="small" />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxWidth: 180 }}>
+                                                        {(item.tags || []).slice(0, 2).map(tag => (<Chip key={tag} label={tag} size="small" variant="filled" sx={{ height: 20, fontSize: '0.7rem' }} />))}
+                                                        {(item.tags || []).length > 2 && (
+                                                            <Tooltip title={item.tags!.slice(2).join(', ')}>
+                                                                <Chip label={`+${item.tags!.length - 2}`} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
+                                                            </Tooltip>
+                                                        )}
+                                                    </Box>
+                                                </TableCell>
+                                                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                                    {new Date(item.published_date || item.scraped_at).toLocaleDateString('de-AT')}
+                                                </TableCell>
+                                                <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                                                    <Tooltip title="Original-URL öffnen">
+                                                        <IconButton component="a" href={item.original_url} target="_blank" rel="noopener noreferrer" size="small"><LinkIcon fontSize="small" /></IconButton>
                                                     </Tooltip>
-                                                    <Tooltip title="Löschen"><span><IconButton onClick={() => handleDelete(item.id, item.data_type)}><DeleteIcon color="error" /></IconButton></span></Tooltip>
+                                                    <Tooltip title="Inhalt bearbeiten">
+                                                        <span><IconButton onClick={(e) => { e.stopPropagation(); handleOpenEditDialog(item); }} disabled={item.data_type === 'traffic'} size="small"><EditIcon fontSize="small" /></IconButton></span>
+                                                    </Tooltip>
+                                                    <Tooltip title="KI Deep Dive">
+                                                        <span><IconButton onClick={(e) => { e.stopPropagation(); handleDeepDive(item.id); }} disabled={item.data_type === 'traffic'} size="small"><ScienceIcon fontSize="small" /></IconButton></span>
+                                                    </Tooltip>
+                                                    <Tooltip title="Löschen">
+                                                        <span><IconButton onClick={(e) => { e.stopPropagation(); handleDelete(item.id, item.data_type); }} size="small"><DeleteIcon color="error" fontSize="small" /></IconButton></span>
+                                                    </Tooltip>
                                                 </TableCell>
                                             </TableRow>
                                         );
@@ -455,7 +504,7 @@ const AdminScrapedContentPage: React.FC = () => {
                     </Paper>
                     {hasMore && (
                         <Box sx={{ textAlign: 'center', mt: 2 }}>
-                            <Button onClick={handleLoadMore} disabled={loading}>
+                            <Button onClick={handleLoadMore} disabled={loading} variant="outlined">
                                 {loading ? <CircularProgress size={24} /> : 'Mehr laden'}
                             </Button>
                         </Box>
@@ -463,35 +512,36 @@ const AdminScrapedContentPage: React.FC = () => {
                     </>
                 )}
                 
-                <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
+                <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="lg">
                     <DialogTitle>{editingContent ? 'Inhalt bearbeiten' : 'Neuen Inhalt hinzufügen'}</DialogTitle>
-                    <DialogContent>
+                    <DialogContent dividers>
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-                        <TextField select name="source_identifier" label="Source Identifier" fullWidth value={formState.source_identifier} onChange={handleFormChange} margin="dense" required disabled={!!editingContent}>
-                            <MenuItem value=""><em>Wählen Sie eine Quellen-ID</em></MenuItem>
-                            {sourceIdentifierOptions.map((opt) => ( <MenuItem key={opt.id} value={opt.source_identifier}>{opt.name || opt.source_identifier}</MenuItem>))}
-                        </TextField>
-                        <TextField name="title" label="Titel" fullWidth value={formState.title} onChange={handleFormChange} margin="dense" required />
-                        <TextField name="original_url" label="Original URL" fullWidth value={formState.original_url} onChange={handleFormChange} margin="dense" required />
-                        <TextField name="thumbnail_url" label="Thumbnail URL" fullWidth value={formState.thumbnail_url} onChange={handleFormChange} margin="dense" />
-                        <TextField name="summary" label="Zusammenfassung" fullWidth multiline rows={3} value={formState.summary} onChange={handleFormChange} margin="dense" />
-                        <TextField name="full_text" label="Volltext" fullWidth multiline rows={5} value={formState.full_text} onChange={handleFormChange} margin="dense" />
-                        <Grid container spacing={2}>
-                            <Grid item xs={6}><TextField name="published_date" label="Veröffentlichungsdatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formState.published_date} onChange={handleFormChange} margin="dense" /></Grid>
-                            <Grid item xs={6}><TextField name="event_date" label="Veranstaltungsdatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formState.event_date} onChange={handleFormChange} margin="dense" /></Grid>
-                        </Grid>
-                        <Grid container spacing={2}>
-                            <Grid item xs={6}>
+                        <Grid container spacing={3} sx={{ mt: 0.5 }}>
+                            <Grid item xs={12} md={6}>
+                                <TextField select name="source_identifier" label="Source Identifier" fullWidth value={formState.source_identifier} onChange={handleFormChange} size="small" required>
+                                    <MenuItem value=""><em>Wählen Sie eine Quellen-ID</em></MenuItem>
+                                    {sourceIdentifierOptions.map((opt) => ( <MenuItem key={opt.id} value={opt.source_identifier}>{opt.name || opt.source_identifier}</MenuItem>))}
+                                </TextField>
+                            </Grid>
+                            <Grid item xs={12} md={6}>
+                                <TextField name="original_url" label="Original URL" fullWidth value={formState.original_url} onChange={handleFormChange} size="small" required />
+                            </Grid>
+
+                            <Grid item xs={12}>
+                                <TextField name="title" label="Titel" fullWidth value={formState.title} onChange={handleFormChange} size="small" required />
+                            </Grid>
+
+                            <Grid item xs={12} md={6}>
                                  <Autocomplete
                                     options={allCategories}
                                     getOptionLabel={(option) => option.name}
                                     value={allCategories.find(c => c.id === formState.category_id) || null}
                                     onChange={(_, newValue) => { setFormState(p => ({...p, category_id: newValue?.id || null})); }}
                                     isOptionEqualToValue={(option, value) => option.id === value.id}
-                                    renderInput={(params) => <TextField {...params} label="Kategorie" margin="dense" />}
+                                    renderInput={(params) => <TextField {...params} label="Kategorie" size="small" />}
                                 />
                             </Grid>
-                            <Grid item xs={6}>
+                            <Grid item xs={12} md={6}>
                                 <Autocomplete
                                     multiple
                                     options={allTags}
@@ -499,26 +549,44 @@ const AdminScrapedContentPage: React.FC = () => {
                                     value={formState.tags}
                                     onChange={(_, newValue) => { setFormState(p => ({...p, tags: newValue})); }}
                                     isOptionEqualToValue={(option, value) => option.id === value.id}
-                                    renderTags={(value, getTagProps) => value.map((option, index) => (<Chip label={option.name} {...getTagProps({ index })} />))}
-                                    renderInput={(params) => <TextField {...params} label="Tags" margin="dense" placeholder="Tags auswählen" />}
+                                    renderTags={(value, getTagProps) => value.map((option, index) => (<Chip label={option.name} size="small" {...getTagProps({ index })} />))}
+                                    renderInput={(params) => <TextField {...params} label="Tags" size="small" placeholder="Tags auswählen" />}
                                 />
                             </Grid>
-                        </Grid>
-                        <Grid container spacing={2}>
-                            <Grid item xs={6}><TextField name="relevance_score" label="Relevanz Score" type="number" fullWidth value={formState.relevance_score} onChange={handleFormChange} margin="dense" /></Grid>
-                            <Grid item xs={6}>
-                                <TextField select name="region" label="Region" fullWidth value={formState.region} onChange={handleFormChange} margin="dense">
+
+                            <Grid item xs={12} md={4}>
+                                <TextField name="published_date" label="Veröffentlichungsdatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formState.published_date} onChange={handleFormChange} size="small" />
+                            </Grid>
+                            <Grid item xs={12} md={4}>
+                                <TextField name="event_date" label="Veranstaltungsdatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formState.event_date} onChange={handleFormChange} size="small" />
+                            </Grid>
+                            <Grid item xs={12} md={4}>
+                                <TextField select name="region" label="Region" fullWidth value={formState.region} onChange={handleFormChange} size="small">
                                     <MenuItem value=""><em>Alle Regionen</em></MenuItem>
                                     {(allRegions || []).map((region) => (
                                         <MenuItem key={region.id} value={region.name}>{region.name}</MenuItem>
                                     ))}
                                 </TextField>
                             </Grid>
+
+                            <Grid item xs={12} md={10}>
+                                <TextField name="thumbnail_url" label="Thumbnail URL" fullWidth value={formState.thumbnail_url} onChange={handleFormChange} size="small" />
+                            </Grid>
+                            <Grid item xs={12} md={2}>
+                                <TextField name="relevance_score" label="Relevanz Score" type="number" fullWidth value={formState.relevance_score} onChange={handleFormChange} size="small" />
+                            </Grid>
+
+                            <Grid item xs={12} md={6}>
+                                <TextField name="summary" label="Zusammenfassung" fullWidth multiline rows={6} value={formState.summary} onChange={handleFormChange} />
+                            </Grid>
+                            <Grid item xs={12} md={6}>
+                                <TextField name="full_text" label="Volltext" fullWidth multiline rows={6} value={formState.full_text} onChange={handleFormChange} />
+                            </Grid>
                         </Grid>
                     </DialogContent>
-                    <DialogActions>
-                        <Button onClick={handleCloseDialog}>Abbrechen</Button>
-                        <Button onClick={handleSubmit} disabled={loading}>{editingContent ? 'Speichern' : 'Hinzufügen'}</Button>
+                    <DialogActions sx={{ px: 3, py: 2 }}>
+                        <Button onClick={handleCloseDialog} color="inherit">Abbrechen</Button>
+                        <Button onClick={handleSubmit} disabled={loading} variant="contained">{editingContent ? 'Speichern' : 'Hinzufügen'}</Button>
                     </DialogActions>
                 </Dialog>
             </Container>

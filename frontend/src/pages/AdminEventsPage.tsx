@@ -1,16 +1,17 @@
-// frontend/src/pages/AdminEventsPage.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     Container, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
     IconButton, Tooltip, Dialog, DialogTitle, DialogContent, TextField, DialogActions, Button,
     Alert, CircularProgress, Box, InputAdornment, TableSortLabel, Link as MuiLink, Grid,
-    FormControl, InputLabel, Select, MenuItem, useTheme, alpha
+    MenuItem, useTheme, alpha, Chip, Divider, Avatar
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import AddIcon from '@mui/icons-material/Add';
+import EventIcon from '@mui/icons-material/Event'; 
+import ClearIcon from '@mui/icons-material/Clear'; 
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 
@@ -22,13 +23,15 @@ interface ScrapedEvent {
     source_identifier: string;
     region: string | null;
     summary: string | null;
+    thumbnail_url?: string | null;
+    businessPartnerId?: string | null;
+    category_id?: string | null;     
+    category_name?: string | null;   
 }
 
-// NEU: Interface für Regionen
-interface Region {
-    name: string;
-    code: string;
-}
+interface Region { name: string; code: string; }
+interface BusinessPartner { id: string; name: string; }
+interface Category { id: string; name: string; category_type?: string; }
 
 type Order = 'asc' | 'desc';
 
@@ -40,10 +43,10 @@ function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
     return 0;
 }
 
-function getComparator<Key extends keyof any>(
+function getComparator<Key extends keyof ScrapedEvent>(
     order: Order,
     orderBy: Key,
-): (a: { [key in Key]: any }, b: { [key in Key]: any }) => number {
+): (a: ScrapedEvent, b: ScrapedEvent) => number {
     return order === 'desc'
         ? (a, b) => descendingComparator(a, b, orderBy)
         : (a, b) => -descendingComparator(a, b, orderBy);
@@ -52,7 +55,10 @@ function getComparator<Key extends keyof any>(
 const AdminEventsPage: React.FC = () => {
     const theme = useTheme();
     const [events, setEvents] = useState<ScrapedEvent[]>([]);
-    const [regions, setRegions] = useState<Region[]>([]); // NEU: State für Regionen
+    const [regions, setRegions] = useState<Region[]>([]);
+    const [businessPartners, setBusinessPartners] = useState<BusinessPartner[]>([]); 
+    const [categories, setCategories] = useState<Category[]>([]); 
+    
     const [editingEvent, setEditingEvent] = useState<Partial<ScrapedEvent> | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -65,11 +71,13 @@ const AdminEventsPage: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [yearFilter, setYearFilter] = useState<string>('all');
     const [monthFilter, setMonthFilter] = useState<string>('all');
+    const [bpFilter, setBpFilter] = useState<string>('all'); 
+    
     const [order, setOrder] = useState<Order>('desc');
     const [orderBy, setOrderBy] = useState<keyof ScrapedEvent>('event_date');
 
     const currentYear = new Date().getFullYear();
-    const years = [currentYear, currentYear + 1];
+    const years = [currentYear, currentYear + 1, currentYear + 2];
     const months = Array.from({ length: 12 }, (_, i) => i + 1);
 
     const fetchData = async () => {
@@ -79,47 +87,54 @@ const AdminEventsPage: React.FC = () => {
             const token = localStorage.getItem('jwt_token');
             const headers = { headers: { 'x-auth-token': token } };
             
-            // Lade Events und Regionen parallel für bessere Performance
-            const [eventsRes, regionsRes] = await Promise.all([
+            const [eventsRes, regionsRes, bpRes, catRes] = await Promise.all([
                 apiClient.get('/api/admin/scraped-content/events', headers),
-                apiClient.get('/api/admin/scraped-content/regions', headers)
+                apiClient.get('/api/admin/scraped-content/regions', headers),
+                apiClient.get('/api/admin/business-partners', headers),
+                apiClient.get('/api/admin/categories', headers) 
             ]);
 
-            if (Array.isArray(eventsRes.data)) {
-                setEvents(eventsRes.data);
-            } else {
-                console.error("Received non-array response for events:", eventsRes.data);
-                throw new Error('Events konnten nicht geladen werden, da ein unerwartetes Datenformat empfangen wurde.');
-            }
-
-            if (Array.isArray(regionsRes.data)) {
-                setRegions(regionsRes.data);
-            } else {
-                console.error("Received non-array response for regions:", regionsRes.data);
-                // Optional: Fehler für Regionen setzen, aber App nicht blockieren
-            }
+            setEvents(Array.isArray(eventsRes.data) ? eventsRes.data : []);
+            setRegions(Array.isArray(regionsRes.data) ? regionsRes.data : []);
+            setBusinessPartners(Array.isArray(bpRes.data) ? bpRes.data : []);
+            setCategories(Array.isArray(catRes.data) ? catRes.data : []);
+            
         } catch (err: any) {
             setError(err.response?.data?.message || err.message || 'Daten konnten nicht geladen werden.');
-            setEvents([]);
         } finally {
             setLoading(false);
         }
     };
 
-    useEffect(() => {
-        fetchData();
-    }, []);
+    useEffect(() => { fetchData(); }, []);
+
+    const getBpNameFromSource = (sourceIdentifier: string) => {
+        if (!sourceIdentifier || sourceIdentifier === 'global_events') return 'Global';
+        const bpId = sourceIdentifier.split('_')[0];
+        const bp = businessPartners.find(b => b.id === bpId);
+        return bp ? bp.name : 'Unbekannter Mandant';
+    };
 
     const handleOpenDialog = (event?: ScrapedEvent) => {
         if (event) {
             setIsCreateMode(false);
+            const isGlobal = event.source_identifier === 'global_events';
+            const bpId = isGlobal ? '' : event.source_identifier.split('_')[0];
+
             setEditingEvent({
                 ...event,
                 event_date: event.event_date ? new Date(event.event_date).toISOString().split('T')[0] : '',
+                businessPartnerId: bpId,
+                category_id: event.category_id || '',
+                source_identifier: event.source_identifier || '', // NEU
             });
         } else {
             setIsCreateMode(true);
-            setEditingEvent({ title: '', event_date: '', region: '', summary: '', original_url: '' });
+            setEditingEvent({ 
+                title: '', event_date: '', region: '', summary: '', 
+                original_url: '', thumbnail_url: '', businessPartnerId: '', 
+                category_id: '', source_identifier: 'global_events' // Standardwert
+            });
         }
         setDialogError(null);
         setDialogOpen(true);
@@ -146,21 +161,14 @@ const AdminEventsPage: React.FC = () => {
                 await apiClient.put(`/api/admin/scraped-content/events/${editingEvent.id}`, dataToSend, { headers: { 'x-auth-token': token } });
             }
             handleCloseDialog();
-            fetchData(); // Neu laden, um Änderungen zu sehen
+            fetchData(); 
         } catch (err: any) {
             setDialogError(err.response?.data?.message || 'Ein unbekannter Fehler ist aufgetreten.');
         }
     };
 
-    const handleOpenDeleteConfirm = (event: ScrapedEvent) => {
-        setEventToDelete(event);
-        setDeleteConfirmOpen(true);
-    };
-
-    const handleCloseDeleteConfirm = () => {
-        setEventToDelete(null);
-        setDeleteConfirmOpen(false);
-    };
+    const handleOpenDeleteConfirm = (event: ScrapedEvent) => { setEventToDelete(event); setDeleteConfirmOpen(true); };
+    const handleCloseDeleteConfirm = () => { setEventToDelete(null); setDeleteConfirmOpen(false); };
 
     const handleDelete = async () => {
         if (!eventToDelete) return;
@@ -168,7 +176,7 @@ const AdminEventsPage: React.FC = () => {
             const token = localStorage.getItem('jwt_token');
             await apiClient.delete(`/api/admin/scraped-content/${eventToDelete.id}?dataType=content`, { headers: { 'x-auth-token': token } });
             handleCloseDeleteConfirm();
-            fetchData(); // Neu laden
+            fetchData();
         } catch (err: any) {
             setError(err.response?.data?.message || 'Event konnte nicht gelöscht werden.');
             handleCloseDeleteConfirm();
@@ -181,97 +189,171 @@ const AdminEventsPage: React.FC = () => {
         setOrderBy(property);
     };
 
+    const handleClearFilters = () => {
+        setSearchTerm('');
+        setYearFilter('all');
+        setMonthFilter('all');
+        setBpFilter('all');
+    };
+
     const sortedAndFilteredEvents = useMemo(() => {
         if (!Array.isArray(events)) return [];
         let filtered = events
-            .filter(event =>
-                event.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                event.source_identifier.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (event.region || '').toLowerCase().includes(searchTerm.toLowerCase())
-            )
+            .filter(event => {
+                const searchLower = searchTerm.toLowerCase();
+                const bpName = getBpNameFromSource(event.source_identifier).toLowerCase();
+                return (
+                    event.title.toLowerCase().includes(searchLower) ||
+                    (event.region || '').toLowerCase().includes(searchLower) ||
+                    (event.summary || '').toLowerCase().includes(searchLower) || 
+                    (event.category_name || '').toLowerCase().includes(searchLower) || 
+                    (event.source_identifier || '').toLowerCase().includes(searchLower) || 
+                    bpName.includes(searchLower) 
+                );
+            })
             .filter(event => {
                 if (!event.event_date) return yearFilter === 'all' && monthFilter === 'all';
                 const eventDate = new Date(event.event_date);
                 const yearMatch = yearFilter === 'all' || eventDate.getFullYear() === parseInt(yearFilter);
                 const monthMatch = monthFilter === 'all' || (eventDate.getMonth() + 1) === parseInt(monthFilter);
                 return yearMatch && monthMatch;
+            })
+            .filter(event => {
+                if (bpFilter === 'all') return true;
+                if (bpFilter === 'global') return event.source_identifier === 'global_events';
+                return event.source_identifier.startsWith(bpFilter);
             });
+            
         return filtered.sort(getComparator(order, orderBy));
-    }, [events, searchTerm, order, orderBy, yearFilter, monthFilter]);
+    }, [events, searchTerm, order, orderBy, yearFilter, monthFilter, bpFilter, businessPartners]); 
 
-    const handleDialogChange = (field: keyof ScrapedEvent, value: any) => {
+    const handleDialogChange = (field: string, value: any) => {
         setEditingEvent(prev => prev ? { ...prev, [field]: value } : null);
     };
+
+    const eventCategories = useMemo(() => {
+        return categories.filter(c => 
+            c.name.toLowerCase().includes('event') || 
+            (c.category_type && c.category_type.toLowerCase().includes('event'))
+        );
+    }, [categories]);
 
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
-                    <Typography variant="h4" component="h1">Events ({sortedAndFilteredEvents.length})</Typography>
-                    <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpenDialog()}>
+                    <Typography variant="h4" component="h1">Events verwalten ({sortedAndFilteredEvents.length})</Typography>
+                    <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpenDialog()} sx={{ borderRadius: 2 }}>
                         Neues Event
                     </Button>
                 </Box>
 
-                <Paper sx={{ p: 2, mb: 3 }}>
+                <Paper sx={{ p: 2, mb: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }} elevation={0}>
                     <Grid container spacing={2} alignItems="center">
-                        <Grid item xs={12} md={6}>
+                        <Grid item xs={12} sm={6} md={4}>
                             <TextField
-                                fullWidth variant="outlined" size="small" placeholder="Events nach Titel, Quelle, Region suchen..."
+                                fullWidth variant="outlined" size="small" placeholder="Suchen (Titel, Ort, Mandant, Kategorie...)"
                                 value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
                                 InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }}
                             />
                         </Grid>
-                        <Grid item xs={6} md={3}>
-                            <FormControl fullWidth size="small">
-                                <InputLabel>Jahr</InputLabel>
-                                <Select value={yearFilter} label="Jahr" onChange={(e) => setYearFilter(e.target.value)}>
-                                    <MenuItem value="all">Alle Jahre</MenuItem>
-                                    {years.map(y => <MenuItem key={y} value={y}>{y}</MenuItem>)}
-                                </Select>
-                            </FormControl>
+                        <Grid item xs={6} sm={6} md={3}>
+                            <TextField 
+                                select fullWidth size="small" label="Zuweisung (Mandant)" 
+                                value={bpFilter} onChange={(e) => setBpFilter(e.target.value)}
+                            >
+                                <MenuItem value="all">Alle anzeigen</MenuItem>
+                                <MenuItem value="global">Nur Globale Events</MenuItem>
+                                <Divider />
+                                {businessPartners.map(bp => <MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>)}
+                            </TextField>
                         </Grid>
-                        <Grid item xs={6} md={3}>
-                            <FormControl fullWidth size="small">
-                                <InputLabel>Monat</InputLabel>
-                                <Select value={monthFilter} label="Monat" onChange={(e) => setMonthFilter(e.target.value)}>
-                                    <MenuItem value="all">Alle Monate</MenuItem>
-                                    {months.map(m => <MenuItem key={m} value={m}>{new Date(2000, m - 1).toLocaleString('de-AT', { month: 'long' })}</MenuItem>)}
-                                </Select>
-                            </FormControl>
+                        <Grid item xs={6} sm={3} md={2}>
+                            <TextField select fullWidth size="small" label="Jahr" value={yearFilter} onChange={(e) => setYearFilter(e.target.value)}>
+                                <MenuItem value="all">Alle Jahre</MenuItem>
+                                {years.map(y => <MenuItem key={y} value={String(y)}>{y}</MenuItem>)}
+                            </TextField>
+                        </Grid>
+                        <Grid item xs={6} sm={3} md={2}>
+                            <TextField select fullWidth size="small" label="Monat" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)}>
+                                <MenuItem value="all">Alle Monate</MenuItem>
+                                {months.map(m => <MenuItem key={m} value={String(m)}>{new Date(2000, m - 1).toLocaleString('de-AT', { month: 'long' })}</MenuItem>)}
+                            </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={1} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                            <Tooltip title="Filter zurücksetzen">
+                                <IconButton onClick={handleClearFilters} color="default" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                                    <ClearIcon />
+                                </IconButton>
+                            </Tooltip>
                         </Grid>
                     </Grid>
                 </Paper>
 
-                {loading ? <CircularProgress /> : error ? <Alert severity="error">{error}</Alert> :
-                    <Paper>
+                {loading ? <Box display="flex" justifyContent="center" p={5}><CircularProgress /></Box> : error ? <Alert severity="error">{error}</Alert> :
+                    <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
                         <TableContainer>
-                            <Table>
-                                <TableHead>
+                            <Table size="small">
+                                <TableHead sx={{ bgcolor: 'action.hover' }}>
                                     <TableRow>
-                                        <TableCell sx={{ width: '45%' }}><TableSortLabel active={orderBy === 'title'} direction={order} onClick={() => handleSortRequest('title')}>Titel</TableSortLabel></TableCell>
+                                        <TableCell>Bild</TableCell>
+                                        <TableCell sx={{ width: '40%' }}><TableSortLabel active={orderBy === 'title'} direction={order} onClick={() => handleSortRequest('title')}>Beitrag & Zuweisung</TableSortLabel></TableCell>
+                                        <TableCell><TableSortLabel active={orderBy === 'category_name'} direction={order} onClick={() => handleSortRequest('category_name')}>Kategorie</TableSortLabel></TableCell>
                                         <TableCell><TableSortLabel active={orderBy === 'region'} direction={order} onClick={() => handleSortRequest('region')}>Region</TableSortLabel></TableCell>
-                                        <TableCell><TableSortLabel active={orderBy === 'event_date'} direction={order} onClick={() => handleSortRequest('event_date')}>Event-Datum</TableSortLabel></TableCell>
+                                        <TableCell><TableSortLabel active={orderBy === 'event_date'} direction={order} onClick={() => handleSortRequest('event_date')}>Datum</TableSortLabel></TableCell>
                                         <TableCell align="right">Aktionen</TableCell>
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
-                                    {sortedAndFilteredEvents.map(event => (
-                                        <TableRow key={event.id} hover sx={{ backgroundColor: !event.event_date ? alpha(theme.palette.warning.main, 0.15) : 'inherit' }}>
-                                            <TableCell>{event.title}</TableCell>
+                                    {sortedAndFilteredEvents.map(event => {
+                                        const isGlobal = event.source_identifier === 'global_events';
+                                        return (
+                                        <TableRow key={event.id} hover sx={{ backgroundColor: !event.event_date ? alpha(theme.palette.warning.main, 0.05) : 'inherit' }}>
+                                            <TableCell>
+                                                {event.thumbnail_url ? (
+                                                    <Avatar variant="rounded" src={event.thumbnail_url} sx={{ width: 48, height: 48 }} />
+                                                ) : (
+                                                    <Avatar variant="rounded" sx={{ width: 48, height: 48, bgcolor: 'action.hover' }}>
+                                                        <EventIcon color="action" />
+                                                    </Avatar>
+                                                )}
+                                            </TableCell>
+                                            <TableCell>
+                                                <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                                    {event.title}
+                                                </Typography>
+                                                <Tooltip title={`Source ID: ${event.source_identifier}`}>
+                                                    <Chip 
+                                                        label={getBpNameFromSource(event.source_identifier)} 
+                                                        size="small" 
+                                                        color={isGlobal ? 'primary' : 'secondary'}
+                                                        variant={isGlobal ? 'outlined' : 'filled'}
+                                                        sx={{ height: 20, fontSize: '0.7rem' }}
+                                                    />
+                                                </Tooltip>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Chip label={event.category_name || '-'} size="small" variant="outlined" />
+                                            </TableCell>
                                             <TableCell>{event.region || '-'}</TableCell>
                                             <TableCell>
-                                                <Typography color={!event.event_date ? 'error.main' : 'inherit'}>
+                                                <Typography color={!event.event_date ? 'error.main' : 'inherit'} variant="body2">
                                                     {event.event_date ? new Date(event.event_date).toLocaleDateString('de-AT') : '- DATUM FEHLT -'}
                                                 </Typography>
                                             </TableCell>
-                                            <TableCell align="right">
-                                                <Tooltip title="Zur Originalquelle"><IconButton component={MuiLink} href={event.original_url} target="_blank" disabled={!event.original_url}><OpenInNewIcon /></IconButton></Tooltip>
-                                                <Tooltip title="Bearbeiten"><IconButton onClick={() => handleOpenDialog(event)}><EditIcon /></IconButton></Tooltip>
-                                                <Tooltip title="Löschen"><IconButton onClick={() => handleOpenDeleteConfirm(event)}><DeleteIcon /></IconButton></Tooltip>
+                                            <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                                                <Tooltip title="Zur Originalquelle">
+                                                    <span><IconButton component={MuiLink} href={event.original_url} target="_blank" disabled={!event.original_url} size="small"><OpenInNewIcon fontSize="small" /></IconButton></span>
+                                                </Tooltip>
+                                                <Tooltip title="Bearbeiten">
+                                                    <IconButton color="primary" onClick={() => handleOpenDialog(event)} size="small"><EditIcon fontSize="small" /></IconButton>
+                                                </Tooltip>
+                                                <Tooltip title="Löschen">
+                                                    <IconButton color="error" onClick={() => handleOpenDeleteConfirm(event)} size="small"><DeleteIcon fontSize="small" /></IconButton>
+                                                </Tooltip>
                                             </TableCell>
                                         </TableRow>
-                                    ))}
+                                    )})}
                                 </TableBody>
                             </Table>
                         </TableContainer>
@@ -279,49 +361,101 @@ const AdminEventsPage: React.FC = () => {
                 }
             </Container>
 
-            <Dialog open={dialogOpen} onClose={handleCloseDialog} fullWidth maxWidth="md">
-                <DialogTitle>{isCreateMode ? 'Neues Event erstellen' : 'Event bearbeiten'}</DialogTitle>
-                <DialogContent>
+            <Dialog open={dialogOpen} onClose={handleCloseDialog} fullWidth maxWidth="md" PaperProps={{ sx: { borderRadius: 3 } }}>
+                <DialogTitle sx={{ fontWeight: 800 }}>{isCreateMode ? 'Neues Event anlegen' : 'Event bearbeiten'}</DialogTitle>
+                <DialogContent dividers>
                     {dialogError && <Alert severity="error" sx={{ mb: 2 }}>{dialogError}</Alert>}
-                    <TextField autoFocus margin="dense" label="Event-Titel" fullWidth value={editingEvent?.title || ''} onChange={e => handleDialogChange('title', e.target.value)} sx={{ mt: 1 }} />
-                    <TextField margin="dense" label="Event-Datum" type="date" fullWidth value={editingEvent?.event_date || ''} onChange={e => handleDialogChange('event_date', e.target.value)} InputLabelProps={{ shrink: true }} />
-                    
-                    <FormControl fullWidth margin="dense">
-                        <InputLabel id="region-select-label">Region</InputLabel>
-                        <Select
-                            labelId="region-select-label"
-                            value={editingEvent?.region || ''}
-                            label="Region"
-                            onChange={e => handleDialogChange('region', e.target.value)}
-                        >
-                            <MenuItem value="">
-                                <em>Keine Auswahl</em>
-                            </MenuItem>
-                            {regions.map((region) => (
-                                <MenuItem key={region.code} value={region.name}>
-                                    {region.name}
-                                </MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
-                    
-                    <TextField margin="dense" label="URL" fullWidth value={editingEvent?.original_url || ''} onChange={e => handleDialogChange('original_url', e.target.value)} />
-                    <TextField margin="dense" label="Zusammenfassung" fullWidth multiline rows={3} value={editingEvent?.summary || ''} onChange={e => handleDialogChange('summary', e.target.value)} />
+                    <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                        <Grid item xs={12}>
+                            <TextField autoFocus label="Event-Titel*" fullWidth value={editingEvent?.title || ''} onChange={e => handleDialogChange('title', e.target.value)} size="small" />
+                        </Grid>
+                        
+                        {/* Zuweisung Mandant -> Füllt automatisch den Source Identifier */}
+                        <Grid item xs={12} md={6}>
+                            <TextField 
+                                select
+                                fullWidth 
+                                size="small"
+                                label="Zuweisung (Mandant)*"
+                                value={editingEvent?.businessPartnerId || ''}
+                                onChange={e => {
+                                    const bpId = e.target.value;
+                                    handleDialogChange('businessPartnerId', bpId);
+                                    // Automatischer Fallback für den Identifier (kann händisch überschrieben werden)
+                                    handleDialogChange('source_identifier', bpId ? `${bpId}_events` : 'global_events');
+                                }}
+                            >
+                                <MenuItem value=""><b>Global (Für alle sichtbar)</b></MenuItem>
+                                <Divider />
+                                {businessPartners.map((bp) => (
+                                    <MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>
+                                ))}
+                            </TextField>
+                        </Grid>
+                        
+                        {/* NEU: Manuell editierbarer Source Identifier */}
+                        <Grid item xs={12} md={6}>
+                            <TextField 
+                                label="Source Identifier*" 
+                                fullWidth 
+                                size="small" 
+                                value={editingEvent?.source_identifier || ''} 
+                                onChange={e => handleDialogChange('source_identifier', e.target.value)} 
+                                required 
+                            />
+                        </Grid>
+                        
+                        <Grid item xs={12} md={6}>
+                            <TextField 
+                                select 
+                                fullWidth 
+                                size="small" 
+                                label="Kategorie" 
+                                value={editingEvent?.category_id || ''} 
+                                onChange={e => handleDialogChange('category_id', e.target.value)}
+                            >
+                                <MenuItem value=""><em>Keine Auswahl</em></MenuItem>
+                                {eventCategories.map((cat) => <MenuItem key={cat.id} value={cat.id}>{cat.name}</MenuItem>)}
+                            </TextField>
+                        </Grid>
+
+                        <Grid item xs={12} md={6}>
+                            <TextField select fullWidth size="small" label="Region" value={editingEvent?.region || ''} onChange={e => handleDialogChange('region', e.target.value)}>
+                                <MenuItem value=""><em>Keine Auswahl (Global)</em></MenuItem>
+                                {regions.map((region) => <MenuItem key={region.code} value={region.name}>{region.name}</MenuItem>)}
+                            </TextField>
+                        </Grid>
+
+                        <Grid item xs={12} md={6}>
+                            <TextField label="Event-Datum*" type="date" fullWidth size="small" value={editingEvent?.event_date || ''} onChange={e => handleDialogChange('event_date', e.target.value)} InputLabelProps={{ shrink: true }} />
+                        </Grid>
+                        
+                        <Grid item xs={12} md={6}>
+                            <TextField label="Bild URL (Thumbnail)" fullWidth size="small" value={editingEvent?.thumbnail_url || ''} onChange={e => handleDialogChange('thumbnail_url', e.target.value)} placeholder="https://..." />
+                        </Grid>
+
+                        <Grid item xs={12}>
+                            <TextField label="Ticket/Info URL" fullWidth size="small" value={editingEvent?.original_url || ''} onChange={e => handleDialogChange('original_url', e.target.value)} placeholder="https://..." />
+                        </Grid>
+                        <Grid item xs={12}>
+                            <TextField label="Zusammenfassung" fullWidth multiline rows={4} value={editingEvent?.summary || ''} onChange={e => handleDialogChange('summary', e.target.value)} />
+                        </Grid>
+                    </Grid>
                 </DialogContent>
-                <DialogActions>
-                    <Button onClick={handleCloseDialog}>Abbrechen</Button>
-                    <Button onClick={handleSave} variant="contained">Speichern</Button>
+                <DialogActions sx={{ p: 3, bgcolor: 'action.hover' }}>
+                    <Button onClick={handleCloseDialog} color="inherit">Abbrechen</Button>
+                    <Button onClick={handleSave} variant="contained" sx={{ borderRadius: 2 }}>{isCreateMode ? 'Hinzufügen' : 'Speichern'}</Button>
                 </DialogActions>
             </Dialog>
 
-            <Dialog open={deleteConfirmOpen} onClose={handleCloseDeleteConfirm}>
+            <Dialog open={deleteConfirmOpen} onClose={handleCloseDeleteConfirm} PaperProps={{ sx: { borderRadius: 3 } }}>
                 <DialogTitle>Löschen bestätigen</DialogTitle>
-                <DialogContent>
-                    <Typography>Möchten Sie das Event "{eventToDelete?.title}" wirklich endgültig löschen?</Typography>
+                <DialogContent dividers>
+                    <Typography>Möchten Sie das Event <b>"{eventToDelete?.title}"</b> wirklich unwiderruflich löschen?</Typography>
                 </DialogContent>
-                <DialogActions>
-                    <Button onClick={handleCloseDeleteConfirm}>Abbrechen</Button>
-                    <Button onClick={handleDelete} variant="contained" color="error">Löschen</Button>
+                <DialogActions sx={{ p: 2 }}>
+                    <Button onClick={handleCloseDeleteConfirm} color="inherit">Abbrechen</Button>
+                    <Button onClick={handleDelete} variant="contained" color="error" sx={{ borderRadius: 2 }}>Endgültig Löschen</Button>
                 </DialogActions>
             </Dialog>
         </DashboardLayout>

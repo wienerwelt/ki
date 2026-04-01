@@ -8,20 +8,9 @@ const {
   renderPasswordResetEmail,
   renderNewsletterOptInEmail,
   renderNewOpportunitiesEmail,
+  renderFleetDailyBriefingEmail
 } = require('./emailTemplates');
 
-/**
- * Transporter (Strato SMTP, STARTTLS auf 587)
- *
- * ENV:
- * EMAIL_HOST=smtp.strato.de
- * EMAIL_PORT=587
- * EMAIL_USER=sp@mobiliti.at
- * EMAIL_PASS=xxx
- * EMAIL_ADMIN="Admin Dashboard <hello@mobiliti.at>"   (optional)
- * FRONTEND_URL=https://dashboard.mobiliti.at         (für Links/Logo-URL)
- * EMAIL_EMBED_LOGO_PATH=/abs/weg/zum/logo.png        (optional: Logo als CID einbetten)
- */
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: Number(process.env.EMAIL_PORT || 587),
@@ -32,21 +21,18 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-/** Absenderadresse zusammenbauen */
-function resolveFrom(fromName = 'KI-Dashboard') {
-  const admin = (process.env.EMAIL_ADMIN || '').trim();
-  if (admin) return admin; // vollständiger "Name <mail@…>"-String
+/** Absenderadresse: Nutzt den Mandantennamen als Anzeigenamen, falls vorhanden */
+function resolveFrom(fromName) {
+  const safeName = fromName || process.env.EMAIL_ADMIN || 'Intelligence Dashboard';
   const user = process.env.EMAIL_USER || 'noreply@example.com';
-  return `"${fromName}" <${user}>`;
+  return `"${safeName}" <${user}>`;
 }
 
-/** Basis-URL ohne abschließenden Slash */
 function getBaseUrl() {
   const raw = (process.env.FRONTEND_URL || 'http://localhost:5173').trim();
   return raw.replace(/\/+$/, '');
 }
 
-/** Wenn EMAIL_EMBED_LOGO_PATH gesetzt & Datei vorhanden → als CID anhängen */
 function resolveLogoAttachment() {
   const p = (process.env.EMAIL_EMBED_LOGO_PATH || '').trim();
   if (!p) return null;
@@ -55,44 +41,41 @@ function resolveLogoAttachment() {
       return {
         filename: path.basename(p),
         path: p,
-        cid: 'brand-logo', // muss zum Template-CID passen
+        cid: 'brand-logo',
       };
     }
   } catch (_) { /* ignore */ }
   return null;
 }
 
-/** Niedrig-Level Versand */
-async function sendEmail({ to, subject, html, text, fromName = 'KI-Dashboard', replyTo }) {
+/** Niedrig-Level Versand, unterstützt nun partner-Objekt für Reply-To */
+async function sendEmail({ to, subject, html, text, fromName, replyTo, partner }) {
   const mailOptions = {
-    from: resolveFrom(fromName),
+    from: resolveFrom(fromName || partner?.name),
     to,
     subject,
     html,
     text,
   };
-  if (replyTo) mailOptions.replyTo = replyTo;
+  
+  if (replyTo) {
+      mailOptions.replyTo = replyTo;
+  } else if (partner?.email) {
+      mailOptions.replyTo = partner.email; // Antworten gehen direkt an den Mandanten
+  }
 
-  // Logo (optional) als CID anhängen
   const logoAttachment = resolveLogoAttachment();
   if (logoAttachment) {
     mailOptions.attachments = [logoAttachment];
   }
 
   await transporter.sendMail(mailOptions);
-  console.log(`[mail] ✔ gesendet an: ${Array.isArray(to) ? to.join(', ') : to}`);
+  console.log(`[mail] ✔ gesendet an: ${Array.isArray(to) ? to.join(', ') : to} (Im Namen von: ${partner?.name || fromName || 'System'})`);
 }
 
-/** URL-Helper */
-function buildVerifyUrl(token) {
-  return `${getBaseUrl()}/verify-email/${token}`;
-}
-function buildResetUrl(token) {
-  return `${getBaseUrl()}/reset-password/${token}`;
-}
-function buildNewsletterConfirmUrl(token) {
-  return `${getBaseUrl()}/newsletter/confirm/${token}`;
-}
+function buildVerifyUrl(token) { return `${getBaseUrl()}/verify-email/${token}`; }
+function buildResetUrl(token) { return `${getBaseUrl()}/reset-password/${token}`; }
+function buildNewsletterConfirmUrl(token) { return `${getBaseUrl()}/newsletter/confirm/${token}`; }
 function buildSearchUrl(searchCriteria) {
     const params = new URLSearchParams();
     if (searchCriteria.q) params.append('q', searchCriteria.q);
@@ -103,11 +86,11 @@ function buildSearchUrl(searchCriteria) {
 
 // --- High-Level Sender Funktionen ---
 
-async function sendNewOpportunitiesNotification({ to, username, searchName, newOpportunities, searchCriteria }) {
+async function sendNewOpportunitiesNotification({ to, username, searchName, newOpportunities, searchCriteria, partner }) {
     const searchUrl = buildSearchUrl(searchCriteria);
-    const html = renderNewOpportunitiesEmail({ username, searchName, newOpportunities, searchUrl });
+    const html = renderNewOpportunitiesEmail({ username, searchName, newOpportunities, searchUrl, partner });
     const subject = `Neue Förderungen für Ihre Suche: "${searchName}"`;
-    await sendEmail({ to, subject, html });
+    await sendEmail({ to, subject, html, partner });
 }
 
 async function sendVerificationEmail({ to, username, verifyUrl, partner }) {
@@ -118,46 +101,37 @@ async function sendVerificationEmail({ to, username, verifyUrl, partner }) {
       : 'Bitte E-Mail-Adresse bestätigen';
 
   const text = `Hallo ${username || ''},\n\nBitte bestätige deine E-Mail-Adresse:\n${verifyUrl}`;
-  
-  await sendEmail({ to, subject, html, text });
+  await sendEmail({ to, subject, html, text, partner });
 }
 
-async function sendPasswordResetEmail({ to, username, resetUrl }) {
+async function sendPasswordResetEmail({ to, username, resetUrl, partner }) {
   if (!resetUrl) throw new Error('resetUrl fehlt für Passwort-Reset-Mail.');
-  const html = renderPasswordResetEmail({ username, resetUrl });
+  const html = renderPasswordResetEmail({ username, resetUrl, partner });
   const subject = 'Passwort zurücksetzen';
   const text = `Hallo ${username || ''},\n\nDu hast eine Zurücksetzung deines Passworts angefragt:\n${resetUrl}`;
-  await sendEmail({ to, subject, html, text });
+  await sendEmail({ to, subject, html, text, partner });
 }
 
-async function sendNewsletterOptInEmail({ to, username, confirmUrl, unsubscribeUrl }) {
+async function sendNewsletterOptInEmail({ to, username, confirmUrl, unsubscribeUrl, partner }) {
   if (!confirmUrl) throw new Error('confirmUrl fehlt für Newsletter-Opt-In-Mail.');
-  const html = renderNewsletterOptInEmail({ username, confirmUrl, unsubscribeUrl });
+  const html = renderNewsletterOptInEmail({ username, confirmUrl, unsubscribeUrl, partner });
   const subject = 'Bitte Newsletter-Anmeldung bestätigen';
   const text = `Hallo ${username || ''},\n\nBitte bestätige deine Anmeldung:\n${confirmUrl}`;
-  await sendEmail({ to, subject, html, text });
+  await sendEmail({ to, subject, html, text, partner });
 }
 
-// ✅ NEU: Community Reply Notification
 async function sendCommunityReplyNotification({ to, recipientName, commenterName, postTitle, postLink }) {
     if (!to) return;
-
     const subject = `Neue Antwort von ${commenterName}`;
-    
-    // Inline-Template für diese spezifische Mail (um emailTemplates.js nicht zu überfrachten)
-    // Nutzt aber renderLayout für Konsistenz
     const contentHtml = `
         <p>Hallo ${recipientName || 'Nutzer'},</p>
         <p><strong>${commenterName}</strong> hat auf deinen Beitrag im Mitglieder-Hub geantwortet.</p>
-        
         <div style="border-left: 4px solid #2196f3; padding-left: 15px; margin: 20px 0; background-color: #f9f9f9; padding: 10px; color: #555;">
             <em>"${postTitle}..."</em>
         </div>
-        
         <p>Klicke auf den Button unten, um die Antwort zu lesen und zu reagieren.</p>
     `;
 
-    // Wir nutzen die existierende renderLayout Funktion
     const html = renderLayout({
         title: 'Neue Antwort',
         preheader: `${commenterName} hat geantwortet`,
@@ -170,13 +144,21 @@ async function sendCommunityReplyNotification({ to, recipientName, commenterName
     await sendEmail({ to, subject, html });
 }
 
+// --- KI BRIEFING VERSAND ---
+async function sendDailyBriefing({ to, user, partner, briefing, nextEvent, pdfUrl }) {
+  const html = renderFleetDailyBriefingEmail({ briefing, partner, nextEvent, pdfUrl });
+  const subject = `${partner?.dashboard_title || 'Markt-Briefing'}: ${briefing.top_insights?.[0]?.title || 'Ihre aktuellen Insights'}`;
+  await sendEmail({ to, subject, html, partner });
+}
+
 module.exports = {
   sendEmail,
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendNewsletterOptInEmail,
   sendNewOpportunitiesNotification,
-  sendCommunityReplyNotification, // Exportieren!
+  sendCommunityReplyNotification,
+  sendDailyBriefing, // Export hinzugefügt
   buildVerifyUrl,
   buildResetUrl,
   buildNewsletterConfirmUrl,

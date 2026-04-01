@@ -1,4 +1,3 @@
-// backend/controllers/communityController.js
 const db = require('../config/db');
 const { PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const s3Client = require("../config/s3Client.js");
@@ -63,18 +62,19 @@ exports.getCategories = async (req, res) => {
 };
 
 
-// Einzelnen Post laden (für Verlinkung)
+// Einzelnen Post laden (für Verlinkung & Popovers)
 exports.getPostById = async (req, res) => {
     const { id } = req.params;
-    const { id: userId } = req.user;
+    const { id: userId, business_partner_id } = req.user;
+    
     try {
-        // Query identisch zum Feed, nur mit WHERE p.id = $1
+        // SICHERHEITSFIX: Post darf nur geladen werden, wenn er zum BP des Users gehört!
         const query = `
             SELECT 
                 p.id, p.content, p.image_url, p.created_at, p.is_pinned,
                 c.name as category_name, c.id as category_id,
                 u.id as author_id, u.first_name, u.last_name, u.username, u.profile_image_url,
-                u.organization_name, u.role as author_role, u.membership_level, u.linkedin_url, 
+                COALESCE(u.organization_name, bp.name) as organization_name, u.role as author_role, u.membership_level, u.linkedin_url, 
                 u.created_at as member_since, u.contribution_score, u.last_login_at,
                 (SELECT COUNT(*) FROM community_likes l WHERE l.post_id = p.id)::int as like_count,
                 (SELECT COUNT(*) FROM community_comments com WHERE com.post_id = p.id)::int as comment_count,
@@ -87,10 +87,11 @@ exports.getPostById = async (req, res) => {
                 ) as poll_options
             FROM community_posts p
             JOIN users u ON p.user_id = u.id
+            JOIN business_partners bp ON p.business_partner_id = bp.id
             LEFT JOIN categories c ON p.category_id = c.id
-            WHERE p.id = $1
+            WHERE p.id = $1 AND p.business_partner_id = $3
         `;
-        const { rows } = await db.query(query, [id, userId]);
+        const { rows } = await db.query(query, [id, userId, business_partner_id]);
         if (rows.length === 0) return res.status(404).json({ message: 'Beitrag nicht gefunden' });
         res.json(rows[0]);
     } catch (err) {
@@ -112,9 +113,9 @@ exports.getFeed = async (req, res) => {
                 p.id, p.content, p.image_url, p.created_at, p.is_pinned,
                 c.name as category_name, c.id as category_id,
                 
-                -- Autor Infos (INKLUSIVE last_login_at)
+                -- Autor Infos (COALESCE für sauberen organization_name Fallback)
                 u.id as author_id, u.first_name, u.last_name, u.username, u.profile_image_url,
-                u.organization_name, u.role as author_role, u.membership_level, u.linkedin_url, 
+                COALESCE(u.organization_name, bp.name) as organization_name, u.role as author_role, u.membership_level, u.linkedin_url, 
                 u.created_at as member_since, u.contribution_score, u.last_login_at,
                 
                 -- Interaktionen
@@ -136,6 +137,7 @@ exports.getFeed = async (req, res) => {
 
             FROM community_posts p
             JOIN users u ON p.user_id = u.id
+            JOIN business_partners bp ON p.business_partner_id = bp.id
             LEFT JOIN categories c ON p.category_id = c.id
             WHERE p.business_partner_id = $2
         `;
@@ -213,7 +215,6 @@ exports.createPost = async (req, res) => {
         ]);
         const postId = postResult.rows[0].id;
 
-        // --- FIX: Mentions in Posts verarbeiten ---
         if (content) {
             await processMentions(content, postId, userId, client);
         }
@@ -237,7 +238,7 @@ exports.createPost = async (req, res) => {
                 p.id, p.content, p.image_url, p.created_at, p.is_pinned,
                 c.name as category_name, c.id as category_id,
                 u.id as author_id, u.first_name, u.last_name, u.username, u.profile_image_url,
-                u.organization_name, u.role as author_role, u.membership_level, u.linkedin_url, 
+                COALESCE(u.organization_name, bp.name) as organization_name, u.role as author_role, u.membership_level, u.linkedin_url, 
                 u.created_at as member_since, u.contribution_score, u.last_login_at,
                 0 as like_count, 0 as comment_count, false as is_liked_by_me,
                 (
@@ -248,11 +249,11 @@ exports.createPost = async (req, res) => {
                 ) as poll_options
             FROM community_posts p
             JOIN users u ON p.user_id = u.id
+            JOIN business_partners bp ON p.business_partner_id = bp.id
             LEFT JOIN categories c ON p.category_id = c.id
             WHERE p.id = $1
         `, [postId]);
 
-        // Den vollständigen Post zurückgeben statt nur einer Message
         res.status(201).json(fullPostRes.rows[0]);
 
     } catch (err) {
@@ -272,10 +273,11 @@ exports.getComments = async (req, res) => {
             SELECT 
                 c.id, c.content, c.created_at,
                 u.id as author_id, u.first_name, u.last_name, u.username, u.profile_image_url,
-                u.membership_level, u.organization_name, u.role,
+                u.membership_level, COALESCE(u.organization_name, bp.name) as organization_name, u.role,
                 u.linkedin_url, u.created_at as member_since, u.contribution_score, u.last_login_at
             FROM community_comments c
             JOIN users u ON c.user_id = u.id
+            JOIN business_partners bp ON u.business_partner_id = bp.id
             WHERE c.post_id = $1
             ORDER BY c.created_at ASC
         `;
@@ -288,7 +290,6 @@ exports.getComments = async (req, res) => {
 
 // 5. Kommentar erstellen
 exports.createComment = async (req, res) => {
-    // DEMO CHECK
     if (req.user.role === 'demo') {
         return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Kommentare erstellen.' });
     }
@@ -354,6 +355,10 @@ exports.createComment = async (req, res) => {
 
         await client.query('COMMIT');
 
+        // Um das Profil im Frontend sauber darzustellen, holen wir den BP-Namen
+        const bpRes = await client.query('SELECT name FROM business_partners WHERE id = $1', [req.user.business_partner_id]);
+        const bpName = bpRes.rows[0]?.name;
+
         res.status(201).json({
             id: insertRes.rows[0].id,
             content: content,
@@ -364,7 +369,7 @@ exports.createComment = async (req, res) => {
             username: req.user.username,
             profile_image_url: req.user.profile_image_url,
             membership_level: req.user.membership_level,
-            organization_name: req.user.organization_name,
+            organization_name: req.user.organization_name || bpName,
             role: req.user.role
         });
     } catch (err) {
@@ -378,7 +383,6 @@ exports.createComment = async (req, res) => {
 
 // 6. Post löschen
 exports.deletePost = async (req, res) => {
-    // DEMO CHECK
     if (req.user.role === 'demo') {
         return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Beiträge löschen.' });
     }
@@ -414,11 +418,13 @@ exports.getLeaderboard = async (req, res) => {
     const { business_partner_id } = req.user;
     try {
         const query = `
-            SELECT id, first_name, last_name, username, profile_image_url, contribution_score, membership_level,
-            organization_name, role, linkedin_url, created_at as member_since, last_login_at
-            FROM users
-            WHERE business_partner_id = $1
-            ORDER BY contribution_score DESC, first_name ASC
+            SELECT 
+                u.id, u.first_name, u.last_name, u.username, u.profile_image_url, u.contribution_score, u.membership_level,
+                COALESCE(u.organization_name, bp.name) as organization_name, u.role, u.linkedin_url, u.created_at as member_since, u.last_login_at
+            FROM users u
+            JOIN business_partners bp ON u.business_partner_id = bp.id
+            WHERE u.business_partner_id = $1
+            ORDER BY u.contribution_score DESC, u.first_name ASC
             LIMIT 5
         `;
         const { rows } = await db.query(query, [business_partner_id]);
@@ -431,7 +437,6 @@ exports.getLeaderboard = async (req, res) => {
 
 // 8. Like
 exports.toggleLike = async (req, res) => {
-    // DEMO CHECK
     if (req.user.role === 'demo') {
         return res.status(403).json({ message: 'Demo-Benutzer dürfen nicht liken.' });
     }
@@ -511,7 +516,6 @@ exports.getAdminPosts = async (req, res) => {
 
 // 10. Update Post
 exports.updatePost = async (req, res) => {
-    // DEMO CHECK
     if (req.user.role === 'demo') {
         return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Beiträge bearbeiten.' });
     }
@@ -537,7 +541,6 @@ exports.updatePost = async (req, res) => {
 
 // 11. Pin Post
 exports.togglePin = async (req, res) => {
-    // DEMO CHECK
     if (req.user.role === 'demo') {
         return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Beiträge pinnen.' });
     }
@@ -564,7 +567,6 @@ exports.togglePin = async (req, res) => {
 
 // 12. Report Content
 exports.reportContent = async (req, res) => {
-    // DEMO CHECK
     if (req.user.role === 'demo') {
         return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Inhalte melden.' });
     }
@@ -590,20 +592,22 @@ exports.getMembers = async (req, res) => {
     try {
         let query = `
             SELECT 
-                id, first_name, last_name, username, email, 
-                profile_image_url, membership_level, role, organization_name,
-                contribution_score, last_login_at
-            FROM users
-            WHERE business_partner_id = $1 AND is_active = TRUE
+                u.id, u.first_name, u.last_name, u.username, u.email, 
+                u.profile_image_url, u.membership_level, u.role, 
+                COALESCE(u.organization_name, bp.name) as organization_name,
+                u.contribution_score, u.last_login_at
+            FROM users u
+            JOIN business_partners bp ON u.business_partner_id = bp.id
+            WHERE u.business_partner_id = $1 AND u.is_active = TRUE
         `;
         const params = [business_partner_id];
 
         if (search) {
-            query += ` AND (first_name ILIKE $2 OR last_name ILIKE $2 OR username ILIKE $2)`;
+            query += ` AND (u.first_name ILIKE $2 OR u.last_name ILIKE $2 OR u.username ILIKE $2)`;
             params.push(`%${search}%`);
         }
 
-        query += ` ORDER BY first_name ASC, last_name ASC LIMIT 100`;
+        query += ` ORDER BY u.first_name ASC, u.last_name ASC LIMIT 100`;
 
         const { rows } = await db.query(query, params);
         res.json(rows);
@@ -616,7 +620,6 @@ exports.getMembers = async (req, res) => {
 
 // 14. Abstimmmen
 exports.votePoll = async (req, res) => {
-    // DEMO CHECK
     if (req.user.role === 'demo') {
         return res.status(403).json({ message: 'Demo-Benutzer dürfen nicht abstimmen.' });
     }
@@ -628,23 +631,19 @@ exports.votePoll = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // 1. Post ID zur Option finden
         const optRes = await client.query('SELECT post_id FROM community_poll_options WHERE id = $1', [optionId]);
         if (optRes.rows.length === 0) throw new Error('Option nicht gefunden');
         const postId = optRes.rows[0].post_id;
 
-        // 2. Alte Votes dieses Users für diesen Post löschen (damit man umentscheiden kann und nur 1 Stimme hat)
         await client.query(`
             DELETE FROM community_poll_votes 
             WHERE user_id = $1 AND option_id IN (SELECT id FROM community_poll_options WHERE post_id = $2)
         `, [userId, postId]);
 
-        // 3. Neuen Vote setzen
         await client.query('INSERT INTO community_poll_votes (option_id, user_id) VALUES ($1, $2)', [optionId, userId]);
 
         await client.query('COMMIT');
         
-        // Aktuelle Stats zurückgeben (für UI Update)
         const statsRes = await db.query(`
              SELECT id, (SELECT COUNT(*) FROM community_poll_votes pv WHERE pv.option_id = po.id) as votes
              FROM community_poll_options po WHERE po.post_id = $1
@@ -661,28 +660,21 @@ exports.votePoll = async (req, res) => {
 };
 
 
-// 15. Experten suchen (NEU)
+// 15. Experten suchen (NEU & SICHERHEITSFIX)
 exports.searchExperts = async (req, res) => {
     const { business_partner_id, id: currentUserId } = req.user;
-    const { query } = req.query; // Der Suchbegriff (Tag/Thema)
+    const { query } = req.query; 
 
     if (!query || query.trim().length < 2) {
         return res.json([]);
     }
 
     try {
-        // Wir suchen Nutzer, die:
-        // 1. Aktiv sind
-        // 2. NICHT der aktuelle Nutzer sind
-        // 3. Den Suchbegriff entweder in ihren TAGS (user_saved_tags) haben
-        // 4. ODER im Namen/Rolle/Firma haben
-        // 5. (Optional) Können wir die Suche auf den eigenen BP beschränken ODER global machen.
-        //    Hier machen wir es GLOBAL (Plattform-Networking), aber filtern Admins/System-User raus.
-        
+        // SICHERHEITSFIX: u.business_partner_id = $3 hinzugefügt!
         const sql = `
             SELECT DISTINCT
                 u.id, u.first_name, u.last_name, u.username, u.profile_image_url,
-                u.role, u.organization_name, u.membership_level, u.contribution_score,
+                u.role, COALESCE(u.organization_name, bp.name) as organization_name, u.membership_level, u.contribution_score,
                 u.created_at as member_since,
                 bp.name as business_partner_name,
                 (
@@ -691,22 +683,23 @@ exports.searchExperts = async (req, res) => {
                     WHERE ust.user_id = u.id
                 ) as tags
             FROM users u
-            LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
+            JOIN business_partners bp ON u.business_partner_id = bp.id
             LEFT JOIN user_saved_tags ust ON u.id = ust.user_id
             WHERE 
                 u.is_active = TRUE 
                 AND u.id != $1
-                AND u.role NOT IN ('demo', 'system') -- Keine Demo-User anzeigen
+                AND u.business_partner_id = $3 -- <--- FIX: Nur eigener Mandant!
+                AND u.role NOT IN ('demo', 'system') 
                 AND (
-                    ust.tag_name ILIKE $2 -- Suche in Tags
-                    OR u.role ILIKE $2    -- Suche in Rolle (z.B. "Fuhrparkleiter")
+                    ust.tag_name ILIKE $2 
+                    OR u.role ILIKE $2    
                     OR u.organization_name ILIKE $2
                 )
-            ORDER BY u.contribution_score DESC -- Aktivste Nutzer zuerst
+            ORDER BY u.contribution_score DESC 
             LIMIT 20
         `;
 
-        const { rows } = await db.query(sql, [currentUserId, `%${query}%`]);
+        const { rows } = await db.query(sql, [currentUserId, `%${query}%`, business_partner_id]);
         res.json(rows);
 
     } catch (err) {
@@ -715,7 +708,7 @@ exports.searchExperts = async (req, res) => {
     }
 };
 
-// 16. Neueste Kommentare für die Sidebar (bessere Sichtbarkeit)
+// 16. Neueste Kommentare für die Sidebar
 exports.getRecentComments = async (req, res) => {
     const { business_partner_id } = req.user;
     try {

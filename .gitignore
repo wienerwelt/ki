@@ -100,6 +100,7 @@ vite.config.*.timestamp-*
 # Project specific
 # =========================================================
 Startanleitung.txt
+todo.txt
 
 # optional SQL working directory
 /sql/

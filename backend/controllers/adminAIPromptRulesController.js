@@ -3,6 +3,7 @@ const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
 const { aiContentQueue } = require('../services/queueService');
 const jobManager = require('../services/jobManagerService');
+const { generateAIContent } = require('../services/aiExecutionService');
 
 const PROMPT_SEPARATOR = '+++';
 
@@ -211,24 +212,49 @@ async function generateAndSaveContentForManualJob(jobId, rule, inputText, region
     const client = await db.connect();
     try {
         await client.query(`UPDATE ai_jobs SET status = 'running' WHERE id = $1`, [jobId]);
-        const { aiResultString } = await generateAIContent({
-            promptTemplate: rule.prompt_template, inputText, region,
-            category: categoryName, focusPage: focus_page,
-            ai_provider: rule.ai_provider, jobId, userId
-        });
+        
+        // NEU: Konfigurationsobjekt für generateAIContent vorbereiten
+        const aiOptions = {
+            promptTemplate: rule.prompt_template, 
+            inputText, 
+            region,
+            category: categoryName, 
+            focusPage: focus_page,
+            ai_provider: rule.ai_provider, 
+            jobId, 
+            userId
+        };
+
+        // NEU: Wenn die Regel JSON erfordert, aktivieren wir den Native-Mode!
+        if (rule.output_format === 'json') {
+            aiOptions.responseFormat = { type: "json_object" };
+        }
+
+        const { aiResultString } = await generateAIContent(aiOptions);
 
         let contentToStore = aiResultString;
         let title = rule.name;
 
         if (rule.output_format === 'json') {
              try {
-                const jsonMatch = aiResultString.match(/\{[\s\S]*\}/);
-                if (!jsonMatch) throw new Error("Kein valides JSON-Objekt im KI-Output gefunden.");
-                const parsedResult = JSON.parse(jsonMatch[0]);
+                // OPTIMIERT: Da wir den Native Mode nutzen, ist aiResultString bereits reines JSON.
+                // Zur Sicherheit machen wir trotzdem einen kleinen Cleanup, falls Markdown-Ticks drin sind.
+                let jsonString = aiResultString;
+                const firstBrace = aiResultString.indexOf('{');
+                const lastBrace = aiResultString.lastIndexOf('}');
+                
+                if (firstBrace !== -1 && lastBrace !== -1) {
+                    jsonString = aiResultString.substring(firstBrace, lastBrace + 1);
+                }
+
+                const parsedResult = JSON.parse(jsonString);
                 title = parsedResult.title || title;
                 contentToStore = parsedResult.content || aiResultString;
             } catch (e) {
                 console.error(`[Job ${jobId}] Fehler beim Parsen des JSON-Outputs:`, e.message);
+                // Fallback: Wenn das JSON komplett kaputt ist, speichern wir den rohen String, 
+                // damit keine Daten verloren gehen.
+                contentToStore = aiResultString;
             }
         } else { 
             const lines = aiResultString.trim().split('\n');
@@ -240,6 +266,7 @@ async function generateAndSaveContentForManualJob(jobId, rule, inputText, region
                 }
             }
         }
+        
         await client.query(
             `INSERT INTO ai_generated_content (id, ai_prompt_rule_id, job_id, title, generated_output, region, user_id, category_id, output_format, source_input_text, prompt_snapshot, focus_page) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
             [uuidv4(), rule.id, jobId, title, contentToStore, region, null, categoryId, rule.output_format, inputText, rule.prompt_template, focus_page]
@@ -253,7 +280,10 @@ async function generateAndSaveContentForManualJob(jobId, rule, inputText, region
         client.release();
     }
 }
+
 exports.generateAndSaveContentForManualJob = generateAndSaveContentForManualJob;
+
+
 
 
 

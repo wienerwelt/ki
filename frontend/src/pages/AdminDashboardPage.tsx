@@ -195,7 +195,7 @@ const AdminDashboardPage: React.FC = () => {
                      <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <SubscriptionsIcon sx={{ fontSize: 60, mb: 2 }} color="error" />
-                            <Typography variant="h6" component="h2" gutterBottom>Abonnements</Typography>
+                            <Typography variant="h6" component="h2" gutterBottom>Widget-Zugriff</Typography>
                             <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Widget-Zugriff für Business Partner steuern.</Typography>
                             <Button component={Link} to="/admin/bp-widget-access" variant="contained" color="error">Verwalten</Button>
                         </Paper>

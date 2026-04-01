@@ -1,7 +1,7 @@
 // backend/services/cronjobScheduler.js
 const cronParser = require('cron-parser');
 const db = require('../config/db');
-// Importiere alle notwendigen Queues
+const { checkSystemHealthAndAlert } = require('./reportingService');
 const { aiContentQueue, scrapeQueue, emailQueue, dataUpdatesQueue } = require('./queueService');
 
 /**
@@ -68,6 +68,13 @@ const runScheduledJobs = async () => {
                 await client.query('UPDATE cronjobs SET last_run_at = NOW() WHERE id = $1', [job.id]);                
             }
         }
+
+        // 4. System Health Check & Alerting (Non-blocking)
+        // Prüft, ob DB, Redis oder Worker down sind. 
+        // Falls ja: Verschickt EINE Mail. Falls recovered: Verschickt EINE Entwarnung.
+        checkSystemHealthAndAlert().catch(err => {
+            console.error('[CRON] Fehler beim Ausführen des System Health Checks:', err.message);
+        });
 
     } catch (error) {
         console.error('[CRON] Error during scheduled job execution:', error);

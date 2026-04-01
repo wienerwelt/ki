@@ -9,7 +9,12 @@ const {
     triggerManualGeneration,
     getAllPartners,
     publishBulkBriefing,
-    publishBriefing 
+    publishBriefing,
+    sendTestEmail, 
+    deleteBriefingItem,
+    updateBriefingSettings,
+    getRawData,
+    getRecipients
 } = require('../controllers/adminBriefingEditorialController');
 
 const isEditorialManager = (req, res, next) => {
@@ -20,6 +25,7 @@ const isEditorialManager = (req, res, next) => {
     }
 };
 
+// Diese Zeile schützt bereits ALLE folgenden Routen mit authMiddleware & Rollen-Check
 router.use(authMiddleware, isEditorialManager);
 
 router.get('/draft', getBriefingDraft);
@@ -27,6 +33,13 @@ router.get('/partners', getAllPartners);
 router.get('/debug-status', getDebugStatus);
 router.post('/trigger-manual', triggerManualGeneration);
 router.post('/publish-bulk', publishBulkBriefing);
+router.put('/settings', updateBriefingSettings);
+router.post('/test-email', sendTestEmail);
+
+router.get('/raw-data', getRawData);
+router.get('/recipients', getRecipients);
+
+router.delete('/:id', deleteBriefingItem);
 router.put('/:id', updateBriefingDraft);
 router.post('/:id/publish', publishBriefing);
 

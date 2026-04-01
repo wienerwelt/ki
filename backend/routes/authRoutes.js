@@ -17,10 +17,16 @@ try {
       password: process.env.REDIS_PASS || undefined,
     }
   );
+
   redisClient.on('ready', () => console.log('[rate-limit] Redis ready'));
-  redisClient.on('error', (err) => console.error('[rate-limit] Redis error:', err?.message || err));
+  redisClient.on('error', (err) =>
+    console.error('[rate-limit] Redis error:', err?.message || err)
+  );
 } catch (e) {
-  console.warn('[rate-limit] Redis-Client konnte nicht initialisiert werden:', e?.message || e);
+  console.warn(
+    '[rate-limit] Redis-Client konnte nicht initialisiert werden:',
+    e?.message || e
+  );
   redisClient = null; // Fallback = MemoryStore
 }
 
@@ -40,7 +46,9 @@ const registerLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Zu viele Registrierungsversuche. Bitte versuchen Sie es später erneut.' },
+  message: {
+    message: 'Zu viele Registrierungsversuche. Bitte versuchen Sie es später erneut.',
+  },
   handler: (req, res, next, options) => {
     console.warn(`[RateLimit] Registrierungslimit erreicht für IP ${req.ip}`);
     res.status(options.statusCode).send(options.message);
@@ -55,42 +63,102 @@ const loginLimiter = rateLimit({
   skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Zu viele Login-Versuche. Bitte versuchen Sie es später erneut.' },
+  message: {
+    message: 'Zu viele Login-Versuche. Bitte versuchen Sie es später erneut.',
+  },
   handler: (req, res, next, options) => {
     console.warn(`[RateLimit] Loginlimit erreicht für IP ${req.ip}`);
     res.status(options.statusCode).send(options.message);
   },
 });
 
-// ---- Newsletter: Opt-In anstoßen (mäßig streng) ----
-const newsletterOptInLimiter = rateLimit({
-  store: makeRedisStore('rl:newsletter:'),
-  windowMs: 30 * 60 * 1000, // 30 Minuten
+// ---- Bestätigungsmail erneut senden ----
+const resendVerificationLimiter = rateLimit({
+  store: makeRedisStore('rl:resend-verification:'),
+  windowMs: 30 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    message: 'Zu viele Anfragen für Bestätigungsmails. Bitte versuchen Sie es später erneut.',
+  },
+  handler: (req, res, next, options) => {
+    console.warn(`[RateLimit] Resend-Verification-Limit erreicht für IP ${req.ip}`);
+    res.status(options.statusCode).send(options.message);
+  },
+});
+
+// ---- Passwort vergessen ----
+const forgotPasswordLimiter = rateLimit({
+  store: makeRedisStore('rl:forgot-password:'),
+  windowMs: 30 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    message: 'Zu viele Passwort-Reset-Anfragen. Bitte versuchen Sie es später erneut.',
+  },
+  handler: (req, res, next, options) => {
+    console.warn(`[RateLimit] Forgot-Password-Limit erreicht für IP ${req.ip}`);
+    res.status(options.statusCode).send(options.message);
+  },
+});
+
+// ---- Passwort zurücksetzen ----
+const resetPasswordLimiter = rateLimit({
+  store: makeRedisStore('rl:reset-password:'),
+  windowMs: 30 * 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Zu viele Anfragen. Bitte versuchen Sie es später erneut.' },
+  message: {
+    message:
+      'Zu viele Versuche beim Zurücksetzen des Passworts. Bitte versuchen Sie es später erneut.',
+  },
+  handler: (req, res, next, options) => {
+    console.warn(`[RateLimit] Reset-Password-Limit erreicht für IP ${req.ip}`);
+    res.status(options.statusCode).send(options.message);
+  },
+});
+
+// ---- Newsletter: Opt-In anstoßen (mäßig streng) ----
+const newsletterOptInLimiter = rateLimit({
+  store: makeRedisStore('rl:newsletter:'),
+  windowMs: 30 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    message: 'Zu viele Anfragen. Bitte versuchen Sie es später erneut.',
+  },
   handler: (req, res, next, options) => {
     console.warn(`[RateLimit] Newsletter-Opt-In-Limit erreicht für IP ${req.ip}`);
     res.status(options.statusCode).send(options.message);
   },
 });
 
-// ---- Auth & Newsletter Routen ----
+// ---- Auth-Routen ----
 router.post('/register', registerLimiter, authController.register);
 router.post('/login', loginLimiter, authController.login);
-router.post('/google', authController.googleLogin);
 
 router.get('/verify-email/:token', authController.verifyEmail);
-router.post('/forgot-password', authController.forgotPassword);
-router.post('/reset-password/:token', authController.resetPassword);
-router.post('/resend-verification', authController.resendVerification);
+router.post('/resend-verification', resendVerificationLimiter, authController.resendVerification);
+router.post('/forgot-password', forgotPasswordLimiter, authController.forgotPassword);
+router.post('/reset-password/:token', resetPasswordLimiter, authController.resetPassword);
 
-// ✅ Newsletter Double-Opt-In
+// ---- Newsletter Double-Opt-In ----
 router.post('/newsletter/opt-in', newsletterOptInLimiter, authController.startNewsletterOptIn);
 router.get('/newsletter/confirm/:token', authController.confirmNewsletterOptIn);
 
-// (optional) Logout
+// ---- Logout ----
 router.post('/logout', authController.logout);
+
+// SSO: Google
+router.get('/google', authController.googleAuth);
+router.get('/google/callback', authController.googleCallback);
+
+// SSO: LinkedIn
+router.get('/linkedin', authController.linkedinAuth);
+router.get('/linkedin/callback', authController.linkedinCallback);
 
 module.exports = router;

@@ -342,9 +342,15 @@ async function _fetchContentWithPuppeteer(url, waitForSelector, jobId) {
         await logToDb(jobId, 'INFO', `Starte Headless-Browser (Stealth-Modus) für ${url}`);
         browser = await puppeteer.launch({
             headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null, // Nutzt Chromium im Docker-Container
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage' // Verhindert RAM-Abstürze bei großen Webseiten im Container
+            ]
         });
         const page = await browser.newPage();
+
         await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 }); // networkidle0 ist hier besser
 
         // Die intelligente Cookie-Logik bleibt, falls sie für andere Seiten benötigt wird
@@ -617,16 +623,21 @@ async function startAllScrapingJobs() {
     }
 }
 
+
 async function getScrapingRuleSuggestion(url, userId) {
     console.log(`[Intelligent-Selector-AI] Starte Analyse für URL: ${url}`);
+    
     await logActivity({
         userId,
         actionType: 'AI_SUGGEST_SCRAPING_RULES',
         status: 'info',
         details: { url, message: 'Analyse gestartet.' }
     });
+    
     let rawContent;
-    let model;
+    let model = 'gpt-3.5-turbo';
+
+    // 1. Daten abrufen (Fehlerhaftes try-catch repariert)
     try {
         const response = await axios.get(url, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' },
@@ -634,6 +645,7 @@ async function getScrapingRuleSuggestion(url, userId) {
             responseType: 'text'
         });
         rawContent = response.data;
+        
         const contentType = response.headers['content-type'] || '';
         if (contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom') || rawContent.trim().startsWith('<?xml')) {
             console.log(`[Intelligent-Selector-AI] URL ${url} als Feed (XML/RSS) erkannt. KI-Analyse wird übersprungen.`);
@@ -654,8 +666,11 @@ async function getScrapingRuleSuggestion(url, userId) {
         console.error(`[Intelligent-Selector-AI] Fehler beim Abrufen der URL ${url}:`, error.message);
         throw new Error(`Konnte die URL nicht abrufen. Status: ${error.response?.status || 'Netzwerkfehler'}`);
     }
+
+    // OPTIMIERT: System-Prompt klarer für JSON formuliert und XML-Tags für den Content genutzt
     const prompt = `
         Du bist ein Experte für Web-Strukturanalysen und Datenextraktion. Deine Aufgabe ist es, den HTML-Code einer Webseite zu analysieren und präzise, robuste CSS-Selektoren für eine Artikelliste zu generieren.
+        
         ANWEISUNGEN - Führe die folgenden Schritte exakt aus:
         1.  FINDE DEN CONTAINER: Identifiziere zuerst den wichtigsten, sich wiederholenden CSS-Selektor, der jeden einzelnen Artikel oder Eintrag in einer Liste umschließt. Dieser 'content_container_selector' muss stabil und prägnant sein (z.B. 'article.news-item', nicht 'div > div > div').
         2.  ANALYSIERE INNERHALB DES CONTAINERS: Konzentriere dich nun auf den Inhalt EINES DIESER CONTAINER. Finde die folgenden Elemente und gib ihre Selektoren relativ zum Container an.
@@ -664,10 +679,9 @@ async function getScrapingRuleSuggestion(url, userId) {
             * \`date_selector\`: Der Selektor für das Veröffentlichungsdatum.
             * \`description_selector\`: Der Selektor für den kurzen Anreißertext oder die Zusammenfassung.
         3.  ANALYSIERE DAS DATUMSFORMAT: Nimm den Textinhalt des gefundenen Datums, analysiere sein Format und gib den passenden 'date-fns' Format-String zurück (z.B. 'dd.MM.yyyy' oder 'd. MMMM yyyy').
-        4.  ANTWORTFORMAT: Gib deine Antwort AUSSCHLIESSLICH als ein einziges, valides JSON-Objekt zurück. Integriere alle gefundenen Informationen.
+        4.  ANTWORTFORMAT: Gib deine Antwort AUSSCHLIESSLICH als ein einziges, valides JSON-Objekt zurück.
 
-        Beispiel für eine perfekte Antwort:
-        \`\`\`json
+        GEFORDERTE JSON-STRUKTUR:
         {
           "format": "html",
           "rules": {
@@ -679,40 +693,54 @@ async function getScrapingRuleSuggestion(url, userId) {
             "date_format": "d. MMMM yyyy"
           }
         }
-        \`\`\`
         
-        Wenn du das Seitenformat absolut nicht bestimmen kannst, antworte mit:
-        \`\`\`json
+        Wenn du das Seitenformat absolut nicht bestimmen kannst, antworte exakt mit diesem JSON:
         { "format": "unknown", "rules": { "message": "Das Format der Seite konnte nicht automatisch erkannt werden." } }
-        \`\`\`
 
-        HIER IST DER ZU ANALYSIERENDE INHALT (max. 40000 Zeichen):
-        \`\`\`
+        HIER IST DER ZU ANALYSIERENDE HTML-INHALT:
+        <html_content>
         ${rawContent.substring(0, 40000)}
-        \`\`\`
+        </html_content>
     `;
+
     let aiResponseContent = '';
+    
+    // 2. KI-Aufruf mit nativem JSON-Mode
     try {
-        model = 'gpt-3.5-turbo';
-        const { content, usage } = await callOpenAI(prompt, model);
+        // OPTIMIERT: Wir übergeben { responseFormat: { type: "json_object" } } an unseren aiService
+        const { content, usage } = await callOpenAI(prompt, model, { responseFormat: { type: "json_object" } });
         aiResponseContent = content;
+        
         if (!aiResponseContent || aiResponseContent.trim() === '') {
             throw new Error('Die KI hat eine leere Antwort zurückgegeben.');
         }
-        const cleanedContent = aiResponseContent.replace(/```json\n?/, '').replace(/```/, '').trim();
-        const suggestion = JSON.parse(cleanedContent);
+
+        // OPTIMIERT: Da wir den json_object Modus nutzen, brauchen wir keine Regex-Magie mehr. 
+        // Wir machen nur einen Fallback-Trim, falls unerwartet Whitespace da ist.
+        let jsonString = aiResponseContent;
+        const firstBrace = aiResponseContent.indexOf('{');
+        const lastBrace = aiResponseContent.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1) {
+             jsonString = aiResponseContent.substring(firstBrace, lastBrace + 1);
+        }
+
+        const suggestion = JSON.parse(jsonString);
+
         if (!suggestion || !suggestion.format || !suggestion.rules) {
             console.error('[Intelligent-Selector-AI] Ungültige JSON-Struktur von der KI:', suggestion);
             throw new Error('Die KI hat eine Antwort mit einer ungültigen Struktur zurückgegeben.');
         }
+
         await logActivity({
             userId,
             actionType: 'AI_SUGGEST_SCRAPING_RULES',
             status: 'success',
             details: { url, model, tokenUsage: usage, format: suggestion.format }
         });
+        
         console.log(`[Intelligent-Selector-AI] Erfolgreich Vorschläge für ${url} erhalten.`);
         return suggestion;
+        
     } catch (error) {
         await logActivity({
             userId,

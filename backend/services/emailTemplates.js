@@ -1,11 +1,5 @@
 // backend/services/emailTemplates.js
 
-const BRAND = {
-  product: 'KI-Dashboard', // Fallback-Titel
-  company: 'Mobiliti',
-  supportEmail: 'hello@mobiliti.at',
-};
-
 function getBaseUrl() {
   const raw = (process.env.FRONTEND_URL || 'http://localhost:5173').trim();
   return raw.replace(/\/+$/, '');
@@ -17,37 +11,37 @@ function escapeHtml(str = '') {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/**
- * Logo-Referenz bestimmen:
- * - Wenn brandLogoUrl übergeben wurde, wird diese URL genutzt.
- * - Wenn EMAIL_EMBED_LOGO_PATH gesetzt ist, referenzieren Templates das Logo als CID "brand-logo".
- * - sonst als öffentliche URL: <FRONTEND_URL>/logos/de-mobiliti.png
- */
-function resolveLogoRef(brandLogoUrl) {
-  if (brandLogoUrl) {
-    return { type: 'url', url: brandLogoUrl };
-  }
-  if ((process.env.EMAIL_EMBED_LOGO_PATH || '').trim()) {
-    return { type: 'cid', id: 'brand-logo' };
-  }
-  return { type: 'url', url: `${getBaseUrl()}/logos/de-mobiliti.png` };
+function resolveLogoRef(logoUrl) {
+  if (logoUrl) return { type: 'url', url: logoUrl };
+  if ((process.env.EMAIL_EMBED_LOGO_PATH || '').trim()) return { type: 'cid', id: 'brand-logo' };
+  return { type: 'url', url: `${getBaseUrl()}/favicon.svg` }; // Fallback
 }
 
-
+// Zentrales Layout (Abwärtskompatibel mit alten Aufrufen und neuem partner-Objekt)
 function renderLayout({ 
   preheader = '', 
   title = '', 
   contentHtml = '', 
   ctaLabel, 
   ctaUrl, 
-  footerText, 
+  footerText,
+  partner = {}, 
   brandLogoUrl, 
   dashboardTitle,
-  colors = {}
+  colors = {} 
 }) {
-  const logo = resolveLogoRef(brandLogoUrl);
-  const primaryColor = colors.primary_color || '#111827';
-  const primaryText = colors.primary_text_color || '#ffffff';
+  const logoUrlToUse = partner?.logo_url || brandLogoUrl;
+  const logo = resolveLogoRef(logoUrlToUse);
+  
+  const primaryColor = partner?.color_scheme?.primary_color || colors.primary_color || '#1e293b'; 
+  const primaryText = partner?.color_scheme?.primary_text_color || colors.primary_text_color || '#ffffff';
+  
+  const partnerName = partner?.name || 'Intelligence Dashboard';
+  const finalDashboardTitle = partner?.dashboard_title || dashboardTitle || partnerName;
+  const partnerEmail = partner?.email || '';
+  const partnerAddress = partner?.address || '';
+  const partnerUrl = partner?.url_businesspartner || '';
+
   const logoImg = logo.type === 'cid'
     ? `<img src="cid:${logo.id}" alt="Logo" height="40" style="display:block;max-height:40px;"/>`
     : `<img src="${logo.url}" alt="Logo" height="40" style="display:block;max-height:40px;"/>`;
@@ -64,6 +58,20 @@ function renderLayout({
     </tr>
   ` : '';
 
+  // Dynamischer Footer
+  let footerHtml = footerText ? `${footerText}<br><br>` : '';
+  if (partner?.name) {
+    const footerDetails = [
+        partnerName,
+        partnerAddress,
+        partnerEmail ? `<a href="mailto:${partnerEmail}" style="color:#9ca3af;">${partnerEmail}</a>` : '',
+        partnerUrl ? `<a href="${partnerUrl}" target="_blank" style="color:#9ca3af;">${partnerUrl}</a>` : ''
+    ].filter(Boolean).join(' • ');
+    footerHtml += `<strong>${escapeHtml(partnerName)}</strong><br>${footerDetails}<br><br>© ${new Date().getFullYear()} ${escapeHtml(partnerName)}. Alle Rechte vorbehalten.`;
+  } else {
+    footerHtml += `© ${new Date().getFullYear()} Mobiliti`;
+  }
+
   return `<!doctype html>
 <html lang="de">
 <head>
@@ -71,18 +79,22 @@ function renderLayout({
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
     .content-block h2 { color: ${primaryColor}; border-bottom: 2px solid ${primaryColor}20; padding-bottom: 5px; }
+    a { color: ${primaryColor}; }
   </style>
 </head>
-<body style="margin:0;padding:0;background-color:#f9fafb;">
+<body style="margin:0;padding:0;background-color:#f4f6f8;">
+  <span style="display:none;font-size:1px;color:#f4f6f8;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">
+    ${escapeHtml(preheader)}
+  </span>
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
     <tr>
-      <td align="center" style="padding:24px;">
-        <table role="presentation" width="100%" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
+      <td align="center" style="padding:24px 10px;">
+        <table role="presentation" width="100%" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
           <tr style="background-color:#ffffff;">
             <td style="padding:24px; border-bottom: 1px solid #f3f4f6;">
               <table width="100%"><tr>
                 <td align="left">${logoImg}</td>
-                <td align="right" style="font-weight:bold; font-size:14px; color:#6b7280;">${escapeHtml(dashboardTitle || 'Intelligence')}</td>
+                <td align="right" style="font-weight:bold; font-size:14px; color:#6b7280;">${escapeHtml(finalDashboardTitle)}</td>
               </tr></table>
             </td>
           </tr>
@@ -97,9 +109,11 @@ function renderLayout({
           </tr>
         </table>
         <table style="max-width:600px;" width="100%">
-          <tr><td style="padding:24px;text-align:center;font-size:12px;color:#9ca3af;">
-            ${footerText || ''}<br>© ${new Date().getFullYear()} Mobiliti
-          </td></tr>
+          <tr>
+            <td style="padding:24px;text-align:center;font-size:12px;color:#9ca3af;line-height:1.5;">
+              ${footerHtml}
+            </td>
+          </tr>
         </table>
       </td>
     </tr>
@@ -108,6 +122,7 @@ function renderLayout({
 </html>`;
 }
 
+// --- BESTEHENDE SYSTEM-MAILS ---
 
 function renderShareContentEmail({ senderName, fromName, title, summary, source, brandLogoUrl, dashboardTitle }) {
   const contentHtml = `
@@ -126,12 +141,11 @@ function renderShareContentEmail({ senderName, fromName, title, summary, source,
     ctaUrl: source || undefined,
     footerText: `Gesendet von ${fromName || 'KI-Dashboard'}.`,
     brandLogoUrl,
-    dashboardTitle, // Weitergeleitet
+    dashboardTitle,
   });
 }
 
-function renderVerificationEmail({ username, verifyUrl, brandLogoUrl, dashboardTitle }) {
-  const title = 'Bitte E-Mail-Adresse bestätigen';
+function renderVerificationEmail({ username, verifyUrl, partner }) {
   const contentHtml = `
     <p>Hallo ${escapeHtml(username || '')},</p>
     <p>bitte bestätige deine E-Mail-Adresse, indem du auf den folgenden Button klickst.</p>
@@ -139,17 +153,15 @@ function renderVerificationEmail({ username, verifyUrl, brandLogoUrl, dashboardT
   `;
   return renderLayout({
     preheader: 'E-Mail-Adresse bestätigen',
-    title,
+    title: 'Bitte E-Mail-Adresse bestätigen',
     contentHtml,
     ctaLabel: 'E-Mail jetzt bestätigen',
     ctaUrl: verifyUrl,
-    brandLogoUrl,
-    dashboardTitle, // Weitergeleitet
+    partner
   });
 }
 
-function renderPasswordResetEmail({ username, resetUrl, brandLogoUrl, dashboardTitle }) {
-  const title = 'Passwort zurücksetzen';
+function renderPasswordResetEmail({ username, resetUrl, partner }) {
   const contentHtml = `
     <p>Hallo ${escapeHtml(username || '')},</p>
     <p>du hast eine Zurücksetzung deines Passworts angefordert. Klicke auf den folgenden Button, um ein neues Passwort zu vergeben.</p>
@@ -157,39 +169,34 @@ function renderPasswordResetEmail({ username, resetUrl, brandLogoUrl, dashboardT
   `;
   return renderLayout({
     preheader: 'Passwort zurücksetzen',
-    title,
+    title: 'Passwort zurücksetzen',
     contentHtml,
     ctaLabel: 'Passwort zurücksetzen',
     ctaUrl: resetUrl,
-    brandLogoUrl,
-    dashboardTitle, // Weitergeleitet
+    partner
   });
 }
 
-function renderNewsletterOptInEmail({ username, confirmUrl, unsubscribeUrl, brandLogoUrl, dashboardTitle }) {
-  const title = 'Newsletter-Anmeldung bestätigen';
+function renderNewsletterOptInEmail({ username, confirmUrl, unsubscribeUrl, partner }) {
   const contentHtml = `
     <p>Hallo ${escapeHtml(username || '')},</p>
-    <p>bitte bestätige deine Anmeldung zum KI-Dashboard Newsletter, indem du auf den folgenden Button klickst.</p>
+    <p>bitte bestätige deine Anmeldung zum Newsletter, indem du auf den folgenden Button klickst.</p>
     <p>So stellst du sicher, dass du unsere Updates nur dann bekommst, wenn du es wirklich möchtest (Double-Opt-In).</p>
     ${unsubscribeUrl ? `<p style="font-size:12px;color:#6b7280;margin-top:12px;">Keine E-Mails mehr gewünscht? Du kannst dich jederzeit <a href="${unsubscribeUrl}" target="_blank" rel="noopener">hier abmelden</a>.</p>` : ''}
   `;
   return renderLayout({
     preheader: 'Newsletter-Anmeldung bestätigen',
-    title,
+    title: 'Newsletter-Anmeldung bestätigen',
     contentHtml,
     ctaLabel: 'Anmeldung bestätigen',
     ctaUrl: confirmUrl,
     footerText: unsubscribeUrl ? `Abmelden: ${escapeHtml(unsubscribeUrl)}` : undefined,
-    brandLogoUrl,
-    dashboardTitle, // Weitergeleitet
+    partner
   });
 }
 
-
-function renderNewOpportunitiesEmail({ username, searchName, newOpportunities, searchUrl, brandLogoUrl, dashboardTitle }) {
+function renderNewOpportunitiesEmail({ username, searchName, newOpportunities, searchUrl, partner }) {
   const title = `Neue Förderungen für Ihre Suche: "${escapeHtml(searchName)}"`;
-  
   const opportunitiesHtml = newOpportunities.map(opp => 
     `<li style="margin-bottom: 8px;">
        <a href="${getBaseUrl()}/funding-detail/${opp.id}" target="_blank" rel="noopener" style="font-weight: bold; text-decoration: none;">
@@ -213,12 +220,10 @@ function renderNewOpportunitiesEmail({ username, searchName, newOpportunities, s
     contentHtml,
     ctaLabel: 'Alle Treffer anzeigen',
     ctaUrl: searchUrl,
-    brandLogoUrl,
-    dashboardTitle, // Weitergeleitet
+    partner
   });
 }
 
-// ANGEPASST: Akzeptiert jetzt `nextEvent`
 function renderBriefingEmail({ briefing, brandLogoUrl, dashboardTitle, nextEvent }) {
   const title = `Ihr Tägliches Briefing für den ${new Date().toLocaleDateString('de-DE')}`;
   
@@ -247,7 +252,6 @@ function renderBriefingEmail({ briefing, brandLogoUrl, dashboardTitle, nextEvent
     });
   }
   
-  // NEU: Nächstes Event am Ende hinzufügen
   if (nextEvent && nextEvent.title) {
     const eventDate = new Date(nextEvent.event_date).toLocaleDateString('de-DE');
     contentHtml += `
@@ -272,137 +276,149 @@ function renderBriefingEmail({ briefing, brandLogoUrl, dashboardTitle, nextEvent
     ctaLabel: 'Zum Dashboard',
     ctaUrl: getBaseUrl(),
     brandLogoUrl,
-    dashboardTitle, // Weitergeleitet
+    dashboardTitle
   });
 }
 
+// --- HILFSFUNKTION FÜR SAUBERE DOMAINS ---
+function getDomain(urlStr) {
+  if (!urlStr) return 'Link';
+  try {
+    const url = new URL(urlStr);
+    return url.hostname.replace(/^www\./, '');
+  } catch (e) {
+    return 'Quelle'; // Fallback, falls es kein valider Link ist
+  }
+}
 
-// backend/services/emailTemplates.js
-// ... (dein bestehender Code bleibt) ...
-
-function renderFleetDailyBriefingEmail({ briefing, brandLogoUrl, dashboardTitle, nextEvent, pdfUrl }) {
+// --- DAS NEUE KI BRIEFING ---
+function renderFleetDailyBriefingEmail({ briefing, partner, nextEvent, pdfUrl }) {
   const today = new Date().toLocaleDateString('de-DE');
-  const title = `Fuhrpark Daily – ${today}`;
+  const title = `${partner?.dashboard_title || 'Tages-Briefing'} – ${today}`;
+  const primaryColor = partner?.color_scheme?.primary_color || '#1e293b';
 
-  const top3 = (briefing.top_insights || []).slice(0, 3).map((x, idx) => `
-    <div style="margin:14px 0;padding:12px;border:1px solid #eee;border-radius:10px;">
-      <p style="margin:0 0 6px;font-weight:700;">${idx + 1}. ${escapeHtml(x.title || '')}</p>
-      <p style="margin:0 0 6px;"><strong>Was neu ist:</strong> ${escapeHtml(x.what_changed || '')}</p>
-      <p style="margin:0 0 6px;"><strong>Warum es zählt:</strong> ${escapeHtml(x.so_what || '')}</p>
-      <p style="margin:0;"><strong>Heute tun:</strong> ${escapeHtml(x.action || '')}</p>
-      ${
-        Array.isArray(x.sources) && x.sources.length
-          ? `<p style="margin:10px 0 0;font-size:12px;color:#6b7280;">
-              Quellen: ${x.sources.slice(0, 3).map(u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`).join(' • ')}
-            </p>`
-          : ''
+  // --- RENDERING: TOP INSIGHTS ---
+  const top3 = (briefing.top_insights || []).slice(0, 3).map((x, idx) => {
+    // Sichere Quellen-Generierung mit echter Domain
+    let sourcesHtml = '';
+    if (Array.isArray(x.sources) && x.sources.length > 0) {
+      const cleanSources = x.sources.filter(url => typeof url === 'string' && url.trim().startsWith('http'));
+      if (cleanSources.length > 0) {
+        sourcesHtml = `
+          <div style="margin-top: 12px; padding-top: 8px; border-top: 1px dashed #e2e8f0; font-size: 13px;">
+            <strong style="color: #64748b;">Quelle(n):</strong><br/>
+            ${cleanSources.map(u => {
+              const url = u.trim();
+              const domain = getDomain(url);
+              return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" style="color: ${primaryColor}; text-decoration: none; font-weight: 500;">
+                ${escapeHtml(domain)}
+              </a>`;
+            }).join(' &nbsp;|&nbsp; ')}
+          </div>
+        `;
       }
-    </div>
-  `).join('');
+    }
 
-  const costRows = (briefing.cost_drivers || []).slice(0, 4).map(d => `
-    <tr>
-      <td style="padding:8px;border-bottom:1px solid #eee;"><strong>${escapeHtml(d.driver || '')}</strong></td>
-      <td style="padding:8px;border-bottom:1px solid #eee;">${escapeHtml(d.value || '')}</td>
-      <td style="padding:8px;border-bottom:1px solid #eee;">${escapeHtml(d.trend || '')}</td>
-      <td style="padding:8px;border-bottom:1px solid #eee;">${escapeHtml(d.impact || '')}</td>
-    </tr>
-  `).join('');
-
-  const regulation = (briefing.regulation_and_funding || []).slice(0, 2).map(r => `
-    <div style="margin:10px 0;padding:12px;border:1px solid #eee;border-radius:10px;">
-      <p style="margin:0 0 6px;font-weight:700;">${escapeHtml(r.title || '')}</p>
-      ${r.deadline ? `<p style="margin:0 0 6px;"><strong>Deadline:</strong> ${escapeHtml(r.deadline)}</p>` : ''}
-      <p style="margin:0 0 6px;">${escapeHtml(r.summary || '')}</p>
-      <p style="margin:0 0 6px;"><strong>Empfehlung:</strong> ${escapeHtml(r.action || '')}</p>
-      ${r.source ? `<p style="margin:0;font-size:12px;color:#6b7280;">Quelle: <a href="${r.source}" target="_blank" rel="noopener">${r.source}</a></p>` : ''}
-    </div>
-  `).join('');
-
-  const radar = (briefing.industry_radar || []).slice(0, 3).map(n => `
-    <li style="margin:0 0 10px;">
-      <div style="font-weight:700;">${escapeHtml(n.title || '')}</div>
-      <div style="margin-top:4px;">${escapeHtml(n.summary || '')}</div>
-      <div style="margin-top:4px;font-size:12px;color:#6b7280;">
-        ${n.published_date ? `Datum: ${escapeHtml(n.published_date)} • ` : ''}
-        ${n.source ? `Quelle: <a href="${n.source}" target="_blank" rel="noopener">${n.source}</a>` : ''}
-      </div>
-    </li>
-  `).join('');
-
-  const actions = (briefing.recommended_actions || []).slice(0, 3).map(a => `<li>${escapeHtml(a)}</li>`).join('');
-
-  const eventBlock = (nextEvent && nextEvent.title) ? (() => {
-    const eventDate = new Date(nextEvent.event_date).toLocaleDateString('de-DE');
     return `
-      <h2 style="font-size: 16px; margin-top: 20px; padding-bottom: 5px; border-bottom: 1px solid #eee;">Nächstes Event</h2>
-      <p style="margin:10px 0 6px;"><strong>${escapeHtml(nextEvent.title)}</strong></p>
-      <p style="margin:0 0 10px;color:#333;">Datum: ${eventDate}</p>
-      ${nextEvent.original_url ? `<a href="${nextEvent.original_url}" target="_blank" rel="noopener"
-        style="display:inline-block;padding:8px 16px;text-decoration:none;border-radius:6px;background:#f4f4f5;color:#111;font-weight:600;font-size:14px;">
-        Details & Anmeldung
-      </a>` : ''}
-    `;
-  })() : '';
+    <div style="margin:16px 0;padding:16px;background-color:#f8fafc;border-left:4px solid ${primaryColor};border-radius:0 8px 8px 0;">
+      <p style="margin:0 0 8px;font-weight:700;font-size:16px;color:#0f172a;">${idx + 1}. ${escapeHtml(x.title || '')}</p>
+      <p style="margin:0 0 6px;"><strong>Analyse:</strong> ${escapeHtml(x.what_changed || '')}</p>
+      <p style="margin:0 0 6px;"><strong>Bedeutung:</strong> ${escapeHtml(x.so_what || '')}</p>
+      <p style="margin:0;"><strong>Empfehlung:</strong> ${escapeHtml(x.action || '')}</p>
+      ${sourcesHtml}
+    </div>
+  `;
+  }).join('');
 
+  const topInsightsHtml = top3 || '<p style="color:#6b7280;">Heute keine relevanten Verschiebungen.</p>';
+
+  // --- RENDERING: NÄCHSTES EVENT ---
+  let eventHtml = '';
+  if (nextEvent && nextEvent.title) {
+      const eventDate = nextEvent.event_date ? new Date(nextEvent.event_date).toLocaleDateString('de-DE') : 'Demnächst';
+      
+      let eventDetailsHtml = '';
+      if (typeof nextEvent.original_url === 'string' && nextEvent.original_url.trim().startsWith('http')) {
+        eventDetailsHtml = `
+          <div style="margin-top: 12px; padding-top: 8px; border-top: 1px dashed #e2e8f0; font-size: 13px;">
+            <a href="${escapeHtml(nextEvent.original_url.trim())}" target="_blank" rel="noopener" style="color: ${primaryColor}; text-decoration: none; font-weight: bold;">
+              Details & Anmeldung &rarr;
+            </a>
+          </div>
+        `;
+      }
+
+      eventHtml = `
+        <h2 style="font-size: 18px; margin-top: 32px;">Nächstes Branchen-Event</h2>
+        <div style="margin:16px 0;padding:16px;background-color:#ffffff;border:1px solid #e2e8f0;border-left:4px solid ${primaryColor};border-radius:8px;">
+            <p style="margin:0 0 6px;font-weight:700;font-size:16px;color:#0f172a;">📅 ${escapeHtml(nextEvent.title)}</p>
+            <p style="margin:0 0 8px;color:${primaryColor};font-size:14px;"><strong>Datum:</strong> ${escapeHtml(eventDate)}</p>
+            ${nextEvent.summary ? `<p style="margin:0 0 12px;font-size:14px;color:#374151;line-height:1.4;">${escapeHtml(nextEvent.summary)}</p>` : ''}
+            ${eventDetailsHtml}
+        </div>
+      `;
+  }
+
+  // --- RENDERING: REGULATORIK & FÖRDERUNG ---
+  let regulationHtml = '';
+  if (Array.isArray(briefing.regulation_and_funding) && briefing.regulation_and_funding.length > 0) {
+      const regulation = briefing.regulation_and_funding.map(r => {
+        let sourceHtml = '';
+        if (typeof r.source === 'string' && r.source.trim().startsWith('http')) {
+          const url = r.source.trim();
+          const domain = getDomain(url);
+          sourceHtml = `
+            <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed #e2e8f0; font-size: 13px;">
+              <strong style="color: #64748b;">Quelle:</strong> 
+              <a href="${escapeHtml(url)}" target="_blank" rel="noopener" style="color: ${primaryColor}; text-decoration: none; font-weight: 500;">
+                ${escapeHtml(domain)}
+              </a>
+            </div>
+          `;
+        }
+
+        return `
+        <div style="margin:12px 0;padding:12px;border:1px solid #e2e8f0;border-radius:8px;">
+          <p style="margin:0 0 6px;font-weight:700;">${escapeHtml(r.title || '')}</p>
+          ${r.deadline ? `<p style="margin:0 0 6px;color:#ef4444;font-size:14px;"><strong>Frist:</strong> ${escapeHtml(r.deadline)}</p>` : ''}
+          <p style="margin:0 0 6px;">${escapeHtml(r.summary || '')}</p>
+          <p style="margin:0;"><strong>Aktion:</strong> ${escapeHtml(r.action || '')}</p>
+          ${sourceHtml}
+        </div>
+      `;
+      }).join('');
+      
+      regulationHtml = `<h2 style="font-size: 18px; margin-top: 32px;">Regulatorik & Förderung</h2>${regulation}`;
+  }
+
+  // --- RENDERING: PDF BLOCK ---
   const pdfBlock = pdfUrl ? `
-    <div style="margin-top: 16px; padding: 12px; border: 1px dashed #e5e7eb; border-radius: 10px;">
-      <strong>PDF-Version:</strong>
-      <a href="${pdfUrl}" target="_blank" rel="noopener">Fuhrpark Daily als PDF herunterladen</a>
+    <div style="margin-top: 24px; padding: 16px; text-align: center; background-color:#f1f5f9; border-radius: 8px;">
+      <a href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener" style="font-weight:bold;text-decoration:none;color:${primaryColor};">
+        📄 Gesamtes Briefing als PDF herunterladen
+      </a>
     </div>
   ` : '';
 
+  // --- ZUSAMMENBAU DES GESAMTEN HTML ---
   const contentHtml = `
-    <p style="margin:0 0 12px;color:#6b7280;">Heute in 60 Sekunden. Relevanz vor Vollständigkeit.</p>
-
-    <h2 style="font-size: 16px; margin-top: 0; padding-bottom: 5px; border-bottom: 1px solid #eee;">Top 3 Insights</h2>
-    ${top3 || '<p style="color:#6b7280;">Heute keine belastbaren Insights aus den Rohdaten.</p>'}
-
-    <h2 style="font-size: 16px; margin-top: 20px; padding-bottom: 5px; border-bottom: 1px solid #eee;">Kosten & Markt (TCO-Treiber)</h2>
-    <table width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #eee;border-radius:10px;overflow:hidden;">
-      <thead>
-        <tr style="background:#f9fafb;">
-          <th align="left" style="padding:8px;">Driver</th>
-          <th align="left" style="padding:8px;">Wert</th>
-          <th align="left" style="padding:8px;">Trend</th>
-          <th align="left" style="padding:8px;">Impact</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${costRows || `<tr><td colspan="4" style="padding:10px;color:#6b7280;">Keine Kostentreiber-Daten verfügbar.</td></tr>`}
-      </tbody>
-    </table>
-
-    ${regulation ? `
-      <h2 style="font-size: 16px; margin-top: 20px; padding-bottom: 5px; border-bottom: 1px solid #eee;">Regulatorik & Förderung</h2>
-      ${regulation}
-    ` : ''}
-
-    <h2 style="font-size: 16px; margin-top: 20px; padding-bottom: 5px; border-bottom: 1px solid #eee;">Branchen-Radar</h2>
-    <ul style="padding-left:18px;margin:10px 0;">
-      ${radar || '<li style="color:#6b7280;">Keine Radar-Einträge.</li>'}
-    </ul>
-
-    ${eventBlock}
-
-    <h2 style="font-size: 16px; margin-top: 20px; padding-bottom: 5px; border-bottom: 1px solid #eee;">Heute empfohlen</h2>
-    <ul style="padding-left:18px;margin:10px 0;">
-      ${actions || '<li style="color:#6b7280;">Keine Empfehlungen.</li>'}
-    </ul>
-
+    <p style="margin:0 0 16px;color:#6b7280;font-size:14px;">Ihre wichtigsten Branchen-Entwicklungen, zusammengefasst in 60 Sekunden.</p>
+    <h2 style="font-size: 18px; margin-top: 24px;">Top Insights</h2>
+    ${topInsightsHtml}
+    
+    ${eventHtml}
+    
+    ${regulationHtml}
     ${pdfBlock}
-
-    ${briefing.confidence_note ? `<p style="margin:16px 0 0;color:#6b7280;font-size:12px;">${escapeHtml(briefing.confidence_note)}</p>` : ''}
   `;
 
   return renderLayout({
-    preheader: (briefing.top_insights && briefing.top_insights[0] && briefing.top_insights[0].title) ? briefing.top_insights[0].title : 'Fuhrpark Daily – Top 3 + Aktionen',
+    preheader: (briefing.top_insights && briefing.top_insights[0]?.title) || 'Ihr neues Briefing ist da',
     title,
     contentHtml,
-    ctaLabel: 'Zum Dashboard',
+    ctaLabel: 'Alle Daten im Dashboard ansehen',
     ctaUrl: getBaseUrl(),
-    brandLogoUrl,
-    dashboardTitle
+    partner
   });
 }
 

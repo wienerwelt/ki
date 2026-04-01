@@ -13,13 +13,21 @@ function maskConnectionInfo() {
 
 console.log('[db] Initialisiere PostgreSQL-Pool mit:', maskConnectionInfo());
 
-const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_DATABASE,
-  password: process.env.DB_PASSWORD,
-  port: Number(process.env.DB_PORT),
-});
+// --- DIE ENTSCHEIDENDE ÄNDERUNG ---
+// Wenn eine DATABASE_URL existiert, nutzen wir diese. 
+// Falls nicht, fallen wir auf die alten Einzelvariablen zurück.
+const poolConfig = process.env.DATABASE_URL 
+  ? { connectionString: process.env.DATABASE_URL }
+  : {
+      user: process.env.DB_USER,
+      host: process.env.DB_HOST,
+      database: process.env.DB_DATABASE,
+      password: process.env.DB_PASSWORD,
+      port: Number(process.env.DB_PORT),
+    };
+
+const pool = new Pool(poolConfig);
+// ----------------------------------
 
 pool.on('error', (err) => {
   console.error('[db] Unerwarteter Fehler auf idle client:', err);

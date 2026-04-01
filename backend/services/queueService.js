@@ -1,6 +1,9 @@
 const { Queue } = require('bullmq');
 const IORedis = require('ioredis');
 
+// Hilfsfunktion zum Warten (NEU)
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 function maskRedisUrl(url) {
   if (!url) return null;
   return url.replace(/:\/\/(.*?):(.*?)@/, '://$1:***@');
@@ -28,9 +31,9 @@ function buildRedisConnection(clientName = 'redis') {
       enableOfflineQueue: false,
       lazyConnect: true,
       retryStrategy(times) {
-        const delay = Math.min(times * 500, 5000);
-        console.log(`[${clientName}] retry #${times} in ${delay}ms`);
-        return delay;
+        const retryDelay = Math.min(times * 500, 5000);
+        console.log(`[${clientName}] retry #${times} in ${retryDelay}ms`);
+        return retryDelay;
       },
     });
   }
@@ -42,9 +45,9 @@ function buildRedisConnection(clientName = 'redis') {
     enableOfflineQueue: false,
     lazyConnect: true,
     retryStrategy(times) {
-      const delay = Math.min(times * 500, 5000);
-      console.log(`[${clientName}] retry #${times} in ${delay}ms`);
-      return delay;
+      const retryDelay = Math.min(times * 500, 5000);
+      console.log(`[${clientName}] retry #${times} in ${retryDelay}ms`);
+      return retryDelay;
     },
   };
 
@@ -74,39 +77,40 @@ attachRedisLogs(connection, 'redis-main');
 const heartbeatRedisClient = buildRedisConnection('redis-heartbeat');
 attachRedisLogs(heartbeatRedisClient, 'redis-heartbeat');
 
+// --- GEÄNDERT: Robuste Verbindungs-Schleife für Docker-Start ---
 async function connectRedisClients() {
-  try {
-    if (connection.status === 'wait') {
-      await connection.connect();
+  let retries = 6; // Versucht es 6 mal (insgesamt ca. 15-20 Sekunden Wartezeit)
+
+  while (retries > 0) {
+    try {
+      if (connection.status === 'wait') {
+        await connection.connect();
+      }
+      if (heartbeatRedisClient.status === 'wait') {
+        await heartbeatRedisClient.connect();
+      }
+
+      // Wenn Ping fehlschlägt, landen wir im Catch-Block und versuchen es erneut
+      const pongMain = await connection.ping();
+      console.log('[redis-main] ping =>', pongMain);
+
+      const pongHb = await heartbeatRedisClient.ping();
+      console.log('[redis-heartbeat] ping =>', pongHb);
+
+      console.log('[queue] Alle Redis-Verbindungen erfolgreich initialisiert.');
+      return; // Alles hat geklappt, Schleife verlassen!
+
+    } catch (err) {
+      console.warn(`[queue] Redis ist noch nicht bereit (${err.message}). Versuche es in 3 Sekunden erneut... (Verbleibend: ${retries - 1})`);
+      retries--;
+      
+      if (retries === 0) {
+        console.error('[queue] Kritischer Fehler: Konnte keine finale Verbindung zu Redis herstellen.');
+        throw err; // Jetzt erst lassen wir den Worker abstürzen
+      }
+      
+      await delay(3000); // 3 Sekunden warten
     }
-  } catch (err) {
-    console.error('[redis-main] Verbindung fehlgeschlagen:', err.message);
-    throw err;
-  }
-
-  try {
-    if (heartbeatRedisClient.status === 'wait') {
-      await heartbeatRedisClient.connect();
-    }
-  } catch (err) {
-    console.error('[redis-heartbeat] Verbindung fehlgeschlagen:', err.message);
-    throw err;
-  }
-
-  try {
-    const pong = await connection.ping();
-    console.log('[redis-main] ping =>', pong);
-  } catch (err) {
-    console.error('[redis-main] ping fehlgeschlagen:', err.message);
-    throw err;
-  }
-
-  try {
-    const pong = await heartbeatRedisClient.ping();
-    console.log('[redis-heartbeat] ping =>', pong);
-  } catch (err) {
-    console.error('[redis-heartbeat] ping fehlgeschlagen:', err.message);
-    throw err;
   }
 }
 

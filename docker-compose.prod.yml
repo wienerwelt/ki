@@ -1,0 +1,26 @@
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - ./backups:/backups
+
+  api:
+    command: npm start
+    ports:
+      - "127.0.0.1:5001:5000"
+
+  worker-ai:
+    command: npm run start:ai
+
+  worker-scrape:
+    command: npm run start:scrape
+
+  worker-mail:
+    command: npm run start:mail
+
+  worker-data:
+    command: npm run start:data
+
+  worker-funding:
+    command: npm run start:funding

@@ -24,8 +24,9 @@ import enTranslation from './locales/translation-en.json';
 
 posthog.init(import.meta.env.VITE_POSTHOG_KEY, {
     api_host: import.meta.env.VITE_POSTHOG_HOST,
-    capture_pageview: true, // Erfasst automatisch Seitenaufrufe
-    autocapture: true, // Ermöglicht das Erstellen von Aktionen direkt aus dem PostHog-UI
+    capture_pageview: true, 
+    autocapture: true, 
+    opt_out_capturing_by_default: true, 
 });
             
 

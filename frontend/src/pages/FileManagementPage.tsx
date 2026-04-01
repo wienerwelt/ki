@@ -79,7 +79,8 @@ const FileManagementPage: React.FC = () => {
   const [fileTags, setFileTags] = useState('');
 
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
-  const [selectedPartnerId, setSelectedPartnerId] = useState<string>('');
+  const [selectedPartnerId, setSelectedPartnerId] = useState<string>(''); // Für den Upload
+  const [filterPartnerId, setFilterPartnerId] = useState<string>('all'); // NEU: Für die Listenansicht
   const [isPartnerListLoading, setIsPartnerListLoading] = useState(false);
   
   const [shareOpen, setShareOpen] = useState(false);
@@ -97,14 +98,22 @@ const FileManagementPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await apiClient.get('/api/files');
+      // Limit erhöhen, um verlässliche Statistiken (Anzahl/Größe) für den Admin zu haben
+      let url = '/api/files?limit=200';
+      
+      // Wenn Admin und ein spezifischer Partner im Filter gewählt ist
+      if (isAdmin && filterPartnerId !== 'all') {
+          url += `&businessPartnerId=${filterPartnerId}`;
+      }
+
+      const response = await apiClient.get(url);
       setFiles(response.data || []);
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Fehler beim Laden der Dateien.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAdmin, filterPartnerId]);
 
   const fetchPartners = useCallback(async () => {
     if (!isAdmin) return;
@@ -192,7 +201,7 @@ const FileManagementPage: React.FC = () => {
     }
   };
 
-  const handleFileDownload = async (fileId: string, filename: string) => {
+  const handleFileDownload = async (fileId: string) => {
     try {
       const response = await apiClient.get(`/api/files/${fileId}/download`);
       const { url } = response.data || {};
@@ -292,33 +301,72 @@ const FileManagementPage: React.FC = () => {
         )}
       </Box>
 
-      {isUploader && businessPartner && (
+      {/* SPEICHER-ANZEIGE */}
+{/* SPEICHER-ANZEIGE */}
+      {(isAdmin || businessPartner) && (
         <Paper sx={{ p: 2, mb: 3 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: isAdmin ? 0 : 1 }}>
             <StorageIcon color="action" />
             <Typography variant="body1" sx={{ flexGrow: 1 }}>
-              Speicher {isMobile ? '' : `(Paket: ${businessPartner?.storage_tier || 'N/A'})`}
+              {isAdmin 
+                ? (filterPartnerId === 'all' ? 'Gesamtspeicher (Alle Partner)' : 'Speicher (Gefilterter Partner)')
+                : `Speicher ${isMobile ? '' : `(Paket: ${businessPartner?.storage_tier || 'Basis'})`}`}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {`${formatFileSize(usageBytes)} / ${formatFileSize(limitBytes)}`}
+            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 'bold' }}>
+              {files.length} Datei(en) | {' '}
+              {isAdmin 
+                ? `${formatFileSize(files.reduce((acc, f) => acc + Number(f.file_size), 0))} belegt` 
+                : `${formatFileSize(usageBytes)} / ${formatFileSize(limitBytes)}`}
             </Typography>
           </Box>
-          <LinearProgress variant="determinate" value={usagePercent} sx={{ height: 8, borderRadius: 4 }} />
+          {!isAdmin && (
+            <LinearProgress 
+                variant="determinate" 
+                value={usagePercent} 
+                // NEU: Dynamische Farben (Rot ab 90%, Gelb ab 75%, sonst Grün)
+                color={usagePercent > 90 ? 'error' : usagePercent > 75 ? 'warning' : 'success'}
+                sx={{ 
+                    height: 8, 
+                    borderRadius: 4, 
+                    bgcolor: theme.palette.mode === 'dark' ? 'grey.800' : 'grey.200' 
+                }} 
+            />
+          )}
         </Paper>
       )}
 
+      {/* FILTER & SUCHE */}
       <Paper sx={{ p: 2, mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
-          <TextField
-            variant="outlined"
-            size="small"
-            placeholder="Suchen..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }}
-            fullWidth={isMobile}
-            sx={{ minWidth: isMobile ? '100%' : '300px' }}
-          />
+          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', flexGrow: 1 }}>
+            <TextField
+              variant="outlined"
+              size="small"
+              placeholder="Suchen..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }}
+              fullWidth={isMobile}
+              sx={{ minWidth: isMobile ? '100%' : '300px' }}
+            />
+            {/* NEU: Admin Business Partner Filter */}
+            {isAdmin && (
+              <FormControl size="small" sx={{ minWidth: isMobile ? '100%' : '250px' }}>
+                <InputLabel>Partner filtern</InputLabel>
+                <Select
+                  value={filterPartnerId}
+                  label="Partner filtern"
+                  onChange={(e) => setFilterPartnerId(e.target.value)}
+                >
+                  <MenuItem value="all"><em>Alle Partner anzeigen</em></MenuItem>
+                  {partners.map(p => (
+                    <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
+          </Box>
+
           {!isMobile && isUploader && (
             <Tooltip title={!canUpload ? 'Speicherlimit erreicht oder Paket erlaubt keine Uploads.' : ''}>
               <span>
@@ -401,6 +449,7 @@ const FileManagementPage: React.FC = () => {
         </DialogActions>
       </Dialog>
       
+      {/* SHARE DIALOG */}
       <Dialog open={shareOpen} onClose={() => setShareOpen(false)} fullWidth maxWidth="sm" fullScreen={isMobile}>
             <DialogTitle>Datei teilen</DialogTitle>
             <DialogContent dividers>
@@ -504,7 +553,7 @@ const FileManagementPage: React.FC = () => {
                                 </Tooltip>
                             )}
                             <Tooltip title="Download">
-                            <IconButton onClick={() => handleFileDownload(file.id, file.filename)} size="small">
+                            <IconButton onClick={() => handleFileDownload(file.id)} size="small">
                                 <DownloadIcon fontSize="small" />
                             </IconButton>
                             </Tooltip>
@@ -560,7 +609,7 @@ const FileManagementPage: React.FC = () => {
                                         <ShareIcon />
                                     </IconButton>
                                 )}
-                                <IconButton onClick={() => handleFileDownload(file.id, file.filename)} size="small">
+                                <IconButton onClick={() => handleFileDownload(file.id)} size="small">
                                     <DownloadIcon />
                                 </IconButton>
                                 {isUploader && (

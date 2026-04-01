@@ -15,7 +15,10 @@ import {
   Divider,
   FormControlLabel,
   Switch,
+  useTheme,
 } from '@mui/material';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import {
   LineChart,
   Line,
@@ -34,6 +37,7 @@ import {
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 
+// --- Interfaces (unverändert) ---
 interface TimeSeriesData {
   period: string;
   login_count: number;
@@ -50,15 +54,12 @@ interface KpiData {
   total_ai_content: number | string;
   total_scraped_content: number | string;
   total_scraping_jobs_completed: number | string;
-
   total_redactional_tokens: number | string | null;
   total_usage_log_tokens: number | string | null;
   total_funding_tokens: number | string | null;
   total_tokens_overall: number | string | null;
-
   total_processed_opportunities: number | string;
   total_ai_requests: number | string;
-
   total_community_posts: number | string;
   total_community_comments: number | string;
   total_community_likes: number | string;
@@ -108,6 +109,7 @@ type AdminStatsResponse = {
   topUserActivity: TopUserData[];
 };
 
+// --- Hilfsfunktionen für Zahlen & Formate ---
 const num = (v: any) => {
   const n = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : 0;
   return Number.isFinite(n) ? n : 0;
@@ -115,6 +117,14 @@ const num = (v: any) => {
 
 const fmtInt = (v: any) => Math.round(num(v)).toLocaleString('de-AT');
 const fmtTokens = (v: any) => Math.round(num(v)).toLocaleString('de-AT');
+
+// Hilfsfunktion: 10000 -> 10k, 1000000 -> 1M
+const fmtAxis = (tickItem: any) => {
+  const v = Number(tickItem);
+  if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
+  if (v >= 1000) return `${(v / 1000).toFixed(0)}k`;
+  return v.toString();
+};
 
 function deltaPct(current: any, previous: any) {
   const c = num(current);
@@ -124,35 +134,81 @@ function deltaPct(current: any, previous: any) {
   return ((c - p) / p) * 100;
 }
 
+// --- Verbesserte StatCard (Farben für Deltas) ---
 const StatCard: React.FC<{
   title: string;
   value: string | number;
   description?: string;
-  delta?: string | null;
-}> = ({ title, value, description, delta }) => (
-  <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', height: '100%' }}>
-    <Typography variant="h6" color="text.secondary" sx={{ fontSize: '0.9rem' }}>
-      {title}
-    </Typography>
+  deltaValue?: number | null;
+  inverseColors?: boolean; // True = Positives Wachstum ist schlecht (Kosten)
+}> = ({ title, value, description, deltaValue, inverseColors = false }) => {
+  let deltaLabel = null;
+  let color: 'default' | 'success' | 'error' | 'primary' = 'default';
+  let icon = null;
 
-    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 1 }}>
-      <Typography component="p" variant="h4">
-        {value}
+  if (deltaValue !== null && deltaValue !== undefined) {
+    if (deltaValue === Infinity) {
+      deltaLabel = '+∞%';
+      color = inverseColors ? 'error' : 'success';
+      icon = <TrendingUpIcon fontSize="small" />;
+    } else {
+      const sign = deltaValue >= 0 ? '+' : '';
+      deltaLabel = `${sign}${deltaValue.toFixed(0)}%`;
+
+      if (deltaValue > 0) {
+        color = inverseColors ? 'error' : 'success';
+        icon = <TrendingUpIcon fontSize="small" />;
+      } else if (deltaValue < 0) {
+        color = inverseColors ? 'success' : 'error';
+        icon = <TrendingDownIcon fontSize="small" />;
+      }
+    }
+  }
+
+  return (
+    <Paper sx={{ p: 2.5, display: 'flex', flexDirection: 'column', height: '100%', borderRadius: 2, transition: 'box-shadow 0.3s ease', '&:hover': { boxShadow: 4 } }}>
+      <Typography variant="subtitle2" color="text.secondary" fontWeight="bold">
+        {title}
       </Typography>
-      {delta ? <Chip size="small" label={delta} variant="outlined" /> : null}
-    </Box>
 
-    {description ? (
-      <Typography variant="caption" color="text.secondary" sx={{ flexGrow: 1, mt: 0.5 }}>
-        {description}
-      </Typography>
-    ) : null}
-  </Paper>
-);
+      <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 1.5, mb: 1 }}>
+        <Typography component="p" variant="h4" fontWeight="bold">
+          {value}
+        </Typography>
+        {deltaLabel && (
+          <Chip
+            size="small"
+            label={deltaLabel}
+            icon={icon!}
+            color={color}
+            variant={color === 'default' ? 'outlined' : 'filled'}
+            sx={{ fontWeight: 'bold', fontSize: '0.75rem' }}
+          />
+        )}
+      </Box>
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#AF19FF', '#FF1943'];
+      {description && (
+        <Typography variant="caption" color="text.secondary" sx={{ flexGrow: 1, mt: 'auto', lineHeight: 1.3 }}>
+          {description}
+        </Typography>
+      )}
+    </Paper>
+  );
+};
 
 const AdminStatisticsPage: React.FC = () => {
+  const theme = useTheme();
+
+  // Themenfarben für die Diagramme (passt sich dem Dark/Light Mode an)
+  const COLORS = [
+    theme.palette.primary.main,
+    theme.palette.secondary.main,
+    theme.palette.success.main,
+    theme.palette.warning.main,
+    theme.palette.info.main,
+    theme.palette.error.main,
+  ];
+
   const [stats, setStats] = useState<AdminStatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -161,7 +217,6 @@ const AdminStatisticsPage: React.FC = () => {
   const [modelFilter, setModelFilter] = useState<string>('');
   const [bpFilter, setBpFilter] = useState<string>('');
 
-  // NEU: Kalendermonat-Auswahl + Vergleich
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     const d = new Date();
     const y = d.getFullYear();
@@ -180,7 +235,6 @@ const AdminStatisticsPage: React.FC = () => {
       if (modelFilter) params.append('model', modelFilter);
       if (bpFilter) params.append('businessPartnerId', bpFilter);
 
-      // Wenn timespan=month: nutze echten Kalendermonat (YYYY-MM)
       if (timespan === 'month') {
         params.append('month', selectedMonth);
       }
@@ -225,7 +279,7 @@ const AdminStatisticsPage: React.FC = () => {
   const renderDashboard = () => {
     if (loading)
       return (
-        <Box sx={{ display: 'flex', justifyContent: 'center', p: 5 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'center', p: 10 }}>
           <CircularProgress />
         </Box>
       );
@@ -235,13 +289,9 @@ const AdminStatisticsPage: React.FC = () => {
     const k = stats.kpis;
     const pk = stats.comparisonKpis;
 
-    const deltaLabel = (current: any, previous: any) => {
+    const getDelta = (current: any, previous: any) => {
       if (!compare || !pk) return null;
-      const d = deltaPct(current, previous);
-      if (d === null) return null;
-      if (d === Infinity) return '+∞%';
-      const sign = d >= 0 ? '+' : '';
-      return `${sign}${d.toFixed(0)}%`;
+      return deltaPct(current, previous);
     };
 
     const totalTokens = num(k.total_tokens_overall);
@@ -250,73 +300,45 @@ const AdminStatisticsPage: React.FC = () => {
 
     return (
       <Grid container spacing={3}>
-        {/* Kontext */}
+        {/* Kontext Box */}
         <Grid item xs={12}>
-          <Paper sx={{ p: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
-              <Typography variant="subtitle1" color="text.secondary">
-                Zeitraum:
-              </Typography>
-              <Chip label={timeframeLabel} size="small" />
-              {compare && pk ? (
+          <Paper sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', bgcolor: 'background.default' }} variant="outlined">
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.5 }}>
+              <Typography variant="body2" color="text.secondary" fontWeight="bold">Zeitraum:</Typography>
+              <Chip label={timeframeLabel} size="small" color="primary" variant="outlined" />
+              
+              {compare && pk && (
                 <>
-                  <Typography variant="subtitle1" color="text.secondary" sx={{ ml: 1 }}>
-                    Vergleich:
-                  </Typography>
+                  <Typography variant="body2" color="text.secondary" fontWeight="bold" sx={{ ml: 2 }}>Vergleich:</Typography>
                   <Chip
-                    label={`${new Date(stats.timeframe.previousStart).toLocaleDateString('de-AT')} – ${new Date(
-                      stats.timeframe.previousEnd
-                    ).toLocaleDateString('de-AT')}`}
+                    label={`${new Date(stats.timeframe.previousStart).toLocaleDateString('de-AT')} – ${new Date(stats.timeframe.previousEnd).toLocaleDateString('de-AT')}`}
                     size="small"
                     variant="outlined"
                   />
                 </>
-              ) : null}
+              )}
             </Box>
           </Paper>
         </Grid>
 
         {/* Zeile 1: System KPIs */}
         <Grid item xs={6} sm={4} md={2}>
-          <StatCard title="Logins" value={fmtInt(k.total_logins)} delta={deltaLabel(k.total_logins, pk?.total_logins)} />
+          <StatCard title="Logins" value={fmtInt(k.total_logins)} deltaValue={getDelta(k.total_logins, pk?.total_logins)} />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>
-          <StatCard
-            title="Unique Login-User"
-            value={fmtInt(k.unique_login_users)}
-            delta={deltaLabel(k.unique_login_users, pk?.unique_login_users)}
-          />
+          <StatCard title="Unique Login-User" value={fmtInt(k.unique_login_users)} deltaValue={getDelta(k.unique_login_users, pk?.unique_login_users)} />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>
-          <StatCard
-            title="KI-Inhalte"
-            value={fmtInt(k.total_ai_content)}
-            delta={deltaLabel(k.total_ai_content, pk?.total_ai_content)}
-          />
+          <StatCard title="KI-Inhalte" value={fmtInt(k.total_ai_content)} deltaValue={getDelta(k.total_ai_content, pk?.total_ai_content)} />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>
-          <StatCard
-            title="AI Requests"
-            value={fmtInt(k.total_ai_requests)}
-            delta={deltaLabel(k.total_ai_requests, pk?.total_ai_requests)}
-            description="activity_log + ai_usage_logs"
-          />
+          <StatCard title="AI Requests" value={fmtInt(k.total_ai_requests)} deltaValue={getDelta(k.total_ai_requests, pk?.total_ai_requests)} description="Alle Aufrufe" />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>
-          <StatCard
-            title="Gescrapte Inhalte"
-            value={fmtInt(k.total_scraped_content)}
-            delta={deltaLabel(k.total_scraped_content, pk?.total_scraped_content)}
-            description="Rows in scraped_content"
-          />
+          <StatCard title="Gescrapte Inhalte" value={fmtInt(k.total_scraped_content)} deltaValue={getDelta(k.total_scraped_content, pk?.total_scraped_content)} description="Seiten/Artikel" />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>
-          <StatCard
-            title="Scraping Jobs"
-            value={fmtInt(k.total_scraping_jobs_completed)}
-            delta={deltaLabel(k.total_scraping_jobs_completed, pk?.total_scraping_jobs_completed)}
-            description="completed"
-          />
+          <StatCard title="Scraping Jobs" value={fmtInt(k.total_scraping_jobs_completed)} deltaValue={getDelta(k.total_scraping_jobs_completed, pk?.total_scraping_jobs_completed)} description="Abgeschlossen" />
         </Grid>
 
         {/* Zeile 2: Tokens & Funding */}
@@ -324,101 +346,85 @@ const AdminStatisticsPage: React.FC = () => {
           <StatCard
             title="Tokens (Gesamt)"
             value={fmtTokens(totalTokens)}
-            delta={deltaLabel(k.total_tokens_overall, pk?.total_tokens_overall)}
-            description={`Redactional + UsageLogs • Funding-Anteil: ${fmtTokens(k.total_funding_tokens)} (~${estimatedFundingCost} USD)`}
+            deltaValue={getDelta(k.total_tokens_overall, pk?.total_tokens_overall)}
+            inverseColors={true} // Mehr Tokens = Mehr Kosten (Rot)
+            description={`Anteil Funding: ${fmtTokens(k.total_funding_tokens)} (~${estimatedFundingCost} USD)`}
           />
         </Grid>
         <Grid item xs={12} md={4}>
           <StatCard
             title="Tokens (Redactional)"
             value={fmtTokens(k.total_redactional_tokens)}
-            delta={deltaLabel(k.total_redactional_tokens, pk?.total_redactional_tokens)}
-            description="activity_log: AI_%_SUCCESS"
+            deltaValue={getDelta(k.total_redactional_tokens, pk?.total_redactional_tokens)}
+            inverseColors={true}
+            description="Aktivitäten in der App (AI_SUCCESS)"
           />
         </Grid>
         <Grid item xs={12} md={4}>
           <StatCard
-            title="Tokens (Usage Logs)"
+            title="Tokens (Background)"
             value={fmtTokens(k.total_usage_log_tokens)}
-            delta={deltaLabel(k.total_usage_log_tokens, pk?.total_usage_log_tokens)}
-            description="ai_usage_logs"
+            deltaValue={getDelta(k.total_usage_log_tokens, pk?.total_usage_log_tokens)}
+            inverseColors={true}
+            description="Worker / Hintergund-Jobs"
           />
         </Grid>
 
-        <Grid item xs={12} md={4}>
-          <StatCard
-            title="Verarbeitete Förderungen"
-            value={fmtInt(k.total_processed_opportunities)}
-            delta={deltaLabel(k.total_processed_opportunities, pk?.total_processed_opportunities)}
-            description="funding rule_type"
-          />
-        </Grid>
-        <Grid item xs={12} md={8}>
-          <Paper sx={{ p: 2, height: '100%' }}>
-            <Typography variant="h6">Community</Typography>
-            <Divider sx={{ my: 1 }} />
-            <Grid container spacing={2}>
-              <Grid item xs={4}>
-                <StatCard
-                  title="Beiträge"
-                  value={fmtInt(k.total_community_posts)}
-                  delta={deltaLabel(k.total_community_posts, pk?.total_community_posts)}
-                  description="Community"
-                />
+        {/* Zeile 3: Community */}
+        <Grid item xs={12}>
+          <Paper sx={{ p: 3, borderRadius: 2 }}>
+            <Typography variant="h6" gutterBottom fontWeight="bold">Community & Interaktion</Typography>
+            <Divider sx={{ mb: 2 }} />
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={4}>
+                <StatCard title="Beiträge" value={fmtInt(k.total_community_posts)} deltaValue={getDelta(k.total_community_posts, pk?.total_community_posts)} />
               </Grid>
-              <Grid item xs={4}>
-                <StatCard
-                  title="Kommentare"
-                  value={fmtInt(k.total_community_comments)}
-                  delta={deltaLabel(k.total_community_comments, pk?.total_community_comments)}
-                  description="Community"
-                />
+              <Grid item xs={12} md={4}>
+                <StatCard title="Kommentare" value={fmtInt(k.total_community_comments)} deltaValue={getDelta(k.total_community_comments, pk?.total_community_comments)} />
               </Grid>
-              <Grid item xs={4}>
-                <StatCard
-                  title="Likes"
-                  value={fmtInt(k.total_community_likes)}
-                  delta={deltaLabel(k.total_community_likes, pk?.total_community_likes)}
-                  description="Community"
-                />
+              <Grid item xs={12} md={4}>
+                <StatCard title="Likes" value={fmtInt(k.total_community_likes)} deltaValue={getDelta(k.total_community_likes, pk?.total_community_likes)} />
               </Grid>
             </Grid>
           </Paper>
         </Grid>
 
-        {/* Time Series */}
+        {/* Time Series Chart */}
         <Grid item xs={12}>
-          <Paper sx={{ p: 2, height: 420 }}>
-            <Typography variant="h6">Aktivität & Token-Verbrauch</Typography>
+          <Paper sx={{ p: 3, height: 450, borderRadius: 2 }}>
+            <Typography variant="h6" gutterBottom fontWeight="bold">Aktivität & Token-Verlauf</Typography>
             <ResponsiveContainer>
-              <LineChart data={stats.timeSeries}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="period" tickFormatter={formatXAxis} />
-                <YAxis yAxisId="left" />
-                <YAxis yAxisId="right" orientation="right" />
-                <Tooltip />
-                <Legend />
-                <Line yAxisId="left" type="monotone" dataKey="prompt_tokens" name="Tokens (Anfrage)" dot={false} />
-                <Line yAxisId="left" type="monotone" dataKey="completion_tokens" name="Tokens (Antwort)" dot={false} />
-                <Line yAxisId="right" type="monotone" dataKey="login_count" name="Logins" strokeWidth={2} dot={false} />
-                <Line yAxisId="right" type="monotone" dataKey="new_posts" name="Neue Beiträge" strokeWidth={2} dot={false} />
-                <Line yAxisId="right" type="monotone" dataKey="new_comments" name="Neue Kommentare" strokeWidth={2} dot={false} />
+              <LineChart data={stats.timeSeries} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="period" tickFormatter={formatXAxis} tickMargin={10} minTickGap={30} />
+                
+                {/* Linke Achse: Tokens */}
+                <YAxis yAxisId="left" tickFormatter={fmtAxis} label={{ value: 'Tokens', angle: -90, position: 'insideLeft', offset: -5 }} />
+                
+                {/* Rechte Achse: Nutzeraktionen */}
+                <YAxis yAxisId="right" orientation="right" tickFormatter={fmtAxis} label={{ value: 'Aktionen', angle: 90, position: 'insideRight', offset: -5 }} />
+                
+                <Tooltip formatter={(value: number) => new Intl.NumberFormat('de-AT').format(value)} labelFormatter={formatXAxis} />
+                <Legend verticalAlign="top" height={36} />
+                <Line yAxisId="left" type="monotone" dataKey="prompt_tokens" name="Prompt Tokens" stroke={theme.palette.primary.main} strokeWidth={2} dot={false} />
+                <Line yAxisId="left" type="monotone" dataKey="completion_tokens" name="Completion Tokens" stroke={theme.palette.secondary.main} strokeWidth={2} dot={false} />
+                <Line yAxisId="right" type="monotone" dataKey="login_count" name="Logins" stroke={theme.palette.success.main} strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
               </LineChart>
             </ResponsiveContainer>
           </Paper>
         </Grid>
 
-        {/* Cost per BP */}
+        {/* Cost per BP (Top Limit für Skalierbarkeit) */}
         <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 2, height: 400 }}>
-            <Typography variant="h6">KI-Tokens pro Business Partner</Typography>
+          <Paper sx={{ p: 3, height: 450, borderRadius: 2 }}>
+            <Typography variant="h6" gutterBottom fontWeight="bold">Token-Verbrauch nach Partner (Top 10)</Typography>
             <ResponsiveContainer>
-              <BarChart data={stats.costPerBusinessPartner} layout="vertical" margin={{ top: 5, right: 30, left: 120, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" />
-                <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(value: number) => value.toLocaleString('de-AT')} />
-                <Bar dataKey="total_tokens" name="Tokens" />
+              <BarChart data={stats.costPerBusinessPartner.slice(0, 10)} layout="vertical" margin={{ top: 5, right: 30, left: 120, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" tickFormatter={fmtAxis} />
+                <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 12 }} />
+                <Tooltip formatter={(value: number) => new Intl.NumberFormat('de-AT').format(value)} />
+                <Bar dataKey="total_tokens" name="Tokens Gesamt" fill={theme.palette.primary.main} radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </Paper>
@@ -426,17 +432,17 @@ const AdminStatisticsPage: React.FC = () => {
 
         {/* Category distribution */}
         <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 2, height: 400 }}>
-            <Typography variant="h6">KI-Inhalte nach Kategorie</Typography>
+          <Paper sx={{ p: 3, height: 450, borderRadius: 2 }}>
+            <Typography variant="h6" gutterBottom fontWeight="bold">KI-Inhalte nach Kategorie</Typography>
             <ResponsiveContainer>
               <PieChart>
-                <Pie data={stats.categoryDistribution} dataKey="count" nameKey="name" outerRadius={140} label>
+                <Pie data={stats.categoryDistribution} dataKey="count" nameKey="name" cx="50%" cy="50%" innerRadius={80} outerRadius={130} labelLine={false} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
                   {stats.categoryDistribution.map((_, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip />
-                <Legend />
+                <Tooltip formatter={(value: number) => new Intl.NumberFormat('de-AT').format(value)} />
+                <Legend verticalAlign="bottom" />
               </PieChart>
             </ResponsiveContainer>
           </Paper>
@@ -444,50 +450,50 @@ const AdminStatisticsPage: React.FC = () => {
 
         {/* Top users */}
         <Grid item xs={12}>
-          <Paper sx={{ p: 2, height: 420 }}>
-            <Typography variant="h6">Top 10 Benutzer-Aktivität (System & Community)</Typography>
+          <Paper sx={{ p: 3, height: 450, borderRadius: 2 }}>
+            <Typography variant="h6" gutterBottom fontWeight="bold">Aktivste Nutzer (Top 10)</Typography>
             <ResponsiveContainer>
-              <BarChart data={stats.topUserActivity} layout="vertical" margin={{ top: 5, right: 30, left: 220, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" />
+              <BarChart data={stats.topUserActivity.slice(0, 10)} layout="vertical" margin={{ top: 5, right: 30, left: 220, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" tickFormatter={fmtAxis} />
                 <YAxis
                   type="category"
                   dataKey="email"
-                  width={220}
-                  tick={{ fontSize: 11 }}
+                  width={210}
+                  tick={{ fontSize: 12 }}
                   tickFormatter={(value) => (String(value).length > 30 ? String(value).substring(0, 27) + '…' : value)}
                 />
-                <Tooltip />
-                <Bar dataKey="activity_count" name="Aktionen (Logins, KI, Posts/Comments)" />
+                <Tooltip formatter={(value: number) => new Intl.NumberFormat('de-AT').format(value)} />
+                <Bar dataKey="activity_count" name="Gesamt-Aktionen" fill={theme.palette.secondary.main} radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </Paper>
         </Grid>
 
-        {/* Provider Usage */}
+        {/* Provider Usage Table */}
         <Grid item xs={12}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h6">Model-/Provider-Nutzung</Typography>
-            <Typography variant="caption" color="text.secondary">
-              Kombiniert aus activity_log (AI_%_SUCCESS) und ai_usage_logs.
+          <Paper sx={{ p: 3, borderRadius: 2 }}>
+            <Typography variant="h6" fontWeight="bold">Model- / API-Kostenaufstellung</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+              Übersicht der Requests und Token-Typen pro Modell für eine genauere Kostenkalkulation.
             </Typography>
-            <Box sx={{ mt: 1, overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <Box sx={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: theme.typography.fontFamily }}>
                 <thead>
                   <tr>
-                    <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #eee' }}>Model</th>
-                    <th style={{ textAlign: 'right', padding: 8, borderBottom: '1px solid #eee' }}>Requests</th>
-                    <th style={{ textAlign: 'right', padding: 8, borderBottom: '1px solid #eee' }}>Prompt Tokens</th>
-                    <th style={{ textAlign: 'right', padding: 8, borderBottom: '1px solid #eee' }}>Completion Tokens</th>
+                    <th style={{ textAlign: 'left', padding: '12px 16px', borderBottom: `2px solid ${theme.palette.divider}` }}>Künstliche Intelligenz Model</th>
+                    <th style={{ textAlign: 'right', padding: '12px 16px', borderBottom: `2px solid ${theme.palette.divider}` }}>API Requests</th>
+                    <th style={{ textAlign: 'right', padding: '12px 16px', borderBottom: `2px solid ${theme.palette.divider}` }}>Prompt Tokens (Input)</th>
+                    <th style={{ textAlign: 'right', padding: '12px 16px', borderBottom: `2px solid ${theme.palette.divider}` }}>Completion Tokens (Output)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {stats.providerUsage.map((r) => (
-                    <tr key={r.model}>
-                      <td style={{ padding: 8, borderBottom: '1px solid #f4f4f4' }}>{r.model}</td>
-                      <td style={{ padding: 8, borderBottom: '1px solid #f4f4f4', textAlign: 'right' }}>{fmtInt(r.requests)}</td>
-                      <td style={{ padding: 8, borderBottom: '1px solid #f4f4f4', textAlign: 'right' }}>{fmtTokens(r.prompt_tokens)}</td>
-                      <td style={{ padding: 8, borderBottom: '1px solid #f4f4f4', textAlign: 'right' }}>{fmtTokens(r.completion_tokens)}</td>
+                    <tr key={r.model} style={{ transition: 'background-color 0.2s' }} onMouseOver={e => e.currentTarget.style.backgroundColor = theme.palette.action.hover} onMouseOut={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                      <td style={{ padding: '12px 16px', borderBottom: `1px solid ${theme.palette.divider}`, fontWeight: 'bold' }}>{r.model}</td>
+                      <td style={{ padding: '12px 16px', borderBottom: `1px solid ${theme.palette.divider}`, textAlign: 'right' }}>{fmtInt(r.requests)}</td>
+                      <td style={{ padding: '12px 16px', borderBottom: `1px solid ${theme.palette.divider}`, textAlign: 'right', color: theme.palette.primary.main }}>{fmtTokens(r.prompt_tokens)}</td>
+                      <td style={{ padding: '12px 16px', borderBottom: `1px solid ${theme.palette.divider}`, textAlign: 'right', color: theme.palette.secondary.main }}>{fmtTokens(r.completion_tokens)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -501,78 +507,52 @@ const AdminStatisticsPage: React.FC = () => {
 
   return (
     <DashboardLayout>
-      <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-        <Box
-          sx={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            mb: 2,
-            flexWrap: 'wrap',
-            gap: 2,
-          }}
-        >
+      <Container maxWidth="xl" sx={{ mt: 4, mb: 6 }}>
+        {/* Header und Filter */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3, flexWrap: 'wrap', gap: 3 }}>
           <Box>
-            <Typography variant="h4" component="h1">
-              System-Statistiken
+            <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
+              System & Analytics Dashboard
             </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Harmonisiert: Logins = LOGIN_SUCCESS (plus Legacy), Tokens = Redactional + UsageLogs, Scraping = Jobs + Rows.
+            <Typography variant="body1" color="text.secondary">
+              Globale Performance-, KI-Nutzungs- und Community-Metriken im Überblick.
             </Typography>
           </Box>
 
-          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Paper variant="outlined" sx={{ p: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap', borderRadius: 2, bgcolor: 'background.paper' }}>
             <FormControlLabel
-              control={<Switch checked={compare} onChange={(e) => setCompare(e.target.checked)} />}
-              label="Vergleich"
+              control={<Switch checked={compare} onChange={(e) => setCompare(e.target.checked)} color="primary" />}
+              label={<Typography variant="body2" fontWeight="bold">Zeitraum-Vergleich</Typography>}
+              sx={{ mr: 1 }}
             />
+            <Divider orientation="vertical" flexItem />
 
-            <TextField
-              select
-              label="Business Partner"
-              value={bpFilter}
-              onChange={(e) => setBpFilter(e.target.value)}
-              size="small"
-              sx={{ minWidth: 220 }}
-            >
-              <MenuItem value="">
-                <em>Alle Partner</em>
-              </MenuItem>
+            <TextField select label="Business Partner" value={bpFilter} onChange={(e) => setBpFilter(e.target.value)} size="small" sx={{ minWidth: 200 }}>
+              <MenuItem value=""><em>Alle Mandanten</em></MenuItem>
               {stats?.businessPartners.map((bp) => (
-                <MenuItem key={bp.id} value={bp.id}>
-                  {bp.name}
-                </MenuItem>
+                <MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>
               ))}
             </TextField>
 
-            <TextField
-              select
-              label="Model"
-              value={modelFilter}
-              onChange={(e) => setModelFilter(e.target.value)}
-              size="small"
-              sx={{ minWidth: 220 }}
-            >
-              <MenuItem value="">
-                <em>Alle Modelle</em>
-              </MenuItem>
+            <TextField select label="KI-Modell" value={modelFilter} onChange={(e) => setModelFilter(e.target.value)} size="small" sx={{ minWidth: 180 }}>
+              <MenuItem value=""><em>Alle Modelle</em></MenuItem>
               {stats?.availableModels.map((m) => (
-                <MenuItem key={m} value={m}>
-                  {m}
-                </MenuItem>
+                <MenuItem key={m} value={m}>{m}</MenuItem>
               ))}
             </TextField>
 
-            <ToggleButtonGroup value={timespan} exclusive onChange={handleTimespanChange} size="small">
-              <ToggleButton value="day">24h</ToggleButton>
-              <ToggleButton value="week">7T</ToggleButton>
-              <ToggleButton value="month">Monat</ToggleButton>
-              <ToggleButton value="year">Jahr</ToggleButton>
+            <Divider orientation="vertical" flexItem />
+
+            <ToggleButtonGroup value={timespan} exclusive onChange={handleTimespanChange} size="small" color="primary">
+              <ToggleButton value="day" sx={{ px: 2, fontWeight: 'bold' }}>24h</ToggleButton>
+              <ToggleButton value="week" sx={{ px: 2, fontWeight: 'bold' }}>7 Tage</ToggleButton>
+              <ToggleButton value="month" sx={{ px: 2, fontWeight: 'bold' }}>Monat</ToggleButton>
+              <ToggleButton value="year" sx={{ px: 2, fontWeight: 'bold' }}>Jahr</ToggleButton>
             </ToggleButtonGroup>
 
-            {timespan === 'month' ? (
+            {timespan === 'month' && (
               <TextField
-                label="Monat"
+                label="Kalendermonat"
                 type="month"
                 size="small"
                 value={selectedMonth}
@@ -580,8 +560,8 @@ const AdminStatisticsPage: React.FC = () => {
                 sx={{ minWidth: 160 }}
                 InputLabelProps={{ shrink: true }}
               />
-            ) : null}
-          </Box>
+            )}
+          </Paper>
         </Box>
 
         {renderDashboard()}

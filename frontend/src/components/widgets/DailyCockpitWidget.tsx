@@ -3,15 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import {
   Box, Typography, Accordion, AccordionSummary, AccordionDetails, Divider,
   Link as MuiLink, FormControlLabel, Switch, Tooltip, Stack, Grid,
-  Card, CardContent, Table, TableBody, TableCell, TableHead, TableRow,
-  Skeleton, Fade
+  Card, CardContent, Skeleton, Fade, useTheme, Chip, Button
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import WbSunnyIcon from '@mui/icons-material/WbSunny';
 import LockIcon from '@mui/icons-material/Lock';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import TrendingDownIcon from '@mui/icons-material/TrendingDown';
-import HorizontalRuleIcon from '@mui/icons-material/HorizontalRule';
+import InsightsIcon from '@mui/icons-material/Insights';
+import EmailIcon from '@mui/icons-material/Email';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
@@ -19,147 +18,279 @@ import { useAuth } from '../../context/AuthContext';
 import { useSnackbar } from '../../context/SnackbarContext';
 
 // --- Interfaces ---
-interface BriefingTopInsight {
-  title: string;
-  what_changed: string;
-  so_what: string;
-  action: string;
-  sources?: string[];
-}
-
-interface BriefingCostDriver {
-  driver: string;
-  value: string;
-  trend: 'up' | 'down' | 'flat' | string;
-  impact: string;
-}
-
-interface BriefingJson {
-  top_insights?: BriefingTopInsight[];
-  cost_drivers?: BriefingCostDriver[];
-  regulation_and_funding?: any[];
-  recommended_actions?: string[];
-  confidence_note?: string;
+interface BriefingItem {
+  briefing_type: string;
+  headline: string;
+  analysis_summary: string;
+  prognosis: string;
+  talking_point: string;
+  related_articles?: string; // Neu für Quellen
 }
 
 interface CockpitData {
-  briefing?: BriefingJson | null;
-  market_briefing?: { headline: string; summary: string; prognosis: string } | null;
+  items?: BriefingItem[]; 
+  briefing?: any | null;  
+  market_briefing?: { headline: string; summary: string; prognosis: string } | null; 
   sales_triggers: any[];
   linkable_names: string[];
   hasVotedToday?: boolean; 
 }
 
-const TextWithSearchLinks: React.FC<{ text: string; namesToLink: string[] }> = ({ text, namesToLink }) => {
-  const navigate = useNavigate();
-  if (!namesToLink || namesToLink.length === 0 || !text) return <>{text}</>;
+interface DailyCockpitWidgetProps extends Partial<BaseWidgetProps> {
+  icon?: React.ReactNode;
+  title?: string;
+  widgetTypeKey?: string;
+  widgetId?: string;
+  isPublic?: boolean;
+}
 
-  const uniqueNames = [...new Set(namesToLink)].filter(Boolean);
-  const pattern = uniqueNames
-    .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .sort((a, b) => b.length - a.length)
-    .join('|');
-
-  const regex = new RegExp(`(${pattern})`, 'gi');
-  const parts = text.split(regex);
-
-  return (
-    <>
-      {parts.map((part, index) => {
-        const isLink = uniqueNames.some(name => name.toLowerCase() === part.toLowerCase());
-        return isLink ? (
-          <MuiLink
-            key={index}
-            component="button"
-            variant="inherit"
-            onClick={() => navigate(`/search?term=${encodeURIComponent(part)}`)}
-            sx={{ fontStyle: 'italic', fontWeight: 'bold', textDecoration: 'underline', textDecorationStyle: 'dotted', color: 'primary.main' }}
-          >
-            {part}
-          </MuiLink>
-        ) : <React.Fragment key={index}>{part}</React.Fragment>;
-      })}
-    </>
-  );
-};
-
-const DailyCockpitWidget: React.FC<BaseWidgetProps & { icon?: React.ReactNode }> = ({
-  widgetId, onDelete, isRemovable, widgetTypeKey, icon: propsIcon
+const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = ({
+  widgetId, onDelete, isRemovable, widgetTypeKey, icon: propsIcon, title, isPublic = false
 }) => {
-  const { user, updateUser } = useAuth();
+  const theme = useTheme();
+  const navigate = useNavigate();
+  const { user, updateUser, businessPartner } = useAuth();
   const { showSnackbar } = useSnackbar();
+  
   const [data, setData] = useState<CockpitData | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in);
 
-  const widgetTitle = 'Tägliches Cockpit';
+  const widgetTitle = title || 'Tägliches Cockpit';
+  
+  // Im public Modus gibt es keinen echten User/BP, daher Newsletter immer als "erlaubt" (optisch),
+  // aber der Klick führt zum Login.
+  const isNewsletterAllowed = isPublic ? true : businessPartner?.allow_automated_newsletter !== false;
 
-  useEffect(() => { setIsSubscribed(!!user?.newsletter_opt_in); }, [user?.newsletter_opt_in]);
+  useEffect(() => { 
+    if (!isPublic) setIsSubscribed(!!user?.newsletter_opt_in); 
+  }, [user?.newsletter_opt_in, isPublic]);
 
   const fetchData = async () => {
     setLoading(true);
+    
+    // --- LADE LOGIK: Public vs. Private ---
     try {
-      const response = await apiClient.get('/api/data/daily-briefing');
-      setData({
-        briefing: response.data.briefing || (response.data.market_briefing?.top_insights ? response.data.market_briefing : null),
-        market_briefing: response.data.market_briefing && !response.data.market_briefing.top_insights ? response.data.market_briefing : null,
-        sales_triggers: response.data.sales_triggers || [],
-        linkable_names: response.data.linkable_names || [],
-        hasVotedToday: response.data.hasVotedToday ?? true
-      });
+        let endpoint = '/api/data/daily-briefing';
+        
+        // Wenn isPublic true ist, nutzen wir einen Public-Endpunkt (falls existent) 
+        // und übergeben die Partner-ID, falls wir eine aus dem Context haben.
+        if (isPublic) {
+            if (businessPartner?.id) {
+                // Echte Daten für einen bekannten Partner auf der Public Page laden
+                endpoint = `/api/public/daily-briefing?partnerId=${businessPartner.id}`;
+            } else {
+                // FALLBACK: Keine Partner-ID bekannt -> Wir zeigen die generischen Mock-Daten
+                setData({
+                    hasVotedToday: true,
+                    linkable_names: ['Österreich', 'Lithium', 'E-Mobilität'],
+                    items: [
+                        {
+                            briefing_type: 'top_insight',
+                            headline: 'Kupferpreise fallen unerwartet',
+                            analysis_summary: 'Aufgrund neuer Exportrichtlinien sinken die Kupferpreise um 3%. Dies könnte die Batterieproduktion begünstigen.',
+                            prognosis: '',
+                            talking_point: '',
+                            related_articles: '["https://example.com/source1"]'
+                        },
+                        {
+                            briefing_type: 'top_insight',
+                            headline: 'Förderstopp für E-LKW diskutiert',
+                            analysis_summary: 'Das Ministerium evaluiert derzeit die Förderrichtlinien. Experten erwarten eine baldige Entscheidung.',
+                            prognosis: '',
+                            talking_point: '',
+                            related_articles: '["https://example.com/source2"]'
+                        },
+                        {
+                            briefing_type: 'top_insight',
+                            headline: 'KI-Prognose: Lade-Engpass in Region Ost',
+                            analysis_summary: 'Unser Modell prognostiziert für das kommende Quartal einen 15%igen Anstieg der Ladeauslastung in Wien und Umgebung.',
+                            prognosis: '',
+                            talking_point: '',
+                            related_articles: '["https://example.com/source3"]'
+                        }
+                    ],
+                    sales_triggers: [
+                        { id: 1, account_name: 'Logistik Müller GmbH', headline: 'Flottenerweiterung geplant', talking_point: 'Sprechen Sie den Kunden auf die fallenden Kupferpreise und günstige Lade-Infrastruktur an.' }
+                    ]
+                });
+                setLoading(false);
+                return; // Abbruch, da wir Mocks haben
+            }
+        }
+
+        // API Call für eingeloggte User ODER Public User mit bekannter Partner-ID
+        const response = await apiClient.get(endpoint);
+        setData({
+            items: response.data.items || [],
+            briefing: response.data.briefing || (response.data.market_briefing?.top_insights ? response.data.market_briefing : null),
+            market_briefing: response.data.market_briefing && !response.data.market_briefing.top_insights ? response.data.market_briefing : null,
+            sales_triggers: response.data.sales_triggers || [],
+            linkable_names: response.data.linkable_names || [],
+            hasVotedToday: response.data.hasVotedToday ?? true
+        });
+
     } catch (err) {
-      showSnackbar('Fehler beim Laden des Cockpits.', 'error');
+        if (!isPublic) showSnackbar('Fehler beim Laden des Cockpits.', 'error');
+        // Fallback auf leeres Array bei Public Fehler, damit das UI nicht crasht
+        setData(null); 
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [isPublic, businessPartner?.id]);
+
+  // --- HILFSKOMPONENTEN (Innerhalb definiert, um useNavigate im Scope zu haben) ---
+  const handlePublicClick = () => {
+    // Wenn User im Public-Modus klickt -> Weiterleitung zum Login (ggf. mit Partner-Param)
+    const loginUrl = businessPartner?.name 
+        ? `/login?partner=${encodeURIComponent(businessPartner.name)}` 
+        : '/login';
+    navigate(loginUrl);
+  };
+
+  const TextWithSearchLinks: React.FC<{ text: string; namesToLink: string[] }> = ({ text, namesToLink }) => {
+    if (!namesToLink || namesToLink.length === 0 || !text) return <>{text}</>;
+
+    const uniqueNames = [...new Set(namesToLink)].filter(Boolean);
+    const pattern = uniqueNames
+        .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .sort((a, b) => b.length - a.length)
+        .join('|');
+
+    if (!pattern) return <>{text}</>;
+
+    const regex = new RegExp(`(${pattern})`, 'gi');
+    const parts = text.split(regex);
+
+    return (
+        <>
+        {parts.map((part, index) => {
+            const isLink = uniqueNames.some(name => name.toLowerCase() === part.toLowerCase());
+            return isLink ? (
+            <MuiLink
+                key={index}
+                component="button"
+                variant="inherit"
+                onClick={isPublic ? handlePublicClick : () => navigate(`/search?term=${encodeURIComponent(part)}`)}
+                sx={{ 
+                    fontWeight: 600, 
+                    textDecoration: 'underline', 
+                    textDecorationStyle: 'dotted', 
+                    textUnderlineOffset: '3px',
+                    color: 'primary.main',
+                    '&:hover': { color: 'primary.dark' }
+                }}
+            >
+                {part}
+            </MuiLink>
+            ) : <React.Fragment key={index}>{part}</React.Fragment>;
+        })}
+        </>
+    );
+  };
+
+
 
   const handleSubscriptionToggle = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (isPublic) {
+        showSnackbar('Bitte loggen Sie sich ein, um den Newsletter zu aktivieren.', 'info');
+        handlePublicClick();
+        return;
+    }
+    if (!isNewsletterAllowed) return showSnackbar('Der E-Mail-Versand ist für Ihr Unternehmen systemseitig deaktiviert.', 'warning');
+    
     const isChecked = event.target.checked;
     setIsSubscribed(isChecked);
     updateUser({ newsletter_opt_in: isChecked });
+    
     try {
       await apiClient.put('/api/users/me', { newsletter_opt_in: isChecked });
-      showSnackbar('Newsletter-Einstellung gespeichert.', 'success');
+      showSnackbar(`E-Mail Briefing ${isChecked ? 'aktiviert' : 'deaktiviert'}.`, 'success');
     } catch {
       setIsSubscribed(!isChecked);
       updateUser({ newsletter_opt_in: !isChecked });
+      showSnackbar('Fehler beim Speichern der Einstellung.', 'error');
     }
   };
 
-  const isLocked = data?.hasVotedToday === false;
+  // Lock-Screen greift nicht im Public Modus (dafür ist Login zuständig)
+  const isLocked = !isPublic && data?.hasVotedToday === false;
+
+  const items = data?.items || [];
+  const legacyBriefing = data?.briefing || {};
+  
+  let topInsights: Array<{ headline: string, analysis_summary: string, related_articles?: string }> = [];
+  
+  if (items.length > 0) {
+      topInsights = items
+          .filter(i => i.briefing_type === 'top_insight')
+          .map(i => ({ headline: i.headline, analysis_summary: i.analysis_summary, related_articles: i.related_articles }));
+  } else if (legacyBriefing.top_insights) {
+      topInsights = legacyBriefing.top_insights.map((i: any) => ({
+          headline: i.title,
+          analysis_summary: i.what_changed || i.so_what,
+          related_articles: JSON.stringify(i.sources || [])
+      }));
+  }
 
   return (
     <WidgetPaper
-      widgetId={widgetId}
+      widgetId={widgetId || 'default-id'}
       onDelete={onDelete}
       isRemovable={isRemovable}
       widgetTitle={widgetTitle}
       widgetTypeKey={widgetTypeKey || 'daily_cockpit'}
-      title={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>{propsIcon || <WbSunnyIcon />} <Typography variant="h6">{widgetTitle}</Typography></Box>}
+      title={
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            {propsIcon || <InsightsIcon color="primary" />} 
+            <Typography variant="h6" sx={{ fontWeight: 800, letterSpacing: '-0.02em' }}>{widgetTitle}</Typography>
+        </Box>
+      }
       noPadding
+      isPublic={isPublic}
     >
-      <Box sx={{ p: 2, position: 'relative', overflowY: 'auto', height: 'calc(100% - 60px)' }}>
-        {loading ? <Stack spacing={2}><Skeleton variant="rectangular" height={120} /><Skeleton variant="text" width="60%" /><Skeleton variant="text" /></Stack> : (
+      <Box sx={{ p: { xs: 2, md: 3 }, position: 'relative', overflowY: 'auto', height: 'calc(100% - 56px)' }}>
+        {loading ? (
+            <Stack spacing={2}>
+                <Skeleton variant="rectangular" height={120} sx={{ borderRadius: 2 }} />
+                <Skeleton variant="text" width="60%" height={30} />
+                <Skeleton variant="text" height={20} />
+            </Stack>
+        ) : (
           <>
-            {data?.briefing?.top_insights && (
-              <Box mb={3}>
-                <Typography variant="overline" color="primary.main" sx={{ fontWeight: 'bold', mb: 1, display: 'block' }}>
-                  Heute in 60 Sekunden
+            {/* --- TOP INSIGHTS --- */}
+            {topInsights.length > 0 && (
+              <Box mb={isPublic ? 0 : 3}>
+                <Typography variant="overline" color="primary.main" sx={{ fontWeight: 800, mb: 2, display: 'flex', alignItems: 'center', gap: 1, letterSpacing: 1 }}>
+                  <AutoAwesomeIcon fontSize="small" /> Heute in 60 Sekunden
                 </Typography>
                 <Grid container spacing={2}>
-                  {data.briefing.top_insights.slice(0, 3).map((ins, idx) => (
-                    <Grid item xs={12} key={idx}>
-                      <Card variant="outlined" sx={{ borderLeft: 4, borderLeftColor: 'primary.main', bgcolor: 'background.default' }}>
-                        <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
-                            {idx + 1}. <TextWithSearchLinks text={ins.title} namesToLink={data.linkable_names} />
+                  {topInsights.slice(0, 3).map((ins, idx) => (
+                    <Grid item xs={12} md={4} key={idx}>
+                      <Card 
+                        variant="outlined" 
+                        sx={{ 
+                            height: '100%',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            borderLeft: '4px solid', 
+                            borderLeftColor: 'primary.main', 
+                            bgcolor: 'background.paper',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                            transition: 'transform 0.2s, box-shadow 0.2s',
+                            '&:hover': { transform: 'translateY(-2px)', boxShadow: '0 6px 12px rgba(0,0,0,0.08)' }
+                        }}
+                      >
+                        <CardContent sx={{ p: 2.5, flexGrow: 1, '&:last-child': { pb: 2.5 } }}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1.5, lineHeight: 1.3, color: 'text.primary' }}>
+                            {idx + 1}. <TextWithSearchLinks text={ins.headline} namesToLink={data?.linkable_names || []} />
                           </Typography>
-                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.85rem' }}>
-                            <TextWithSearchLinks text={ins.so_what} namesToLink={data.linkable_names} />
-                          </Typography>
+<Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem', lineHeight: 1.6 }}>
+    <TextWithSearchLinks text={ins.analysis_summary} namesToLink={data?.linkable_names || []} />
+  </Typography>
+
                         </CardContent>
                       </Card>
                     </Grid>
@@ -168,74 +299,65 @@ const DailyCockpitWidget: React.FC<BaseWidgetProps & { icon?: React.ReactNode }>
               </Box>
             )}
 
-            {!data?.briefing && data?.market_briefing && (
-              <Box mb={3} sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 2, borderLeft: 4, borderLeftColor: 'secondary.main' }}>
-                <Typography variant="overline" color="text.secondary">Markt-Briefing</Typography>
-                <Typography variant="h6" sx={{ mt: 0.5 }}><TextWithSearchLinks text={data.market_briefing.headline} namesToLink={data.linkable_names} /></Typography>
-                <Typography variant="body2" sx={{ mt: 1 }}><TextWithSearchLinks text={data.market_briefing.summary} namesToLink={data.linkable_names} /></Typography>
+            {/* --- GANZ ALTES FALLBACK --- */}
+            {topInsights.length === 0 && data?.market_briefing && (
+              <Box mb={3} sx={{ p: 3, bgcolor: alpha(theme.palette.secondary.main, 0.05), borderRadius: 2, borderLeft: '4px solid', borderLeftColor: 'secondary.main' }}>
+                <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 'bold' }}>Markt-Briefing</Typography>
+                <Typography variant="h6" sx={{ mt: 0.5, fontWeight: 700 }}><TextWithSearchLinks text={data.market_briefing.headline} namesToLink={data.linkable_names} /></Typography>
+                <Typography variant="body2" sx={{ mt: 1.5, lineHeight: 1.6 }}><TextWithSearchLinks text={data.market_briefing.summary} namesToLink={data.linkable_names} /></Typography>
               </Box>
             )}
 
+            {/* --- PUBLIC LOCK SCREEN (Login-Aufforderung) --- */}
+            {isPublic && (
+              <Box sx={{ mt: 3, textAlign: 'center', p: 3, bgcolor: alpha(theme.palette.primary.main, 0.05), borderRadius: 3, border: '1px dashed', borderColor: 'primary.main' }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Möchten Sie alle Details und Analysen sehen?</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Die vollständigen Handlungsanweisungen und Kunden-Triggers sind nur für eingeloggte Nutzer sichtbar.</Typography>
+                  <Button variant="contained" onClick={handlePublicClick} startIcon={<LockIcon />}>Jetzt einloggen</Button>
+              </Box>
+            )}
+
+            {/* --- PRIVATE LOCK SCREEN (Bezahlschranke für Barometer) --- */}
             {isLocked && (
               <Fade in={isLocked}>
                 <Box sx={{ 
-                  position: 'absolute', top: '260px', left: 0, right: 0, bottom: 0, 
-                  background: 'linear-gradient(to bottom, transparent, #fff 15%, #fff)',
-                  zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', pt: 8, textAlign: 'center', px: 3
+                  position: 'absolute', top: topInsights.length > 0 ? '260px' : '100px', left: 0, right: 0, bottom: 0, 
+                  background: `linear-gradient(to bottom, transparent, ${theme.palette.background.paper} 15%, ${theme.palette.background.paper})`,
+                  zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', pt: 8, textAlign: 'center', px: 3,
+                  backdropFilter: 'blur(2px)'
                 }}>
-                  <LockIcon color="disabled" sx={{ fontSize: 44, mb: 1.5 }} />
-                  <Typography variant="h6" sx={{ fontWeight: 'bold' }}>Exklusive Daten gesperrt</Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 280 }}>
-                    Bitte nehmen Sie am <b>Markt-Barometer</b> teil, um TCO-Treiber und Empfehlungen freizuschalten.
+                  <Box sx={{ bgcolor: alpha(theme.palette.text.disabled, 0.1), p: 2, borderRadius: '50%', mb: 2 }}>
+                    <LockIcon color="disabled" sx={{ fontSize: 40 }} />
+                  </Box>
+                  <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Exklusive Daten gesperrt</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 300, lineHeight: 1.6 }}>
+                    Bitte nehmen Sie am <b>Markt-Barometer</b> teil, um TCO-Treiber und Handlungsempfehlungen freizuschalten.
                   </Typography>
                 </Box>
               </Fade>
             )}
 
-            {data?.briefing?.cost_drivers && (
-              <Box mb={3} sx={{ opacity: isLocked ? 0.3 : 1, filter: isLocked ? 'blur(2px)' : 'none' }}>
-                <Divider sx={{ my: 2 }} />
-                <Typography variant="overline" color="text.secondary">Marktindikatoren & TCO</Typography>
-                <Table size="small" sx={{ mt: 1, border: '1px solid', borderColor: 'divider' }}>
-                  <TableHead sx={{ bgcolor: 'action.hover' }}>
-                    <TableRow>
-                      <TableCell sx={{ fontWeight: 'bold', py: 1 }}>Treiber</TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 'bold' }}>Wert</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {data.briefing.cost_drivers.map((c, i) => (
-                      <TableRow key={i} hover>
-                        <TableCell sx={{ fontSize: '0.8rem', py: 1 }}><TextWithSearchLinks text={c.driver} namesToLink={data.linkable_names} /></TableCell>
-                        <TableCell align="right" sx={{ fontSize: '0.8rem', fontWeight: 'bold' }}>
-                          <Stack direction="row" alignItems="center" justifyContent="flex-end" spacing={0.5}>
-                            {c.value}
-                            {c.trend === 'up' && <TrendingUpIcon sx={{ fontSize: 16, color: 'error.main' }} />}
-                            {c.trend === 'down' && <TrendingDownIcon sx={{ fontSize: 16, color: 'success.main' }} />}
-                            {c.trend === 'flat' && <HorizontalRuleIcon sx={{ fontSize: 16, color: 'text.disabled' }} />}
-                          </Stack>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </Box>
-            )}
-
-            {data && data.sales_triggers && data.sales_triggers.length > 0 && (
-              <Box mb={2} sx={{ opacity: isLocked ? 0.3 : 1, filter: isLocked ? 'blur(2px)' : 'none' }}>
-                <Divider sx={{ my: 2 }} />
-                <Typography variant="overline" color="secondary.main" sx={{ fontWeight: 'bold' }}>Sales Intelligence</Typography>
+            {/* --- SALES TRIGGERS (Nur sichtbar im privaten Modus) --- */}
+            {!isPublic && data && data.sales_triggers && data.sales_triggers.length > 0 && (
+              <Box mt={4} sx={{ opacity: isLocked ? 0.3 : 1, filter: isLocked ? 'blur(3px)' : 'none', pointerEvents: isLocked ? 'none' : 'auto', transition: 'all 0.3s' }}>
+                <Divider sx={{ mb: 3 }} />
+                <Typography variant="overline" color="secondary.main" sx={{ fontWeight: 800, letterSpacing: 1, mb: 1, display: 'block' }}>Sales Intelligence</Typography>
                 {data.sales_triggers.map((trigger: any) => (
-                  <Accordion key={trigger.id} variant="outlined" sx={{ mt: 1, borderRadius: '8px !important', overflow: 'hidden' }}>
-                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                        <TextWithSearchLinks text={trigger.headline} namesToLink={data.linkable_names} />
-                      </Typography>
+                  <Accordion key={trigger.id} variant="outlined" disableGutters sx={{ mb: 1.5, borderRadius: '8px !important', overflow: 'hidden', border: '1px solid', borderColor: 'divider', '&:before': { display: 'none' } }}>
+                    <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ bgcolor: alpha(theme.palette.background.default, 0.4) }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          <TextWithSearchLinks text={trigger.headline} namesToLink={data.linkable_names} />
+                        </Typography>
+                      </Box>
                     </AccordionSummary>
-                    <AccordionDetails sx={{ bgcolor: 'action.hover', borderTop: '1px solid', borderColor: 'divider' }}>
-                      <Typography variant="caption" sx={{ display: 'block', mb: 1, color: 'text.secondary' }}>Kunde: <b>{trigger.account_name}</b></Typography>
-                      <Typography variant="body2"><b>Talking Point:</b> <TextWithSearchLinks text={`"${trigger.talking_point}"`} namesToLink={data.linkable_names} /></Typography>
+                    <AccordionDetails sx={{ bgcolor: 'background.default', borderTop: '1px solid', borderColor: 'divider', p: 2.5 }}>
+                      <Typography variant="caption" sx={{ display: 'inline-block', mb: 1.5, px: 1, py: 0.5, bgcolor: alpha(theme.palette.text.primary, 0.05), borderRadius: 1, fontWeight: 600 }}>
+                        Zielkunde: {trigger.account_name}
+                      </Typography>
+                      <Typography variant="body2" sx={{ lineHeight: 1.6 }}>
+                        <b>Empfohlener Ansatz:</b> <TextWithSearchLinks text={`"${trigger.talking_point}"`} namesToLink={data.linkable_names} />
+                      </Typography>
                     </AccordionDetails>
                   </Accordion>
                 ))}
@@ -245,14 +367,47 @@ const DailyCockpitWidget: React.FC<BaseWidgetProps & { icon?: React.ReactNode }>
         )}
       </Box>
 
-      <Divider />
-      <Box sx={{ p: 1, display: 'flex', justifyContent: 'center', bgcolor: 'background.default' }}>
-        <Tooltip title="Tägliche Zusammenfassung per E-Mail erhalten">
-          <FormControlLabel
-            control={<Switch size="small" checked={isSubscribed} onChange={handleSubscriptionToggle} color="primary" />}
-            label={<Typography variant="caption" sx={{ fontWeight: 500 }}>E-Mail Briefing aktiv</Typography>}
-          />
-        </Tooltip>
+      {/* --- FOOTER (NEWSLETTER SETTINGS) --- */}
+      <Box sx={{ borderTop: '1px solid', borderColor: 'divider', bgcolor: alpha(theme.palette.background.default, 0.6), px: 3, py: 1.5 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <EmailIcon fontSize="small" sx={{ color: isNewsletterAllowed ? (isSubscribed ? 'primary.main' : 'text.secondary') : 'text.disabled' }} />
+                <Typography variant="body2" sx={{ fontWeight: 600, color: !isNewsletterAllowed ? 'text.disabled' : 'text.primary' }}>
+                    Tägliches E-Mail Briefing
+                </Typography>
+            </Box>
+            
+            <Tooltip 
+                title={
+                    isPublic ? "Login erforderlich, um Briefings zu abonnieren" : 
+                    !isNewsletterAllowed ? "E-Mail-Versand ist für Ihr Unternehmen durch den Administrator deaktiviert." : 
+                    (isSubscribed ? "Briefing abbestellen" : "Briefing abonnieren")
+                }
+                placement="top-end"
+            >
+                <FormControlLabel
+                    control={
+                        <Switch 
+                            size="small" 
+                            checked={isPublic ? false : (isNewsletterAllowed ? isSubscribed : false)} 
+                            onChange={handleSubscriptionToggle} 
+                            color="primary" 
+                            disabled={!isNewsletterAllowed && !isPublic} 
+                        />
+                    }
+                    label={
+                        <Chip 
+                            size="small" 
+                            label={isPublic ? "Login" : (!isNewsletterAllowed ? "Gesperrt" : (isSubscribed ? "Aktiv" : "Inaktiv"))}
+                            color={isPublic ? "default" : (!isNewsletterAllowed ? "default" : (isSubscribed ? "primary" : "default"))}
+                            variant={isSubscribed && !isPublic ? "filled" : "outlined"}
+                            sx={{ ml: 1, fontSize: '0.7rem', height: 20, fontWeight: 'bold' }}
+                        />
+                    }
+                    sx={{ m: 0 }}
+                />
+            </Tooltip>
+        </Box>
       </Box>
     </WidgetPaper>
   );

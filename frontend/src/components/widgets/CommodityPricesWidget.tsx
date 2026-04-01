@@ -160,58 +160,36 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({
     const [isChartLoading, setIsChartLoading] = useState(false);
 
     // Daten laden (Mock oder API)
+// Daten laden (Dynamisch: Public-Wrapper oder geschützte API)
     useEffect(() => {
         const fetchData = async () => {
             setIsLoading(true);
             setError(null);
 
-            if (isPublic) {
-                // Public Mode: Mock-Daten
-                setTimeout(() => {
-                    setData({
-                        'BRENT_OIL': {
-                            currentPrice: 82.45, unit: 'Barrel', lastUpdate: new Date().toISOString(), source: 'oilpriceapi.com', trend: 'up', countryCode: 'us', is_trusted_source: true,
-                            historical: { weekAgo: 80.10, monthAgo: 78.50, yearAgo: 75.00 }
-                        },
-                        'EUR_USD': {
-                            currentPrice: 1.08, unit: 'USD', lastUpdate: new Date().toISOString(), source: 'ecb.europa.eu', trend: 'stable', countryCode: 'eu', is_trusted_source: true,
-                            historical: { weekAgo: 1.08, monthAgo: 1.07, yearAgo: 1.05 }
-                        },
-                        'SWAP_10Y': {
-                            currentPrice: 2.85,
-                            unit: '%',
-                            lastUpdate: new Date().toISOString(),
-                            source: 'ecb.europa.eu',
-                            trend: 'stable',
-                            countryCode: 'eu',
-                            is_trusted_source: true,
-                            historical: { weekAgo: 2.82, monthAgo: 2.75, yearAgo: 3.10 }
-                        },                        
-                        'CO2_PRICE': {
-                            currentPrice: 65.20, unit: 'Tonne', lastUpdate: new Date().toISOString(), source: 'tradingeconomics.com', trend: 'down', countryCode: 'eu', is_trusted_source: true,
-                            historical: { weekAgo: 68.00, monthAgo: 70.50, yearAgo: 85.00 }
-                        }
-                    });
-                    setIsLoading(false);
-                }, 500);
-                return;
-            }
-
-            // Normaler Modus: API
             try {
-                const token = localStorage.getItem('jwt_token');
-                const response = await apiClient.get('/api/data/commodities', { headers: { 'x-auth-token': token } });
+                // 1. Pfad wählen: Public-Wrapper für Landingpage, sonst geschützte Route
+                const endpoint = isPublic ? '/api/public/commodities' : '/api/data/commodities';
+                
+                // 2. Auth-Header nur setzen, wenn wir nicht im Public-Mode sind
+                const config = !isPublic ? {
+                    headers: { 'x-auth-token': localStorage.getItem('jwt_token') }
+                } : {};
+
+                const response = await apiClient.get(endpoint, config);
+
                 if (response.data.ok) {
                     setData(response.data.data);
                 } else {
                     throw new Error(response.data.message || t('widgets.commodities.errorLoad'));
                 }
             } catch (err: any) {
+                console.error('Fehler beim Laden der Commodities:', err);
                 setError(err?.response?.data?.message || t('widgets.commodities.errorGeneral'));
             } finally {
                 setIsLoading(false);
             }
         };
+
         fetchData();
     }, [isPublic, t]);
 

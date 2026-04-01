@@ -15,6 +15,7 @@ const {
 
 const { generateAndSaveContentForManualJob } = require('../controllers/adminAIPromptRulesController');
 const { processSubscription, processSystemSubscription } = require('../services/intelligentContentService');
+const { generateBriefingsForAllPartners } = require('../services/marketBriefingService');
 
 function logWorkerBoot() {
   console.log('==================================================');
@@ -66,8 +67,16 @@ async function startWorker() {
               break;
             }
 
+            case 'generate-editorial-briefings': {
+              const { bpId } = job.data || {};
+              console.log(`[ai] Starte Briefing-Generierung für Partner: ${bpId || 'ALLE'}`);
+              await generateBriefingsForAllPartners(bpId);
+              break;
+            }
+
             default:
               throw new Error(`Unbekannter Job-Typ: ${job.name}`);
+              
           }
 
           console.log(`[ai] Job "${job.name}" erfolgreich abgeschlossen.`);

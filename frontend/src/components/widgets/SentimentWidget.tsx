@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Typography, Button, Stack, Skeleton, Fade, useTheme } from '@mui/material';
+import { Box, Typography, Button, Stack, Skeleton, Fade, alpha } from '@mui/material';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import apiClient from '../../apiClient';
 import WidgetPaper from './WidgetPaper'; 
 import { BaseWidgetProps } from '../../types/dashboard.types';
-import { useTranslation } from 'react-i18next'; // ✅ NEU: Import
+import { useTranslation } from 'react-i18next';
 
 interface SentimentWidgetProps extends Partial<BaseWidgetProps> {
     widgetId: string;
@@ -29,9 +29,7 @@ const describeArc = (x: number, y: number, innerRadius: number, outerRadius: num
     const end = polarToCartesian(x, y, outerRadius, startAngle);
     const start2 = polarToCartesian(x, y, innerRadius, endAngle);
     const end2 = polarToCartesian(x, y, innerRadius, startAngle);
-
     const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
-
     return [
         "M", start.x, start.y,
         "A", outerRadius, outerRadius, 0, largeArcFlag, 0, end.x, end.y,
@@ -42,31 +40,20 @@ const describeArc = (x: number, y: number, innerRadius: number, outerRadius: num
 };
 
 const SentimentWidget: React.FC<SentimentWidgetProps> = ({ widgetId, onDelete, isRemovable, title, widgetTypeKey, icon, isPublic = false }) => {
-    const { t } = useTranslation(); // ✅ NEU: Hook nutzen
-    const theme = useTheme();
+    const { t } = useTranslation();
     const [loading, setLoading] = useState(true);
     const [data, setData] = useState<any>(null);
     const [animating, setAnimating] = useState(false);
 
     const fetchData = async () => {
-        if (isPublic) {
-            setData({
-                active: true,
-                questionId: 'ghost',
-                questionText: null, // Nutzen Fallback aus Translation
-                stats: { bullishPercent: 65, total: 1250 },
-                userVote: null,
-                hasVoted: false
-            });
-            setLoading(false);
-            return;
-        }
-
+        setLoading(true);
         try {
-            const res = await apiClient.get('/api/data/sentiment');
+            // Holt jetzt sicher die Live-Daten vom Public-Wrapper
+            const endpoint = isPublic ? '/api/public/sentiment' : '/api/data/sentiment';
+            const res = await apiClient.get(endpoint);
             setData(res.data);
         } catch (e) {
-            console.error(e);
+            console.error('Fehler beim Laden des Sentiments:', e);
         } finally {
             setLoading(false);
         }
@@ -87,7 +74,6 @@ const SentimentWidget: React.FC<SentimentWidgetProps> = ({ widgetId, onDelete, i
         }
     };
 
-    // ✅ Übersetzung für Titel nutzen
     const displayTitle = typeof title === 'string' ? title : t('widgets.sentiment.title');
 
     const titleHeader = (
@@ -99,7 +85,6 @@ const SentimentWidget: React.FC<SentimentWidgetProps> = ({ widgetId, onDelete, i
 
     const score = data?.stats?.bullishPercent ?? 50; 
     
-    // ✅ Labels jetzt dynamisch via t()
     const gaugeConfig = useMemo(() => {
         const cx = 200;
         const cy = 200;
@@ -117,12 +102,11 @@ const SentimentWidget: React.FC<SentimentWidgetProps> = ({ widgetId, onDelete, i
 
         const totalAngle = 180;
         const segmentAngle = (totalAngle - (gap * (segments.length - 1))) / segments.length;
-
         const activeSegmentIndex = segments.findIndex(s => score >= s.min && score <= s.max);
-        const safeActiveIndex = activeSegmentIndex === -1 ? (score === 0 ? 0 : 4) : activeSegmentIndex;
+        const safeActiveIndex = activeSegmentIndex === -1 ? (score <= 20 ? 0 : 4) : activeSegmentIndex;
 
         return { cx, cy, iR, oR, segments, segmentAngle, gap, activeIndex: safeActiveIndex };
-    }, [score, t]); // ✅ 't' als Dependency, damit Sprache live wechselt
+    }, [score, t]);
 
     const bullishColor = '#00c805'; 
     const bearishColor = '#ff3b30';
@@ -134,7 +118,7 @@ const SentimentWidget: React.FC<SentimentWidgetProps> = ({ widgetId, onDelete, i
                 widgetId={widgetId} widgetTitle={displayTitle} widgetTypeKey={widgetTypeKey || 'sentiment_widget'}
                 title={titleHeader} onDelete={onDelete} isRemovable={isRemovable} loading={true} error={null} isPublic={isPublic}
             >
-                <Skeleton height={200} />
+                <Box sx={{ p: 4 }}><Skeleton variant="circular" width={150} height={150} sx={{ mx: 'auto' }} /></Box>
             </WidgetPaper>
         );
     }
@@ -143,32 +127,24 @@ const SentimentWidget: React.FC<SentimentWidgetProps> = ({ widgetId, onDelete, i
 
     return (
         <WidgetPaper 
-            widgetId={widgetId} 
-            widgetTitle={displayTitle} 
-            widgetTypeKey={widgetTypeKey || 'sentiment_widget'}
-            title={titleHeader} 
-            onDelete={onDelete} 
-            isRemovable={isRemovable} 
-            noPadding
-            loading={false}
-            error={null}
-            isPublic={isPublic} 
+            widgetId={widgetId} widgetTitle={displayTitle} widgetTypeKey={widgetTypeKey || 'sentiment_widget'}
+            title={titleHeader} onDelete={onDelete} isRemovable={isRemovable} noPadding loading={false} error={null} isPublic={isPublic} 
         >
             <Box sx={{ p: 2, textAlign: 'center', display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'center' }}>
-                
-                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom sx={{ fontWeight: 600 }}>
                     {data.questionText || t('widgets.sentiment.question')}
                 </Typography>
 
+                {/* Zeige Buttons nur wenn nicht Public UND noch nicht gevoted */}
                 {!data.hasVoted && !isPublic ? (
                     <Fade in={!data.hasVoted}>
                         <Stack spacing={2} sx={{ mt: 2 }}>
                             <Button variant="outlined" size="large" startIcon={<TrendingUpIcon />} onClick={() => handleVote('bullish')} disabled={animating}
-                                sx={{ py: 1.5, fontSize: '1.1rem', color: bullishColor, borderColor: bullishColor, '&:hover': { bgcolor: 'rgba(0, 200, 5, 0.08)', borderColor: bullishColor } }}>
+                                sx={{ py: 1.5, fontSize: '1.1rem', color: bullishColor, borderColor: bullishColor, '&:hover': { bgcolor: alpha(bullishColor, 0.08), borderColor: bullishColor } }}>
                                 {t('widgets.sentiment.btnBullish')}
                             </Button>
                             <Button variant="outlined" size="large" startIcon={<TrendingDownIcon />} onClick={() => handleVote('bearish')} disabled={animating}
-                                sx={{ py: 1.5, fontSize: '1.1rem', color: bearishColor, borderColor: bearishColor, '&:hover': { bgcolor: 'rgba(255, 59, 48, 0.08)', borderColor: bearishColor } }}>
+                                sx={{ py: 1.5, fontSize: '1.1rem', color: bearishColor, borderColor: bearishColor, '&:hover': { bgcolor: alpha(bearishColor, 0.08), borderColor: bearishColor } }}>
                                 {t('widgets.sentiment.btnBearish')}
                             </Button>
                         </Stack>
@@ -177,7 +153,6 @@ const SentimentWidget: React.FC<SentimentWidgetProps> = ({ widgetId, onDelete, i
                     <Fade in={true}>
                         <Box sx={{ position: 'relative', width: '100%', maxWidth: 350, margin: '0 auto' }}>
                             <svg viewBox="0 0 400 220" style={{ width: '100%', height: 'auto' }}>
-                                {/* Segmente zeichnen */}
                                 {gaugeConfig.segments.map((seg, i) => {
                                     const startAngle = i * (gaugeConfig.segmentAngle + gaugeConfig.gap);
                                     const endAngle = startAngle + gaugeConfig.segmentAngle;
@@ -193,17 +168,9 @@ const SentimentWidget: React.FC<SentimentWidgetProps> = ({ widgetId, onDelete, i
                                     return (
                                         <g key={i}>
                                             <path d={pathD} fill={fillColor} />
-                                            <text
-                                                x={labelPos.x}
-                                                y={labelPos.y}
-                                                fill={i === gaugeConfig.activeIndex ? '#fff' : '#9e9e9e'}
-                                                fontSize="13"
-                                                fontWeight="bold"
-                                                textAnchor="middle"
-                                                alignmentBaseline="middle"
-                                                transform={`rotate(${rotation}, ${labelPos.x}, ${labelPos.y})`}
-                                                style={{ pointerEvents: 'none' }}
-                                            >
+                                            <text x={labelPos.x} y={labelPos.y} fill={i === gaugeConfig.activeIndex ? '#fff' : '#9e9e9e'}
+                                                fontSize="13" fontWeight="bold" textAnchor="middle" alignmentBaseline="middle"
+                                                transform={`rotate(${rotation}, ${labelPos.x}, ${labelPos.y})`} style={{ pointerEvents: 'none' }}>
                                                 {lines.length > 1 ? (
                                                     <>
                                                         <tspan x={labelPos.x} dy="-0.4em">{lines[0]}</tspan>
@@ -215,12 +182,10 @@ const SentimentWidget: React.FC<SentimentWidgetProps> = ({ widgetId, onDelete, i
                                     );
                                 })}
 
-                                {/* Nadel / Indikator */}
                                 <g transform={`rotate(${(score * 1.8) - 90}, 200, 200)`}>
                                     <polygon points="190,200 210,200 200,185" fill="#000" />
                                 </g>
 
-                                {/* Score Halbkreis unten Mitte */}
                                 <path d={describeArc(200, 200, 0, 75, 0, 180)} fill={currentActiveColor} />
                                 
                                 <text x="200" y="150" textAnchor="middle" fill="rgba(255,255,255,0.9)" fontSize="11" fontWeight="bold" letterSpacing="1px">
@@ -231,14 +196,13 @@ const SentimentWidget: React.FC<SentimentWidgetProps> = ({ widgetId, onDelete, i
                                 </text>
                             </svg>
                             
-                            {/* Legend / Vote Info */}
                             <Box sx={{ mt: -2 }}>
-                                <Typography variant="caption" color="text.secondary">
+                                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
                                     {isPublic 
                                         ? t('widgets.sentiment.trendPublic') 
                                         : `${t('widgets.sentiment.voteLabel')}: ${data.userVote === 'bullish' ? t('widgets.sentiment.votePos') : t('widgets.sentiment.voteNeg')}`
                                     } 
-                                    {' '}| Total: {data.stats.total}
+                                    {' '}| Total: {data?.stats?.total || 0}
                                 </Typography>
                             </Box>
                         </Box>

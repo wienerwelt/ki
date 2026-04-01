@@ -2,16 +2,24 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>KI-Dashboard</title>
-    <meta name="theme-color" content="#ffffff" />
+
+    <title>Mobiliti Dashboard | Mobiliti Intelligence</title>
+    <meta name="description" content="Das KI-gestützte Dashboard für Ihr Fuhrpark- und Mobilitätsmanagement." />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Mobiliti Dashboard" />
+    <meta property="og:description" content="Ihr Kompass für betriebliche Mobilität." />
+    <meta property="og:url" content="https://dashboard.mobiliti.at" />
+    <meta property="og:image" content="https://dashboard.mobiliti.at/og-image.jpg" /> 
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
-    <link rel="mask-icon" href="/favicon.svg" color="#FFFFFF" />
-    <meta name="description" content="Ihr Kompass für betriebliche Mobilität." />
+    <link rel="mask-icon" href="/favicon.svg" color="#2196f3" />
+    <meta name="theme-color" content="#f4f6f8" />
+
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- === STYLES AUS index.css HIER EINGEFÜGT === -->
     <style>
       body {
         margin: 0;
@@ -22,8 +30,7 @@
       }
 
       code {
-        font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-          monospace;
+        font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
       }
 
       #root {
@@ -32,10 +39,10 @@
         flex-direction: column;
       }
     </style>
-    <!-- === ENDE DER EINGEFÜGTEN STYLES === -->
-
   </head>
   <body>
+    <noscript>Bitte aktivieren Sie JavaScript, um das Mobiliti Dashboard zu nutzen.</noscript>
+    
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

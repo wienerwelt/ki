@@ -1,6 +1,6 @@
 // frontend/src/components/VoteSourcesList.tsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Paper, Typography, CircularProgress, Alert, Rating, List, Link as MuiLink } from '@mui/material';
+import { Box, Paper, Typography, CircularProgress, Alert, Rating, List, Link as MuiLink, Avatar, Chip } from '@mui/material';
 import apiClient from '../apiClient';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 
@@ -9,8 +9,29 @@ interface PendingSource {
     url: string;
     description: string | null;
     category_name: string | null;
-    category_name_lang: string | null; // NEU
+    category_name_lang: string | null;
+    logo_url: string | null; // NEU: Logo Unterstützung
 }
+
+// Hilfsfunktion zur Bildgenerierung
+const getImageUrl = (url: string | null) => {
+    if (!url) return '';
+    if (url.startsWith('http')) return url;
+    const baseUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+    let cleanPath = url.startsWith('/') ? url : `/${url}`;
+    cleanPath = cleanPath.replace(/^\/public\//, '/');
+    return `${baseUrl}${cleanPath}`;
+};
+
+// Hilfsfunktion für den Fallback-Avatar
+const getDomainInitial = (url: string) => {
+    try {
+        const domain = new URL(url).hostname.replace('www.', '');
+        return domain.charAt(0).toUpperCase();
+    } catch {
+        return url.charAt(0).toUpperCase();
+    }
+};
 
 export const VoteSourcesList: React.FC = () => {
     const [sources, setSources] = useState<PendingSource[]>([]);
@@ -46,40 +67,87 @@ export const VoteSourcesList: React.FC = () => {
         }
     };
 
-    if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box>;
-    if (error) return <Alert severity="error">{error}</Alert>;
+    if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', p: 6 }}><CircularProgress /></Box>;
+    if (error) return <Alert severity="error" sx={{ borderRadius: 2 }}>{error}</Alert>;
 
     return (
-        <Box>
-            <Typography variant="h6" gutterBottom>Stimme jetzt ab und verdiene Punkte!</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Bewerte die Vertrauenswürdigkeit der von anderen Nutzern vorgeschlagenen Quellen. Für jede Bewertung erhältst du +1 Punkt.
-            </Typography>
+        <Box maxWidth="md" mx="auto">
+            <Box sx={{ mb: 4, textAlign: 'center' }}>
+                <Typography variant="h5" gutterBottom fontWeight="bold" color="primary.main">Stimme jetzt ab und verdiene Punkte!</Typography>
+                <Typography variant="body1" color="text.secondary">
+                    Bewerte die Vertrauenswürdigkeit der von anderen Nutzern vorgeschlagenen Quellen. Für jede Bewertung erhältst du <strong>+1 Punkt</strong> für dein Community-Konto.
+                </Typography>
+            </Box>
+
             {sources.length > 0 ? (
-                <List>
+                <List sx={{ p: 0 }}>
                     {sources.map((source) => (
-                        <React.Fragment key={source.id}>
-                            <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-                                <Typography variant="body1" sx={{ fontWeight: 'bold' }}>
-                                    {source.url}
-                                     <MuiLink href={source.url} target="_blank" rel="noopener noreferrer" sx={{ ml: 1, verticalAlign: 'middle' }}>
-                                        <OpenInNewIcon fontSize="small" />
-                                    </MuiLink>
-                                </Typography>
-                                {/* HIER DIE ÄNDERUNG: Nutze name_lang für die Anzeige */}
-                                {(source.category_name_lang || source.category_name) && <Typography variant="caption" color="text.secondary">Kategorie: {source.category_name_lang || source.category_name}</Typography>}
-                                <Typography variant="body2" sx={{ my: 1 }}>{source.description || 'Keine Beschreibung vorhanden.'}</Typography>
+                        <Paper key={source.id} elevation={1} sx={{ p: { xs: 2, sm: 3 }, mb: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+                            <Box sx={{ display: 'flex', gap: 3, alignItems: 'flex-start', flexDirection: { xs: 'column', sm: 'row' } }}>
                                 
-                                <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-                                    <Typography variant="body2" sx={{ mr: 2 }}>Deine Bewertung:</Typography>
-                                    <Rating name={`rating-${source.id}`} onChange={(event, newValue) => handleVote(source.id, newValue)} />
+                                {/* Linke Spalte: Logo & Info */}
+                                <Box sx={{ flexGrow: 1, display: 'flex', gap: 2, alignItems: 'flex-start', width: '100%' }}>
+                                    {source.logo_url ? (
+                                        <Box 
+                                            component="img" 
+                                            src={getImageUrl(source.logo_url)} 
+                                            alt="Logo" 
+                                            sx={{ width: 64, height: 64, objectFit: 'contain', bgcolor: 'grey.50', p: 1, borderRadius: 2, border: '1px solid', borderColor: 'divider', flexShrink: 0 }} 
+                                        />
+                                    ) : (
+                                        <Avatar variant="rounded" sx={{ width: 64, height: 64, bgcolor: 'secondary.main', fontSize: '1.5rem', fontWeight: 'bold', flexShrink: 0 }}>
+                                            {getDomainInitial(source.url)}
+                                        </Avatar>
+                                    )}
+                                    
+                                    <Box>
+                                        <MuiLink href={source.url} target="_blank" rel="noopener noreferrer" underline="hover" sx={{ display: 'flex', alignItems: 'center', color: 'text.primary', mb: 0.5 }}>
+                                            <Typography variant="h6" component="span" sx={{ fontWeight: 'bold', wordBreak: 'break-all' }}>
+                                                {source.url.replace(/^https?:\/\//, '')}
+                                            </Typography>
+                                            <OpenInNewIcon sx={{ ml: 1, fontSize: '1.2rem', color: 'primary.main' }} />
+                                        </MuiLink>
+                                        
+                                        {(source.category_name_lang || source.category_name) && (
+                                            <Chip label={source.category_name_lang || source.category_name} size="small" sx={{ mb: 1.5, bgcolor: 'action.hover' }} />
+                                        )}
+                                        
+                                        <Typography variant="body2" color="text.secondary">
+                                            {source.description || 'Keine Beschreibung vorhanden.'}
+                                        </Typography>
+                                    </Box>
                                 </Box>
-                            </Paper>
-                        </React.Fragment>
+
+                                {/* Rechte Spalte: Voting Bereich */}
+                                <Box sx={{ 
+                                    minWidth: { sm: '200px' }, 
+                                    width: { xs: '100%', sm: 'auto' }, 
+                                    bgcolor: 'background.default', 
+                                    p: 2, 
+                                    borderRadius: 2, 
+                                    textAlign: 'center',
+                                    border: '1px dashed',
+                                    borderColor: 'primary.light'
+                                }}>
+                                    <Typography variant="subtitle2" color="primary.main" sx={{ mb: 1, fontWeight: 'bold' }}>
+                                        Wie vertrauenswürdig?
+                                    </Typography>
+                                    <Rating 
+                                        name={`rating-${source.id}`} 
+                                        size="large"
+                                        onChange={(event, newValue) => handleVote(source.id, newValue)} 
+                                    />
+                                    <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 1 }}>
+                                        1 Stern = Spam/Fake <br/> 5 Sterne = Exzellent
+                                    </Typography>
+                                </Box>
+
+                            </Box>
+                        </Paper>
                     ))}
                 </List>
             ) : (
-                <Alert severity="info">Derzeit gibt es keine neuen Vorschläge zum Abstimmen. Schau bald wieder vorbei!</Alert>
+                <Alert severity="info" sx={{ borderRadius: 2 }}>Derzeit gibt es keine neuen Vorschläge zum Abstimmen. Schau bald wieder vorbei!</Alert>
             )}
         </Box>
     );

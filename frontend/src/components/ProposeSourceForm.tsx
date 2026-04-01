@@ -1,13 +1,7 @@
 // frontend/src/components/ProposeSourceForm.tsx
-import React, { useState, useEffect } from 'react';
-import { Box, TextField, Button, CircularProgress, Alert, Autocomplete } from '@mui/material';
+import React, { useState } from 'react';
+import { Box, TextField, Button, CircularProgress, Alert } from '@mui/material';
 import apiClient from '../apiClient';
-
-interface Category {
-    id: string;
-    name: string;
-    name_lang: string | null;
-}
 
 interface ProposeSourceFormProps {
     onSuccess?: () => void;
@@ -16,26 +10,10 @@ interface ProposeSourceFormProps {
 export const ProposeSourceForm: React.FC<ProposeSourceFormProps> = ({ onSuccess }) => {
     const [url, setUrl] = useState('');
     const [description, setDescription] = useState('');
-    const [category, setCategory] = useState<Category | null>(null);
-    const [allCategories, setAllCategories] = useState<Category[]>([]);
     
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
-
-    useEffect(() => {
-        const fetchCategories = async () => {
-            try {
-                // ✅ KORREKTUR: Der Endpunkt wurde von '/api/admin/categories' geändert
-                // und der unnötige 'x-auth-token' Header wurde entfernt.
-                const response = await apiClient.get('/api/sources/categories');
-                setAllCategories(response.data);
-            } catch (err) {
-                console.error("Fehler beim Laden der Kategorien:", err);
-            }
-        };
-        fetchCategories();
-    }, []);
 
     const handleSubmit = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -44,20 +22,18 @@ export const ProposeSourceForm: React.FC<ProposeSourceFormProps> = ({ onSuccess 
         setSuccess(null);
 
         try {
-            // Der 'token'-Header ist hier (bei der POST-Anfrage) korrekt, 
-            // da die Route /api/sources (POST) Auth erfordert
             const token = localStorage.getItem('jwt_token'); 
             const payload = {
                 url,
                 description,
-                category_id: category?.id || null,
+                // category_id wird bewusst weggelassen, das Backend setzt es auf null.
+                // Der Admin ordnet die Kategorie später bei der Prüfung zu.
             };
             await apiClient.post('/api/sources', payload, { headers: { 'x-auth-token': token } });
             
             setSuccess('Vielen Dank! Deine Quelle wurde zur Prüfung eingereicht. Du erhältst +5 Punkte, wenn sie genehmigt wird.');
             setUrl('');
             setDescription('');
-            setCategory(null);
             if (onSuccess) onSuccess();
 
         } catch (err: any) {
@@ -90,14 +66,6 @@ export const ProposeSourceForm: React.FC<ProposeSourceFormProps> = ({ onSuccess 
                 onChange={(e) => setDescription(e.target.value)}
                 margin="normal"
                 placeholder="Warum ist diese Quelle wertvoll?"
-            />
-            <Autocomplete
-                options={allCategories}
-                getOptionLabel={(option) => option.name_lang || option.name}
-                value={category}
-                onChange={(event, newValue) => setCategory(newValue)}
-                isOptionEqualToValue={(option, value) => option.id === value.id}
-                renderInput={(params) => <TextField {...params} label="Kategorie (optional)" margin="normal" />}
             />
 
             <Button type="submit" variant="contained" disabled={loading} sx={{ mt: 2 }}>

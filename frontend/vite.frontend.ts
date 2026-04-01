@@ -1,15 +1,19 @@
-// frontend/vite.config.ts
+
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// https://vitejs.dev/config/
 export default defineConfig({
+  base: '/',
   plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'robots.txt', 'apple-touch-icon.png'],
+      workbox: {
+        navigateFallbackDenylist: [/^\/api/],
+        maximumFileSizeToCacheInBytes: 10000000,
+      },
       manifest: {
         name: 'Fleet KI-Dashboard',
         short_name: 'FleetKI',
@@ -45,7 +49,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+      //  target: 'http://localhost:5000', // prod
+        target: 'http://localhost:5001', // dev
         changeOrigin: true,
       },
     },

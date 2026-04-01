@@ -1,4 +1,3 @@
-// frontend/src/pages/CommunityPage.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Container, Grid, Paper, Typography, Box, Avatar, Button,
@@ -6,7 +5,8 @@ import {
   Divider, CircularProgress, Tooltip, Chip, useTheme, useMediaQuery,
   MenuItem, Select, FormControl, InputLabel, Collapse, Popover,
   Tabs, Tab, List, ListItem, ListItemAvatar, ListItemText, InputAdornment,
-  TextField, Badge, Alert, Link as MuiLink, Dialog, DialogTitle, DialogContent
+  TextField, Badge, Alert, Link as MuiLink, Dialog, DialogTitle, DialogContent,
+  alpha
 } from '@mui/material';
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -32,6 +32,9 @@ import SchoolIcon from '@mui/icons-material/School';
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import CloseIcon from '@mui/icons-material/Close';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
+import AddIcon from '@mui/icons-material/Add';
 
 // App Context & Utils
 import { useAuth } from '../context/AuthContext';
@@ -149,7 +152,7 @@ const UserAvatarWithStatus: React.FC<{ user: UserProfileData | RecentComment, si
     const tooltip = status === 'online' ? 'Online' : (status === 'active_today' ? 'War heute aktiv' : '');
     const invisible = status === 'offline';
     
-    const letter = user.first_name ? user.first_name.charAt(0) : (user.username ? user.username.charAt(0) : '?');
+    const letter = user.first_name ? user.first_name.charAt(0).toUpperCase() : (user.username ? user.username.charAt(0).toUpperCase() : '?');
 
     return (
         <Tooltip title={tooltip}>
@@ -170,7 +173,7 @@ const UserAvatarWithStatus: React.FC<{ user: UserProfileData | RecentComment, si
             >
                 <Avatar 
                     src={user.profile_image_url || undefined} 
-                    sx={{ width: size, height: size, cursor: onClick ? 'pointer' : 'default' }} 
+                    sx={{ width: size, height: size, cursor: onClick ? 'pointer' : 'default', bgcolor: 'primary.main', color: 'white' }} 
                     onClick={onClick}
                 >
                     {letter}
@@ -180,39 +183,52 @@ const UserAvatarWithStatus: React.FC<{ user: UserProfileData | RecentComment, si
     );
 };
 
-// --- COMPONENT: Einheitliche Profil-Karte (Für Hover & Klick) ---
+// --- COMPONENT: Einheitliche Profil-Karte (Weiße Ränder gefixt) ---
 const ProfileCard: React.FC<{ user: UserProfileData }> = ({ user }) => {
     return (
-        <Box sx={{ width: 300, p: 0 }}>
-            <Box sx={{ height: 60, bgcolor: 'primary.main', opacity: 0.9 }}></Box>
-            <Box sx={{ px: 2, pb: 2, mt: -4 }}>
-                <UserAvatarWithStatus user={user} size={70} />
+        <Box sx={{ width: '100%', p: 0, overflow: 'hidden' }}>
+            {/* Header / Cover Image */}
+            <Box sx={{ height: 70, bgcolor: 'primary.main', opacity: 0.9, width: '100%' }}></Box>
+            
+            <Box sx={{ px: 3, pb: 3, mt: -4 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'flex-start' }}>
+                    <Box sx={{ border: '4px solid white', borderRadius: '50%', bgcolor: 'white' }}>
+                        <UserAvatarWithStatus user={user} size={70} />
+                    </Box>
+                </Box>
+                
                 <Box sx={{ mt: 1 }}>
                     <Typography variant="h6" fontWeight="bold" lineHeight={1.2}>
                         {user.first_name} {user.last_name}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                        {user.role} {user.organization_name && ` • ${user.organization_name}`}
+                        {user.role === 'admin' ? 'Administrator' : (user.role === 'assistenz' ? 'Assistenz' : 'Mitglied')} 
+                        {user.organization_name && ` • ${user.organization_name}`}
                     </Typography>
-                    {user.membership_level && <Chip label={user.membership_level} size="small" color="secondary" variant="outlined" sx={{ mt: 0.5, height: 20, fontSize: '0.7rem' }} />}
+                    {user.membership_level && (
+                        <Chip label={user.membership_level} size="small" color="secondary" variant="outlined" sx={{ mt: 1, height: 20, fontSize: '0.7rem', fontWeight: 'bold' }} />
+                    )}
                 </Box>
-                <Divider sx={{ my: 1.5 }} />
+
+                <Divider sx={{ my: 2 }} />
+                
                 <Grid container spacing={1}>
                     <Grid item xs={6}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary' }}>
                             <EventIcon fontSize="inherit" />
                             <Typography variant="caption">
-                                Seit {user.member_since ? new Date(user.member_since).toLocaleDateString('de-DE', {month: 'short', year: '2-digit'}) : '-'}
+                                Seit {user.member_since ? new Date(user.member_since).toLocaleDateString('de-DE', {month: 'short', year: 'numeric'}) : '-'}
                             </Typography>
                         </Box>
                     </Grid>
                     <Grid item xs={6}>
                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary' }}>
                             <StarsIcon fontSize="inherit" color="warning" />
-                            <Typography variant="caption">{user.contribution_score || 0} Punkte</Typography>
+                            <Typography variant="caption" fontWeight="bold">{user.contribution_score || 0} Punkte</Typography>
                         </Box>
                     </Grid>
                 </Grid>
+
                 {user.linkedin_url && (
                     <Box sx={{ mt: 2 }}>
                         <Button 
@@ -222,6 +238,7 @@ const ProfileCard: React.FC<{ user: UserProfileData }> = ({ user }) => {
                             size="small"
                             href={user.linkedin_url} 
                             target="_blank"
+                            sx={{ color: '#0077b5', borderColor: '#0077b5', '&:hover': { bgcolor: '#0077b5', color: 'white' } }}
                         >
                             LinkedIn Profil
                         </Button>
@@ -282,11 +299,11 @@ const MentionLink: React.FC<{ username: string }> = ({ username }) => {
                 transformOrigin={{ vertical: 'top', horizontal: 'left' }}
                 onClose={handleMouseLeave}
                 disableRestoreFocus
-                PaperProps={{ sx: { borderRadius: 2, overflow: 'hidden' } }}
+                PaperProps={{ sx: { borderRadius: 3, overflow: 'hidden', width: 300 } }}
             >
                 {loading ? (
-                     <Box sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <CircularProgress size={16} /> <Typography variant="caption">Lade Profil...</Typography>
+                     <Box sx={{ p: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <CircularProgress size={20} /> <Typography variant="body2" color="text.secondary">Lade Profil...</Typography>
                     </Box>
                 ) : user ? (
                     <ProfileCard user={user} />
@@ -334,7 +351,6 @@ const ContentWithMentions: React.FC<{ text: string }> = ({ text }) => {
 
 // --- MAIN COMPONENT ---
 const CommunityPage: React.FC = () => {
-  // KORREKTUR: Unused 'businessPartner' entfernt
   const { user, userTags } = useAuth();
   const { showSnackbar } = useSnackbar();
   const theme = useTheme();
@@ -652,6 +668,7 @@ const CommunityPage: React.FC = () => {
     setSelectedUser(normalizedUser);
     setAnchorEl(event.currentTarget as HTMLElement);
   };
+  
   const handlePopoverClose = () => {
     setAnchorEl(null);
     setSelectedUser(null);
@@ -660,20 +677,23 @@ const CommunityPage: React.FC = () => {
 
   // --- RENDER POST HELPER ---
   const renderPostCard = (post: CommunityPost, isDialog: boolean = false) => (
-      <Card key={post.id} sx={{ mb: isDialog ? 0 : 2, borderRadius: isDialog ? 0 : 2, boxShadow: isDialog ? 'none' : undefined }}>
+      <Card key={post.id} sx={{ mb: isDialog ? 0 : 3, borderRadius: isDialog ? 0 : 3, boxShadow: isDialog ? 'none' : theme.shadows[2], border: post.is_pinned ? `1px solid ${theme.palette.primary.main}` : 'none' }}>
         <CardHeader
             avatar={
                 <UserAvatarWithStatus user={post} onClick={(e) => handleProfileClick(e, post)} />
             }
             action={
                 <Box sx={{ display: 'flex', gap: 0.5 }}>
-                    <Tooltip title={isDemo ? "Deaktiviert" : "Melden"}>
-                        <span>
-                            <IconButton onClick={() => handleReportPost(post.id)} size="small" disabled={isDemo}>
-                                <ReportProblemIcon fontSize="small" color="action" />
-                            </IconButton>
-                        </span>
-                    </Tooltip>
+                    {/* Eigene Beiträge kann man nicht melden */}
+                    {user?.id !== post.author_id && (
+                        <Tooltip title={isDemo ? "Deaktiviert" : "Melden"}>
+                            <span>
+                                <IconButton onClick={() => handleReportPost(post.id)} size="small" disabled={isDemo}>
+                                    <ReportProblemIcon fontSize="small" color="action" />
+                                </IconButton>
+                            </span>
+                        </Tooltip>
+                    )}
                     {(user?.role === 'admin' || user?.role === 'assistenz') && (
                         <Tooltip title={post.is_pinned ? "Loslösen" : "Anpinnen"}>
                             <IconButton onClick={() => handleTogglePin(post.id)} color={post.is_pinned ? "primary" : "default"} size="small" disabled={isDemo}>
@@ -685,19 +705,21 @@ const CommunityPage: React.FC = () => {
                 </Box>
             }
             title={
-                <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5 }}>
-                    <Typography fontWeight="bold" variant="subtitle2" sx={{ cursor: 'pointer' }} onClick={(e) => handleProfileClick(e, post)}>{post.first_name} {post.last_name}</Typography>
-                    {post.category_name && <Chip label={post.category_name} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.65rem' }} />}
-                    {post.is_pinned && <Chip icon={<PushPinIcon style={{fontSize: 12}} />} label="Pin" size="small" color="primary" sx={{ height: 18, fontSize: '0.65rem', '& .MuiChip-label': { px: 0.5 } }} />}
+                <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+                    <Typography fontWeight="bold" variant="subtitle2" sx={{ cursor: 'pointer', '&:hover': { color: 'primary.main'} }} onClick={(e) => handleProfileClick(e, post)}>
+                        {post.first_name} {post.last_name}
+                    </Typography>
+                    {post.category_name && <Chip label={post.category_name} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: alpha(theme.palette.primary.main, 0.1), color: 'primary.dark' }} />}
+                    {post.is_pinned && <Chip icon={<PushPinIcon style={{fontSize: 12}} />} label="Angepinnt" size="small" color="primary" sx={{ height: 18, fontSize: '0.65rem' }} />}
                 </Box>
             }
             subheader={<Typography variant="caption" color="text.secondary">{safeFormatDistance(post.created_at)}</Typography>}
         />
-        <CardContent sx={{ pt: 0, pb: 1 }}>
+        <CardContent sx={{ pt: 0, pb: 1, px: 3 }}>
             <ContentWithMentions text={post.content} />
             
             {post.poll_options && post.poll_options.length > 0 && (
-                <Box sx={{ mt: 2 }}>
+                <Box sx={{ mt: 3 }}>
                     {post.poll_options.map(opt => {
                         const totalVotes = post.poll_options!.reduce((acc, o) => acc + parseInt(o.votes as any), 0);
                         const percent = totalVotes > 0 ? Math.round((parseInt(opt.votes as any) / totalVotes) * 100) : 0;
@@ -707,62 +729,62 @@ const CommunityPage: React.FC = () => {
                             <Box 
                                 key={opt.id} 
                                 sx={{ 
-                                    mb: 1, p: 1, borderRadius: 1, cursor: isDemo ? 'default' : 'pointer', position: 'relative',
-                                    border: isVoted ? `1px solid ${theme.palette.primary.main}` : '1px solid #eee',
+                                    mb: 1.5, p: 1.5, borderRadius: 2, cursor: isDemo ? 'default' : 'pointer', position: 'relative',
+                                    border: isVoted ? `2px solid ${theme.palette.primary.main}` : '1px solid #e0e0e0',
                                     overflow: 'hidden',
-                                    '&:hover': { bgcolor: isDemo ? 'transparent' : 'action.hover' }
+                                    '&:hover': { bgcolor: isDemo ? 'transparent' : alpha(theme.palette.primary.main, 0.05) }
                                 }}
                                 onClick={() => !isDemo && handleVotePoll(opt.id, post.id)}
                             >
                                 <Box sx={{ 
                                     position: 'absolute', top: 0, left: 0, bottom: 0, 
-                                    width: `${percent}%`, bgcolor: isVoted ? 'primary.light' : 'action.selected', 
-                                    opacity: 0.3, zIndex: 0, transition: 'width 0.5s ease'
+                                    width: `${percent}%`, bgcolor: isVoted ? alpha(theme.palette.primary.main, 0.2) : alpha(theme.palette.action.selected, 0.5), 
+                                    zIndex: 0, transition: 'width 0.5s ease'
                                 }} />
                                 
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', position: 'relative', zIndex: 1, px: 1 }}>
-                                    <Typography variant="body2" fontWeight={isVoted ? 'bold' : 'normal'}>{opt.text}</Typography>
-                                    <Typography variant="caption" fontWeight="bold">{percent}% ({opt.votes})</Typography>
+                                    <Typography variant="body2" fontWeight={isVoted ? 'bold' : 'medium'}>{opt.text}</Typography>
+                                    <Typography variant="body2" fontWeight="bold">{percent}% ({opt.votes})</Typography>
                                 </Box>
                             </Box>
                         );
                     })}
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', textAlign: 'right' }}>
-                        {post.poll_options.reduce((acc, o) => acc + parseInt(o.votes as any), 0)} Stimmen
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', textAlign: 'right' }}>
+                        Gesamt: {post.poll_options.reduce((acc, o) => acc + parseInt(o.votes as any), 0)} Stimmen
                     </Typography>
                 </Box>
             )}
         </CardContent>
         {post.image_url && renderMedia(post.image_url)}
-        <Divider />
-        <CardActions disableSpacing sx={{ px: 2, py: 1 }}>
-            <Button size="small" startIcon={post.is_liked_by_me ? <ThumbUpIcon fontSize="small" /> : <ThumbUpOutlinedIcon fontSize="small" />} onClick={() => handleLike(post.id)} color={post.is_liked_by_me ? "primary" : "inherit"} disabled={isDemo}>{post.like_count > 0 ? post.like_count : 'Gefällt'}</Button>
-            {!isDialog && <Button size="small" startIcon={<CommentIcon fontSize="small" />} onClick={() => toggleComments(post.id)} color="inherit" sx={{ ml: 2 }}>{post.comment_count > 0 ? post.comment_count : 'Kommentieren'}</Button>}
+        <Divider sx={{ mx: 2, mt: 1 }} />
+        <CardActions disableSpacing sx={{ px: 2, py: 1.5 }}>
+            <Button size="small" startIcon={post.is_liked_by_me ? <ThumbUpIcon fontSize="small" /> : <ThumbUpOutlinedIcon fontSize="small" />} onClick={() => handleLike(post.id)} color={post.is_liked_by_me ? "primary" : "inherit"} disabled={isDemo} sx={{ borderRadius: 4, px: 2 }}>{post.like_count > 0 ? post.like_count : 'Gefällt mir'}</Button>
+            {!isDialog && <Button size="small" startIcon={<CommentIcon fontSize="small" />} onClick={() => toggleComments(post.id)} color="inherit" sx={{ ml: 2, borderRadius: 4, px: 2 }}>{post.comment_count > 0 ? post.comment_count : 'Kommentieren'}</Button>}
         </CardActions>
         <Collapse in={isDialog || post.commentsOpen} timeout="auto" unmountOnExit>
-            <Box sx={{ p: 1.5, bgcolor: theme.palette.mode === 'dark' ? 'action.hover' : '#f9f9f9', borderTop: `1px solid ${theme.palette.divider}` }}>
+            <Box sx={{ p: 2, bgcolor: theme.palette.mode === 'dark' ? 'action.hover' : alpha(theme.palette.primary.main, 0.02), borderTop: `1px solid ${theme.palette.divider}` }}>
                 {post.comments?.map(c => (
                     <Box key={c.id} sx={{ display: 'flex', gap: 1.5, mb: 2 }}>
-                        <UserAvatarWithStatus user={c} size={32} onClick={(e) => handleProfileClick(e, c)} />
+                        <UserAvatarWithStatus user={c} size={36} onClick={(e) => handleProfileClick(e, c)} />
                         
-                        <Box sx={{ bgcolor: theme.palette.background.paper, p: 1, borderRadius: 2, flexGrow: 1, boxShadow: 1 }}>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                                <Typography variant="subtitle2" fontWeight="bold" sx={{ cursor: 'pointer', fontSize: '0.85rem' }} onClick={(e) => handleProfileClick(e, c)}>
+                        <Box sx={{ bgcolor: theme.palette.background.paper, p: 1.5, borderRadius: '0 16px 16px 16px', flexGrow: 1, boxShadow: theme.shadows[1], border: `1px solid ${theme.palette.divider}` }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 0.5 }}>
+                                <Typography variant="subtitle2" fontWeight="bold" sx={{ cursor: 'pointer', '&:hover': {color: 'primary.main'} }} onClick={(e) => handleProfileClick(e, c)}>
                                     {c.first_name} {c.last_name}
                                 </Typography>
                                 <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>{safeFormatDistance(c.created_at)}</Typography>
                             </Box>
-                            <Typography variant="body2" sx={{ fontSize: '0.9rem' }}><ContentWithMentions text={c.content} /></Typography>
+                            <Typography variant="body2" sx={{ fontSize: '0.9rem', color: 'text.primary' }}><ContentWithMentions text={c.content} /></Typography>
                         </Box>
                     </Box>
                 ))}
-                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-end', mt: 1 }}>
-                    {user && <UserAvatarWithStatus user={user as any} size={32} />}
+                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', mt: 3 }}>
+                    {user && <UserAvatarWithStatus user={user as any} size={36} />}
                     <Box sx={{ flexGrow: 1 }}>
                         <MentionInput 
                             value={commentInputs[post.id] || ''} 
                             onChange={(val) => handleCommentInputChange(post.id, val)} 
-                            placeholder={isDemo ? "Kommentieren deaktiviert" : "Antwort..."}
+                            placeholder={isDemo ? "Kommentieren deaktiviert" : "Schreibe eine Antwort..."}
                             disabled={isDemo}
                             onKeyDown={(e) => { 
                                 if (e.key === 'Enter' && !e.shiftKey) { 
@@ -776,6 +798,7 @@ const CommunityPage: React.FC = () => {
                         onClick={() => handleSendComment(post.id, commentInputs[post.id] || '')} 
                         color="primary" 
                         disabled={isDemo || !commentInputs[post.id]?.trim()}
+                        sx={{ bgcolor: 'background.paper', border: `1px solid ${theme.palette.divider}`, '&:hover': {bgcolor: 'primary.light', color: 'white'} }}
                     >
                         <SendIcon />
                     </IconButton>
@@ -785,45 +808,57 @@ const CommunityPage: React.FC = () => {
       </Card>
   );
 
-  if (loading) return <Box sx={{ p: 4, display: 'flex', justifyContent: 'center' }}><CircularProgress /></Box>;
+  if (loading) return <Box sx={{ p: 4, display: 'flex', justifyContent: 'center', minHeight: '50vh', alignItems: 'center' }}><CircularProgress /></Box>;
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 2, mb: 4, px: isMobile ? 1 : 2 }}>
-      <Grid container spacing={isMobile ? 1 : 3}>
+    <Container maxWidth="lg" sx={{ mt: 3, mb: 4, px: isMobile ? 1 : 3 }}>
+      <Grid container spacing={isMobile ? 2 : 4}>
         
+        {/* LINKS: Hauptinhalt (Feed, Mitglieder, Experten) */}
         <Grid item xs={12} md={8}>
-          <Box sx={{ mb: 2 }}>
-             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                <Typography variant={isMobile ? 'h5' : 'h4'} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <GroupIcon fontSize={isMobile ? "medium" : "large"} color="primary" /> Community
+          <Box sx={{ mb: 3 }}>
+             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant={isMobile ? 'h5' : 'h4'} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, fontWeight: 'bold' }}>
+                    <GroupIcon fontSize="large" color="primary" /> Community
                 </Typography>
              </Box>
-             {isDemo && <Alert severity="info" sx={{ mb: 2 }}>Im Demo-Modus sind Interaktionen (Posten, Liken, Kommentieren) deaktiviert.</Alert>}
-             <Paper sx={{ mb: 2, overflow: 'hidden' }}>
-                 <Tabs value={currentTab} onChange={(_, val) => setCurrentTab(val)} variant="fullWidth" indicatorColor="primary" textColor="primary">
+             {isDemo && <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>Im Demo-Modus sind Interaktionen (Posten, Liken, Kommentieren) deaktiviert.</Alert>}
+             
+             {/* Tabs */}
+             <Paper sx={{ mb: 3, borderRadius: 3, overflow: 'hidden', boxShadow: theme.shadows[2] }}>
+                 <Tabs 
+                    value={currentTab} 
+                    onChange={(_, val) => setCurrentTab(val)} 
+                    variant="fullWidth" 
+                    indicatorColor="primary" 
+                    textColor="primary"
+                    sx={{ '& .MuiTab-root': { py: 2, fontWeight: 'bold' } }}
+                 >
                      <Tab icon={<DynamicFeedIcon />} iconPosition="start" label="Feed" value="feed" />
                      <Tab icon={<PersonSearchIcon />} iconPosition="start" label="Mitglieder" value="members" />
-                     <Tab icon={<SchoolIcon />} iconPosition="start" label="Experten finden" value="experts" />
+                     <Tab icon={<SchoolIcon />} iconPosition="start" label="Experten" value="experts" />
                  </Tabs>
              </Paper>
           </Box>
 
+          {/* TAB: FEED */}
           {currentTab === 'feed' && (
-            <>
+            <Box sx={{ animation: 'fadeIn 0.3s ease-in-out' }}>
                 <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-                    <FormControl size="small" sx={{ minWidth: 120 }}>
-                        <InputLabel>Thema</InputLabel>
-                        <Select value={filterCategory} label="Thema" onChange={(e) => setFilterCategory(e.target.value)}>
-                            <MenuItem value="all">Alle</MenuItem>
+                    <FormControl size="small" sx={{ minWidth: 150, bgcolor: 'background.paper', borderRadius: 1 }}>
+                        <InputLabel>Thema filtern</InputLabel>
+                        <Select value={filterCategory} label="Thema filtern" onChange={(e) => setFilterCategory(e.target.value)}>
+                            <MenuItem value="all">Alle Beiträge</MenuItem>
                             {categories.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
                         </Select>
                     </FormControl>
                 </Box>
 
-                <Paper sx={{ p: isMobile ? 2 : 3, mb: 3, borderRadius: 2 }} elevation={1}>
+                {/* Create Post Area */}
+                <Paper sx={{ p: isMobile ? 2 : 3, mb: 4, borderRadius: 3, boxShadow: theme.shadows[2] }}>
                     <Box sx={{ display: 'flex', gap: 2 }}>
                     {!isMobile && (
-                        <Box>
+                        <Box sx={{ pt: 1 }}>
                             {user && <UserAvatarWithStatus user={user as any} size={48} onClick={() => navigate('/profile')} />}
                         </Box>
                     )}
@@ -831,96 +866,144 @@ const CommunityPage: React.FC = () => {
                         <MentionInput 
                             value={newContent} 
                             onChange={setNewContent} 
-                            placeholder={isDemo ? "Posten ist im Demo-Modus deaktiviert." : `Was gibt's Neues, ${user?.first_name}?`} 
+                            placeholder={isDemo ? "Posten ist im Demo-Modus deaktiviert." : `Was möchten Sie der Community mitteilen, ${user?.first_name}?`} 
                             disabled={isDemo}
                         />
                         
                         {isPollMode && (
-                            <Box sx={{ mt: 2, p: 2, border: '1px solid #eee', borderRadius: 1 }}>
-                                <Typography variant="caption" fontWeight="bold" sx={{ mb: 1, display: 'block' }}>Umfrage Optionen:</Typography>
+                            <Box sx={{ mt: 2, p: 2, border: `1px solid ${theme.palette.divider}`, borderRadius: 2, bgcolor: alpha(theme.palette.primary.main, 0.02) }}>
+                                <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <PollIcon fontSize="small" color="primary"/> Umfrage erstellen:
+                                </Typography>
                                 {pollOptions.map((opt, idx) => (
                                     <TextField 
                                         key={idx} 
-                                        placeholder={`Option ${idx + 1}`} 
+                                        placeholder={`Antwortmöglichkeit ${idx + 1}`} 
                                         value={opt}
                                         onChange={(e) => {
                                             const newOpts = [...pollOptions];
                                             newOpts[idx] = e.target.value;
                                             setPollOptions(newOpts);
                                         }}
-                                        fullWidth size="small" sx={{ mb: 1 }}
+                                        fullWidth size="small" sx={{ mb: 1.5, bgcolor: 'background.paper' }}
                                         disabled={isDemo}
                                     />
                                 ))}
-                                <Button size="small" onClick={() => setPollOptions([...pollOptions, ''])} disabled={isDemo}>+ Option</Button>
+                                <Button size="small" startIcon={<AddIcon />} onClick={() => setPollOptions([...pollOptions, ''])} disabled={isDemo}>Weitere Option hinzufügen</Button>
                             </Box>
                         )}
 
                         <Box sx={{ display: 'flex', mt: 2, gap: 2 }}>
                             <FormControl fullWidth size="small" disabled={isDemo}>
-                                <InputLabel>Kategorie *</InputLabel>
-                                <Select value={selectedCategory} label="Kategorie *" onChange={(e) => setSelectedCategory(e.target.value)}>
+                                <InputLabel>Kategorie zuordnen *</InputLabel>
+                                <Select value={selectedCategory} label="Kategorie zuordnen *" onChange={(e) => setSelectedCategory(e.target.value)} sx={{ bgcolor: 'background.paper' }}>
                                     {categories.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
                                 </Select>
                             </FormControl>
                         </Box>
-                        {selectedImage && <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1, bgcolor: '#f5f5f5', p: 1, borderRadius: 1 }}><ImageIcon fontSize="small" color="action" /><Typography variant="caption" noWrap sx={{ maxWidth: 200 }}>{selectedImage.name}</Typography><IconButton size="small" onClick={() => {setSelectedImage(null); if(fileInputRef.current) fileInputRef.current.value='';}}><DeleteIcon fontSize="small" color="error" /></IconButton></Box>}
-                        
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2 }}>
-                            <Box sx={{ display: 'flex', gap: 1 }}>
-                                <IconButton onClick={() => fileInputRef.current?.click()} size="small" color="inherit" disabled={isDemo}><ImageIcon /></IconButton>
-                                <IconButton 
-                                    onClick={() => setIsPollMode(!isPollMode)} 
-                                    size="small" 
-                                    color={isPollMode ? "primary" : "inherit"}
-                                    disabled={isDemo}
-                                >
-                                    <PollIcon />
+
+                        {selectedImage && (
+                            <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, bgcolor: alpha(theme.palette.info.main, 0.1), p: 1.5, borderRadius: 2, border: `1px solid ${theme.palette.info.light}` }}>
+                                <ImageIcon fontSize="small" color="info" />
+                                <Typography variant="body2" fontWeight="medium" noWrap sx={{ maxWidth: 200, flexGrow: 1 }}>{selectedImage.name}</Typography>
+                                <IconButton size="small" onClick={() => {setSelectedImage(null); if(fileInputRef.current) fileInputRef.current.value='';}}>
+                                    <DeleteIcon fontSize="small" color="error" />
                                 </IconButton>
                             </Box>
+                        )}
+                        
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2, pt: 2, borderTop: `1px solid ${theme.palette.divider}` }}>
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                <Tooltip title="Bild/Video anhängen">
+                                    <IconButton onClick={() => fileInputRef.current?.click()} size="small" sx={{ bgcolor: 'action.hover', color: 'text.secondary' }} disabled={isDemo}>
+                                        <ImageIcon />
+                                    </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Umfrage erstellen">
+                                    <IconButton 
+                                        onClick={() => setIsPollMode(!isPollMode)} 
+                                        size="small" 
+                                        sx={{ bgcolor: isPollMode ? 'primary.main' : 'action.hover', color: isPollMode ? 'white' : 'text.secondary', '&:hover': { bgcolor: isPollMode ? 'primary.dark' : undefined } }}
+                                        disabled={isDemo}
+                                    >
+                                        <PollIcon />
+                                    </IconButton>
+                                </Tooltip>
+                            </Box>
                             <input type="file" hidden ref={fileInputRef} accept="image/*,video/mp4,video/webm,video/quicktime" onChange={(e) => e.target.files && setSelectedImage(e.target.files[0])} />
-                            <Button variant="contained" onClick={handleCreatePost} disabled={createLoading || isDemo} endIcon={createLoading ? <CircularProgress size={20} color="inherit" /> : <SendIcon />}>Posten</Button>
+                            
+                            <Button 
+                                variant="contained" 
+                                onClick={handleCreatePost} 
+                                disabled={createLoading || isDemo} 
+                                endIcon={createLoading ? <CircularProgress size={20} color="inherit" /> : <SendIcon />}
+                                sx={{ borderRadius: 8, px: 3, fontWeight: 'bold' }}
+                            >
+                                Veröffentlichen
+                            </Button>
                         </Box>
                     </Box>
                     </Box>
                 </Paper>
 
+                {/* Posts List */}
                 {posts.map((post) => renderPostCard(post))}
-            </>
+                {posts.length === 0 && (
+                    <Box sx={{ textAlign: 'center', py: 8, opacity: 0.6 }}>
+                        <DynamicFeedIcon sx={{ fontSize: 60, color: 'text.disabled', mb: 2 }} />
+                        <Typography variant="h6" color="text.secondary">Noch keine Beiträge vorhanden.</Typography>
+                        <Typography variant="body2" color="text.secondary">Sei der Erste, der etwas in dieser Kategorie teilt!</Typography>
+                    </Box>
+                )}
+            </Box>
           )}
 
+          {/* TAB: MEMBERS */}
           {currentTab === 'members' && (
-             <Paper sx={{ p: isMobile ? 2 : 3, borderRadius: 2 }}>
-                 <Box sx={{ mb: 2 }}>
+             <Paper sx={{ p: isMobile ? 2 : 4, borderRadius: 3, boxShadow: theme.shadows[2], animation: 'fadeIn 0.3s ease-in-out' }}>
+                 <Box sx={{ mb: 4 }}>
+                    <Typography variant="h6" fontWeight="bold" gutterBottom>Kollegen finden</Typography>
                     <TextField 
                         fullWidth 
-                        size="small"
-                        placeholder="Mitglieder suchen..." 
+                        placeholder="Nach Name oder Firma suchen..." 
                         variant="outlined" 
                         value={memberSearch} 
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMemberSearch(e.target.value)} 
-                        InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>) }} 
+                        InputProps={{ 
+                            startAdornment: (<InputAdornment position="start"><SearchIcon color="action" /></InputAdornment>),
+                            sx: { borderRadius: 2, bgcolor: 'background.default' }
+                        }} 
                     />
                  </Box>
-                 {membersLoading ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box> : members.length === 0 ? <Typography variant="body2" color="text.secondary" textAlign="center">Keine Mitglieder gefunden.</Typography> : (
+                 {membersLoading ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box> : members.length === 0 ? <Typography variant="body1" color="text.secondary" textAlign="center" py={4}>Keine Mitglieder gefunden.</Typography> : (
                     <List disablePadding>
                         {members.map((member, index) => (
                             <React.Fragment key={member.id}>
-                                <ListItem alignItems="flex-start" sx={{ px: 0 }}>
-                                <ListItemAvatar>
-                                    <UserAvatarWithStatus user={member} size={isMobile ? 40 : 50} onClick={(e) => handleProfileClick(e, member)} />
+                                <ListItem alignItems="center" sx={{ px: 1, py: 2, borderRadius: 2, '&:hover': { bgcolor: 'action.hover' } }}>
+                                <ListItemAvatar sx={{ minWidth: 64 }}>
+                                    <UserAvatarWithStatus user={member} size={isMobile ? 48 : 56} onClick={(e) => handleProfileClick(e, member)} />
                                 </ListItemAvatar>
                                     <ListItemText
-                                        primary={<Typography variant="subtitle2" fontWeight="bold">{member.first_name} {member.last_name} {member.membership_level && <Chip label={member.membership_level} size="small" color="primary" variant="outlined" sx={{ ml: 1, height: 18, fontSize: '0.65rem' }} />}</Typography>}
+                                        primary={
+                                            <Typography variant="subtitle1" fontWeight="bold" sx={{ cursor: 'pointer', '&:hover': {color: 'primary.main'} }} onClick={(e) => handleProfileClick(e, member)}>
+                                                {member.first_name} {member.last_name} 
+                                                {member.membership_level && <Chip label={member.membership_level} size="small" color="primary" variant="outlined" sx={{ ml: 1.5, height: 20, fontSize: '0.7rem' }} />}
+                                            </Typography>
+                                        }
                                         secondary={
-                                            <React.Fragment>
-                                                <Typography component="span" variant="caption" color="text.primary" display="block">{member.role} {member.organization_name ? `bei ${member.organization_name}` : ''}</Typography>
-                                                <Typography component="span" variant="caption" color="text.secondary">{member.contribution_score} Punkte</Typography>
-                                            </React.Fragment>
+                                            <Box sx={{ mt: 0.5 }}>
+                                                <Typography component="span" variant="body2" color="text.primary" display="block">
+                                                    {member.role} {member.organization_name ? `bei ${member.organization_name}` : ''}
+                                                </Typography>
+                                                <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                                                    <StarsIcon fontSize="small" color="warning" /> {member.contribution_score} Community-Punkte
+                                                </Typography>
+                                            </Box>
                                         }
                                     />
+                                    <Button variant="outlined" size="small" onClick={(e) => handleProfileClick(e, member)} sx={{ borderRadius: 6, display: { xs: 'none', sm: 'flex' } }}>Profil</Button>
                                 </ListItem>
-                                {index < members.length - 1 && <Divider component="li" />}
+                                {index < members.length - 1 && <Divider component="li" sx={{ my: 1 }} />}
                             </React.Fragment>
                         ))}
                     </List>
@@ -928,109 +1011,158 @@ const CommunityPage: React.FC = () => {
              </Paper>
           )}
 
+          {/* TAB: EXPERTS */}
           {currentTab === 'experts' && (
-             <Paper sx={{ p: isMobile ? 2 : 3, borderRadius: 2 }}>
-                 <Box sx={{ mb: 3 }}>
-                    <Typography variant="h6" gutterBottom textAlign="center">Wissen & Netzwerk</Typography>
+             <Paper sx={{ p: isMobile ? 2 : 4, borderRadius: 3, boxShadow: theme.shadows[2], animation: 'fadeIn 0.3s ease-in-out' }}>
+                 <Box sx={{ mb: 4 }}>
+                    <Typography variant="h5" fontWeight="bold" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <SchoolIcon color="primary" fontSize="large" /> Wissen & Netzwerk
+                    </Typography>
+                    <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
+                        Suchen Sie nach bestimmten Kompetenzen, Branchen oder Stichwörtern, um den passenden Ansprechpartner in der Community zu finden.
+                    </Typography>
                     
-                    <form onSubmit={handleExpertSearchSubmit}>
-                        <TextField 
-                            fullWidth 
-                            size="small"
-                            placeholder="Thema oder Kompetenz suchen..." 
-                            variant="outlined" 
-                            value={expertSearch} 
-                            onChange={(e) => setExpertSearch(e.target.value)} 
-                            InputProps={{ 
-                                startAdornment: (<InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>),
-                                endAdornment: (
-                                    <InputAdornment position="end">
-                                        <Button type="submit" variant="contained" size="small" disabled={expertsLoading}>Suchen</Button>
-                                    </InputAdornment>
-                                )
-                            }} 
-                        />
+<form onSubmit={handleExpertSearchSubmit}>
+                        <Box sx={{ 
+                            display: 'flex', 
+                            gap: 1, 
+                            width: '100%',
+                            flexDirection: { xs: 'column', sm: 'row' } // Auf sehr kleinen Screens untereinander, sonst nebeneinander
+                        }}>
+                            <TextField 
+                                fullWidth 
+                                placeholder="Z.B. Elektromobilität, Förderung, Ladeinfrastruktur..." 
+                                variant="outlined" 
+                                value={expertSearch} 
+                                onChange={(e) => setExpertSearch(e.target.value)} 
+                                InputProps={{ 
+                                    startAdornment: (<InputAdornment position="start"><SearchIcon color="primary" /></InputAdornment>),
+                                    sx: { borderRadius: 3, bgcolor: 'background.default' }
+                                }} 
+                            />
+                            <Button 
+                                type="submit" 
+                                variant="contained" 
+                                size="large" 
+                                disabled={expertsLoading} 
+                                sx={{ 
+                                    borderRadius: 3, 
+                                    px: 4, 
+                                    minWidth: { sm: 140 }, // Gute Mindestbreite auf Desktop
+                                    height: { sm: 'auto' }, // Passt sich der Höhe des Textfeldes an
+                                    py: { xs: 1.5, sm: 0 }, // Ein bisschen Padding auf Mobile
+                                    fontWeight: 'bold',
+                                    boxShadow: theme.shadows[2],
+                                    '&:hover': { boxShadow: theme.shadows[4] }
+                                }}
+                            >
+                                Suchen
+                            </Button>
+                        </Box>
                     </form>
 
-                    <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
-                        <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <LocalOfferIcon fontSize="inherit" /> Mein Wissen:
+                    <Box sx={{ mt: 3, p: 2, bgcolor: alpha(theme.palette.primary.main, 0.03), borderRadius: 2, border: `1px solid ${alpha(theme.palette.primary.main, 0.1)}` }}>
+                        <Typography variant="subtitle2" fontWeight="bold" color="text.primary" sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+                            <LocalOfferIcon fontSize="small" color="primary" /> Mein hinterlegtes Wissen:
                         </Typography>
+                        
+                        {/* --- LÖSUNG FÜR DAS LEERE "MEIN WISSEN" --- */}
                         {userTags && userTags.length > 0 ? (
-                            userTags.map(tag => (
-                                <Chip 
-                                    key={tag} 
-                                    label={tag} 
-                                    size="small" 
-                                    onClick={() => {
-                                        setExpertSearch(tag);
-                                        fetchExperts(tag);
-                                    }}
-                                    sx={{ cursor: 'pointer', bgcolor: 'action.hover', '&:hover': { bgcolor: 'action.selected' } }}
-                                />
-                            ))
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                {userTags.map(tag => (
+                                    <Chip 
+                                        key={tag} 
+                                        label={tag} 
+                                        onClick={() => {
+                                            setExpertSearch(tag);
+                                            fetchExperts(tag);
+                                        }}
+                                        sx={{ 
+                                            cursor: 'pointer', 
+                                            bgcolor: 'background.paper', 
+                                            border: `1px solid ${theme.palette.divider}`,
+                                            fontWeight: 500,
+                                            '&:hover': { bgcolor: 'primary.main', color: 'white', borderColor: 'primary.main' } 
+                                        }}
+                                    />
+                                ))}
+                            </Box>
                         ) : (
-                            <Typography variant="caption" color="text.disabled" sx={{ fontStyle: 'italic' }}>
-                                - Keine Themen im Profil hinterlegt -
-                            </Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                                    Sie haben noch keine Kompetenzen in Ihrem Profil hinterlegt.
+                                </Typography>
+                                <Button 
+                                    size="small" 
+                                    variant="outlined" 
+                                    startIcon={<SettingsSuggestIcon />}
+                                    onClick={() => navigate('/profile')}
+                                    sx={{ borderRadius: 4, textTransform: 'none' }}
+                                >
+                                    Jetzt Themen hinzufügen
+                                </Button>
+                            </Box>
                         )}
                     </Box>
                  </Box>
 
-                 <Divider sx={{ mb: 2 }} />
+                 <Divider sx={{ mb: 3 }} />
 
                  {expertsLoading ? (
-                     <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box>
+                     <Box sx={{ display: 'flex', justifyContent: 'center', p: 6 }}><CircularProgress /></Box>
                  ) : experts.length > 0 ? (
                     <List disablePadding>
                         {experts.map((expert, index) => (
                             <React.Fragment key={expert.id}>
-                                <ListItem alignItems="flex-start" sx={{ px: 0 }}>
-                                    <ListItemAvatar>
-                                        <UserAvatarWithStatus user={expert} size={isMobile ? 40 : 50} onClick={(e) => handleProfileClick(e, expert)} />
+                                <ListItem alignItems="flex-start" sx={{ px: 2, py: 3, borderRadius: 2, '&:hover': { bgcolor: alpha(theme.palette.action.hover, 0.5) } }}>
+                                    <ListItemAvatar sx={{ minWidth: 70 }}>
+                                        <UserAvatarWithStatus user={expert} size={isMobile ? 50 : 60} onClick={(e) => handleProfileClick(e, expert)} />
                                     </ListItemAvatar>
                                     <ListItemText
                                         primary={
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                                                <Typography variant="subtitle2" fontWeight="bold" sx={{ cursor: 'pointer' }} onClick={(e) => handleProfileClick(e, expert)}>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 0.5 }}>
+                                                <Typography variant="h6" fontWeight="bold" sx={{ cursor: 'pointer', '&:hover': { color: 'primary.main'} }} onClick={(e) => handleProfileClick(e, expert)}>
                                                     {expert.first_name} {expert.last_name}
                                                 </Typography>
-                                                {expert.membership_level && <Chip label={expert.membership_level} size="small" color="secondary" variant="outlined" sx={{ height: 18, fontSize: '0.65rem' }} />}
+                                                {expert.membership_level && <Chip label={expert.membership_level} size="small" color="secondary" sx={{ height: 20, fontSize: '0.7rem', fontWeight: 'bold' }} />}
                                             </Box>
                                         }
                                         secondary={
-                                            <React.Fragment>
-                                                <Typography component="span" variant="caption" color="text.primary" display="block">
+                                            <Box>
+                                                <Typography component="span" variant="body2" color="text.primary" display="block" sx={{ mb: 1 }}>
                                                     {expert.role} {expert.organization_name ? `bei ${expert.organization_name}` : ''}
                                                 </Typography>
                                                 {expert.tags && expert.tags.length > 0 && (
-                                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
+                                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
                                                         {expert.tags.map(tag => (
-                                                            <Chip key={tag} label={tag} size="small" sx={{ height: 20, fontSize: '0.7rem', bgcolor: 'action.hover' }} />
+                                                            <Chip key={tag} label={tag} size="small" sx={{ height: 22, fontSize: '0.7rem', bgcolor: alpha(theme.palette.primary.main, 0.05), border: `1px solid ${alpha(theme.palette.primary.main, 0.2)}` }} />
                                                         ))}
                                                     </Box>
                                                 )}
-                                            </React.Fragment>
+                                            </Box>
                                         }
                                     />
                                     <Button 
                                         size="small" 
-                                        variant="outlined" 
+                                        variant="contained" 
                                         onClick={(e) => handleProfileClick(e, expert)}
-                                        sx={{ ml: 1, minWidth: 0, px: 2 }}
+                                        sx={{ ml: 2, borderRadius: 6, display: { xs: 'none', sm: 'flex' }, boxShadow: 'none' }}
                                     >
                                         Profil
                                     </Button>
                                 </ListItem>
-                                {index < experts.length - 1 && <Divider component="li" />}
+                                {index < experts.length - 1 && <Divider component="li" sx={{ my: 1 }} />}
                             </React.Fragment>
                         ))}
                     </List>
                  ) : expertSearch && (
-                    <Box sx={{ textAlign: 'center', mt: 4, opacity: 0.7 }}>
-                        <SchoolIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1 }} />
-                        <Typography variant="body2" color="text.secondary">
-                            Keine Experten für "{expertSearch}" gefunden.
+                    <Box sx={{ textAlign: 'center', mt: 6, opacity: 0.6 }}>
+                        <PersonSearchIcon sx={{ fontSize: 60, color: 'text.disabled', mb: 2 }} />
+                        <Typography variant="h6" color="text.secondary">
+                            Keine passenden Experten gefunden.
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                            Probieren Sie es mit einem anderen Suchbegriff oder breiteren Kategorien.
                         </Typography>
                     </Box>
                  )}
@@ -1038,109 +1170,161 @@ const CommunityPage: React.FC = () => {
           )}
         </Grid>
 
+        {/* RECHTS: Sidebar (Stats, Leaderboard) */}
         {!isMobile && (
         <Grid item md={4}>
-            <Paper sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: theme.palette.primary.main, color: theme.palette.primary.contrastText }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    {user && <UserAvatarWithStatus user={user as any} size={56} onClick={() => navigate('/profile')} />}
+            
+            <Paper sx={{ p: 3, mb: 4, borderRadius: 3, bgcolor: theme.palette.primary.main, color: 'white', position: 'relative', overflow: 'hidden', boxShadow: theme.shadows[4] }}>
+                {/* Dekorativer Hintergrundkreis */}
+                <Box sx={{ position: 'absolute', top: -30, right: -20, width: 120, height: 120, borderRadius: '50%', bgcolor: 'rgba(255,255,255,0.1)' }} />
+                
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, position: 'relative', zIndex: 1 }}>
+                    {user && <UserAvatarWithStatus user={user as any} size={60} onClick={() => navigate('/profile')} />}
                     <Box>
-                        <Typography variant="subtitle1" fontWeight="bold">Mein Status</Typography>
-                        <Typography variant="h4" fontWeight="bold">{user?.contribution_score || 0}</Typography>
-                        <Typography variant="caption" sx={{ opacity: 0.8 }}>Punkte gesamt</Typography>
+                        <Typography variant="subtitle2" sx={{ opacity: 0.9, textTransform: 'uppercase', letterSpacing: 1 }}>Mein Status</Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
+                            <Typography variant="h3" fontWeight="900">{user?.contribution_score || 0}</Typography>
+                            <Typography variant="body2" sx={{ opacity: 0.9 }}>Punkte</Typography>
+                        </Box>
                     </Box>
                 </Box>
             </Paper>
             
-            <Paper sx={{ p: 3, mb: 3, borderRadius: 2 }}>
-                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ChatBubbleOutlineIcon fontSize="small" color="primary" /> 
-                    Aktuelle Diskussionen
-                </Typography>
-                <List disablePadding sx={{ mt: 1 }}>
-                    {recentComments.length === 0 ? (
-                        <Typography variant="caption" color="text.secondary">Noch keine Kommentare.</Typography>
-                    ) : (
-                        recentComments.map((comment, idx) => (
-                            <React.Fragment key={comment.id}>
-                                <ListItem 
-                                    alignItems="flex-start" 
-                                    sx={{ px: 0 }}
-                                    button
-                                    onClick={() => handleOpenPostDetail(comment.post_id)}
-                                >
-                                    <ListItemAvatar sx={{ minWidth: 40 }}>
-                                        <UserAvatarWithStatus user={comment as any} size={30} onClick={(e) => handleProfileClick(e, comment as any)} />
-                                    </ListItemAvatar>
-                                    <ListItemText
-                                        primary={
-                                            <Typography variant="body2" noWrap sx={{ fontWeight: 'medium', cursor: 'pointer' }} onClick={(e) => handleProfileClick(e, comment as any)}>
-                                                {comment.first_name} {comment.last_name}
-                                            </Typography>
-                                        }
-                                        secondary={
-                                            <Typography variant="caption" color="text.secondary" sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                                                "{comment.content}"
-                                            </Typography>
-                                        }
-                                    />
-                                </ListItem>
-                                {idx < recentComments.length - 1 && <Divider variant="inset" component="li" sx={{ ml: 6 }} />}
-                            </React.Fragment>
-                        ))
-                    )}
-                </List>
-            </Paper>
-
-            <Paper sx={{ p: 3, borderRadius: 2 }}>
-                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><StarsIcon sx={{ color: '#ffd700' }} /> Top Mitglieder</Typography>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
+            {/* LEADERBOARD */}
+            <Paper sx={{ p: 3, mb: 4, borderRadius: 3, boxShadow: theme.shadows[2] }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="h6" fontWeight="bold" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <StarsIcon sx={{ color: '#ffd700', fontSize: 28 }} /> Top Mitglieder
+                    </Typography>
+                    
+                    {/* --- LÖSUNG FÜR DIE PUNKTE-ERKLÄRUNG --- */}
+                    <Tooltip 
+                        title={
+                            <Box sx={{ p: 1 }}>
+                                <Typography variant="subtitle2" fontWeight="bold" gutterBottom>So funktioniert's:</Typography>
+                                <ul style={{ paddingLeft: 16, margin: 0 }}>
+                                    <li><b>+5</b> für eigene Beiträge</li>
+                                    <li><b>+2</b> für Kommentare</li>
+                                    <li><b>+1</b> für Likes / Umfragen</li>
+                                    <li>Wird ein Inhalt gelöscht, werden die Punkte wieder abgezogen.</li>
+                                </ul>
+                            </Box>
+                        } 
+                        arrow
+                    >
+                        <IconButton size="small" sx={{ color: 'text.secondary' }}>
+                            <InfoOutlinedIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                </Box>
+                
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mt: 3 }}>
                     {leaderboard.map((lbUser, index) => (
-                        <Box key={lbUser.id} sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer' }} onClick={(e) => handleProfileClick(e, lbUser)}>
-                            <Avatar sx={{ bgcolor: index === 0 ? '#ffd700' : index === 1 ? '#c0c0c0' : index === 2 ? '#cd7f32' : theme.palette.action.selected, width: 24, height: 24, fontSize: '0.8rem', color: index < 3 ? 'black' : 'inherit', fontWeight: 'bold' }}>{index + 1}</Avatar>
-                            <UserAvatarWithStatus user={lbUser} size={40} />
-                            <Box sx={{ overflow: 'hidden' }}>
+                        <Box 
+                            key={lbUser.id} 
+                            sx={{ 
+                                display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', p: 1.5, borderRadius: 2,
+                                border: index < 3 ? `1px solid ${index === 0 ? '#ffd700' : index === 1 ? '#c0c0c0' : '#cd7f32'}` : '1px solid transparent',
+                                bgcolor: index < 3 ? alpha(index === 0 ? '#ffd700' : index === 1 ? '#c0c0c0' : '#cd7f32', 0.05) : 'transparent',
+                                '&:hover': { bgcolor: 'action.hover' }
+                            }} 
+                            onClick={(e) => handleProfileClick(e, lbUser)}
+                        >
+                            <Box sx={{ width: 24, textAlign: 'center' }}>
+                                <Typography variant="body1" fontWeight="bold" sx={{ color: index === 0 ? '#ffd700' : index === 1 ? '#c0c0c0' : index === 2 ? '#cd7f32' : 'text.disabled' }}>
+                                    #{index + 1}
+                                </Typography>
+                            </Box>
+                            <UserAvatarWithStatus user={lbUser} size={44} />
+                            <Box sx={{ overflow: 'hidden', flexGrow: 1 }}>
                                 <Typography variant="body2" fontWeight="bold" noWrap>
                                     {lbUser.first_name || lbUser.last_name ? `${lbUser.first_name || ''} ${lbUser.last_name || ''}`.trim() : (lbUser.username || 'Unbekannt')}
-                                    {lbUser.membership_level && <Typography component="span" variant="caption" sx={{ color: 'text.secondary', ml: 0.5, fontWeight: 'normal' }}>({lbUser.membership_level})</Typography>}
                                 </Typography>
-                                <Typography variant="caption" color="text.secondary">{lbUser.contribution_score} Punkte</Typography>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    {lbUser.contribution_score} Punkte {lbUser.membership_level && `• ${lbUser.membership_level}`}
+                                </Typography>
                             </Box>
                         </Box>
                     ))}
                 </Box>
             </Paper>
+
+            {/* AKTUELLE DISKUSSIONEN */}
+            <Paper sx={{ p: 3, mb: 3, borderRadius: 3, boxShadow: theme.shadows[2] }}>
+                <Typography variant="h6" fontWeight="bold" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <ChatBubbleOutlineIcon color="primary" /> Aktuelle Diskussionen
+                </Typography>
+                <List disablePadding sx={{ mt: 2 }}>
+                    {recentComments.length === 0 ? (
+                        <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', py: 2 }}>Noch keine Kommentare.</Typography>
+                    ) : (
+                        recentComments.map((comment, idx) => (
+                            <React.Fragment key={comment.id}>
+                                <ListItem 
+                                    alignItems="flex-start" 
+                                    sx={{ px: 1, py: 1.5, borderRadius: 2, '&:hover': { bgcolor: 'action.hover' } }}
+                                    button
+                                    onClick={() => handleOpenPostDetail(comment.post_id)}
+                                >
+                                    <ListItemAvatar sx={{ minWidth: 48 }}>
+                                        <UserAvatarWithStatus user={comment as any} size={36} onClick={(e) => handleProfileClick(e, comment as any)} />
+                                    </ListItemAvatar>
+                                    <ListItemText
+                                        primary={
+                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                                                <Typography variant="body2" noWrap sx={{ fontWeight: 'bold', cursor: 'pointer' }} onClick={(e) => handleProfileClick(e, comment as any)}>
+                                                    {comment.first_name}
+                                                </Typography>
+                                                <Typography variant="caption" color="text.disabled">{safeFormatDistance(comment.created_at)}</Typography>
+                                            </Box>
+                                        }
+                                        secondary={
+                                            <Typography variant="body2" color="text.secondary" sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.4 }}>
+                                                "{comment.content}"
+                                            </Typography>
+                                        }
+                                    />
+                                </ListItem>
+                                {idx < recentComments.length - 1 && <Divider variant="middle" component="li" />}
+                            </React.Fragment>
+                        ))
+                    )}
+                </List>
+            </Paper>
         </Grid>
         )}
       </Grid>
 
-      {/* VISITING CARD POPOVER */}
+      {/* VISITING CARD POPOVER (Mit reparierter Breite!) */}
       <Popover
         open={popoverOpen}
         anchorEl={anchorEl}
         onClose={handlePopoverClose}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+        PaperProps={{
+            // WICHTIG: Hier wurde der weiße Rand entfernt, indem die Breite exakt definiert ist
+            sx: { borderRadius: 4, overflow: 'hidden', width: 320, maxWidth: '95vw', boxShadow: theme.shadows[8] }
+        }}
       >
         {selectedUser && (
-            <Box sx={{ p: 0, width: 360, maxWidth: '90vw' }}>
-                {/* Wiederverwendung der ProfileCard für konsistentes Design */}
-                <ProfileCard user={selectedUser} />
-            </Box>
+            <ProfileCard user={selectedUser} />
         )}
       </Popover>
 
-      {/* NEU: DETAIL POST DIALOG */}
+      {/* DETAIL POST DIALOG */}
       <Dialog 
         open={!!detailPost} 
         onClose={() => setDetailPost(null)} 
         fullWidth 
         maxWidth="md"
+        PaperProps={{ sx: { borderRadius: 3, bgcolor: 'background.default' } }}
       >
-        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
-            <Typography variant="h6">Beitrag ansehen</Typography>
-            <IconButton onClick={() => setDetailPost(null)}><CloseIcon /></IconButton>
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1, bgcolor: 'background.paper', borderBottom: `1px solid ${theme.palette.divider}` }}>
+            <Typography variant="h6" fontWeight="bold">Beitrag ansehen</Typography>
+            <IconButton onClick={() => setDetailPost(null)} sx={{ bgcolor: 'action.hover' }}><CloseIcon /></IconButton>
         </DialogTitle>
-        <DialogContent sx={{ bgcolor: 'background.default', p: 2 }}>
+        <DialogContent sx={{ p: {xs: 1, md: 3} }}>
             {detailPost && renderPostCard(detailPost, true)}
         </DialogContent>
       </Dialog>

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:dashboard": "vite build --base=/dashboard/",
+    "build:dashboard": "vite build --config vite.frontend.ts",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "start:serve": "serve -s dist -l 5173"

@@ -50,6 +50,7 @@ interface ScrapingRule {
 interface Category {
     id: string;
     name: string;
+    category_type: string; // HINZUGEFÜGT für den Filter
 }
 
 type Order = 'asc' | 'desc';
@@ -328,6 +329,11 @@ const AdminScrapingRulesPage: React.FC = () => {
         return filtered.sort(getComparator(order, orderBy));
     }, [rules, searchTerm, order, orderBy]);
 
+    // HINZUGEFÜGT: Filtere die Kategorien, sodass nur content-Kategorien zur Auswahl stehen
+    const contentCategories = useMemo(() => {
+        return categories.filter(c => c.category_type === 'content');
+    }, [categories]);
+
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
@@ -470,7 +476,8 @@ const AdminScrapingRulesPage: React.FC = () => {
                             <Grid item xs={12} sm={6}>
                                 <TextField select name="category_default" label="Standard-Kategorie" fullWidth value={formState.category_default} onChange={handleFormChange} margin="dense" required>
                                     <MenuItem value=""><em>Wählen Sie eine Kategorie</em></MenuItem>
-                                    {categories.map((cat) => ( <MenuItem key={cat.id} value={cat.name}>{cat.name}</MenuItem>))}
+                                    {/* HINZUGEFÜGT: Gefilterte Kategorieliste verwenden */}
+                                    {contentCategories.map((cat) => ( <MenuItem key={cat.id} value={cat.name}>{cat.name}</MenuItem>))}
                                 </TextField>
                             </Grid>
                             <Grid item xs={12} sm={6}>

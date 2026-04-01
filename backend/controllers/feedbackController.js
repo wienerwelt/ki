@@ -5,16 +5,19 @@ const db = require('../config/db');
 exports.getFeedbackItems = async (req, res) => {
     const { id: userId } = req.user;
     try {
+        // WICHTIG: LEFT JOIN, da user_id jetzt NULL sein kann (bei Leads)
+        // WHERE-Filter, damit Sales-Leads ('demo_request') nicht auf dem Community-Board landen!
         const query = `
             SELECT 
                 fi.*,
-                u.username AS author_username,
-                u.organization_name,
+                COALESCE(u.username, fi.name) AS author_username,
+                COALESCE(u.organization_name, fi.organization) AS organization_name,
                 (SELECT COUNT(*) FROM feedback_votes fv WHERE fv.feedback_item_id = fi.id) AS votes,
                 EXISTS(SELECT 1 FROM feedback_votes fv WHERE fv.feedback_item_id = fi.id AND fv.user_id = $1) AS has_voted
             FROM feedback_items fi
-            JOIN users u ON fi.user_id = u.id
-            ORDER BY created_at DESC;
+            LEFT JOIN users u ON fi.user_id = u.id
+            WHERE fi.type IN ('bug', 'suggestion', 'idea')
+            ORDER BY fi.created_at DESC;
         `;
         const result = await db.query(query, [userId]);
         res.json(result.rows);
@@ -24,14 +27,18 @@ exports.getFeedbackItems = async (req, res) => {
     }
 };
 
-// Einen neuen Feedback-Eintrag erstellen
+// Einen neuen Feedback-Eintrag erstellen (Intern aus dem Dashboard)
 exports.createFeedbackItem = async (req, res) => {
-    const { id: userId } = req.user;
+    const { id: userId, business_partner_id: bpId } = req.user;
     const { title, description, type, widget_type_key } = req.body;
 
     if (!title || !description || !type) {
         return res.status(400).json({ message: 'Title, description, and type are required.' });
     }
+
+    // IP-Adresse und User-Agent für Analytics/Spamschutz erfassen
+    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip;
+    const userAgent = req.headers['user-agent'];
 
     // Client für die Transaktion aus dem Pool holen
     const client = await db.connect();
@@ -40,13 +47,23 @@ exports.createFeedbackItem = async (req, res) => {
         // Transaktion starten
         await client.query('BEGIN');
 
-        // 1. Feedback-Eintrag erstellen und das neue Objekt zurückgeben lassen
+        // 1. Feedback-Eintrag erstellen inkl. IP und BP-ID
         const insertFeedbackQuery = `
-            INSERT INTO feedback_items (user_id, title, description, type, widget_type_key)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO feedback_items 
+            (user_id, business_partner_id, title, description, type, widget_type_key, ip_address, user_agent)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING *;
         `;
-        const feedbackResult = await client.query(insertFeedbackQuery, [userId, title, description, type, widget_type_key]);
+        const feedbackResult = await client.query(insertFeedbackQuery, [
+            userId, 
+            bpId || null, 
+            title, 
+            description, 
+            type, 
+            widget_type_key || null, 
+            ipAddress, 
+            userAgent
+        ]);
         const newFeedbackItem = feedbackResult.rows[0];
 
         // 2. Gamification: Dem Nutzer 5 Punkte gutschreiben
@@ -109,10 +126,13 @@ exports.toggleVote = async (req, res) => {
     }
 };
 
+// Status durch Admins aktualisieren
 exports.updateFeedbackStatus = async (req, res) => {
     const { itemId } = req.params;
     const { status } = req.body;
-    const validStatuses = ['new', 'in_review', 'planned', 'done', 'rejected'];
+    
+    // NEU: 'in_progress' und 'resolved' hinzugefügt!
+    const validStatuses = ['new', 'in_review', 'planned', 'done', 'rejected', 'in_progress', 'resolved'];
 
     if (!status || !validStatuses.includes(status)) {
         return res.status(400).json({ message: 'Invalid status provided.' });

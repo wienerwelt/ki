@@ -1,8 +1,42 @@
 // backend/controllers/adminSourcesController.js
-
 const db = require('../config/db');
+const sharp = require('sharp');
+const path = require('path');
+const fs = require('fs');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
+
+// Hilfsfunktion: Domain aus URL extrahieren für den Dateinamen
+const extractDomain = (urlStr) => {
+    try {
+        const urlObj = new URL(urlStr);
+        return urlObj.hostname.replace(/[^a-zA-Z0-9]/g, '-');
+    } catch (e) {
+        return 'source';
+    }
+};
+
+// Hilfsfunktion: WebP Bildverarbeitung
+const processAndSaveSourceLogo = async (fileBuffer, sourceUrl) => {
+    // Wir hängen noch 4 zufällige Zeichen an, falls es mehrere Quellen derselben Domain gibt
+    const slug = extractDomain(sourceUrl) + '-' + Date.now().toString().slice(-4);
+    const fileName = `${slug}.webp`;
+    const uploadPath = path.join(__dirname, '..', 'public', 'logos');
+    
+    if (!fs.existsSync(uploadPath)) {
+        fs.mkdirSync(uploadPath, { recursive: true });
+    }
+
+    const filePath = path.join(uploadPath, fileName);
+
+    await sharp(fileBuffer)
+        .resize({ height: 50, withoutEnlargement: true }) 
+        .webp({ quality: 80 }) 
+        .toFile(filePath);
+
+    return `/logos/${fileName}`; 
+};
+
 
 // @desc    Alle Quellen für Admins abrufen
 // @route   GET /api/admin/sources
@@ -134,5 +168,74 @@ exports.getSourceReports = async (req, res) => {
     } catch (err) {
         console.error('Error fetching source reports:', err.message);
         res.status(500).send('Server error');
+    }
+};
+
+// --- NEUE FUNKTION UNTEN ANFÜGEN ---
+
+// @desc    Quelle bearbeiten (Beschreibung, Kategorie, Logo)
+// @route   PUT /api/admin/sources/:id
+// @access  Admin
+exports.updateSource = async (req, res) => {
+    if (req.user.role === 'demo') {
+        return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Quellen bearbeiten.' });
+    }    
+    
+    const { id } = req.params;
+    if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
+
+    // URL muss vom Frontend mitgeschickt werden, um den Namen zu generieren
+    const { description, category_id, url } = req.body; 
+
+    try {
+        let updateQuery = 'UPDATE sources SET description = $1, category_id = $2, updated_at = CURRENT_TIMESTAMP';
+        const values = [description || null, category_id || null];
+        let paramIndex = 3;
+        
+        // 1. Neues Logo hochgeladen
+        if (req.file) {
+            const logoUrl = await processAndSaveSourceLogo(req.file.buffer, url || 'source');
+            updateQuery += `, logo_url = $${paramIndex}`;
+            values.push(logoUrl);
+            paramIndex++;
+        } 
+        // 2. Logo soll gelöscht werden
+        else if (req.body.delete_logo === 'true') {
+            updateQuery += `, logo_url = NULL`;
+        }
+
+        values.push(id);
+        updateQuery += ` WHERE id = $${paramIndex} RETURNING *`;
+
+        const updatedSource = await db.query(updateQuery, values);
+        if (updatedSource.rows.length === 0) return res.status(404).json({ message: 'Source not found.' });
+
+        res.json(updatedSource.rows[0]);
+    } catch (err) {
+        console.error('Error updating source:', err.message);
+        res.status(500).send('Server error');
+    }
+};
+
+// Ergänzung für adminSourcesController.js
+exports.adminCreateSource = async (req, res) => {
+    const { url, description, category_id, status } = req.body;
+    let logoUrl = null;
+
+    if (req.file) {
+        // Falls du Multer verwendest, ist hier das Logo
+        logoUrl = `/logos/${req.file.filename}`;
+    }
+
+    try {
+        const result = await db.query(
+            `INSERT INTO sources (url, description, category_id, status, logo_url) 
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [url, description, category_id || null, status || 'approved', logoUrl]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Fehler beim Erstellen der Quelle' });
     }
 };

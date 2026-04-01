@@ -412,106 +412,150 @@ const fetchAndStoreCarRegistrationsDE = async () => {
 const fetchAndStoreCarRegistrations = async () => {
     console.log('[data-update] Starte Abruf der KFZ-Neuzulassungen für Österreich (Statistik Austria ODS)...');
     
-    const monthNames = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
-    const today = new Date();
-    const year = today.getFullYear();
-    const endMonthName = monthNames[new Date(today.getFullYear(), today.getMonth() - 1, 1).getMonth()];
-    
-    const odsUrl = `https://www.statistik.at/fileadmin/pages/77/NeuzulassungenFahrzeugeJaennerBis${endMonthName}${year}.ods`;
-    console.log(`[data-update] Dynamisch erstellte ODS-URL: ${odsUrl}`);
-
     const client = await db.connect();
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth(); // 0 = Jänner, 1 = Februar, 2 = März
+    
+    const monthNames = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+    const urlMonthNames = ["Jaenner", "Februar", "Maerz", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+    
+    // BACKFILL-LOGIK: Wir prüfen IMMER das Vorjahr komplett (bis Dezember) UND das aktuelle Jahr (bis zum Vormonat).
+    // So werden fehlende Daten (wie 12/2025) garantiert nachgetragen!
+    const filesToFetch = [
+        { year: currentYear - 1, monthIndex: 11 } // Das Vorjahr holen wir immer bis "Dezember"
+    ];
+    
+    if (currentMonth > 0) {
+        // Das aktuelle Jahr holen wir bis zum vergangenen Monat
+        filesToFetch.push({ year: currentYear, monthIndex: currentMonth - 1 });
+    }
 
-    try {
-        const response = await axios.get(odsUrl, { responseType: 'arraybuffer' });
-        const fileData = new Uint8Array(response.data);
-        const workbook = xlsx.read(fileData, { type: 'array' });
+    let totalUpsertCount = 0;
 
-        await client.query('BEGIN');
-        let totalUpsertCount = 0;
+    for (const fileInfo of filesToFetch) {
+        const targetYear = fileInfo.year;
+        const targetMonthIndex = fileInfo.monthIndex;
+        const endMonthNameUrl = urlMonthNames[targetMonthIndex];
+        
 
-        for (const sheetName of workbook.SheetNames) {
-            const monthIndex = monthNames.findIndex(m => m.toLowerCase() === sheetName.trim().toLowerCase());
-            if (monthIndex === -1) {
-                console.log(`[data-update] Überspringe Tabellenblatt "${sheetName}", da es keinem Monat zugeordnet werden kann.`);
+        let urlsToTry = [
+            `https://www.statistik.at/fileadmin/pages/77/NeuzulassungenFahrzeugeJaennerBis${endMonthNameUrl}${targetYear}.ods`,
+            `https://www.statistik.at/fileadmin/pages/77/NeuzulassungenFahrzeuge${endMonthNameUrl}${targetYear}.ods`
+        ];
+
+        // Dynamische Generierung der neuen CMS-Präfixe für die Abfrage
+        for (let i = 1; i <= 5; i++) {
+            urlsToTry.push(`https://www.statistik.at/fileadmin/pages/77/DE${i}_NeuzulassungenFahrzeugeJaennerBis${endMonthNameUrl}${targetYear}.ods`);
+            urlsToTry.push(`https://www.statistik.at/fileadmin/pages/77/DE${i}_NeuzulassungenFahrzeuge${endMonthNameUrl}${targetYear}.ods`);
+        }
+
+        let fileData = null;
+        let successfulUrl = "";
+
+        // URL Auto-Finder
+        for (const url of urlsToTry) {
+            try {
+                console.log(`[data-update] Versuche URL: ${url}`);
+                const response = await axios.get(url, { responseType: 'arraybuffer' });
+                fileData = new Uint8Array(response.data);
+                successfulUrl = url;
+                console.log(`[data-update] Datei erfolgreich gefunden!`);
+                break; // Schleife abbrechen, wir haben die Datei
+            } catch (err) {
+                // Bei 404 Fehler (Not Found) versuchen wir einfach das nächste URL-Muster
                 continue;
             }
+        }
 
-            // Erstellt ein timezone-sicheres Datum für den LETZTEN Tag des Monats.
-            const time_period = new Date(Date.UTC(year, monthIndex + 1, 0));
-            console.log(`[data-update] Verarbeite Tabellenblatt "${sheetName}" für den Zeitraum ${time_period.toISOString().split('T')[0]}`);
+        if (!fileData) {
+            console.warn(`[data-update] Konnte ODS-Datei für ${targetYear} unter keiner URL finden. Wird übersprungen.`);
+            continue;
+        }
 
-            const worksheet = workbook.Sheets[sheetName];
-            const sheetData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: null });
-            
-            const monthlyTotals = {};
-            const foundFlags = {};
+        try {
+            const workbook = xlsx.read(fileData, { type: 'array' });
+            await client.query('BEGIN');
 
-            for (const row of sheetData) {
-                if (!row || !row[0] || row[1] === null) continue;
+            for (const sheetName of workbook.SheetNames) {
+                const sheetClean = sheetName.trim().toLowerCase();
+                
+                // Fuzzy Matching: Findet den Monat auch, wenn er "Jänner 2026" oder ähnlich heißt
+                const monthIndex = monthNames.findIndex(m => sheetClean.includes(m.toLowerCase()));
+                
+                if (monthIndex === -1) {
+                    console.log(`[data-update] Überspringe Blatt "${sheetName}" (Kein Monat erkannt).`);
+                    continue;
+                }
 
-                const driveTypeRaw = String(row[0]).trim();
-                const registrationCount = parseInt(String(row[1]).replace(/\D/g, ''), 10);
+                // Datum: Letzter Tag des jeweiligen Monats
+                const time_period = new Date(Date.UTC(targetYear, monthIndex + 1, 0));
+                console.log(`[data-update] Verarbeite Daten für ${time_period.toISOString().split('T')[0]}...`);
 
-                if (!driveTypeRaw || isNaN(registrationCount)) continue;
+                const worksheet = workbook.Sheets[sheetName];
+                const sheetData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: null });
+                
+                const monthlyTotals = {};
+                const foundFlags = {};
 
-                if (driveTypeRaw.startsWith('darunter Benzin/Elektro (hybrid) – Plug-In') && !foundFlags['plug-in-benzin']) {
-                    monthlyTotals['Plug-in-Hybrid'] = (monthlyTotals['Plug-in-Hybrid'] || 0) + registrationCount;
-                    foundFlags['plug-in-benzin'] = true;
-                } else if (driveTypeRaw.startsWith('darunter Diesel/Elektro (hybrid) – Plug-In') && !foundFlags['plug-in-diesel']) {
-                    monthlyTotals['Plug-in-Hybrid'] = (monthlyTotals['Plug-in-Hybrid'] || 0) + registrationCount;
-                    foundFlags['plug-in-diesel'] = true;
-                } else if (driveTypeRaw.startsWith('Benzin/Elektro (hybrid)') && !foundFlags['hybrid-benzin']) {
-                    monthlyTotals['Hybrid (ohne Plug-in)'] = (monthlyTotals['Hybrid (ohne Plug-in)'] || 0) + registrationCount;
-                    foundFlags['hybrid-benzin'] = true;
-                } else if (driveTypeRaw.startsWith('Diesel/Elektro (hybrid)') && !foundFlags['hybrid-diesel']) {
-                    monthlyTotals['Hybrid (ohne Plug-in)'] = (monthlyTotals['Hybrid (ohne Plug-in)'] || 0) + registrationCount;
-                    foundFlags['hybrid-diesel'] = true;
-                } else if (['Benzin', 'Diesel', 'Elektro'].includes(driveTypeRaw)) {
-                    if (!foundFlags[driveTypeRaw]) {
-                        monthlyTotals[driveTypeRaw] = registrationCount;
-                        foundFlags[driveTypeRaw] = true;
+                for (const row of sheetData) {
+                    if (!row || !row[0] || row[1] === null) continue;
+
+                    const driveTypeRaw = String(row[0]).trim();
+                    const registrationCount = parseInt(String(row[1]).replace(/\D/g, ''), 10);
+
+                    if (!driveTypeRaw || isNaN(registrationCount)) continue;
+
+                    if (driveTypeRaw.startsWith('darunter Benzin/Elektro (hybrid) – Plug-In') && !foundFlags['plug-in-benzin']) {
+                        monthlyTotals['Plug-in-Hybrid'] = (monthlyTotals['Plug-in-Hybrid'] || 0) + registrationCount;
+                        foundFlags['plug-in-benzin'] = true;
+                    } else if (driveTypeRaw.startsWith('darunter Diesel/Elektro (hybrid) – Plug-In') && !foundFlags['plug-in-diesel']) {
+                        monthlyTotals['Plug-in-Hybrid'] = (monthlyTotals['Plug-in-Hybrid'] || 0) + registrationCount;
+                        foundFlags['plug-in-diesel'] = true;
+                    } else if (driveTypeRaw.startsWith('Benzin/Elektro (hybrid)') && !foundFlags['hybrid-benzin']) {
+                        monthlyTotals['Hybrid (ohne Plug-in)'] = (monthlyTotals['Hybrid (ohne Plug-in)'] || 0) + registrationCount;
+                        foundFlags['hybrid-benzin'] = true;
+                    } else if (driveTypeRaw.startsWith('Diesel/Elektro (hybrid)') && !foundFlags['hybrid-diesel']) {
+                        monthlyTotals['Hybrid (ohne Plug-in)'] = (monthlyTotals['Hybrid (ohne Plug-in)'] || 0) + registrationCount;
+                        foundFlags['hybrid-diesel'] = true;
+                    } else if (['Benzin', 'Diesel', 'Elektro'].includes(driveTypeRaw)) {
+                        if (!foundFlags[driveTypeRaw]) {
+                            monthlyTotals[driveTypeRaw] = registrationCount;
+                            foundFlags[driveTypeRaw] = true;
+                        }
                     }
+                }
+                
+                for (const driveType in monthlyTotals) {
+                    const statistic = {
+                        country_code: 'AT',
+                        statistic_type: 'fleet_statistics',
+                        statistic_subtype: driveType,
+                        time_period: time_period,
+                        value: monthlyTotals[driveType],
+                        unit: 'Stück',
+                        source_name: 'Statistik Austria',
+                        source_url: successfulUrl
+                    };
+                    
+                    await upsertStatistic(client, statistic);
+                    totalUpsertCount++;
                 }
             }
             
-            let currentMonthUpsertCount = 0;
-            for (const driveType in monthlyTotals) {
-                const statistic = {
-                    country_code: 'AT',
-                    statistic_type: 'fleet_statistics',
-                    statistic_subtype: driveType,
-                    time_period: time_period,
-                    value: monthlyTotals[driveType],
-                    unit: 'Stück',
-                    source_name: 'Statistik Austria',
-                    source_url: 'https://www.statistik.at/statistiken/tourismus-und-verkehr/fahrzeuge/kfz-neuzulassungen'
-                };
-                
-                await upsertStatistic(client, statistic);
-                currentMonthUpsertCount++;
-            }
-            totalUpsertCount += currentMonthUpsertCount;
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error(`[data-update] Fehler beim Verarbeiten der ODS-Datei für ${targetYear}:`, error.message);
         }
-        
-        await client.query('COMMIT');
-        console.log(`[data-update] Insgesamt ${totalUpsertCount} Einträge für KFZ-Neuzulassungen (AT ODS) erfolgreich gespeichert/aktualisiert.`);
-
-    } catch (error) {
-        await client.query('ROLLBACK');
-        if (axios.isAxiosError(error) && error.response?.status === 404) {
-            console.warn(`[data-update] Statistik Austria ODS-Datei für ${endMonthName} ${year} noch nicht verfügbar (404). Überspringe...`);
-            return;
-        }
-        throw new Error(`Update der KFZ-Neuzulassungen (AT ODS) fehlgeschlagen: ${error.message}`);
-    } finally {
-        client.release();
     }
+
+    console.log(`[data-update] FERTIG! Insgesamt ${totalUpsertCount} Einträge für KFZ-Neuzulassungen (AT) aktualisiert.`);
+    client.release();
 };
 
 
-// KORREKTUR: Euribor-Funktion (fetchAndStoreEuriborRate) 
-//            wurde aus den täglichen Jobs entfernt.
+// Euribor-Funktion (fetchAndStoreEuriborRate) 
 const updateDailyIndicators = async () => {
     console.log('[data-update] Starte die Aktualisierung der TÄGLICHEN Wirtschaftsdaten...');
     const results = await Promise.allSettled([

@@ -1,32 +1,35 @@
 // backend/routes/adminSourcesRoutes.js
-
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const adminAuth = require('../middleware/adminAuth');
 const {
     getAllSourcesAdmin,
     getSourceDetailsAdmin,
     updateSourceStatus,
+    updateSource, 
     deleteSource,
-    getSourceReports
+    getSourceReports,
+    adminCreateSource // NEU: Importiert!
 } = require('../controllers/adminSourcesController');
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Alle Routen hier sind durch adminAuth geschützt
 router.use(adminAuth);
 
-// GET /api/admin/sources - Alle Quellen abrufen (mit Filtern)
 router.get('/', getAllSourcesAdmin);
 
-// GET /api/admin/sources/reports - Alle Meldungen abrufen
+// KORRIGIERT: auth/admin entfernt, Multer-Upload für das Logo hinzugefügt, direkter Funktionsaufruf
+router.post('/', upload.single('logo'), adminCreateSource);
+
 router.get('/reports', getSourceReports);
-
-// GET /api/admin/sources/:id - Details einer Quelle abrufen
 router.get('/:id', getSourceDetailsAdmin);
-
-// PUT /api/admin/sources/:id/status - Status einer Quelle ändern (genehmigen/ablehnen)
 router.put('/:id/status', updateSourceStatus);
 
-// DELETE /api/admin/sources/:id - Eine Quelle löschen
+// Route zum Bearbeiten der Quelle inkl. Logo
+router.put('/:id', upload.single('logo'), updateSource);
+
 router.delete('/:id', deleteSource);
 
 module.exports = router;

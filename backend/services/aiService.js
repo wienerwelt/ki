@@ -9,9 +9,6 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
 /**
  * Normalisiert das Token-Usage-Objekt von verschiedenen Anbietern
  * für eine einheitliche Struktur im Logging.
- * @param {string} provider - 'openai' oder 'gemini'.
- * @param {object} usage - Das usage-Objekt von der API.
- * @returns {object|null} - Ein normalisiertes Objekt oder null.
  */
 const normalizeUsage = (provider, usage) => {
     if (!usage) return { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -36,22 +33,33 @@ const normalizeUsage = (provider, usage) => {
  * Interne Funktion für OpenAI-Aufrufe.
  * @param {string} prompt - Der an die KI zu sendende Prompt.
  * @param {string} model - Das zu verwendende OpenAI-Modell.
+ * @param {object} options - Zusätzliche Parameter (z.B. responseFormat).
  * @returns {Promise<object>} Ein Objekt mit Inhalt, Token-Nutzung und Modell.
  */
-async function callOpenAI(prompt, model = 'gpt-4') {
+async function callOpenAI(prompt, model = 'gpt-4', options = {}) {
     if (!process.env.OPENAI_API_KEY) {
         console.warn('OPENAI_API_KEY nicht gesetzt. Simuliere KI-Antwort.');
         return {
-            content: `Dies ist eine simulierte KI-Antwort für das Modell ${model}.`,
+            content: options.responseFormat?.type === 'json_object' 
+                ? '{"simulated": true, "model": "' + model + '"}' 
+                : `Dies ist eine simulierte KI-Antwort für das Modell ${model}.`,
             usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
             model: model
         };
     }
     try {
-        const completion = await openai.chat.completions.create({
+        // Basis-Konfiguration für den API-Aufruf
+        const apiConfig = {
             messages: [{ role: 'user', content: prompt }],
             model: model,
-        }, {
+        };
+
+        // NEU: Wenn responseFormat (JSON-Mode) gefordert ist, anfügen
+        if (options.responseFormat && options.responseFormat.type === 'json_object') {
+            apiConfig.response_format = { type: 'json_object' };
+        }
+
+        const completion = await openai.chat.completions.create(apiConfig, {
             timeout: 60000, // Timeout nach 60 Sekunden
             maxRetries: 1,
         });
@@ -74,21 +82,34 @@ async function callOpenAI(prompt, model = 'gpt-4') {
  * Interne Funktion für Google Gemini-Aufrufe.
  * @param {string} prompt - Der an die KI zu sendende Prompt.
  * @param {string} model - Das zu verwendende Gemini-Modell.
+ * @param {object} options - Zusätzliche Parameter (z.B. responseFormat).
  * @returns {Promise<object>} Ein Objekt mit Inhalt, Token-Nutzung und Modell.
  */
-async function callGoogleGemini(prompt, model = 'gemini-1.5-flash') {
+async function callGoogleGemini(prompt, model = 'gemini-1.5-flash', options = {}) {
     if (!process.env.GOOGLE_GEMINI_API_KEY) {
         console.warn('GOOGLE_GEMINI_API_KEY nicht gesetzt. Simuliere KI-Antwort.');
          return {
-            content: `Dies ist eine simulierte KI-Antwort für das Modell ${model}.`,
+            content: options.responseFormat?.type === 'json_object' 
+                ? '{"simulated": true, "model": "' + model + '"}' 
+                : `Dies ist eine simulierte KI-Antwort für das Modell ${model}.`,
             usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
             model: model
         };
     }
     try {
-        const geminiModel = genAI.getGenerativeModel({ model: model });
+        const modelConfig = { model: model };
+        
+        // NEU: Gemini JSON-Mode Unterstützung
+        if (options.responseFormat && options.responseFormat.type === 'json_object') {
+            modelConfig.generationConfig = {
+                responseMimeType: "application/json"
+            };
+        }
+
+        const geminiModel = genAI.getGenerativeModel(modelConfig);
         const result = await geminiModel.generateContent(prompt);
         const response = await result.response;
+        
         return {
             content: response.text(),
             usage: normalizeUsage('gemini', result.response.usageMetadata),
@@ -102,22 +123,25 @@ async function callGoogleGemini(prompt, model = 'gemini-1.5-flash') {
 
 /**
  * Führt einen Prompt bei einem bestimmten KI-Anbieter aus.
+ * @param {string} provider - Der Name des Providers
+ * @param {string} prompt - Der auszuführende Text
+ * @param {object} options - Zusätzliche Parameter (wie responseFormat)
  */
-async function executePrompt(provider, prompt) {
-    console.log(`[AI Service] Executing prompt with provider: ${provider}`);
+async function executePrompt(provider, prompt, options = {}) {
+    console.log(`[AI Service] Executing prompt with provider: ${provider}${options.responseFormat?.type === 'json_object' ? ' (JSON Mode)' : ''}`);
+    
     switch (provider) {
         case 'OpenAI GPT-4':
-            return callOpenAI(prompt, 'gpt-4');
+            return callOpenAI(prompt, 'gpt-4', options);
         case 'OpenAI GPT-4o':
-            return callOpenAI(prompt, 'gpt-4o');
+            return callOpenAI(prompt, 'gpt-4o', options);
         case 'OpenAI GPT-3.5':
-             return callOpenAI(prompt, 'gpt-3.5-turbo');             
+             return callOpenAI(prompt, 'gpt-3.5-turbo', options);            
         case 'Google Gemini':
-            return callGoogleGemini(prompt, 'gemini-1.5-flash');
+            return callGoogleGemini(prompt, 'gemini-1.5-flash', options);
         default:
             throw new Error(`Unbekannter AI Provider: ${provider}`);
     }
 }
 
-// KORREKTUR: Die Funktion 'callOpenAI' wird jetzt exportiert.
 module.exports = { executePrompt, callOpenAI };
