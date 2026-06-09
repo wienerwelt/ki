@@ -28,7 +28,6 @@ import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import QrCode2Icon from '@mui/icons-material/QrCode2';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import ShareIcon from '@mui/icons-material/Share';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { QRCodeSVG } from 'qrcode.react';
 import apiClient from '../apiClient';
 
@@ -80,6 +79,13 @@ const PublicProfileCard: React.FC = () => {
         return fullName || 'Profil';
     }, [user]);
 
+    // NEU: Setzt den Browser-Tab Titel auf den Namen des Users
+    useEffect(() => {
+        if (displayName && displayName !== 'Profil') {
+            document.title = `${displayName} | Visitenkarte`;
+        }
+    }, [displayName]);
+
     const initials = useMemo(() => {
         if (!displayName) return '?';
         return displayName
@@ -129,7 +135,7 @@ const PublicProfileCard: React.FC = () => {
             user.phone ? `TEL;TYPE=CELL:${escapeVCardValue(user.phone)}` : '',
             user.linkedin_url ? `URL:${escapeVCardValue(user.linkedin_url)}` : '',
             `URL:${escapeVCardValue(publicProfileUrl)}`,
-            `NOTE:${escapeVCardValue(`Öffentliches Profil: ${publicProfileUrl}`)}`,
+            `NOTE:${escapeVCardValue(`Öffentliche Visitenkarte: ${publicProfileUrl}`)}`,
             'END:VCARD'
         ].filter(Boolean);
 
@@ -252,7 +258,7 @@ const PublicProfileCard: React.FC = () => {
                         </Box>
 
                         <Box sx={{ px: 3, pt: 3, pb: 4 }}>
-                            <Stack spacing={2.5} alignItems="center" textAlign="center">
+                                <Stack spacing={2.5} alignItems="center" textAlign="center">
                                 <Box>
                                     <Typography
                                         variant="h4"
@@ -273,7 +279,6 @@ const PublicProfileCard: React.FC = () => {
                                             justifyContent="center"
                                             sx={{ mt: 1.25, color: 'text.secondary' }}
                                         >
-
                                             <Typography
                                                 variant="body2"
                                                 sx={{ fontWeight: 500 }}
@@ -399,94 +404,74 @@ const PublicProfileCard: React.FC = () => {
                                     Zum Adressbuch hinzufügen
                                 </Button>
 
-                                <Stack
-                                    direction={{ xs: 'column', sm: 'row' }}
-                                    spacing={1.25}
-                                    width="100%"
+                                {/* GEÄNDERT: Button "Profil öffnen" entfernt, QR Button nimmt volle Breite */}
+                                <Button
+                                    variant="outlined"
+                                    startIcon={<QrCode2Icon />}
+                                    onClick={() => setQrOpen(true)}
+                                    fullWidth
+                                    sx={{
+                                        borderRadius: 999,
+                                        py: 1.2,
+                                        textTransform: 'none',
+                                        fontWeight: 700
+                                    }}
                                 >
-                                    <Button
-                                        variant="outlined"
-                                        startIcon={<QrCode2Icon />}
-                                        onClick={() => setQrOpen(true)}
-                                        fullWidth
+                                    QR-Code anzeigen
+                                </Button>
+
+                                {(user.bp_logo_url || memberSinceText) && (
+                                    <Box
                                         sx={{
-                                            borderRadius: 999,
-                                            py: 1.2,
-                                            textTransform: 'none',
-                                            fontWeight: 700
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: 1,
+                                            minHeight: 24,
+                                            flexWrap: 'wrap'
                                         }}
                                     >
-                                        QR-Code anzeigen
-                                    </Button>
+                                        {user.bp_logo_url && (
+                                            <Box
+                                                component="img"
+                                                src={user.bp_logo_url}
+                                                alt={user.bp_name || 'Business Partner'}
+                                                sx={{
+                                                    maxHeight: 24,
+                                                    maxWidth: 130,
+                                                    objectFit: 'contain',
+                                                    opacity: 0.78,
+                                                    display: 'block'
+                                                }}
+                                            />
+                                        )}
 
-                                    <Button
-                                        variant="outlined"
-                                        startIcon={<OpenInNewIcon />}
-                                        component="a"
-                                        href={publicProfileUrl}
-                                        fullWidth
-                                        sx={{
-                                            borderRadius: 999,
-                                            py: 1.2,
-                                            textTransform: 'none',
-                                            fontWeight: 700
-                                        }}
-                                    >
-                                        Profil öffnen
-                                    </Button>
-                                </Stack>
-
-{(user.bp_logo_url || memberSinceText) && (
-    <Box
-        sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 1,
-            minHeight: 24,
-            flexWrap: 'wrap'
-        }}
-    >
-        {user.bp_logo_url && (
-            <Box
-                component="img"
-                src={user.bp_logo_url}
-                alt={user.bp_name || 'Business Partner'}
-                sx={{
-                    maxHeight: 24,
-                    maxWidth: 130,
-                    objectFit: 'contain',
-                    opacity: 0.78,
-                    display: 'block'
-                }}
-            />
-        )}
-
-        {memberSinceText && (
-            <Typography
-                variant="caption"
-                sx={{
-                    color: 'text.disabled',
-                    fontWeight: 500,
-                    letterSpacing: 0.1,
-                    lineHeight: 1.2
-                }}
-            >
-                {memberSinceText}
-            </Typography>
-        )}
-    </Box>
-)}
+                                        {memberSinceText && (
+                                            <Typography
+                                                variant="caption"
+                                                sx={{
+                                                    color: 'text.disabled',
+                                                    fontWeight: 500,
+                                                    letterSpacing: 0.1,
+                                                    lineHeight: 1.2
+                                                }}
+                                            >
+                                                {memberSinceText}
+                                            </Typography>
+                                        )}
+                                    </Box>
+                                )}
                             </Stack>
 
                             <Divider sx={{ my: 3 }} />
 
+                            {/* GEÄNDERT: Neuer Footer Text */}
                             <Typography
                                 variant="caption"
                                 color="text.disabled"
                                 sx={{ display: 'block', textAlign: 'center' }}
                             >
-                                Virtuelle Visitenkarte ·{' '}
+                                Virtuelle Visitenkarte erstellt von{' '}
                                 <Link
                                     href="https://www.mobiliti.at"
                                     target="_blank"
@@ -494,7 +479,7 @@ const PublicProfileCard: React.FC = () => {
                                     color="inherit"
                                     underline="hover"
                                 >
-                                    Mobiliti Dashboard
+                                    Mobiliti
                                 </Link>
                             </Typography>
                         </Box>

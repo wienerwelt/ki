@@ -1,11 +1,14 @@
+// frontend/src/pages/DashboardPage.tsx
 import React, { useState, useEffect, useCallback, Suspense, memo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   Container, Box, CircularProgress, Alert, Menu, MenuItem, Button, Snackbar,
   useTheme, useMediaQuery, SpeedDial, SpeedDialIcon, SpeedDialAction, Dialog, DialogTitle,
   List, ListItem, ListItemButton, ListItemIcon, ListItemText, Typography,
-  IconButton, Tooltip
+  IconButton, Tooltip, Badge, Chip
 } from '@mui/material';
+import { Link as RouterLink } from 'react-router-dom';
+import TuneIcon from '@mui/icons-material/Tune';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import SaveIcon from '@mui/icons-material/Save';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
@@ -33,6 +36,19 @@ interface SnackbarState {
 interface LastDeletedState {
   widget: WidgetConfig;
   layouts: Layouts;
+}
+
+// NEU: TypeScript Interface für den animierten Button
+interface AnimatedActionButtonProps {
+  id: string; // ID ist nun zwingend erforderlich
+  icon: React.ReactNode;
+  text: string;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void | Promise<void>;
+  variant?: 'text' | 'outlined' | 'contained';
+  color?: 'inherit' | 'primary' | 'secondary' | 'success' | 'error' | 'info' | 'warning';
+  disabled?: boolean;
+  isExpanded: boolean; // Steuert, ob genau dieser Button offen ist
+  onExpand: () => void; // Meldet dem Parent, dass dieser Button geklickt wurde
 }
 
 function asArray<T = any>(value: any): T[] {
@@ -91,8 +107,63 @@ const MemoizedWidgetContent = memo(({
     );
 });
 
+// HILFS-KOMPONENTE: Ausgelagert aus der Hauptseite, um Re-Mounts zu verhindern
+const AnimatedActionButton: React.FC<AnimatedActionButtonProps> = ({ 
+    id, icon, text, onClick, variant = "outlined", color = "primary", disabled = false,
+    isExpanded, onExpand
+}) => (
+    <Tooltip title={!isExpanded ? text : ''} placement="top">
+        <span>
+            <Button
+                id={id}
+                variant={variant}
+                color={color}
+                onClick={(e) => {
+                    onExpand(); // Setzt diesen Button als "aktiv/offen"
+                    onClick(e); // Führt die eigentliche Aktion aus
+                }}
+                disabled={disabled}
+                sx={{
+                    minWidth: isExpanded ? 'auto' : '40px',
+                    width: isExpanded ? 'auto' : '40px',
+                    height: '40px',
+                    p: isExpanded ? '6px 16px' : '6px',
+                    transition: 'all 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: variant === 'text' && !disabled ? 0.7 : 1,
+                    '&:hover': { opacity: 1 }
+                }}
+            >
+                {icon}
+                <Box
+                    component="span"
+                    sx={{
+                        maxWidth: isExpanded ? '150px' : '0px',
+                        opacity: isExpanded ? 1 : 0,
+                        overflow: 'hidden',
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+                        ml: isExpanded ? 1 : 0
+                    }}
+                >
+                    {text}
+                </Box>
+            </Button>
+        </span>
+    </Tooltip>
+);
+
 const DashboardPage: React.FC = () => {
-  const { user, businessPartner, dashboardRefreshKey } = useAuth();
+  const { 
+    user, 
+    businessPartner, 
+    dashboardRefreshKey, 
+    userTags, 
+    refreshUserTags, 
+    triggerDashboardRefresh 
+  } = useAuth();
   
   // State
   const [dashboardConfig, setDashboardConfig] = useState<DashboardSavedConfig>(emptyConfig());
@@ -108,6 +179,9 @@ const DashboardPage: React.FC = () => {
   const [lastDeleted, setLastDeleted] = useState<LastDeletedState | null>(null);
   const [openSpeedDial, setOpenSpeedDial] = useState(false);
   const [addWidgetDialogOpen, setAddWidgetDialogOpen] = useState(false);
+  
+  // NEU: Trackt, welcher Button gerade aktiv/ausgeklappt ist ('all' für den Start)
+  const [activeButtonId, setActiveButtonId] = useState<string | 'all' | null>('all');
   
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -130,6 +204,14 @@ const DashboardPage: React.FC = () => {
     { target: '#save-layout-button', content: 'Wenn Ihnen Ihr Layout gefällt, vergessen Sie nicht, es hier zu speichern!', placement: 'bottom-end' }
   ];
 
+  // NEU: Nach 3 Sekunden schließen sich alle initial geöffneten Buttons
+  useEffect(() => {
+      const timer = setTimeout(() => {
+          setActiveButtonId((prev) => (prev === 'all' ? null : prev));
+      }, 3000);
+      return () => clearTimeout(timer);
+  }, []);
+
   useEffect(() => {
     const tourHasBeenSeen = localStorage.getItem('dashboardTourSeen');
     if (!tourHasBeenSeen && !isMobile) {
@@ -144,6 +226,19 @@ const DashboardPage: React.FC = () => {
       setRunTour(false);
       localStorage.setItem('dashboardTourSeen', 'true');
     }
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => async () => {
+      if (user?.role === 'demo') return;
+      try {
+          await apiClient.delete(`/api/users/tags/${encodeURIComponent(tagToRemove)}`);
+          setSnackbar({ open: true, message: `Thema "${tagToRemove}" entfernt.`, severity: 'info' });
+          refreshUserTags();
+          triggerDashboardRefresh();
+      } catch (err) {
+          console.error("Fehler beim Entfernen des Tags:", err);
+          setSnackbar({ open: true, message: 'Fehler beim Entfernen des Themas.', severity: 'error' });
+      }
   };
 
   const startTourManually = () => setRunTour(true);
@@ -194,7 +289,9 @@ const DashboardPage: React.FC = () => {
     }
   };
 
-  const handleOpenAddWidgetMenu = (event: React.MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget);
+  const handleOpenAddWidgetMenu = (event: React.MouseEvent<HTMLElement>) => {
+      setAnchorEl(event.currentTarget);
+  };
   const handleCloseAddWidgetMenu = () => setAnchorEl(null);
 
   const handleAddWidgetDialogOpen = () => {
@@ -304,34 +401,93 @@ const DashboardPage: React.FC = () => {
             styles={{ options: { zIndex: 1301, primaryColor: businessPartner?.color_scheme?.primary_color || '#1976d2' } }}
         />
 
+        {/* Willkommens-Widget anzeigen, falls relevant */}
         {!!user && user.has_seen_welcome_widget === false && <WelcomeWidget />}
 
-        {!isMobile && (
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2, gap: 2, alignItems: 'center' }}>
-                <Button 
-                    variant="text" 
-                    color="inherit" 
-                    onClick={startTourManually} 
-                    startIcon={<PlayCircleOutlineIcon />}
-                    sx={{ opacity: 0.7, '&:hover': { opacity: 1 } }}
-                >
-                    Tour starten
-                </Button>
-                <Button id="add-widget-button" variant="outlined" onClick={handleOpenAddWidgetMenu} startIcon={<AddCircleOutlineIcon />}>
-                Widgets verwalten
-                </Button>
-                <Button
-                    id="save-layout-button"
-                    variant="contained"
-                    color="primary"
-                    onClick={handleSaveConfig}
-                    disabled={isSaving || !hasUnsavedChanges}
-                    startIcon={isSaving ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />}
-                >
-                    {isSaving ? 'Speichert...' : 'Layout speichern'}
-                </Button>
+        {/* --- KONSOLIDIERTE TOP-LEISTE: Filter & Animierte Buttons auf einer Linie --- */}
+        <Box 
+            sx={{ 
+                display: 'flex', 
+                flexWrap: 'wrap', 
+                alignItems: 'center', 
+                justifyContent: 'space-between',
+                gap: 2, 
+                mb: 2, 
+                p: 1.5, 
+                bgcolor: 'background.paper', 
+                borderRadius: 1, 
+                boxShadow: 1 
+            }}
+        >
+            {/* LINKE SEITE: Filter & Badge */}
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, flexGrow: 1 }}>
+                <Typography variant="subtitle2" color="text.secondary" sx={{ mr: 1, display: { xs: 'none', sm: 'block' } }}>
+                    Meine Filter:
+                </Typography>
+                
+                {userTags && userTags.length > 0 ? (
+                    userTags.map(tag => (
+                        <Chip
+                            key={tag}
+                            label={tag}
+                            onDelete={user?.role !== 'demo' ? handleRemoveTag(tag) : undefined}
+                            variant="outlined"
+                            color="primary"
+                            size="small"
+                        />
+                    ))
+                ) : (
+                    <Typography variant="body2" color="text.disabled">Keine Filter ausgewählt</Typography>
+                )}
+                
+                <Tooltip title="Themen bearbeiten">
+                    <IconButton component={RouterLink} to="/profile#my-tags" size="small" sx={{ ml: 1 }}>
+                        <Badge badgeContent={userTags?.length || 0} color="primary" sx={{ '& .MuiBadge-badge': { fontSize: '0.6rem', height: 16, minWidth: 16 } }}>
+                            <TuneIcon fontSize="small" />
+                        </Badge>
+                    </IconButton>
+                </Tooltip>
             </Box>
-        )}
+
+            {/* RECHTE SEITE: Animierte Desktop Buttons */}
+            {!isMobile && (
+                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexShrink: 0 }}>
+                    <AnimatedActionButton 
+                        id="tour-button"
+                        icon={<PlayCircleOutlineIcon />}
+                        text="Tour starten"
+                        onClick={startTourManually}
+                        variant="text"
+                        color="inherit"
+                        isExpanded={activeButtonId === 'all' || activeButtonId === 'tour-button'}
+                        onExpand={() => setActiveButtonId('tour-button')}
+                    />
+                    
+                    <AnimatedActionButton 
+                        id="add-widget-button"
+                        icon={<AddCircleOutlineIcon />}
+                        text="Widgets verwalten"
+                        onClick={handleOpenAddWidgetMenu}
+                        variant="outlined"
+                        color="primary"
+                        isExpanded={activeButtonId === 'all' || activeButtonId === 'add-widget-button'}
+                        onExpand={() => setActiveButtonId('add-widget-button')}
+                    />
+                    
+                    <AnimatedActionButton 
+                        id="save-layout-button"
+                        icon={isSaving ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />}
+                        text={isSaving ? 'Speichert...' : 'Layout speichern'}
+                        onClick={handleSaveConfig}
+                        variant="contained"
+                        color="primary"
+                        disabled={isSaving || !hasUnsavedChanges}
+                        isExpanded={activeButtonId === 'all' || activeButtonId === 'save-layout-button'}
+                        onExpand={() => setActiveButtonId('save-layout-button')}
+                    />
+                </Box>
+            )}
+        </Box>
 
         {/* --- DESKTOP DROPDOWN --- */}
         <Menu 
@@ -339,6 +495,8 @@ const DashboardPage: React.FC = () => {
           open={Boolean(anchorEl) && !isMobile} 
           onClose={handleCloseAddWidgetMenu}
           PaperProps={{ sx: { width: 320, maxHeight: 400 } }}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         >
             {asArray(availableWidgetTypes).map((widgetType) => {
               const Icon = getIcon(widgetType.icon_name);
@@ -346,7 +504,6 @@ const DashboardPage: React.FC = () => {
               const isAlreadyAdded = existingWidgets.length > 0;
               const isMultiInstance = widgetType.is_multi_instance;
               
-              // Entweder das Widget ist einmalig und aktiv, oder wir erlauben Multi-Instances
               const canAdd = isMultiInstance || !isAlreadyAdded;
 
               return (
@@ -413,42 +570,54 @@ const DashboardPage: React.FC = () => {
                 </Button>
             </Box>
         ) : (
-            <ErrorBoundary>
-                <ResponsiveGridLayout
-                    className="layout"
-                    layouts={dashboardConfig.layouts}
-                    onLayoutChange={onLayoutChange}
-                    breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
-                    cols={{ lg: 12, md: 10, sm: 6, xs: 1 }}
-                    margin={{ lg: [15, 15], md: [10, 10], sm: [8, 8], xs: [8, 8] }}
-                    rowHeight={30}
-                    isDroppable
-                    isDraggable={!isMobile} 
-                    isResizable={!isMobile} 
-                    draggableHandle=".widget-drag-handle"
-                >
-                    {dashboardConfig.widgets.map((widget: WidgetConfig) => {
-                        const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widget.type);
-                        const widgetName = widgetTypeMeta?.name || widget.type || 'Unbekanntes Widget';
+<ErrorBoundary>
+    <ResponsiveGridLayout
+        className="layout"
+        layouts={dashboardConfig.layouts}
+        onLayoutChange={onLayoutChange}
+        breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
+        cols={{ lg: 12, md: 10, sm: 6, xs: 1 }}
+        margin={{ lg: [15, 15], md: [10, 10], sm: [8, 8], xs: [8, 8] }}
+        rowHeight={30} 
+        isDroppable
+        isDraggable={!isMobile} 
+        isResizable={!isMobile} 
+        draggableHandle=".widget-drag-handle"
+        compactType="vertical"
+        style={isMobile ? { 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: '16px' 
+        } : undefined}
+    >
+        {dashboardConfig.widgets.map((widget: WidgetConfig) => {
+            const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widget.type);
+            const widgetName = widgetTypeMeta?.name || widget.type || 'Unbekanntes Widget';
 
-                        return (
-                            <div 
-                                key={widget.id} 
-                                data-grid={dashboardConfig.layouts.lg?.find((l: Layout) => l.i === widget.id) || {x:0, y:Infinity, w:4, h:8}}
-                            >
-                                <ErrorBoundary name={widgetName}>
-                                    <MemoizedWidgetContent 
-                                        widget={widget} 
-                                        availableWidgetTypes={availableWidgetTypes}
-                                        businessPartner={businessPartner}
-                                        onDelete={handleDeleteWidget}
-                                    />
-                                </ErrorBoundary>
-                            </div>
-                        );
-                    })}
-                </ResponsiveGridLayout>
-            </ErrorBoundary>
+            return (
+                <div 
+                    key={widget.id} 
+                    data-grid={dashboardConfig.layouts.lg?.find((l: Layout) => l.i === widget.id) || {x:0, y:Infinity, w:4, h:8}}
+                    style={isMobile ? { 
+                        position: 'relative', 
+                        width: '100%', 
+                        height: 'auto', 
+                        transform: 'none' 
+                    } : undefined}
+                >
+                    <ErrorBoundary name={widgetName}>
+                        <MemoizedWidgetContent 
+                            widget={widget} 
+                            availableWidgetTypes={availableWidgetTypes}
+                            businessPartner={businessPartner}
+                            onDelete={handleDeleteWidget}
+                        />
+                    </ErrorBoundary>
+                </div>
+            );
+        })}
+    </ResponsiveGridLayout>
+</ErrorBoundary>
         )}
 
         {isMobile && (
@@ -499,7 +668,7 @@ const DashboardPage: React.FC = () => {
                         >
                             <ListItemButton 
                               onClick={() => canAdd ? handleAddWidget(widgetType.type_key) : null} 
-                              sx={{ pr: isAlreadyAdded && !isMultiInstance ? 6 : 2 }} // Platz für den Delete-Button lassen
+                              sx={{ pr: isAlreadyAdded && !isMultiInstance ? 6 : 2 }}
                             >
                                 <ListItemIcon>
                                   <Icon color={isAlreadyAdded ? 'success' : 'inherit'} />

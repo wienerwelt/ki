@@ -15,5 +15,7 @@ router.get('/:bpId/widget/:widgetId/installations', adminBpWidgetAccessControlle
 router.get('/:bpId', adminBpWidgetAccessController.getBpWidgetAccessByBpId); 
 router.post('/grant', adminBpWidgetAccessController.grantWidgetAccess); 
 router.delete('/revoke/:bpId/:widgetId', adminBpWidgetAccessController.revokeWidgetAccess);
+router.put('/toggle-public/:bpId/:widgetId', adminBpWidgetAccessController.togglePublicAccess);
+router.put('/update-order/:bpId', adminBpWidgetAccessController.updateWidgetOrder);
 
 module.exports = router;

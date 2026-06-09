@@ -13,7 +13,7 @@ function maskConnectionInfo() {
 
 console.log('[db] Initialisiere PostgreSQL-Pool mit:', maskConnectionInfo());
 
-// --- DIE ENTSCHEIDENDE ÄNDERUNG ---
+// --- VERBINDUNGS-KONFIGURATION ---
 // Wenn eine DATABASE_URL existiert, nutzen wir diese. 
 // Falls nicht, fallen wir auf die alten Einzelvariablen zurück.
 const poolConfig = process.env.DATABASE_URL 
@@ -27,12 +27,15 @@ const poolConfig = process.env.DATABASE_URL
     };
 
 const pool = new Pool(poolConfig);
-// ----------------------------------
 
+// --- DER DAUERHAFTE DOCKER-FIX ---
 pool.on('error', (err) => {
-  console.error('[db] Unerwarteter Fehler auf idle client:', err);
+  console.error('[db] Kritischer Datenbank-Fehler (Verbindung verloren):', err.message);
+  // Beendet den Node.js Prozess, damit Docker den Container sofort neu startet!
+  process.exit(-1);
 });
 
+// --- INITIALER VERBINDUNGSTEST ---
 async function logDbConnectionInfo() {
   let client;
   try {

@@ -1,3 +1,4 @@
+// frontend/src/pages/AdminEditorialBriefingPage.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Container, Typography, Box, Paper, TextField, Button, Grid, 
@@ -211,6 +212,8 @@ const AdminEditorialBriefingPage: React.FC = () => {
         }
     };
 
+    const [newsletterFrequency, setNewsletterFrequency] = useState<string>('never');
+
     useEffect(() => {
         const init = async () => {
             if (user?.role === 'admin') {
@@ -249,6 +252,7 @@ const AdminEditorialBriefingPage: React.FC = () => {
             setBriefingItems(Array.isArray(briefingRes.data) ? briefingRes.data : []);
             setDebugInfo(debugRes.data);
             setBriefingFrequency(debugRes.data.briefing_frequency || 'never');
+            setNewsletterFrequency(debugRes.data.newsletter_frequency || 'never');
             setAutoApprove(debugRes.data.auto_approve_briefings || false);
             setIsGenerating(debugRes.data.is_generating || false);
         } catch (e) { showSnackbar('Datenfehler', 'error'); }
@@ -276,25 +280,36 @@ const AdminEditorialBriefingPage: React.FC = () => {
         return () => clearInterval(timer);
     }, [briefingFrequency]);
 
-    const saveSettings = async (freq: string, auto: boolean) => {
+    const saveSettings = async (dashFreq: string, mailFreq: string, auto: boolean) => {
         try {
-            await apiClient.put('/api/admin/briefing/settings', { bpId: selectedBpId, frequency: freq, autoApprove: auto });
+            await apiClient.put('/api/admin/briefing/settings', { 
+                bpId: selectedBpId, 
+                frequency: dashFreq, 
+                newsletterFrequency: mailFreq, 
+                autoApprove: auto 
+            });
             showSnackbar('Einstellungen gespeichert.', 'success');
             loadData(); 
         } catch (e) { showSnackbar('Fehler beim Speichern.', 'error'); }
     };
 
-    const handleFrequencyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        setBriefingFrequency(val);
-        saveSettings(val, autoApprove); 
+    const handleNewsletterFreqChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setNewsletterFrequency(val);
+    saveSettings(briefingFrequency, val, autoApprove); 
+    };
+
+    const handleDashboardFreqChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setBriefingFrequency(val);
+    saveSettings(val, newsletterFrequency, autoApprove); 
     };
 
     const handleAutoApproveChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.checked;
-        if (val && !window.confirm('WARNUNG: Die KI versendet dann ohne Ihre Freigabe. Fortfahren?')) return;
+        if (val && !window.confirm('WARNUNG: Die KI veröffentlicht dann ohne Ihre Freigabe im Dashboard. Fortfahren?')) return;
         setAutoApprove(val);
-        saveSettings(briefingFrequency, val);
+        saveSettings(briefingFrequency, newsletterFrequency, val);
     };
 
     const handleManualTrigger = async () => {
@@ -436,33 +451,44 @@ const AdminEditorialBriefingPage: React.FC = () => {
                         <Paper sx={{ p: 3, height: '100%', borderRadius: 3, border: '1px solid #e2e8f0' }}>
                             <StepHeader stepNumber={2} title="Automatisierung" subtitle="Wann und wie soll die KI tätig werden?" icon={<RobotIcon color="primary" />} />
                             
-                            <Grid container spacing={3}>
-                                <Grid item xs={12} sm={6}>
-                                    <Typography variant="caption" fontWeight="bold" sx={{ mb: 1, display: 'block' }}>Sende-Frequenz</Typography>
-                                    <RadioGroup value={briefingFrequency} onChange={handleFrequencyChange}>
-                                        <FormControlLabel value="daily" control={<Radio size="small" />} label={<Typography variant="body2">Täglich (08:00)</Typography>} />
-                                        <FormControlLabel value="weekly" control={<Radio size="small" />} label={<Typography variant="body2">Wöchentlich (Fr.)</Typography>} />
-                                        <FormControlLabel value="biweekly" control={<Radio size="small" />} label={<Typography variant="body2">14-tägig (Fr.)</Typography>} />
-                                        <FormControlLabel value="monthly" control={<Radio size="small" />} label={<Typography variant="body2">Monatlich (1.)</Typography>} />
-                                        <FormControlLabel value="never" control={<Radio size="small" />} label={<Typography variant="body2">Pausiert / Nur manuell</Typography>} />
-                                    </RadioGroup>
-                                    <Typography variant="caption" color={briefingFrequency === 'never' ? 'error' : 'success.main'} sx={{ fontWeight: 'bold', display: 'block', mt: 1 }}>
-                                        Nächster Lauf: {countdown}
-                                    </Typography>
-                                </Grid>
-                                <Grid item xs={12} sm={6}>
-                                    <Typography variant="caption" fontWeight="bold" sx={{ mb: 1, display: 'block' }}>Autopilot (Auto-Approve)</Typography>
-                                    <Box sx={{ p: 1.5, bgcolor: autoApprove ? '#f0fdf4' : '#f1f5f9', border: '1px solid', borderColor: autoApprove ? '#86efac' : '#cbd5e1', borderRadius: 2 }}>
-                                        <FormControlLabel
-                                            control={<Switch checked={autoApprove} onChange={handleAutoApproveChange} color="success" disabled={briefingFrequency === 'never'} />}
-                                            label={<Typography variant="body2" sx={{ fontWeight: 'bold' }}>Aktiviert</Typography>}
-                                        />
-                                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, lineHeight: 1.3 }}>
-                                            {autoApprove ? 'KI sendet Mails sofort ohne Freigabe.' : 'KI erstellt nur Entwürfe für Schritt 3.'}
-                                        </Typography>
-                                    </Box>
-                                </Grid>
-                            </Grid>
+<Grid container spacing={3}>
+    <Grid item xs={12} sm={4}>
+        <Typography variant="caption" fontWeight="bold" sx={{ mb: 1, display: 'block' }}>Dashboard Update</Typography>
+        <RadioGroup value={briefingFrequency} onChange={handleDashboardFreqChange}>
+            <FormControlLabel value="daily" control={<Radio size="small" />} label={<Typography variant="body2">Täglich</Typography>} />
+            <FormControlLabel value="weekly" control={<Radio size="small" />} label={<Typography variant="body2">Wöchentlich</Typography>} />
+            <FormControlLabel value="never" control={<Radio size="small" />} label={<Typography variant="body2" color="error">Pausiert</Typography>} />
+</RadioGroup>
+    
+    {/* DIESER BLOCK HAT GEFEHLT: */}
+    <Typography variant="caption" color={briefingFrequency === 'never' ? 'error' : 'success.main'} sx={{ fontWeight: 'bold', display: 'block', mt: 1 }}>
+        Nächster Lauf: {countdown}
+    </Typography>
+</Grid>
+
+    <Grid item xs={12} sm={4}>
+        <Typography variant="caption" fontWeight="bold" sx={{ mb: 1, display: 'block' }}>E-Mail Versand</Typography>
+        <RadioGroup value={newsletterFrequency} onChange={handleNewsletterFreqChange}>
+            <FormControlLabel value="daily" control={<Radio size="small" />} label={<Typography variant="body2">Täglich</Typography>} />
+            <FormControlLabel value="weekly" control={<Radio size="small" />} label={<Typography variant="body2">Wöchentlich (Fr.)</Typography>} />
+            <FormControlLabel value="monthly" control={<Radio size="small" />} label={<Typography variant="body2">Monatlich (1.)</Typography>} />
+            <FormControlLabel value="never" control={<Radio size="small" />} label={<Typography variant="body2" color="error">Nur Manuell</Typography>} />
+        </RadioGroup>
+    </Grid>
+
+    <Grid item xs={12} sm={4}>
+        <Typography variant="caption" fontWeight="bold" sx={{ mb: 1, display: 'block' }}>Autopilot (Dashboard)</Typography>
+        <Box sx={{ p: 1.5, bgcolor: autoApprove ? '#f0fdf4' : '#f1f5f9', border: '1px solid', borderColor: autoApprove ? '#86efac' : '#cbd5e1', borderRadius: 2 }}>
+            <FormControlLabel
+                control={<Switch checked={autoApprove} onChange={handleAutoApproveChange} color="success" disabled={briefingFrequency === 'never'} />}
+                label={<Typography variant="body2" sx={{ fontWeight: 'bold' }}>Aktiviert</Typography>}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, lineHeight: 1.3 }}>
+                {autoApprove ? 'KI publiziert direkt ins Dashboard.' : 'KI erstellt nur Entwürfe für Schritt 3.'}
+            </Typography>
+        </Box>
+    </Grid>
+</Grid>
                         </Paper>
                     </Grid>
                 </Grid>

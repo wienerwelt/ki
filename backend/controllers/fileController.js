@@ -282,3 +282,46 @@ exports.trackDownload = async (req, res) => {
     return res.status(500).json({ message: "Fehler beim Server während der Download-Erfassung." });
   }
 };
+
+// === Bearbeiten (NEU) ===
+exports.updateFile = async (req, res) => {
+  const { id: fileId } = req.params;
+  const { role, business_partner_id: businessPartnerId } = req.user || {};
+  const { filename, description, tags } = req.body;
+
+  // Nur Admins und Assistenten dürfen bearbeiten
+  if (role !== 'admin' && role !== 'assistenz') {
+    return res.status(403).json({ message: "Keine Berechtigung zum Bearbeiten von Dateien." });
+  }
+
+  if (!filename || filename.trim() === '') {
+    return res.status(400).json({ message: "Der Dateiname darf nicht leer sein." });
+  }
+
+  try {
+    let query;
+    const tagsArray = typeof tags === 'string'
+      ? tags.split(',').map(t => t.trim()).filter(Boolean)
+      : (Array.isArray(tags) ? tags : []);
+      
+    const queryParams = [filename.trim(), description || null, tagsArray, fileId];
+
+    if (role === 'admin') {
+      query = `UPDATE business_partner_files SET filename = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *;`;
+    } else {
+      query = `UPDATE business_partner_files SET filename = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 AND business_partner_id = $5 RETURNING *;`;
+      queryParams.push(businessPartnerId);
+    }
+
+    const result = await db.query(query, queryParams);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Datei nicht gefunden oder Zugriff verweigert." });
+    }
+
+    return res.status(200).json({ message: "Datei erfolgreich aktualisiert.", file: result.rows[0] });
+  } catch (error) {
+    console.error("Fehler beim Aktualisieren der Datei:", error);
+    return res.status(500).json({ message: "Fehler beim Aktualisieren der Datei." });
+  }
+};

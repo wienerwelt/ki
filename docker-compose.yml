@@ -1,5 +1,14 @@
+# Vorlage für die Log-Begrenzung (spart Platz und Arbeit)
+x-logging: &default-logging
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   postgres:
+    <<: *default-logging
     image: postgres:17
     container_name: mobiliti-dashboard-postgres17
     restart: unless-stopped
@@ -8,6 +17,7 @@ services:
       - mobiliti_dashboard_pg17_data:/var/lib/postgresql/data
 
   redis:
+    <<: *default-logging
     image: redis:7
     container_name: mobiliti-dashboard-redis
     restart: unless-stopped
@@ -15,47 +25,68 @@ services:
       - mobiliti_dashboard_redis_data:/data
 
   api:
+    <<: *default-logging
     build: ./backend
     container_name: mobiliti-dashboard-api
     restart: unless-stopped
     env_file: .env
-    depends_on: [postgres, redis]
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - mobiliti_dashboard_public_directory_logos:/app/public/directory_logos
+      - mobiliti_dashboard_public_logos:/app/public/logos
 
   worker-ai:
+    <<: *default-logging
     build: ./backend
     container_name: mobiliti-worker-ai
     restart: unless-stopped
     env_file: .env
-    depends_on: [postgres, redis]
+    depends_on:
+      - postgres
+      - redis
 
   worker-scrape:
+    <<: *default-logging
     build: ./backend
     container_name: mobiliti-worker-scrape
     restart: unless-stopped
     shm_size: '1gb'
     env_file: .env
-    depends_on: [postgres, redis]
+    depends_on:
+      - postgres
+      - redis
 
   worker-mail:
+    <<: *default-logging
     build: ./backend
     container_name: mobiliti-worker-mail
     restart: unless-stopped
     env_file: .env
-    depends_on: [postgres, redis]
+    depends_on:
+      - postgres
+      - redis
 
   worker-data:
+    <<: *default-logging
     build: ./backend
     container_name: mobiliti-worker-data
     restart: unless-stopped
     env_file: .env
-    depends_on: [postgres, redis]
+    depends_on:
+      - postgres
+      - redis
 
   worker-funding:
+    <<: *default-logging
     build: ./backend
     container_name: mobiliti-worker-funding
     restart: unless-stopped
     env_file: .env
-    depends_on: [postgres, redis]
+    depends_on:
+      - postgres
+      - redis
 
 volumes:
   mobiliti_dashboard_pg17_data:

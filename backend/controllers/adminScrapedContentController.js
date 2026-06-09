@@ -1,6 +1,9 @@
 // backend/controllers/adminScrapedContentController.js
 const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
+const { GetObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const s3Client = require("../config/s3Client.js");
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
@@ -9,11 +12,12 @@ exports.getAllScrapedContent = async (req, res) => {
     const { source_identifier, startDate, endDate, region, category_id, limit = 50, offset = 0 } = req.query;
     
     try {
-        const baseQuery = `
+const baseQuery = `
             SELECT 
                 sc.id, sc.source_identifier, sr.name as rule_name, sc.title, sc.original_url, sc.category,
-                sc.category_id, -- NEU hinzugefügt für den Filter
+                sc.category_id,
                 sc.summary, sc.published_date, sc.event_date, sc.region, sc.scraped_at, sc.relevance_score,
+                sc.created_at, -- <--- HIER EINGEFÜGT
                 sc.thumbnail_url, 'content' as data_type,
                 (SELECT array_agg(t.name) FROM tags t JOIN scraped_content_tags sct ON t.id = sct.tag_id WHERE sct.scraped_content_id = sc.id) as tags
             FROM scraped_content sc
@@ -24,9 +28,10 @@ exports.getAllScrapedContent = async (req, res) => {
             SELECT 
                 ti.id, ti.source_identifier, sr.name as rule_name, ti.title, ti.link as original_url,
                 ti.type as category, 
-                NULL::uuid as category_id, -- Verkehrsmeldungen haben keine category_id
+                NULL::uuid as category_id,
                 null as summary, ti.published_at as published_date, null as event_date,
                 ti.region, ti.published_at as scraped_at, 0 as relevance_score,
+                ti.created_at, -- <--- UND HIER EINGEFÜGT
                 null as thumbnail_url, 'traffic' as data_type,
                 (SELECT array_agg(t.name) FROM tags t JOIN traffic_incidents_tags tit ON t.id = tit.tag_id WHERE tit.traffic_incident_id = ti.id) as tags
             FROM traffic_incidents ti
@@ -243,7 +248,8 @@ exports.updateScrapedContent = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
     
-    const { title, summary, category_id, category, tags: tagIds, region, relevance_score, thumbnail_url } = req.body;
+    // NEU: published_date, event_date und created_at auslesen
+    const { title, summary, category_id, category, tags: tagIds, region, relevance_score, thumbnail_url, published_date, event_date, created_at } = req.body;
 
     const client = await db.connect();
     try {
@@ -260,12 +266,24 @@ exports.updateScrapedContent = async (req, res) => {
             if (catRes.rows.length > 0) finalCategoryId = catRes.rows[0].id;
         }
         
+        // NEU: Query um die Datumsfelder und entsprechenden Variablen erweitert
         const updatedContent = await client.query(
             `UPDATE scraped_content SET 
-                title = $1, summary = $2, category_id = $3, category = $4, region = $5, relevance_score = $6, thumbnail_url = $7, updated_at = CURRENT_TIMESTAMP 
-             WHERE id = $8 RETURNING *`,
-            [title, summary, finalCategoryId, finalCategoryText, region, relevance_score, thumbnail_url, id]
+                title = $1, 
+                summary = $2, 
+                category_id = $3, 
+                category = $4, 
+                region = $5, 
+                relevance_score = $6, 
+                thumbnail_url = $7, 
+                published_date = $8,
+                event_date = $9,
+                created_at = COALESCE($10, created_at),
+                updated_at = CURRENT_TIMESTAMP 
+             WHERE id = $11 RETURNING *`,
+            [title, summary, finalCategoryId, finalCategoryText, region, relevance_score, thumbnail_url, published_date || null, event_date || null, created_at || null, id]
         );
+
         if (updatedContent.rows.length === 0) throw new Error('Content not found.');
 
         await client.query('DELETE FROM scraped_content_tags WHERE scraped_content_id = $1', [id]);
@@ -278,6 +296,7 @@ exports.updateScrapedContent = async (req, res) => {
                 );
             }
         }
+        
         await client.query('COMMIT');
         res.json(updatedContent.rows[0]);
     } catch (err) {
@@ -423,5 +442,43 @@ exports.triggerDeepDive = async (req, res) => {
     } catch (err) {
         console.error(`Error triggering deep dive for content ${contentId}:`, err.message);
         res.status(500).send('Serverfehler');
+    }
+};
+
+exports.downloadStatisticArchive = async (req, res) => {
+    const { id } = req.params; // ID des economic_statistics Eintrags
+    
+    // Sicherheit: Nur Admins oder befugte Rollen dürfen die Rohdateien laden
+    if (req.user?.role !== 'admin' && req.user?.role !== 'assistenz') {
+        return res.status(403).json({ message: 'Keine Berechtigung zum Download von Systemdateien.' });
+    }
+
+    try {
+        // 1. Pfad aus der Datenbank holen
+        const result = await db.query(
+            `SELECT archive_path FROM economic_statistics WHERE id = $1`, 
+            [id]
+        );
+
+        if (result.rows.length === 0 || !result.rows[0].archive_path) {
+            return res.status(404).json({ message: 'Keine Archivdatei für diesen Datensatz gefunden.' });
+        }
+
+        const archivePath = result.rows[0].archive_path;
+
+        // 2. Temporäre S3 URL generieren (gültig für 60 Sekunden)
+        const command = new GetObjectCommand({
+            Bucket: process.env.AWS_S3_BUCKET_NAME,
+            Key: archivePath,
+        });
+
+        const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 60 });
+        
+        // 3. Dem Frontend die URL übergeben
+        res.status(200).json({ url: signedUrl });
+
+    } catch (error) {
+        console.error('Fehler beim Generieren der S3 Download-URL:', error);
+        res.status(500).json({ message: 'Interner Serverfehler beim Bereitstellen der Datei.' });
     }
 };

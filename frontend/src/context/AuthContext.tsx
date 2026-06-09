@@ -34,7 +34,7 @@ export interface UserPayload {
   role: string;
   business_partner_id: string | null;
   business_partner_name: string | null;
-  business_partner_category?: string | null; // <--- NEU HINZUGEFÜGT
+  business_partner_category?: string | null;
   dashboard_title: string | null;
   regions: Region[] | null;
   contribution_score: number;
@@ -202,7 +202,7 @@ useEffect(() => {
     });
   }, []);
 
-  const refreshUserTags = useCallback(async () => {
+const refreshUserTags = useCallback(async () => {
     if (!user) {
        setUserTags([]);
        return;
@@ -210,19 +210,25 @@ useEffect(() => {
     try {
         const { data } = await apiClient.get('/api/users/tags');
         setUserTags(data || []);
-    } catch (error) {
+    } catch (error: any) {
+        // AbortErrors stumm schalten
+        if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') return;
+        
         console.error('Fehler beim Laden der globalen User-Tags:', error);
         setUserTags([]);
     }
   }, [user]);
 
-  const fetchBusinessPartnerData = useCallback(async () => {
+const fetchBusinessPartnerData = useCallback(async () => {
     if (!user) return;
     try {
       const response = await apiClient.get('/api/data/dashboard/config');
       const { businessPartner: bp } = response.data; 
       setBusinessPartner(bp || null);
-    } catch (error) {
+    } catch (error: any) {
+      // AbortErrors ignorieren, um Branding-Reset zu verhindern!
+      if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') return;
+      
       console.error('Fehler beim Laden der Dashboard-Konfiguration:', error);
       setBusinessPartner(null);
     }
@@ -273,13 +279,16 @@ const setPartnerByCode = useCallback(async (code: string) => {
   }, []);
 
 
-  const refreshUser = useCallback(async () => {
+const refreshUser = useCallback(async () => {
     try {
         const { data: refreshedUser } = await apiClient.get<UserPayload>('/api/users/me');
         if (refreshedUser) {
             updateUser(refreshedUser);
         }
-    } catch (error) {
+    } catch (error: any) {
+        // AbortErrors stumm schalten
+        if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') return;
+        
         console.error("Fehler beim Aktualisieren der Benutzerdaten:", error);
     }
   }, [updateUser]);
@@ -385,7 +394,7 @@ useEffect(() => {
     refreshUser, 
     userTags,
     refreshUserTags,
-    setPartnerByCode, // ✅ Hier im Provider-Value registriert
+    setPartnerByCode,
   };
 
   return (

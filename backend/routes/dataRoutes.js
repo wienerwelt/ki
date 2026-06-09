@@ -54,6 +54,7 @@ router.get('/monitor-entries', dataController.getMonitorEntries);
 router.get('/bp-members-preview', dataController.getBusinessPartnerMembersPreview);
 router.get('/daily-briefing', authMiddleware, dataController.getDailyBriefing);
 router.get('/daily-briefing/pdf', dataController.getDailyBriefingPdfByToken);
+router.get('/notification-counts', dataController.getNotificationCounts);
 
 router.get('/sentiment', dataController.getMarketSentiment);
 router.post('/sentiment/vote', dataController.voteSentiment);

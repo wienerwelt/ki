@@ -3,7 +3,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Chip, Tooltip, Tabs, Tab, Rating, Link as MuiLink,
-    Dialog, DialogTitle, DialogContent, DialogActions, TextField, FormControl, InputLabel, Select, MenuItem, Avatar, Button
+    Dialog, DialogTitle, DialogContent, DialogActions, TextField, FormControl, InputLabel, Select, MenuItem, Avatar, Button,
+    InputAdornment
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -16,6 +17,7 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import UndoIcon from '@mui/icons-material/Undo';
 import AddIcon from '@mui/icons-material/Add';
+import SearchIcon from '@mui/icons-material/Search';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
@@ -52,10 +54,11 @@ const AdminSourcesPage: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [filterStatus, setFilterStatus] = useState<'all' | 'pending_review' | 'approved' | 'rejected'>('all');
+    const [searchTerm, setSearchTerm] = useState('');
 
     // Dialog State
     const [dialogOpen, setDialogOpen] = useState(false);
-    const [isAddMode, setIsAddMode] = useState(false); // NEU: Unterscheidung Add vs Edit
+    const [isAddMode, setIsAddMode] = useState(false);
     const [editingSource, setEditingSource] = useState<Source | null>(null);
     const [formState, setFormState] = useState<{ url: string, description: string, category_id: string, logo: File | null, deleteLogo: boolean }>({ 
         url: '', description: '', category_id: '', logo: null, deleteLogo: false 
@@ -99,36 +102,48 @@ const AdminSourcesPage: React.FC = () => {
     }, []);
 
     const filteredSources = useMemo(() => {
-        if (filterStatus === 'all') return sources;
-        return sources.filter(s => s.status === filterStatus);
-    }, [sources, filterStatus]);
+        let filtered = sources;
+        
+        if (filterStatus !== 'all') {
+            filtered = filtered.filter(s => s.status === filterStatus);
+        }
 
-    // --- Status & Delete Handlers ---
+        if (searchTerm) {
+            const q = searchTerm.toLowerCase();
+            filtered = filtered.filter(s => 
+                s.url.toLowerCase().includes(q) || 
+                (s.description && s.description.toLowerCase().includes(q)) ||
+                (s.category_name && s.category_name.toLowerCase().includes(q))
+            );
+        }
+        
+        return filtered;
+    }, [sources, filterStatus, searchTerm]);
+
     const handleStatusChange = async (id: string, newStatus: 'approved' | 'rejected') => {
-        if (!window.confirm(`Sind Sie sicher, dass Sie diese Quelle ${newStatus === 'approved' ? 'genehmigen' : 'ablehnen'} möchten?`)) return;
+        if (!window.confirm(`Möchten Sie diese Quelle wirklich ${newStatus === 'approved' ? 'genehmigen' : 'ablehnen'}?`)) return;
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.put(`/api/admin/sources/${id}/status`, { status: newStatus }, { headers: { 'x-auth-token': token } });
             fetchAllData();
             showSnackbar('Status erfolgreich geändert.', 'success');
         } catch (err: any) {
-            alert(err.response?.data?.message || 'Fehler beim Ändern des Status.');
+            showSnackbar(err.response?.data?.message || 'Fehler beim Ändern des Status.', 'error');
         }
     };
 
     const handleDelete = async (id: string) => {
-        if (!window.confirm('Sind Sie sicher, dass Sie diese Quelle endgültig löschen möchten? Alle zugehörigen Stimmen werden ebenfalls entfernt.')) return;
+        if (!window.confirm('Möchten Sie diese Quelle endgültig löschen? Alle zugehörigen Stimmen werden ebenfalls entfernt.')) return;
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.delete(`/api/admin/sources/${id}`, { headers: { 'x-auth-token': token } });
             fetchAllData();
             showSnackbar('Quelle erfolgreich gelöscht.', 'success');
         } catch (err: any) {
-            alert(err.response?.data?.message || 'Fehler beim Löschen.');
+            showSnackbar(err.response?.data?.message || 'Fehler beim Löschen.', 'error');
         }
     };
 
-    // --- Edit & Add Handlers ---
     const handleOpenEdit = (source: Source) => {
         setIsAddMode(false);
         setEditingSource(source);
@@ -146,11 +161,7 @@ const AdminSourcesPage: React.FC = () => {
         setIsAddMode(true);
         setEditingSource(null);
         setFormState({ 
-            url: '', 
-            description: '', 
-            category_id: '', 
-            logo: null, 
-            deleteLogo: false 
+            url: '', description: '', category_id: '', logo: null, deleteLogo: false 
         });
         setDialogOpen(true);
     };
@@ -167,8 +178,8 @@ const AdminSourcesPage: React.FC = () => {
     };
 
     const handleEditSubmit = async () => {
-        if (!formState.url) {
-            alert("Die URL ist ein Pflichtfeld.");
+        if (!formState.url.trim()) {
+            showSnackbar("Die URL ist ein Pflichtfeld.", "error");
             return;
         }
 
@@ -176,20 +187,18 @@ const AdminSourcesPage: React.FC = () => {
         const headers = { 'x-auth-token': token }; 
 
         const formData = new FormData();
-        formData.append('url', formState.url); 
-        if (formState.description) formData.append('description', formState.description);
+        formData.append('url', formState.url.trim()); 
+        if (formState.description) formData.append('description', formState.description.trim());
         if (formState.category_id) formData.append('category_id', formState.category_id);
         if (formState.logo) formData.append('logo', formState.logo);
         if (formState.deleteLogo && !isAddMode) formData.append('delete_logo', 'true');
         
-        // Im Add-Mode setzen wir den Status standardmäßig auf 'approved'
         if (isAddMode) {
             formData.append('status', 'approved');
         }
 
         try {
             if (isAddMode) {
-                // HINWEIS: Hierfür brauchst du eine POST Route im AdminSourcesController
                 await apiClient.post(`/api/admin/sources`, formData, { headers });
                 showSnackbar('Neue Quelle erfolgreich hinzugefügt.', 'success');
             } else {
@@ -200,35 +209,48 @@ const AdminSourcesPage: React.FC = () => {
             fetchAllData();
             setDialogOpen(false);
         } catch (err: any) {
-            alert(err.response?.data?.message || 'Fehler beim Speichern.');
+            showSnackbar(err.response?.data?.message || 'Fehler beim Speichern.', 'error');
         }
     };
 
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
                     <Typography variant="h4" component="h1">
                         Vertrauenswürdige Quellen
                     </Typography>
-                </Box>
-                
-                <Paper sx={{ overflow: 'hidden' }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: 1, borderColor: 'divider', px: 2, bgcolor: 'background.default' }}>
-                        <Tabs value={filterStatus} onChange={(_e, newValue) => setFilterStatus(newValue)} variant="scrollable">
-                            <Tab label="Alle" value="all" />
-                            <Tab label="Ausstehend" value="pending_review" />
-                            <Tab label="Genehmigt" value="approved" />
-                            <Tab label="Abgelehnt" value="rejected" />
-                        </Tabs>
-                        <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenAdd} size="small">
+                    
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                        <TextField 
+                            variant="outlined" 
+                            size="small" 
+                            placeholder="Suchen..." 
+                            value={searchTerm} 
+                            onChange={(e) => setSearchTerm(e.target.value)} 
+                            InputProps={{ 
+                                startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) 
+                            }} 
+                        />
+                        <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenAdd}>
                             Neue Quelle
                         </Button>
                     </Box>
+                </Box>
+                
+                <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+                    <Tabs value={filterStatus} onChange={(_e, newValue) => setFilterStatus(newValue)} variant="scrollable">
+                        <Tab label={`Alle (${sources.length})`} value="all" />
+                        <Tab label={`Ausstehend (${sources.filter(s => s.status === 'pending_review').length})`} value="pending_review" />
+                        <Tab label={`Genehmigt (${sources.filter(s => s.status === 'approved').length})`} value="approved" />
+                        <Tab label={`Abgelehnt (${sources.filter(s => s.status === 'rejected').length})`} value="rejected" />
+                    </Tabs>
+                </Box>
 
-                    {loading ? <Box sx={{ p: 5, textAlign: 'center' }}><CircularProgress /></Box> : 
-                     error ? <Alert severity="error" sx={{ m: 2 }}>{error}</Alert> : (
-                        <TableContainer sx={{ maxHeight: '75vh', overflowX: 'hidden' }}>
+                {loading ? <Box sx={{ p: 5, textAlign: 'center' }}><CircularProgress /></Box> : 
+                    error ? <Alert severity="error" sx={{ m: 2 }}>{error}</Alert> : (
+                    <Paper sx={{ overflow: 'hidden' }}>
+                        <TableContainer sx={{ maxHeight: '75vh', overflowX: 'auto' }}>
                             <Table stickyHeader size="small">
                                 <TableHead>
                                     <TableRow>
@@ -241,7 +263,13 @@ const AdminSourcesPage: React.FC = () => {
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
-                                    {filteredSources.map((source) => (
+                                    {filteredSources.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                                                Keine Quellen gefunden.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : filteredSources.map((source) => (
                                         <TableRow key={source.id} hover>
                                             <TableCell>
                                                 {source.logo_url ? (
@@ -310,8 +338,8 @@ const AdminSourcesPage: React.FC = () => {
                                 </TableBody>
                             </Table>
                         </TableContainer>
-                     )}
-                </Paper>
+                    </Paper>
+                )}
             </Container>
 
             {/* ADD / EDIT DIALOG */}
@@ -326,12 +354,11 @@ const AdminSourcesPage: React.FC = () => {
                         onChange={handleFormChange}
                         fullWidth 
                         variant="outlined" 
-                        InputProps={{ readOnly: !isAddMode }} 
-                        sx={{ mt: 1, bgcolor: !isAddMode ? 'action.hover' : 'inherit' }} 
                         required
+                        sx={{ mt: 1 }}
                     />
                     
-                    <Box sx={{ mt: 2, mb: 1, p: 2, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
+                    <Box sx={{ mt: 3, mb: 1, p: 2, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
                         <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                             Quellen-Logo (wird auf 50px Höhe formatiert & als WebP gespeichert)
                         </Typography>
@@ -369,9 +396,9 @@ const AdminSourcesPage: React.FC = () => {
                         )}
                     </Box>
 
-                    <TextField margin="dense" name="description" label="Beschreibung (Optional)" fullWidth multiline rows={3} variant="outlined" value={formState.description} onChange={handleFormChange} />
+                    <TextField margin="dense" name="description" label="Beschreibung (Optional)" fullWidth multiline rows={3} variant="outlined" value={formState.description} onChange={handleFormChange} sx={{ mt: 2 }} />
                     
-                    <FormControl fullWidth margin="dense">
+                    <FormControl fullWidth margin="dense" sx={{ mt: 2 }}>
                         <InputLabel>Kategorie</InputLabel>
                         <Select name="category_id" value={formState.category_id} label="Kategorie" onChange={handleFormChange as any}>
                             <MenuItem value=""><em>Keine Kategorie</em></MenuItem>
@@ -379,8 +406,8 @@ const AdminSourcesPage: React.FC = () => {
                         </Select>
                     </FormControl>
                 </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setDialogOpen(false)}>Abbrechen</Button>
+                <DialogActions sx={{ p: 2 }}>
+                    <Button onClick={() => setDialogOpen(false)} color="inherit">Abbrechen</Button>
                     <Button onClick={handleEditSubmit} variant="contained">Speichern</Button>
                 </DialogActions>
             </Dialog>

@@ -8,7 +8,19 @@ const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F
 // GET all categories
 exports.getAllCategories = async (req, res) => {
     try {
-        const result = await db.query('SELECT id, name, name_lang, name_lang_en, description, category_type FROM categories ORDER BY name ASC');
+        const result = await db.query(`
+            SELECT 
+                id, 
+                name, 
+                name AS category_name, 
+                name_lang, 
+                name_lang_en, 
+                description, 
+                category_type, 
+                category_type AS category_typ 
+            FROM categories 
+            ORDER BY name ASC
+        `);
         res.json(result.rows);
     } catch (err) {
         console.error('Error fetching categories:', err.message);
@@ -19,7 +31,15 @@ exports.getAllCategories = async (req, res) => {
 // NEUE FUNKTION: Holt nur die Kategorien vom Typ 'industry'
 exports.getAllIndustries = async (req, res) => {
     try {
-        const result = await db.query("SELECT id, name FROM categories WHERE category_type = 'industry' ORDER BY name ASC");
+        const result = await db.query(`
+            SELECT 
+                id, 
+                name, 
+                name AS category_name 
+            FROM categories 
+            WHERE category_type = 'industry' 
+            ORDER BY name ASC
+        `);
         res.json(result.rows);
     } catch (err) {
         console.error('Error fetching industries:', err.message);
@@ -32,8 +52,19 @@ exports.getCategoryById = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
     try {
-        // KORREKTUR: category_type hinzugefügt
-        const result = await db.query('SELECT id, name, name_lang, name_lang_en, description, category_type FROM categories WHERE id = $1', [id]);
+        const result = await db.query(`
+            SELECT 
+                id, 
+                name, 
+                name AS category_name, 
+                name_lang, 
+                name_lang_en, 
+                description, 
+                category_type, 
+                category_type AS category_typ 
+            FROM categories 
+            WHERE id = $1
+        `, [id]);
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Category not found.' });
         }

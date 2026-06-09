@@ -1,514 +1,85 @@
 // frontend/src/pages/ProfilePage.tsx
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  Container, Typography, Box, TextField, Button, Grid, Paper, CircularProgress,
-  Alert, Snackbar, Tooltip, ToggleButton, ToggleButtonGroup, FormControlLabel, Switch,
-  FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, Chip, Autocomplete, useTheme, useMediaQuery,
-  Avatar,
-  IconButton,
-  Badge,
-  Dialog, DialogTitle, DialogContent, DialogActions 
-} from '@mui/material';
-import ThumbUpIcon from '@mui/icons-material/ThumbUp';
-import ThumbDownIcon from '@mui/icons-material/ThumbDown';
-import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
-import EditIcon from '@mui/icons-material/Edit';
-import DeleteIcon from '@mui/icons-material/Delete';
-import QrCodeIcon from '@mui/icons-material/QrCode';
-import ShareIcon from '@mui/icons-material/Share';
-
-import { useAuth } from '../context/AuthContext';
-import apiClient from '../apiClient';
+import React, { useState } from 'react';
+import { Container, Typography, Paper, Tabs, Tab, Box, Alert, CircularProgress } from '@mui/material';
 import { useTranslation } from 'react-i18next';
-import posthog from 'posthog-js';
-import ContributionHistoryModal from '../components/ContributionHistoryModal';
-import { QRCodeCanvas } from 'qrcode.react';
+import { useAuth } from '../context/AuthContext';
 
-type ScoreFilter = 'all' | 'balanced' | 'positive';
-interface FundingCategory { id: number; name: string; }
+// Importiere die neuen Tab-Komponenten
+import ProfileTabPersonal from '../components/ProfileTabPersonal';
+import ProfileTabThemen from '../components/ProfileTabThemen';
+import ProfileTabSettings from '../components/ProfileTabSettings';
+
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
+}
+
+function CustomTabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props;
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`profile-tabpanel-${index}`}
+      aria-labelledby={`profile-tab-${index}`}
+      {...other}
+    >
+      {value === index && <Box sx={{ pt: 3 }}>{children}</Box>}
+    </div>
+  );
+}
 
 const ProfilePage: React.FC = () => {
   const { t } = useTranslation();
-  const { 
-    user, 
-    updateUser, 
-    themeMode, 
-    setThemeMode, 
-    language, 
-    setLanguage, 
-    userTags, 
-    refreshUserTags 
-  } = useAuth();
-  
-  const [avatarLoading, setAvatarLoading] = useState(false); 
-  const avatarUploadRef = useRef<HTMLInputElement>(null);
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState(0);
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  
-  // Form States
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [organizationName, setOrganizationName] = useState('');
-  const [linkedinUrl, setLinkedinUrl] = useState('');
-  const [phone, setPhone] = useState(''); // <--- NEU: Telefonnummer State
-  
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [scoreFilter, setScoreFilter] = useState<ScoreFilter>('all');
-  
-  const [allAvailableTags, setAllAvailableTags] = useState<string[]>([]);
-  const [tagsLoading, setTagsLoading] = useState(true);
-  const [allFundingCategories, setAllFundingCategories] = useState<FundingCategory[]>([]);
-  const [userFundingCategoryIds, setUserFundingCategoryIds] = useState<number[]>([]);
-  const [historyModalOpen, setHistoryModalOpen] = useState(false);
-  const [newsletterOptIn, setNewsletterOptIn] = useState<boolean>(false);
-  
-  const [qrDialogOpen, setQrDialogOpen] = useState(false);
-
-  const isDemoUser = user?.role === 'demo';
-
-  const fetchData = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    try {
-        const token = localStorage.getItem('jwt_token');
-        const headers = { headers: { 'x-auth-token': token } };
-        
-        const [allTagsRes, allCatsRes, userCatsRes] = await Promise.all([
-            apiClient.get('/api/data/all-tags', headers),
-            apiClient.get('/api/funding/categories', headers),
-            apiClient.get('/api/funding/user-categories', headers)
-        ]);
-
-        setAllAvailableTags(allTagsRes.data || []);
-        setAllFundingCategories(allCatsRes.data || []);
-        setUserFundingCategoryIds(userCatsRes.data || []);
-
-    } catch (err) {
-        console.error("Fehler beim Laden der Profildaten:", err);
-        setError("Einige Profildaten konnten nicht geladen werden.");
-    } finally {
-        setLoading(false);
-        setTagsLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (user) {
-      setFirstName(user.first_name || '');
-      setLastName(user.last_name || '');
-      setOrganizationName(user.organization_name || '');
-      setLinkedinUrl(user.linkedin_url || '');
-      // <--- NEU: Telefonnummer laden (Cast as any, da Interface evtl. noch nicht aktuell)
-      setPhone((user as any).phone || ''); 
-
-      const scoreMin = user.article_score_min;
-      if (scoreMin === 1) setScoreFilter('positive');
-      else if (scoreMin === 0) setScoreFilter('balanced');
-      else setScoreFilter('all');
-
-      setNewsletterOptIn(Boolean((user as any).newsletter_opt_in));
-      
-      fetchData();
-    }
-  }, [user, fetchData]);
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (isDemoUser) return;
-    setError(null);
-
-    if (password !== confirmPassword) {
-      setError(t('profile.passwordsDoNotMatch'));
-      return;
-    }
-
-    try {
-      let articleScoreMin: number | null = null;
-      if (scoreFilter === 'positive') articleScoreMin = 1;
-      else if (scoreFilter === 'balanced') articleScoreMin = 0;
-
-      const profileData = {
-        first_name: firstName, 
-        last_name: lastName, 
-        organization_name: organizationName, 
-        linkedin_url: linkedinUrl,
-        phone: phone, // <--- NEU: Telefonnummer senden
-        password: password || undefined,
-        article_score_min: articleScoreMin, 
-        article_score_max: null,
-        preferred_theme: themeMode, 
-        preferred_language: language,
-        newsletter_opt_in: newsletterOptIn,
-      };
-
-      const token = localStorage.getItem('jwt_token');
-      const headers = { headers: { 'x-auth-token': token } };
-
-      const [profileResponse] = await Promise.all([
-        apiClient.put('/api/users/me', profileData, headers),
-        apiClient.post('/api/funding/user-categories', { categoryIds: userFundingCategoryIds }, headers)
-      ]);
-      
-      updateUser(profileResponse.data); 
-      
-      setSnackbar({ open: true, message: t('profile.updateSuccess') });
-      setPassword('');
-      setConfirmPassword('');
-      posthog.capture('profile_updated');
-    } catch (err: any) {
-      setError(err?.response?.data?.message || t('profile.updateError'));
-    }
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
+    setActiveTab(newValue);
   };
 
-  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (isDemoUser) return;
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setAvatarLoading(true);
-    setError(null);
-    const formData = new FormData();
-    formData.append('avatar', file);
-
-    try {
-      const token = localStorage.getItem('jwt_token');
-      const response = await apiClient.post('/api/users/me/avatar', formData, {
-        headers: { 'x-auth-token': token }
-      });
-      
-      updateUser(response.data.user); 
-      setSnackbar({ open: true, message: 'Profilbild erfolgreich aktualisiert.' });
-      posthog.capture('avatar_updated');
-
-    } catch (err: any) {
-      console.error("Avatar-Upload fehlgeschlagen:", err);
-      setError(err?.response?.data?.message || 'Fehler beim Hochladen des Bildes.');
-      setSnackbar({ open: true, message: 'Fehler beim Hochladen des Bildes.' });
-    } finally {
-      setAvatarLoading(false);
-      if (avatarUploadRef.current) {
-        avatarUploadRef.current.value = "";
-      }
-    }
-  };
-
-  const handleAvatarClick = () => {
-    if (isDemoUser || avatarLoading) return;
-    avatarUploadRef.current?.click();
-  };
-
-  const handleAvatarDelete = async () => {
-    if (isDemoUser || !user?.profile_image_url) return;
-    if (!window.confirm("Möchten Sie Ihr Profilbild wirklich entfernen?")) return;
-
-    setAvatarLoading(true);
-    setError(null);
-
-    try {
-        const token = localStorage.getItem('jwt_token');
-        const response = await apiClient.delete('/api/users/me/avatar', {
-            headers: { 'x-auth-token': token }
-        });
-
-        updateUser(response.data.user);
-        setSnackbar({ open: true, message: 'Profilbild erfolgreich gelöscht.' });
-        posthog.capture('avatar_deleted');
-
-    } catch (err: any) {
-        console.error("Avatar-Löschen fehlgeschlagen:", err);
-        setError(err?.response?.data?.message || 'Fehler beim Löschen des Bildes.');
-        setSnackbar({ open: true, message: 'Fehler beim Löschen des Bildes.' });
-    } finally {
-        setAvatarLoading(false);
-    }
-  };
-
-  const handleTagsChange = async (_event: React.SyntheticEvent, newTags: string[]) => {
-    if (isDemoUser) return;
-    const oldTags = userTags;
-    const tagsToAdd = newTags.filter(tag => !oldTags.includes(tag));
-    const tagsToRemove = oldTags.filter(tag => !newTags.includes(tag));
-    try {
-        if (tagsToAdd.length > 0) await Promise.all(tagsToAdd.map(tag => apiClient.post('/api/users/tags', { tagName: tag })));
-        if (tagsToRemove.length > 0) await Promise.all(tagsToRemove.map(tag => apiClient.delete(`/api/users/tags/${encodeURIComponent(tag)}`)));
-        setSnackbar({ open: true, message: 'Themen aktualisiert.'});
-        refreshUserTags();
-    } catch (err) {
-        setSnackbar({ open: true, message: 'Fehler beim Aktualisieren der Themen.' });
-        refreshUserTags();
-    }
-  };
-  
-  const handleScoreFilterChange = (_event: React.MouseEvent<HTMLElement>, newFilter: ScoreFilter | null) => {
-    if (newFilter !== null) setScoreFilter(newFilter);
-  };
-
-  const handleThemeChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setThemeMode(event.target.checked ? 'dark' : 'light');
-  };
-
-  const handleLanguageChange = (event: SelectChangeEvent<'de' | 'en'>) => {
-    setLanguage(event.target.value as 'de' | 'en');
-  };
-
-  const handleNewsletterToggle = (_event: React.ChangeEvent<HTMLInputElement>, checked: boolean) => {
-    if (isDemoUser) return;
-    setNewsletterOptIn(checked);
-  };
-
-  if (loading || !user) {
+  if (!user) {
     return <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box>;
   }
 
+  const isDemoUser = user.role === 'demo';
+
   return (
     <Container maxWidth="md">
-      <Paper sx={{ p: isMobile ? 2 : 4, mt: 4 }}>
+      <Paper sx={{ p: { xs: 2, sm: 4 }, mt: 4, minHeight: '70vh' }}>
         <Typography variant="h4" component="h1" gutterBottom>{t('profile.title')}</Typography>
         {isDemoUser && <Alert severity="info" sx={{ mb: 3 }}>{t('profile.demoUserNotice')}</Alert>}
-        
-        <Box sx={{ display: 'flex', justifyContent: 'center', mb: 3, alignItems: 'center', flexDirection: 'column' }}>
-          <input
-            type="file"
-            ref={avatarUploadRef}
-            onChange={handleAvatarUpload}
-            hidden
-            accept="image/png, image/jpeg, image/webp"
-          />
-          <Tooltip title={isDemoUser ? '' : t('profile.changeAvatar')}>
-            <Badge
-              overlap="circular"
-              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-              badgeContent={
-                <IconButton
-                  onClick={handleAvatarClick}
-                  disabled={isDemoUser || avatarLoading}
-                  size="small"
-                  sx={{ 
-                    bgcolor: 'background.paper', 
-                    '&:hover': { bgcolor: 'background.default' },
-                    border: `1px solid ${theme.palette.divider}`
-                  }}
-                >
-                  {avatarLoading ? <CircularProgress size={20} /> : <EditIcon fontSize="small" />}
-                </IconButton>
-              }
-            >
-              <Avatar
-                src={user.profile_image_url || undefined}
-                alt={user.first_name || user.username}
-                sx={{ width: 100, height: 100, fontSize: '3rem', cursor: isDemoUser ? 'default' : 'pointer' }}
-                onClick={handleAvatarClick}
-              >
-                {user.first_name ? user.first_name.charAt(0) : user.username.charAt(0)}
-              </Avatar>
-            </Badge>
-          </Tooltip>
 
-          {user.profile_image_url && (
-            <Button
-                variant="text"
-                color="error"
-                size="small"
-                startIcon={<DeleteIcon />}
-                onClick={handleAvatarDelete}
-                disabled={avatarLoading || isDemoUser}
-                sx={{ mt: 1.5 }}
-            >
-                {t('profile.deleteAvatar', 'Bild entfernen')}
-            </Button>
-          )}
-
-          <Button 
-            variant="outlined" 
-            startIcon={<QrCodeIcon />} 
-            onClick={() => setQrDialogOpen(true)}
-            sx={{ mt: 2 }}
+        <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+          <Tabs 
+            value={activeTab} 
+            onChange={handleTabChange} 
+            variant="scrollable"
+            scrollButtons="auto"
+            aria-label="Profil Navigation"
           >
-            Digitale Visitenkarte
-          </Button>
+            <Tab label="Persönliches" />
+            <Tab label="Themen & Präferenzen" />
+            <Tab label="Account & Sicherheit" />
+          </Tabs>
         </Box>
 
-        <Box component="form" onSubmit={handleSubmit}>
-          <Grid container spacing={3}>
-            <Grid item xs={12} sm={6}><TextField label={t('profile.firstname')} fullWidth value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={isDemoUser}/></Grid>
-            <Grid item xs={12} sm={6}><TextField label={t('profile.lastname')} fullWidth value={lastName} onChange={(e) => setLastName(e.target.value)} disabled={isDemoUser}/></Grid>
-            <Grid item xs={12}><TextField label={t('profile.organization')} fullWidth value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} disabled={isDemoUser}/></Grid>
-            <Grid item xs={12} sm={6}><TextField label={t('profile.linkedinUrl')} fullWidth value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} disabled={isDemoUser}/></Grid>
-            
-            {/* NEU: Telefonnummer Feld */}
-            <Grid item xs={12} sm={6}>
-                <TextField 
-                    label="Telefonnummer (für Visitenkarte)" 
-                    fullWidth 
-                    value={phone} 
-                    onChange={(e) => setPhone(e.target.value)} 
-                    disabled={isDemoUser}
-                    placeholder="+43 123 456789"
-                />
-            </Grid>
-            
-            <Grid item xs={12}>
-                <Typography variant="h6" sx={{ mt: 2 }}>Meine Förder-Interessen</Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    Wählen Sie Ihre relevanten Branchen und Themen aus, damit wir Ihnen die passendsten Förderungen mit einem "Match-Score" anzeigen können.
-                </Typography>
-                {tagsLoading ? <CircularProgress size={24} /> : (
-                    <Autocomplete
-                        multiple
-                        options={allFundingCategories}
-                        getOptionLabel={(option) => option.name}
-                        value={allFundingCategories.filter(cat => userFundingCategoryIds.includes(cat.id))}
-                        onChange={(_event, newValue) => {
-                            setUserFundingCategoryIds(newValue.map(v => v.id));
-                        }}
-                        isOptionEqualToValue={(option, value) => option.id === value.id}
-                        disabled={isDemoUser}
-                        renderInput={(params) => (
-                            <TextField {...params} variant="outlined" label="Branchen, Themen & Unternehmens-Typen" placeholder="Interessen hinzufügen" />
-                        )}
-                        renderTags={(value, getTagProps) =>
-                            value.map((option, index) => {
-                                const { key, ...tagProps } = getTagProps({ index });
-                                return (
-                                    <Chip key={key} label={option.name} {...tagProps} />
-                                );
-                            })
-                        }
-                    />
-                )}
-            </Grid>
+        <CustomTabPanel value={activeTab} index={0}>
+          <ProfileTabPersonal user={user} isDemoUser={isDemoUser} />
+        </CustomTabPanel>
 
-            <Grid item xs={12}>
-                <Typography id="my-tags" variant="h6" sx={{ mt: 2 }}>Meine Themen / Tags</Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    Fügen Sie Themen hinzu, um Ihre Inhalte zu personalisieren. Bestehende Tags werden als Vorschlag geladen.
-                </Typography>
-                {tagsLoading ? <CircularProgress size={24} /> : (
-                    <Autocomplete
-                        multiple
-                        options={allAvailableTags}
-                        value={userTags}
-                        onChange={handleTagsChange}
-                        disabled={isDemoUser}
-                        renderTags={(value: readonly string[], getTagProps) =>
-                            value.map((option: string, index: number) => {
-                                const { key, ...tagProps } = getTagProps({ index });
-                                return (
-                                    <Chip key={key} variant="outlined" label={option} {...tagProps} />
-                                );
-                            })
-                        }
-                        renderInput={(params) => (<TextField {...params} variant="outlined" label="Meine Themen" placeholder="Themen auswählen"/>)}
-                    />
-                )}
-            </Grid>
+        <CustomTabPanel value={activeTab} index={1}>
+          <ProfileTabThemen user={user} isDemoUser={isDemoUser} />
+        </CustomTabPanel>
 
-            <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.dashboardSettings')}</Typography></Grid>
-            <Grid item xs={12}>
-              <Typography variant="body2" color="text.secondary" gutterBottom>{t('profile.articleQuality')}</Typography>
-              <ToggleButtonGroup
-                value={scoreFilter}
-                exclusive
-                onChange={handleScoreFilterChange}
-                aria-label="Artikel-Score Filter"
-                disabled={isDemoUser}
-                orientation={isMobile ? 'vertical' : 'horizontal'}
-                fullWidth={isMobile}
-              >
-                <ToggleButton value="all" aria-label="alles anzeigen">
-                  <Tooltip title={t('profile.tooltipAll')}>
-                    <ThumbDownIcon sx={{ mr: 1 }} />
-                  </Tooltip>
-                  {t('profile.qualityAll')}
-                </ToggleButton>
-                <ToggleButton value="balanced" aria-label="ausgeglichen und besser">
-                  <Tooltip title={t('profile.tooltipBalanced')}>
-                    <RemoveCircleOutlineIcon sx={{ mr: 1 }} />
-                  </Tooltip>
-                  {t('profile.qualityBalanced')}
-                </ToggleButton>
-                <ToggleButton value="positive" aria-label="nur positive">
-                  <Tooltip title={t('profile.tooltipHelpful')}>
-                    <ThumbUpIcon sx={{ mr: 1 }} />
-                  </Tooltip>
-                  {t('profile.qualityHelpful')}
-                </ToggleButton>
-              </ToggleButtonGroup>
-            </Grid>
+        <CustomTabPanel value={activeTab} index={2}>
+          <ProfileTabSettings user={user} isDemoUser={isDemoUser} />
+        </CustomTabPanel>
 
-            <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.appearanceSettings')}</Typography></Grid>
-            <Grid item xs={12} sm={6}><FormControlLabel control={<Switch checked={themeMode === 'dark'} onChange={handleThemeChange} disabled={isDemoUser}/>} label={t('profile.darkTheme')}/></Grid>
-            <Grid item xs={12} sm={6}><FormControl fullWidth size="small"><InputLabel>{t('profile.language')}</InputLabel><Select value={language} label={t('profile.language')} onChange={handleLanguageChange} disabled={isDemoUser}><MenuItem value="de">Deutsch</MenuItem><MenuItem value="en">English</MenuItem></Select></FormControl></Grid>
-            <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.newsletterTitle')}</Typography><Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{t('profile.newsletterDescription')}</Typography><FormControlLabel control={<Switch checked={newsletterOptIn} onChange={handleNewsletterToggle} disabled={isDemoUser}/>} label={newsletterOptIn ? t('profile.newsletterOn') : t('profile.newsletterOff')}/></Grid>
-            
-            <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.accountInfo')}</Typography></Grid>
-            <Grid item xs={12} sm={6}><TextField label={t('profile.email')} fullWidth value={user.email} disabled /></Grid>
-            <Grid item xs={12} sm={6}><TextField label={t('profile.role')} fullWidth value={user.role} disabled /></Grid>
-            <Grid item xs={12} sm={6}><TextField label={t('profile.membershipLevel')} fullWidth value={user.membership_level || 'Kein Level'} disabled/></Grid>
-            <Grid item xs={12} sm={6}>
-                <Paper variant="outlined" sx={{ p: '13.5px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                    <Box>
-                        <Typography variant="caption" color="text.secondary">Community-Punkte</Typography>
-                        <Typography variant="body1">{user.contribution_score || 0}</Typography>
-                    </Box>
-                    <Button size="small" onClick={() => setHistoryModalOpen(true)}>Verlauf</Button>
-                </Paper>
-            </Grid>
-            
-            <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>{t('profile.changePassword')}</Typography></Grid>
-            <Grid item xs={12} sm={6}><TextField type="password" label={t('profile.newPassword')} fullWidth value={password} onChange={(e) => setPassword(e.target.value)} disabled={isDemoUser}/></Grid>
-            <Grid item xs={12} sm={6}><TextField type="password" label={t('profile.confirmPassword')} fullWidth value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} disabled={isDemoUser}/></Grid>
-            {error && (<Grid item xs={12}><Alert severity="error">{error}</Alert></Grid>)}
-            <Grid item xs={12}><Button type="submit" variant="contained" color="primary" sx={{ mt: 2 }} disabled={isDemoUser}>{t('saveChanges')}</Button></Grid>
-          </Grid>
-        </Box>
       </Paper>
-      <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={() => setSnackbar({ ...snackbar, open: false })} message={snackbar.message} />
-      <ContributionHistoryModal 
-        open={historyModalOpen} 
-        onClose={() => setHistoryModalOpen(false)} 
-        currentUserScore={user.contribution_score || 0}
-      />        
-
-      {/* NEU: Dialog für Visitenkarte */}
-      <Dialog open={qrDialogOpen} onClose={() => setQrDialogOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ textAlign: 'center' }}>Meine Visitenkarte</DialogTitle>
-        <DialogContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 3 }}>
-            <Box sx={{ p: 2, bgcolor: 'white', borderRadius: 2, border: '1px solid #eee', mb: 2 }}>
-                {user && (
-                    <QRCodeCanvas 
-                        value={`${window.location.origin}/p/${user.id}`}
-                        size={200}
-                        level="M"
-                    />
-                )}
-            </Box>
-            <Typography variant="body2" align="center" color="text.secondary">
-                Scannen Sie diesen Code, um Ihre Kontaktdaten zu teilen.
-            </Typography>
-            <Button 
-                startIcon={<ShareIcon />} 
-                sx={{ mt: 2 }} 
-                onClick={() => {
-                    navigator.clipboard.writeText(`${window.location.origin}/p/${user?.id}`);
-                    setSnackbar({ open: true, message: 'Link kopiert!' });
-                }}
-            >
-                Link kopieren
-            </Button>
-        </DialogContent>
-        <DialogActions>
-            <Button onClick={() => setQrDialogOpen(false)}>Schließen</Button>
-            <Button component="a" href={`/p/${user?.id}`} target="_blank">Vorschau</Button>
-        </DialogActions>
-      </Dialog>
-
     </Container>
   );
 };
+
 export default ProfilePage;

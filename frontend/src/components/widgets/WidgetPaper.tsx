@@ -1,3 +1,4 @@
+// frontend/src/components/widgets/WidgetPaper.tsx
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -63,6 +64,7 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
     };
 
     const renderActions = () => {
+        // Im Public-Schaufenster gibt es kein Feedback oder Löschen
         if (isPublic) return null;
 
         // Mobile: Drei-Punkte-Menü
@@ -113,12 +115,12 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                 display: 'flex', 
                 flexDirection: 'column',
                 overflow: 'hidden',
-                borderRadius: 2, // Etwas weichere Ecken
+                borderRadius: 2,
                 border: theme.palette.mode === 'dark' ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0,0,0,0.04)',
                 ...(isPublic && {
                     backgroundColor: 'rgba(255,255,255,0.6)', 
                     backdropFilter: 'blur(10px)',
-                    border: '1px solid rgba(255,255,255,0.3)',
+                    border: '1px solid rgba(255,255,255,0.1)',
                     transition: 'all 0.3s ease'
                 }),
                 // Desktop Hover-Logik: Header-Elemente sichtbar machen
@@ -127,25 +129,30 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
             }} 
             {...rest}
         >
-            {/* WIDGET HEADER */}
-            <Box 
-                sx={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    p: isMobile ? '8px 12px' : '10px 16px',
-                    borderBottom: '1px solid',
-                    borderColor: 'divider',
-                    backgroundColor: isPublic ? 'transparent' : (theme.palette.mode === 'dark' ? 'background.paper' : '#f8fafc'), // Sanftes Grau im Light-Mode
-                    minHeight: isMobile ? 44 : 48,
-                }}
-            >
+            {/* --- WIDGET HEADER --- */}
+<Box 
+    sx={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        p: isMobile ? '8px 12px' : '10px 16px',
+        borderBottom: '1px solid',
+        borderColor: 'rgba(255,255,255,0.1)', // Einheitliche, zarte Linie
+        
+        // HIER IST DER FIX: Einheitlicher Hintergrund für ALLE Header im Public Mode
+        backgroundColor: isPublic 
+            ? 'rgba(0, 0, 0, 0.2)'  // <--- Das sorgt für den einheitlichen Glass-Header
+            : (theme.palette.mode === 'dark' ? 'background.paper' : '#f8fafc'),
+            
+        minHeight: isMobile ? 44 : 48,
+    }}
+>
                 {!isMobile && !isPublic && (
                     <Box 
                         className="widget-drag-handle" 
                         sx={{ 
                             cursor: 'grab', 
                             mr: 1, 
-                            opacity: 0, // Standardmäßig unsichtbar
+                            opacity: 0, 
                             transition: 'opacity 0.2s',
                             display: 'flex',
                             alignItems: 'center',
@@ -163,18 +170,20 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                     flexGrow: 1, 
                     overflow: 'hidden', 
                     mr: 1,
+                    // FIX: Strahlend weiß im Public-Modus, normales Text-Primary sonst
                     '& .MuiTypography-h6': {
                         fontSize: isMobile ? '1rem' : '1.1rem',
                         fontWeight: 600,
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
-                        color: isPublic ? 'text.secondary' : 'text.primary'
+                        color: isPublic ? '#ffffff' : 'text.primary'
                     },
+                    // FIX: Helles Grau für Icons im Public-Modus, normales Text-Secondary sonst
                     '& svg': {
                         fontSize: '1.2rem',
                         marginRight: '8px',
-                        color: 'text.secondary'
+                        color: isPublic ? 'rgba(255, 255, 255, 0.7)' : 'text.secondary'
                     }
                 }}>
                     {title}
@@ -183,7 +192,7 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                 {renderActions()}
             </Box>
             
-            {/* WIDGET CONTENT */}
+            {/* --- WIDGET CONTENT --- */}
             <Box sx={{ 
                 flexGrow: 1, 
                 overflowY: isMobile ? 'hidden' : 'auto', 
@@ -192,7 +201,8 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                 display: 'flex', 
                 flexDirection: 'column',
                 position: 'relative',
-                maxHeight: isMobile && !mobileExpanded ? '380px' : 'none',
+                // FIX: 2500px statt 'none', damit CSS die Höhe weich animieren kann
+                maxHeight: isMobile && !mobileExpanded ? '380px' : '2500px',
                 transition: 'max-height 0.4s ease-in-out',
                 bgcolor: 'background.paper'
             }}>
@@ -210,7 +220,7 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                     children
                 )}
 
-                {/* Theme-kompatibler Fade-Out Effekt */}
+                {/* Theme-kompatibler Fade-Out Effekt auf Mobile */}
                 {isMobile && !mobileExpanded && !loading && !error && (
                     <Box sx={{ 
                         position: 'absolute', 
@@ -223,7 +233,7 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                 )}
             </Box>
 
-            {/* DEZENTER MOBILE EXPAND BUTTON */}
+            {/* --- DEZENTER MOBILE EXPAND BUTTON --- */}
             {isMobile && !loading && !error && (
                 <Button 
                     fullWidth 
@@ -236,7 +246,7 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
                         py: 0.75,
                         textTransform: 'none',
                         fontSize: '0.85rem',
-                        color: 'text.secondary',
+                        color: isPublic ? 'rgba(255,255,255,0.7)' : 'text.secondary',
                         bgcolor: 'background.paper',
                         '&:hover': { bgcolor: 'action.hover' }
                     }}

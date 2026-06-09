@@ -1,3 +1,4 @@
+// backend/services/marketBriefingService.js
 const db = require('../config/db');
 const { generateAIContent, logToDb } = require('./aiExecutionService');
 
@@ -295,6 +296,120 @@ exports.generateBriefingsForAllPartners = async (targetBpId = null) => {
             await client.query(`UPDATE ai_jobs SET status = 'failed' WHERE id = $1`, [jobId]);
             await logToDb(jobId, 'ERROR', `Kritischer Fehler: ${err.message}`);
         }
+    } finally {
+        if (client) client.release();
+    }
+};
+
+// Hilfsfunktion für den E-Mail-Versand
+function extractSources(related_articles) {
+    if (!related_articles) return [];
+    if (Array.isArray(related_articles)) return related_articles;
+    if (typeof related_articles === 'string') {
+        try {
+            const parsed = JSON.parse(related_articles);
+            if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+            if (related_articles.trim().startsWith('http')) return [related_articles.trim()];
+        }
+    }
+    return [];
+}
+
+const { sendDailyBriefing } = require('./emailService'); // Stelle sicher, dass das oben oder hier importiert ist
+
+exports.dispatchAutomatedNewsletters = async () => {
+    let client;
+    try {
+        client = await db.connect();
+        console.log('[Briefing Service] Starte automatischen E-Mail-Versand Check...');
+
+        // 1. Hole alle Partner, die einen aktiven E-Mail-Versand haben
+        const bpRes = await client.query(
+            `SELECT id, name, newsletter_frequency FROM business_partners WHERE is_active = TRUE AND newsletter_frequency != 'never'`
+        );
+
+        const now = new Date();
+        const isFriday = now.getDay() === 5;
+        const isFirstOfMonth = now.getDate() === 1;
+
+        for (const partner of bpRes.rows) {
+            const freq = partner.newsletter_frequency;
+            
+            // 2. Prüfen, ob HEUTE der Tag für den Versand ist
+            let shouldSendToday = false;
+            if (freq === 'daily') shouldSendToday = true;
+            if (freq === 'weekly' && isFriday) shouldSendToday = true;
+            if (freq === 'monthly' && isFirstOfMonth) shouldSendToday = true;
+
+            if (!shouldSendToday) continue;
+
+            console.log(`[Briefing Service] Bereite Versand für Partner ${partner.name} vor (${freq})...`);
+
+            // 3. Neuestes publiziertes Briefing holen (max 24h alt)
+            const briefingRes = await client.query(`
+                SELECT * FROM business_partner_intelligence_briefings 
+                WHERE business_partner_id = $1 AND status = 'published' 
+                AND created_at >= NOW() - INTERVAL '24 hours'
+                ORDER BY created_at DESC
+            `, [partner.id]);
+
+            const items = briefingRes.rows;
+            if (items.length === 0) {
+                console.log(`[Briefing Service] Abbruch: Kein aktuelles (publiziertes) Briefing für ${partner.name} gefunden.`);
+                continue;
+            }
+
+            // 4. Empfänger holen
+            const userRes = await client.query(
+                `SELECT email, first_name, last_name FROM users WHERE business_partner_id = $1 AND newsletter_opt_in = TRUE AND is_active = TRUE`,
+                [partner.id]
+            );
+            const recipients = userRes.rows;
+
+            if (recipients.length === 0) continue;
+
+            // 5. E-Mail Struktur bauen
+            const partnerDataRes = await client.query(`
+                SELECT bp.*, row_to_json(cs.*) as color_scheme 
+                FROM business_partners bp LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id 
+                WHERE bp.id = $1`, [partner.id]);
+            
+            const briefingForEmail = {
+                top_insights: items.filter(i => i.briefing_type === 'top_insight').map(i => ({ 
+                    title: i.headline, what_changed: i.analysis_summary, so_what: i.prognosis, action: i.talking_point, sources: extractSources(i.related_articles)
+                })),
+                regulation_and_funding: items.filter(i => i.briefing_type === 'regulation').map(i => {
+                    const parsedSources = extractSources(i.related_articles);
+                    return { title: i.headline, summary: i.analysis_summary, action: i.talking_point, source: parsedSources[0] || null };
+                }),
+                recommended_actions: items.filter(i => i.briefing_type === 'action_plan').map(i => i.headline)
+            };
+
+            const eventRes = await client.query(`
+                SELECT title, event_date, original_url, summary
+                FROM scraped_content sc
+                WHERE sc.event_date >= CURRENT_DATE
+                AND (sc.source_identifier = $1 OR sc.source_identifier !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}_(news|events)$')
+                ORDER BY sc.event_date ASC LIMIT 1
+            `, [`${partner.id}_events`]);
+
+            // 6. Mails senden
+            recipients.forEach(user => {
+                sendDailyBriefing({ 
+                    to: user.email, 
+                    user, 
+                    partner: partnerDataRes.rows[0], 
+                    briefing: briefingForEmail, 
+                    nextEvent: eventRes.rows[0] || null 
+                }).catch(e => console.error(e));
+            });
+
+            console.log(`[Briefing Service] ${recipients.length} E-Mails an Partner ${partner.name} versendet.`);
+        }
+
+    } catch (err) {
+        console.error('[Briefing Service] Fehler beim automatischen E-Mail-Versand:', err);
     } finally {
         if (client) client.release();
     }

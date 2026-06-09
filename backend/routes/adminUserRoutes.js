@@ -35,9 +35,11 @@ router.delete('/:id', adminUserController.deleteUser);
 // ==========================================
 // 3. SUB-RESSOURCEN (Dashboards & Widgets)
 // ==========================================
-// Hier verwenden wir :userId zur besseren Unterscheidung
-router.delete('/:userId/dashboard/widget/:widgetTypeKey', adminUserController.removeWidgetFromUserDashboard);
-router.get('/:userId/statistics', adminUserController.getUserStatistics);
+// WICHTIG: Die Parameternamen (:id und :widgetKey) müssen exakt mit dem Controller übereinstimmen!
+router.delete('/:id/dashboard/widget/:widgetKey', adminUserController.removeWidgetFromUserDashboard);
+
+// Falls getUserStatistics auch req.params.id nutzt, hier ebenfalls konsistent :id verwenden:
+router.get('/:id/statistics', adminUserController.getUserStatistics);
 
 
 module.exports = router;

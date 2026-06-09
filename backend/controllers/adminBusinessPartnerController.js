@@ -99,7 +99,8 @@ exports.createBusinessPartner = async (req, res) => {
         color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
         default_region_id, email, briefing_frequency, allow_automated_newsletter,
-        category_ids = [], dashboard_focus
+        category_ids = [], dashboard_focus,
+        color_mode, custom_colors // NEU
     } = req.body;
 
     if (!name) return res.status(400).json({ message: 'Name is required.' });
@@ -107,6 +108,33 @@ exports.createBusinessPartner = async (req, res) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+
+        let finalColorSchemeId = color_scheme_id;
+
+        // NEU: Custom Color Scheme anlegen, wenn Modus auf 'custom' steht
+        if (color_mode === 'custom' && custom_colors) {
+            const customName = `Custom - BP ${Date.now()}`;
+            
+            const insertSchemeQuery = `
+                INSERT INTO color_schemes (
+                    name, primary_color, secondary_color, 
+                    text_color_light, background_color_light, paper_color_light, primary_text_color
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id
+            `;
+            
+            const result = await client.query(insertSchemeQuery, [
+                customName, 
+                custom_colors.primary_color, 
+                custom_colors.secondary_color, 
+                custom_colors.text_color_light, 
+                custom_colors.background_color_light, 
+                custom_colors.paper_color_light,
+                custom_colors.primary_text_color
+            ]);
+            
+            finalColorSchemeId = result.rows[0].id;
+        }
 
         const bpResult = await client.query(
             `INSERT INTO business_partners (
@@ -117,7 +145,7 @@ exports.createBusinessPartner = async (req, res) => {
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
             [
                 name, address || null, logo_url || null, subscription_start_date || null,
-                subscription_end_date || null, color_scheme_id || null, is_active,
+                subscription_end_date || null, finalColorSchemeId || null, is_active,
                 url_businesspartner || null, dashboard_title || null, level_1_name || null,
                 level_2_name || null, level_3_name || null, email || null,
                 !!allow_automated_newsletter, briefing_frequency || 'never', dashboard_focus || 'information'
@@ -158,20 +186,18 @@ exports.createBusinessPartner = async (req, res) => {
     }
 };
 
-
 exports.updateBusinessPartner = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
 
-    // FIX: Keine leeren Arrays = [] mehr als Fallback! 
-    // Wenn das Frontend sie nicht schickt, bleiben sie undefined.
     const {
         name, address, logo_url, subscription_start_date, subscription_end_date,
         color_scheme_id, is_active, url_businesspartner, region_ids,
         dashboard_title, level_1_name, level_2_name, level_3_name,
         default_region_id, email, storage_tier, 
         allow_automated_newsletter, briefing_frequency, 
-        category_ids, dashboard_focus 
+        category_ids, dashboard_focus,
+        color_mode, custom_colors // NEU
     } = req.body;
 
     // Storage Tier Logik
@@ -189,6 +215,33 @@ exports.updateBusinessPartner = async (req, res) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+
+        let finalColorSchemeId = color_scheme_id;
+
+        // NEU: Custom Color Scheme Logik beim Update
+        if (color_mode === 'custom' && custom_colors) {
+            const customName = `Custom - BP ${Date.now()}`;
+            
+            const insertSchemeQuery = `
+                INSERT INTO color_schemes (
+                    name, primary_color, secondary_color, 
+                    text_color_light, background_color_light, paper_color_light, primary_text_color
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id
+            `;
+            
+            const result = await client.query(insertSchemeQuery, [
+                customName, 
+                custom_colors.primary_color, 
+                custom_colors.secondary_color, 
+                custom_colors.text_color_light, 
+                custom_colors.background_color_light, 
+                custom_colors.paper_color_light,
+                custom_colors.primary_text_color
+            ]);
+            
+            finalColorSchemeId = result.rows[0].id;
+        }
 
         // UPDATE Query mit exakt 19 Parametern
         const updatedBpResult = await client.query(
@@ -219,7 +272,7 @@ exports.updateBusinessPartner = async (req, res) => {
                 logo_url || null, 
                 subscription_start_date || null, 
                 subscription_end_date || null,
-                color_scheme_id || null, 
+                finalColorSchemeId || null, 
                 is_active, 
                 url_businesspartner || null, 
                 dashboard_title || null,
@@ -240,7 +293,7 @@ exports.updateBusinessPartner = async (req, res) => {
             throw new Error('Business Partner not found.');
         }
 
-        // 1. Regions-Logik (NUR WENN region_ids im Request existiert)
+        // 1. Regions-Logik
         if (region_ids !== undefined) {
             await client.query('DELETE FROM business_partner_regions WHERE business_partner_id = $1', [id]);
             if (Array.isArray(region_ids) && region_ids.length > 0) {
@@ -254,7 +307,7 @@ exports.updateBusinessPartner = async (req, res) => {
             }
         }
         
-        // 2. Branchen/Kategorien-Logik (NUR WENN category_ids im Request existiert)
+        // 2. Branchen/Kategorien-Logik
         if (category_ids !== undefined) {
             await client.query('DELETE FROM business_partner_categories WHERE business_partner_id = $1', [id]);
             if (Array.isArray(category_ids) && category_ids.length > 0) {
@@ -279,7 +332,6 @@ exports.updateBusinessPartner = async (req, res) => {
     }
 };
 
-// ... (rest of the controller remains unchanged)
 exports.deleteBusinessPartner = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Business Partner ID format.' });
@@ -298,7 +350,14 @@ exports.deleteBusinessPartner = async (req, res) => {
 
 exports.getAllColorSchemes = async (req, res) => {
     try {
-        const result = await db.query('SELECT id, name, primary_color, secondary_color FROM color_schemes ORDER BY name ASC');
+        // Hinweis: Wir ziehen auch die Custom-Themes, 
+        // im Frontend filtern wir "Custom -" für die Dropdowns aber heraus.
+        const result = await db.query(`
+            SELECT id, name, primary_color, secondary_color, 
+                   text_color_light, background_color_light, paper_color_light, primary_text_color 
+            FROM color_schemes 
+            ORDER BY name ASC
+        `);
         res.json(result.rows);
     } catch (err) {
         console.error('Error fetching all color schemes:', err.message);
@@ -407,15 +466,12 @@ exports.updateBusinessPartnerTier = async (req, res) => {
     }
 };
 
-
-
 exports.uploadBusinessPartnerLogo = async (req, res) => {
     const file = req.file;
     if (!file) {
         return res.status(400).json({ message: "Keine Datei hochgeladen." });
     }
 
-    // Eindeutigen Dateinamen generieren, um Kollisionen zu vermeiden
     const fileExtension = file.originalname.split('.').pop();
     const uniqueFileName = `${uuidv4()}.${fileExtension}`;
     const storagePath = `logos/${uniqueFileName}`; // Zielordner in S3
@@ -430,7 +486,6 @@ exports.uploadBusinessPartnerLogo = async (req, res) => {
 
         await s3Client.send(new PutObjectCommand(params));
 
-        // Die öffentliche URL der Datei konstruieren
         const publicUrl = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_S3_REGION}.amazonaws.com/${storagePath}`;
 
         return res.status(200).json({
@@ -441,43 +496,5 @@ exports.uploadBusinessPartnerLogo = async (req, res) => {
     } catch (error) {
         console.error("Fehler beim Logo-Upload:", error);
         return res.status(500).json({ message: "Fehler beim Server während des Logo-Uploads." });
-    }
-};
-
-
-// --- NEU: Öffentliche Daten für die Invite-Card abrufen ---
-exports.getPublicPartnerCard = async (req, res) => {
-    const { id } = req.params;
-
-    // 1. Validierung
-    if (!id || !/^[0-9a-fA-F-]{36}$/.test(id)) {
-        return res.status(400).json({ message: 'Ungültige ID.' });
-    }
-
-    try {
-        // 2. Abfrage der öffentlichen Daten (inkl. Primärfarbe aus dem Farbschema)
-        const query = `
-            SELECT 
-                bp.id, 
-                bp.name, 
-                bp.logo_url, 
-                bp.dashboard_title,
-                cs.primary_color, -- Farbe aus der verknüpften Tabelle holen
-                RIGHT(bp.id::text, 8) as voucher_code
-            FROM business_partners bp
-            LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id
-            WHERE bp.id = $1 AND bp.is_active = TRUE
-        `;
-        
-        const { rows } = await db.query(query, [id]);
-
-        if (rows.length === 0) {
-            return res.status(404).json({ message: 'Partner nicht gefunden oder inaktiv.' });
-        }
-
-        res.json(rows[0]);
-    } catch (err) {
-        console.error('Fehler beim Laden der Public BP Card:', err.message);
-        res.status(500).json({ message: 'Serverfehler' });
     }
 };

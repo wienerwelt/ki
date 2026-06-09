@@ -32,6 +32,7 @@ interface UnifiedContent {
     region: string | null;
     relevance_score: number | null;
     scraped_at: string;
+    created_at?: string | null;
     data_type: 'content' | 'traffic';
     tags: string[] | null;
     summary?: string | null;
@@ -67,6 +68,7 @@ const initialFormState = {
     full_text: '',
     published_date: '',
     event_date: '',
+    created_at: '',
     category_id: '' as string | null,
     tags: [] as Tag[],
     relevance_score: '' as number | '',
@@ -206,6 +208,7 @@ const AdminScrapedContentPage: React.FC = () => {
             full_text: item.full_text || '',
             published_date: item.published_date ? new Date(item.published_date).toISOString().split('T')[0] : '',
             event_date: item.event_date ? new Date(item.event_date).toISOString().split('T')[0] : '',
+            created_at: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
             category_id: allCategories.find(c => c.name === item.category)?.id || null,
             tags: allTags.filter(t => item.tags?.includes(t.name)),
             relevance_score: item.relevance_score ?? '',
@@ -228,6 +231,7 @@ const AdminScrapedContentPage: React.FC = () => {
             full_text: formState.full_text || null,
             published_date: formState.published_date || null,
             event_date: formState.event_date || null,
+            created_at: formState.created_at || null,
             relevance_score: formState.relevance_score === '' ? null : Number(formState.relevance_score),
             region: formState.region || null,
             thumbnail_url: formState.thumbnail_url || null,
@@ -549,7 +553,14 @@ const AdminScrapedContentPage: React.FC = () => {
                                     value={formState.tags}
                                     onChange={(_, newValue) => { setFormState(p => ({...p, tags: newValue})); }}
                                     isOptionEqualToValue={(option, value) => option.id === value.id}
-                                    renderTags={(value, getTagProps) => value.map((option, index) => (<Chip label={option.name} size="small" {...getTagProps({ index })} />))}
+                                    renderTags={(value, getTagProps) => 
+                                        value.map((option, index) => {
+                                            const { key, ...tagProps } = getTagProps({ index });
+                                            return (
+                                                <Chip key={key} label={option.name} size="small" {...tagProps} />
+                                            );
+                                        })
+                                    }
                                     renderInput={(params) => <TextField {...params} label="Tags" size="small" placeholder="Tags auswählen" />}
                                 />
                             </Grid>
@@ -559,6 +570,9 @@ const AdminScrapedContentPage: React.FC = () => {
                             </Grid>
                             <Grid item xs={12} md={4}>
                                 <TextField name="event_date" label="Veranstaltungsdatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formState.event_date} onChange={handleFormChange} size="small" />
+                            </Grid>
+                            <Grid item xs={12} md={3}>
+                                <TextField name="created_at" label="Erstellt am" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formState.created_at} onChange={handleFormChange} size="small" />
                             </Grid>
                             <Grid item xs={12} md={4}>
                                 <TextField select name="region" label="Region" fullWidth value={formState.region} onChange={handleFormChange} size="small">

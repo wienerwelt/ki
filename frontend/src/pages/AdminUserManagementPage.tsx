@@ -1,4 +1,3 @@
-// frontend/src/pages/AdminUserManagementPage.tsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { 
@@ -7,6 +6,8 @@ import {
     TextField, MenuItem, Switch, FormControlLabel, Chip, Tabs, Tab, TableSortLabel, InputAdornment, Tooltip, Snackbar, Grid,
     Avatar, List, ListItem, ListItemText, Divider
 } from '@mui/material';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
@@ -39,15 +40,15 @@ interface User {
   business_partner_id: string | null;
   business_partner_name: string | null;
   is_active: boolean;
+  active_until: string | null;
   last_login_at: string | null;
   profile_image_url: string | null;
 }
 
-interface BusinessPartnerOption { id: string; name: string; }
+interface BusinessPartnerOption { id: string; name: string; user_count: number; }
 interface RoleOption { name: string; description: string; }
 interface MembershipLevels { level_1_name?: string; level_2_name?: string; level_3_name?: string; }
 
-// NEU: Interfaces für Statistiken
 interface InstalledWidget {
     widget_name: string;
     type_key: string;
@@ -62,7 +63,6 @@ interface UserStats {
     installed_widgets: InstalledWidget[];
 }
 
-// --- Sortier-Helferfunktionen ---
 type Order = 'asc' | 'desc';
 
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
@@ -97,18 +97,18 @@ const AdminUserManagementPage: React.FC = () => {
   const currentBpId = isAssistant ? loggedInUser?.business_partner_id : adminFilterBpId;
 
   const [users, setUsers] = useState<User[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [businessPartnerOptions, setBusinessPartnerOptions] = useState<BusinessPartnerOption[]>([]);
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
   const [membershipLevels, setMembershipLevels] = useState<MembershipLevels | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  // Edit/Add Dialog States
   const [openDialog, setOpenDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
 
-  // NEU: Stats Dialog States
   const [statsModalOpen, setStatsModalOpen] = useState(false);
   const [selectedUserForStats, setSelectedUserForStats] = useState<User | null>(null);
   const [userStats, setUserStats] = useState<UserStats | null>(null);
@@ -125,9 +125,12 @@ const AdminUserManagementPage: React.FC = () => {
   const [formRole, setFormRole] = useState('user');
   const [formBusinessPartnerId, setFormBusinessPartnerId] = useState('');
   const [formIsActive, setFormIsActive] = useState(true);
+  const [formActiveUntil, setFormActiveUntil] = useState('');
   const [formProfileImageUrl, setFormProfileImageUrl] = useState('');
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [selectedBpFilter, setSelectedBpFilter] = useState<string>('all'); 
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [order, setOrder] = useState<Order>('asc');
   const [orderBy, setOrderBy] = useState<keyof User>('last_name');
@@ -138,6 +141,11 @@ const AdminUserManagementPage: React.FC = () => {
   const [importReport, setImportReport] = useState<any>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean, message: string, severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
 
+  // Debounce für Serverseitige Suche
+  useEffect(() => {
+      const timer = setTimeout(() => setDebouncedSearch(searchTerm), 500);
+      return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   const handleDownloadTemplate = async () => {
     try {
@@ -165,28 +173,45 @@ const AdminUserManagementPage: React.FC = () => {
     }
   };
 
-  const fetchUsers = useCallback(async () => {
+  const fetchUsers = useCallback(async (currentPage = 1, bpFilterOverride?: string, searchOverride?: string) => {
     if (isAssistant && !loggedInUser?.business_partner_id) {
         setUsers([]); setLoading(false); return;
     }
-    setLoading(true);
+    if (currentPage === 1) setLoading(true);
     try {
-      let userUrl = '/api/admin/users';
-      if (isAdmin && adminFilterBpId) {
-        userUrl = `/api/admin/users?business_partner_id=${adminFilterBpId}`;
-      } 
-      else if (isAssistant && loggedInUser?.business_partner_id) {
-        userUrl = `/api/admin/users?business_partner_id=${loggedInUser.business_partner_id}`;
+      const filterToUse = bpFilterOverride !== undefined ? bpFilterOverride : selectedBpFilter;
+      const searchToUse = searchOverride !== undefined ? searchOverride : debouncedSearch;
+      
+      let userUrl = `/api/admin/users?page=${currentPage}&limit=50`;
+      
+      if (isAdmin && filterToUse !== 'all') {
+        userUrl += `&business_partner_id=${filterToUse}`;
+      } else if (isAdmin && adminFilterBpId) {
+        userUrl += `&business_partner_id=${adminFilterBpId}`;
+      } else if (isAssistant && loggedInUser?.business_partner_id) {
+        userUrl += `&business_partner_id=${loggedInUser.business_partner_id}`;
       }
+
+      if (searchToUse) {
+        userUrl += `&search=${encodeURIComponent(searchToUse)}`;
+      }
+      
       const userRes = await apiClient.get(userUrl);
-      setUsers(asArray<User>(userRes.data));
+      const newUsers = asArray<User>(userRes.data);
+      
+      if (currentPage === 1) {
+          setUsers(newUsers);
+      } else {
+          setUsers(prev => [...prev, ...newUsers]);
+      }
+      setHasMore(newUsers.length === 50);
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Fehler beim Laden der Benutzer.');
-      setUsers([]);
+      if (currentPage === 1) setUsers([]);
     } finally {
         setLoading(false);
     }
-  }, [isAdmin, isAssistant, adminFilterBpId, loggedInUser?.business_partner_id]);
+  }, [isAdmin, isAssistant, adminFilterBpId, loggedInUser?.business_partner_id, selectedBpFilter, debouncedSearch]);
 
   useEffect(() => {
     const fetchDropdownData = async () => {
@@ -196,17 +221,33 @@ const AdminUserManagementPage: React.FC = () => {
                 apiClient.get('/api/admin/business-partners'),
                 apiClient.get('/api/admin/roles'),
             ]);
-            setBusinessPartnerOptions(asArray<any>(bpRes.data).map((bp: any) => ({ id: bp.id, name: bp.name })));
+            setBusinessPartnerOptions(asArray<any>(bpRes.data).map((bp: any) => ({ id: bp.id, name: bp.name, user_count: bp.user_count || 0 })));
             setRoleOptions(asArray<RoleOption>(roleRes.data));
         } catch(err) {
             setError('Fehler beim Laden der Auswahloptionen.');
         }
     };
     if (!isAuthLoading) {
-        fetchUsers();
+        setPage(1);
+        fetchUsers(1);
         fetchDropdownData();
     }
-  }, [fetchUsers, isAdmin, loggedInUser, isAuthLoading]);
+  }, [isAdmin, loggedInUser, isAuthLoading]);
+
+  // Effekt triggert serverseitige Suche wenn der debounced Suchbegriff sich ändert
+  useEffect(() => {
+    if (!isAuthLoading) {
+        setPage(1);
+        fetchUsers(1, undefined, debouncedSearch);
+    }
+  }, [debouncedSearch]); 
+
+  const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newBp = e.target.value;
+    setSelectedBpFilter(newBp);
+    setPage(1);
+    fetchUsers(1, newBp, debouncedSearch);
+  };
 
   useEffect(() => {
     const fetchLevels = async (bpId: string) => {
@@ -223,7 +264,6 @@ const AdminUserManagementPage: React.FC = () => {
     fetchLevels(formBusinessPartnerId);
   }, [formBusinessPartnerId]);
 
-  // NEU: Lade detaillierte Statistiken für einen Nutzer
   const handleOpenStats = async (user: User) => {
       setSelectedUserForStats(user);
       setStatsModalOpen(true);
@@ -249,11 +289,11 @@ const AdminUserManagementPage: React.FC = () => {
   }, [roleOptions, isAssistant]);
 
   const handleOpenAddDialog = () => {
-    setEditingUser(null); setFormUsername(''); setFormEmail(''); setFormPassword(''); setFormFirstName(''); setFormLastName(''); setFormOrganizationName(''); setFormLinkedinUrl(''); setFormProfileImageUrl(''); setFormMembershipLevel(''); setFormRole('user'); setFormBusinessPartnerId(isAssistant ? (loggedInUser?.business_partner_id || '') : (adminFilterBpId || '')); setFormIsActive(true); setDialogError(null); setOpenDialog(true);
+    setEditingUser(null); setFormUsername(''); setFormEmail(''); setFormPassword(''); setFormFirstName(''); setFormLastName(''); setFormOrganizationName(''); setFormLinkedinUrl(''); setFormProfileImageUrl(''); setFormMembershipLevel(''); setFormRole('user'); setFormBusinessPartnerId(isAssistant ? (loggedInUser?.business_partner_id || '') : (adminFilterBpId || '')); setFormIsActive(true); setFormActiveUntil(''); setDialogError(null); setOpenDialog(true);
   };
 
   const handleOpenEditDialog = (user: User) => {
-    setEditingUser(user); setFormUsername(user.username); setFormEmail(user.email); setFormPassword(''); setFormFirstName(user.first_name || ''); setFormLastName(user.last_name || ''); setFormOrganizationName(user.organization_name || ''); setFormLinkedinUrl(user.linkedin_url || ''); setFormMembershipLevel(user.membership_level || ''); setFormRole(user.role); setFormBusinessPartnerId(user.business_partner_id || ''); setFormIsActive(user.is_active); setFormProfileImageUrl(user.profile_image_url || ''); setDialogError(null); setOpenDialog(true);
+    setEditingUser(user); setFormUsername(user.username); setFormEmail(user.email); setFormPassword(''); setFormFirstName(user.first_name || ''); setFormLastName(user.last_name || ''); setFormOrganizationName(user.organization_name || ''); setFormLinkedinUrl(user.linkedin_url || ''); setFormMembershipLevel(user.membership_level || ''); setFormRole(user.role); setFormBusinessPartnerId(user.business_partner_id || ''); setFormIsActive(user.is_active); setFormActiveUntil(user.active_until ? user.active_until.split('T')[0] : ''); setFormProfileImageUrl(user.profile_image_url || ''); setDialogError(null); setOpenDialog(true);
   };
 
   const handleCloseDialog = () => {
@@ -263,7 +303,19 @@ const AdminUserManagementPage: React.FC = () => {
   const handleSubmit = async () => {
     setDialogError(null);
     const userData = {
-      username: formUsername, email: formEmail, password: formPassword || undefined, first_name: formFirstName || null, last_name: formLastName || null, organization_name: formOrganizationName || null, linkedin_url: formLinkedinUrl || null, profile_image_url: formProfileImageUrl || null, membership_level: formMembershipLevel || null, role: formRole, business_partner_id: formBusinessPartnerId || null, is_active: formIsActive,
+      username: formUsername, 
+      email: formEmail, 
+      password: formPassword || undefined, 
+      first_name: formFirstName || null, 
+      last_name: formLastName || null, 
+      organization_name: formOrganizationName || null, 
+      linkedin_url: formLinkedinUrl || null, 
+      profile_image_url: formProfileImageUrl || null, 
+      membership_level: formMembershipLevel || null, 
+      role: formRole, 
+      business_partner_id: formBusinessPartnerId || null, 
+      is_active: formIsActive,
+      active_until: formActiveUntil || null
     };
     try {
       if (editingUser) {
@@ -273,7 +325,8 @@ const AdminUserManagementPage: React.FC = () => {
         await apiClient.post('/api/admin/users', userData);
       }
       handleCloseDialog();
-      fetchUsers();
+      setPage(1);
+      fetchUsers(1);
     } catch (err: any) {
       setDialogError(err?.response?.data?.message || 'Fehler beim Speichern des Benutzers.');
     }
@@ -283,7 +336,8 @@ const AdminUserManagementPage: React.FC = () => {
     if (!window.confirm('Sind Sie sicher, dass Sie diesen Benutzer löschen möchten?')) return;
     try {
       await apiClient.delete(`/api/admin/users/${id}`);
-      fetchUsers();
+      setPage(1);
+      fetchUsers(1);
     } catch (err: any) {
       setSnackbar({ open: true, message: 'Löschen fehlgeschlagen: ' + (err?.response?.data?.message || 'Serverfehler'), severity: 'error' });
     }
@@ -295,14 +349,31 @@ const AdminUserManagementPage: React.FC = () => {
       if (!token) throw new Error('Authentifizierungs-Token nicht gefunden.');
       const apiBase = (import.meta as any).env?.VITE_API_URL || '';
       
-      const res = await fetch(`${apiBase}/api/admin/users/export/csv`, { headers: { 'Authorization': `Bearer ${token}` } });
+      let filter = (isAdmin && selectedBpFilter !== 'all') ? `?business_partner_id=${selectedBpFilter}` : '';
+      if (debouncedSearch) {
+          filter += filter ? `&search=${encodeURIComponent(debouncedSearch)}` : `?search=${encodeURIComponent(debouncedSearch)}`;
+      }
+      
+      const res = await fetch(`${apiBase}/api/admin/users/export/csv${filter}`, { headers: { 'Authorization': `Bearer ${token}` } });
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
 
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', 'benutzer-export.csv');
+
+      // Dateiname mit Partner und Datum
+      let bpName = 'Alle_Partner';
+      if (isAdmin && selectedBpFilter !== 'all') {
+          bpName = businessPartnerOptions.find(bp => bp.id === selectedBpFilter)?.name || 'Partner';
+      } else if (isAssistant) {
+          bpName = loggedInUser?.business_partner_name || 'Partner';
+      }
+      const safeBpName = bpName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `benutzer-export-${safeBpName}-${dateStr}.csv`;
+      
+      link.setAttribute('download', filename);
       document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url);
     } catch (err: any) {
       setSnackbar({ open: true, message: 'Export fehlgeschlagen: ' + (err?.message || 'Unbekannter Fehler'), severity: 'error' });
@@ -322,7 +393,8 @@ const AdminUserManagementPage: React.FC = () => {
     try {
       const response = await apiClient.post('/api/admin/users/import/csv', formData);
       setImportReport(response.data);
-      fetchUsers();
+      setPage(1);
+      fetchUsers(1);
     } catch (err: any) {
       setImportReport({ errors: [err?.response?.data?.message || 'Import fehlgeschlagen.'] });
     } finally {
@@ -337,9 +409,12 @@ const AdminUserManagementPage: React.FC = () => {
 
   const sortedAndFilteredUsers: User[] = useMemo(() => {
     let filtered: User[] = [...users];
+    
     if (statusFilter !== 'all') {
       filtered = filtered.filter((user) => user.is_active === (statusFilter === 'active'));
     }
+    
+    // Client-seitige Zusatz-Filterung für sofortiges Feedback
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
       filtered = filtered.filter((user) =>
@@ -353,8 +428,26 @@ const AdminUserManagementPage: React.FC = () => {
     return filtered.sort(getComparator(order, orderBy));
   }, [users, searchTerm, order, orderBy, statusFilter]);
 
+  const activeCount = users.filter((u) => u.is_active).length;
+  const inactiveCount = users.filter((u) => !u.is_active).length;
+  const showPlus = hasMore ? '+' : '';
+
+  // Helper für den Farb-Indikator
+  const getStatusInfo = (u: User) => {
+    if (!u.is_active) return { color: 'error.main', title: 'Inaktiv' };
+    if (u.active_until) {
+        const expiryDate = new Date(u.active_until);
+        const now = new Date();
+        const daysLeft = (expiryDate.getTime() - now.getTime()) / (1000 * 3600 * 24);
+        
+        if (daysLeft < 0) return { color: 'error.main', title: 'Abgelaufen' };
+        if (daysLeft <= 30) return { color: 'warning.main', title: 'Läuft in weniger als 30 Tagen ab' };
+    }
+    return { color: 'success.main', title: 'Aktiv' };
+  };
+
   return (
-      <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+      <Container maxWidth="xl" sx={{ mt: 4, mb: 4, pb: hasMore ? 8 : 0 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
           <Box>
             <Typography variant="h4" component="h1">Benutzerverwaltung</Typography>
@@ -365,24 +458,41 @@ const AdminUserManagementPage: React.FC = () => {
               <Typography variant="subtitle1" color="text.secondary" sx={{ mt: 1 }}>Verwaltung für: <strong>{loggedInUser?.business_partner_name}</strong></Typography>
             )}
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
             {currentBpId && (
                 <Button variant="outlined" startIcon={<QrCodeIcon />} onClick={() => window.open(`/invite/${currentBpId}`, '_blank')} sx={{ borderColor: 'primary.main', color: 'primary.main', mr: 1 }}>
                     Mitglieder einladen
                 </Button>
             )}
+
+            {isAdmin && !adminFilterBpId && (
+                <TextField
+                    select
+                    size="small"
+                    label="Partner Filter"
+                    value={selectedBpFilter}
+                    onChange={handleBpFilterChange}
+                    sx={{ minWidth: 180 }}
+                >
+                    <MenuItem value="all">Alle Partner</MenuItem>
+                      {businessPartnerOptions.map((bp) => (
+                          <MenuItem key={bp.id} value={bp.id}>{bp.name} ({bp.user_count})</MenuItem>
+                      ))}
+                </TextField>
+            )}
+
             <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }} />
-            <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExport}>Exportieren</Button>
-            <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={() => setOpenImportDialog(true)}>Importieren</Button>
-            <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenAddDialog}>Benutzer hinzufügen</Button>
+            <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExport}>Export</Button>
+            <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={() => setOpenImportDialog(true)}>Import</Button>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenAddDialog}>Hinzufügen</Button>
           </Box>
         </Box>
 
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
           <Tabs value={statusFilter} onChange={(_e, v) => setStatusFilter(v)}>
-            <Tab label={`Alle (${users.length})`} value="all" />
-            <Tab label={`Aktiv (${users.filter((u) => u.is_active).length})`} value="active" />
-            <Tab label={`Inaktiv (${users.filter((u) => !u.is_active).length})`} value="inactive" />
+            <Tab label={`Alle (${users.length}${showPlus})`} value="all" />
+            <Tab label={`Aktiv (${activeCount}${showPlus})`} value="active" />
+            <Tab label={`Inaktiv (${inactiveCount}${showPlus})`} value="inactive" />
           </Tabs>
         </Box>
 
@@ -391,8 +501,8 @@ const AdminUserManagementPage: React.FC = () => {
         ) : error ? (
           <Alert severity="error">{error}</Alert>
         ) : (
-          <Paper>
-            <TableContainer>
+          <Paper sx={{ overflow: 'visible' }}>
+            <TableContainer sx={{ overflowX: 'auto' }}>
               <Table>
                 <TableHead>
                   <TableRow>
@@ -401,87 +511,135 @@ const AdminUserManagementPage: React.FC = () => {
                     <TableCell sortDirection={orderBy === 'organization_name' ? order : false}><TableSortLabel active={orderBy === 'organization_name'} direction={order} onClick={() => handleSortRequest('organization_name')}>Organisation</TableSortLabel></TableCell>
                     {isAdmin && <TableCell sortDirection={orderBy === 'business_partner_name' ? order : false}><TableSortLabel active={orderBy === 'business_partner_name'} direction={order} onClick={() => handleSortRequest('business_partner_name')}>Business Partner</TableSortLabel></TableCell>}
                     <TableCell sortDirection={orderBy === 'email' ? order : false}><TableSortLabel active={orderBy === 'email'} direction={order} onClick={() => handleSortRequest('email')}>E-Mail</TableSortLabel></TableCell>
-                    <TableCell sortDirection={orderBy === 'membership_level' ? order : false}><TableSortLabel active={orderBy === 'membership_level'} direction={order} onClick={() => handleSortRequest('membership_level')}>Mitgliedslevel</TableSortLabel></TableCell>
+                    <TableCell sortDirection={orderBy === 'membership_level' ? order : false}><TableSortLabel active={orderBy === 'membership_level'} direction={order} onClick={() => handleSortRequest('membership_level')}>Level</TableSortLabel></TableCell>
                     <TableCell sortDirection={orderBy === 'role' ? order : false}><TableSortLabel active={orderBy === 'role'} direction={order} onClick={() => handleSortRequest('role')}>Rolle</TableSortLabel></TableCell>
-                    <TableCell align="center" sortDirection={orderBy === 'login_count' ? order : false}><TableSortLabel active={orderBy === 'login_count'} direction={order} onClick={() => handleSortRequest('login_count')}>Logins</TableSortLabel></TableCell>
+                    <TableCell sortDirection={orderBy === 'active_until' ? order : false}><TableSortLabel active={orderBy === 'active_until'} direction={order} onClick={() => handleSortRequest('active_until')}>Aktiv bis</TableSortLabel></TableCell>
                     <TableCell sortDirection={orderBy === 'last_login_at' ? order : false}><TableSortLabel active={orderBy === 'last_login_at'} direction={order} onClick={() => handleSortRequest('last_login_at')}>Letzter Login</TableSortLabel></TableCell>
-                    <TableCell align="right">Aktionen</TableCell>
+                    <TableCell align="right" sx={{ position: 'sticky', right: 0, bgcolor: 'background.paper', zIndex: 2, boxShadow: '-2px 0 5px rgba(0,0,0,0.05)' }}>
+                        Aktionen
+                    </TableCell>
                   </TableRow>
                 </TableHead>
-<TableBody>
-                  {sortedAndFilteredUsers.map((user) => (
-                    <TableRow 
-                        key={user.id} 
-                        hover 
-                        sx={{ 
-                            // NEU: Deutliches Ausgrauen für inaktive User
-                            backgroundColor: user.is_active ? 'inherit' : '#f1f5f9',
-                            opacity: user.is_active ? 1 : 0.55,
-                            transition: 'opacity 0.2s, background-color 0.2s',
-                            '&:hover': {
-                                opacity: 1, // Beim Hovern wieder deutlich machen
-                            }
-                        }}
-                    >
-                      <TableCell>
-                        <Avatar src={user.profile_image_url || undefined} alt={user.first_name || 'User'} sx={{ width: 32, height: 32 }}>
-                            {user.first_name ? user.first_name.charAt(0) : '?'}
-                        </Avatar>
-                      </TableCell>                      
-                      <TableCell>{user.first_name} {user.last_name}</TableCell>
-                      <TableCell>{user.organization_name || '-'}</TableCell>
-                      {isAdmin && <TableCell>{user.business_partner_name || '-'}</TableCell>}
-                      
-                      {/* KORREKTUR: Flexbox nach innen verlagert, damit die Tabellen-Linien intakt bleiben */}
-                      <TableCell>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                              <Tooltip title={user.newsletter_opt_in ? 'Newsletter abonniert' : 'Kein Newsletter'}>
-                                  <Box 
-                                      sx={{ 
-                                          width: 10, 
-                                          height: 10, 
-                                          borderRadius: '50%', 
-                                          bgcolor: user.newsletter_opt_in ? 'success.main' : 'error.main',
-                                          flexShrink: 0 // Verhindert, dass der Punkt gequetscht wird
-                                      }} 
-                                  />
-                              </Tooltip>
-                              <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>
-                                  {user.email}
-                              </Typography>
-                          </Box>
-                      </TableCell>
+                <TableBody>
+                  {sortedAndFilteredUsers.map((u) => {
+                    const statusInfo = getStatusInfo(u);
+                    
+                    return (
+                        <TableRow 
+                            key={u.id} 
+                            hover 
+                            sx={{ 
+                                backgroundColor: u.is_active ? 'inherit' : '#f1f5f9',
+                                opacity: u.is_active ? 1 : 0.55,
+                                transition: 'opacity 0.2s, background-color 0.2s',
+                                '&:hover': { opacity: 1 }
+                            }}
+                        >
+                        <TableCell>
+                            <Avatar src={u.profile_image_url || undefined} alt={u.first_name || 'User'} sx={{ width: 32, height: 32 }}>
+                                {u.first_name ? u.first_name.charAt(0) : '?'}
+                            </Avatar>
+                        </TableCell>      
+                        <TableCell>{u.first_name} {u.last_name}</TableCell>
+                        <TableCell>{u.organization_name || '-'}</TableCell>
+                        {isAdmin && <TableCell>{u.business_partner_name || '-'}</TableCell>}
+                        
+                        <TableCell>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                <Tooltip title={u.newsletter_opt_in ? 'Newsletter abonniert' : 'Kein Newsletter'}>
+                                    <Box 
+                                        sx={{ 
+                                            width: 10, height: 10, borderRadius: '50%', 
+                                            bgcolor: u.newsletter_opt_in ? 'success.main' : 'error.main', flexShrink: 0 
+                                        }} 
+                                    />
+                                </Tooltip>
+                                <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>
+                                    {u.email}
+                                </Typography>
+                            </Box>
+                        </TableCell>
 
-                      <TableCell>{user.membership_level || '-'}</TableCell>
-                      <TableCell>{user.role}</TableCell>
-                      <TableCell align="center">{user.login_count}</TableCell>
-                      <TableCell>
-                          {user.last_login_at 
-                              ? new Date(user.last_login_at).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) 
-                              : '-'}
-                      </TableCell>
-                      <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                        {user.linkedin_url && (
-                          <Tooltip title="LinkedIn Profil aufrufen">
-                            <IconButton href={user.linkedin_url} target="_blank" size="small"><LinkedInIcon color="primary" /></IconButton>
-                          </Tooltip>
-                        )}
-                        <Tooltip title="Nutzer-Statistiken ansehen">
-                          <IconButton color="info" onClick={() => handleOpenStats(user)} size="small"><InfoIcon /></IconButton>
-                        </Tooltip>
-                        <Tooltip title="Bearbeiten">
-                          <IconButton color="primary" onClick={() => handleOpenEditDialog(user)} size="small"><EditIcon /></IconButton>
-                        </Tooltip>
-                        <Tooltip title="Löschen">
-                          <IconButton color="error" onClick={() => handleDelete(user.id)} size="small"><DeleteIcon /></IconButton>
-                        </Tooltip>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        <TableCell>{u.membership_level || '-'}</TableCell>
+                        <TableCell>{u.role}</TableCell>
+                        
+                        <TableCell>
+                            <Tooltip title={statusInfo.title}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: statusInfo.color, flexShrink: 0 }} />
+                                    <Typography variant="body2">{u.active_until ? new Date(u.active_until).toLocaleDateString('de-AT') : 'Unbegrenzt'}</Typography>
+                                </Box>
+                            </Tooltip>
+                        </TableCell>
+                        
+                        <TableCell>
+                            {u.last_login_at ? new Date(u.last_login_at).toLocaleDateString('de-AT') : '-'}
+                        </TableCell>
+
+                        <TableCell align="right" sx={{ whiteSpace: 'nowrap', position: 'sticky', right: 0, bgcolor: u.is_active ? 'background.paper' : '#f1f5f9', zIndex: 1, boxShadow: '-2px 0 5px rgba(0,0,0,0.05)' }}>
+                            {u.linkedin_url && (
+                            <Tooltip title="LinkedIn Profil aufrufen">
+                                <IconButton href={u.linkedin_url} target="_blank" size="small"><LinkedInIcon color="primary" /></IconButton>
+                            </Tooltip>
+                            )}
+                            <Tooltip title="Nutzer-Statistiken ansehen">
+                            <IconButton color="info" onClick={() => handleOpenStats(u)} size="small"><InfoIcon /></IconButton>
+                            </Tooltip>
+                            <Tooltip title="Bearbeiten">
+                            <IconButton color="primary" onClick={() => handleOpenEditDialog(u)} size="small"><EditIcon /></IconButton>
+                            </Tooltip>
+                            <Tooltip title="Löschen">
+                            <IconButton color="error" onClick={() => handleDelete(u.id)} size="small"><DeleteIcon /></IconButton>
+                            </Tooltip>
+                        </TableCell>
+                        </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TableContainer>
           </Paper>
+        )}
+
+        {/* Schwebender (Floating) Button "Weitere 50 Benutzer laden" */}
+        {!loading && users.length > 0 && (
+            <Box sx={{ position: 'fixed', bottom: 32, left: '50%', transform: 'translateX(-50%)', zIndex: 1000, display: 'flex', gap: 2, alignItems: 'center' }}>
+                
+                <Tooltip title="Zum Seitenanfang">
+                    <IconButton 
+                        onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+                        sx={{ bgcolor: 'background.paper', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', '&:hover': { bgcolor: 'grey.100' } }}
+                    >
+                        <KeyboardArrowUpIcon />
+                    </IconButton>
+                </Tooltip>
+
+                {hasMore && (
+                    <Button 
+                        variant="contained" 
+                        color="secondary"
+                        size="large"
+                        sx={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.25)', fontWeight: 'bold', px: 4, py: 1.5 }}
+                        onClick={() => {
+                            const nextPage = page + 1;
+                            setPage(nextPage);
+                            fetchUsers(nextPage);
+                        }}
+                    >
+                        Weitere 50 Benutzer laden
+                    </Button>
+                )}
+
+                <Tooltip title="Zum Seitenende">
+                    <IconButton 
+                        onClick={() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })}
+                        sx={{ bgcolor: 'background.paper', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', '&:hover': { bgcolor: 'grey.100' } }}
+                    >
+                        <KeyboardArrowDownIcon />
+                    </IconButton>
+                </Tooltip>
+
+            </Box>
         )}
 
         {/* --- Dialog: Edit/Add User --- */}
@@ -496,19 +654,43 @@ const AdminUserManagementPage: React.FC = () => {
             <Grid container spacing={2} sx={{ pt: 1 }}>
               <Grid item xs={12} sm={6}><TextField label="Vorname" fullWidth value={formFirstName} onChange={(e) => setFormFirstName(e.target.value)} /></Grid>
               <Grid item xs={12} sm={6}><TextField label="Nachname" fullWidth value={formLastName} onChange={(e) => setFormLastName(e.target.value)} /></Grid>
+              
               <Grid item xs={12}>
-                  <TextField label="Profilbild URL" fullWidth value={formProfileImageUrl} onChange={(e) => setFormProfileImageUrl(e.target.value)} helperText="Link zu einem öffentlichen Bild (z.B. HTTPS URL)" />
+                  <TextField 
+                    label="Profilbild URL" 
+                    fullWidth 
+                    value={formProfileImageUrl} 
+                    onChange={(e) => setFormProfileImageUrl(e.target.value)} 
+                    helperText={!isAssistant ? "Link zu einem öffentlichen Bild (z.B. HTTPS URL)" : ""}
+                    InputProps={{
+                        readOnly: isAssistant, // Nur lesbar für Assistenz
+                    }}
+                  />
                 </Grid>              
-              <Grid item xs={12}><TextField label="Organisation" fullWidth value={formOrganizationName} onChange={(e) => setFormOrganizationName(e.target.value)} /></Grid>
-              <Grid item xs={12}><TextField label="LinkedIn URL (optional)" fullWidth value={formLinkedinUrl} onChange={(e) => setFormLinkedinUrl(e.target.value)} /></Grid>
-              <Grid item xs={12}><TextField label="Username" fullWidth value={formUsername} onChange={(e) => setFormUsername(e.target.value)} disabled={!!editingUser} /></Grid>
-              <Grid item xs={12}><TextField label="E-Mail" type="email" fullWidth value={formEmail} onChange={(e) => setFormEmail(e.target.value)} /></Grid>
-              <Grid item xs={12}><TextField label={editingUser ? 'Neues Passwort (leer lassen)' : 'Passwort'} type="password" fullWidth value={formPassword} onChange={(e) => setFormPassword(e.target.value)} /></Grid>
+              
+              <Grid item xs={12} sm={6}><TextField label="Organisation" fullWidth value={formOrganizationName} onChange={(e) => setFormOrganizationName(e.target.value)} /></Grid>
+              <Grid item xs={12} sm={6}><TextField label="Username" fullWidth value={formUsername} onChange={(e) => setFormUsername(e.target.value)} disabled={!!editingUser} /></Grid>
+              <Grid item xs={12} sm={6}><TextField label="E-Mail" type="email" fullWidth value={formEmail} onChange={(e) => setFormEmail(e.target.value)} /></Grid>
+              <Grid item xs={12} sm={6}><TextField label={editingUser ? 'Neues Passwort (leer lassen)' : 'Passwort'} type="password" fullWidth value={formPassword} onChange={(e) => setFormPassword(e.target.value)} /></Grid>
+              
+              <Grid item xs={12} sm={6}>
+                  <TextField 
+                      label="Aktiv bis (Optional)" 
+                      type="date" 
+                      fullWidth 
+                      InputLabelProps={{ shrink: true }} 
+                      value={formActiveUntil} 
+                      onChange={(e) => setFormActiveUntil(e.target.value)} 
+                  />
+              </Grid>
+              <Grid item xs={12} sm={6}><TextField label="LinkedIn URL (optional)" fullWidth value={formLinkedinUrl} onChange={(e) => setFormLinkedinUrl(e.target.value)} /></Grid>
             </Grid>
 
-            <TextField select margin="dense" label="Rolle" fullWidth value={formRole} onChange={(e) => setFormRole(e.target.value)} sx={{ mt: 2 }} disabled={isAssistant}>
-              {filteredRoleOptions.map((role) => (<MenuItem key={role.name} value={role.name} title={role.description}>{role.name}</MenuItem>))}
-            </TextField>
+            {isAdmin && (
+                <TextField select margin="dense" label="Rolle" fullWidth value={formRole} onChange={(e) => setFormRole(e.target.value)} sx={{ mt: 2 }}>
+                  {filteredRoleOptions.map((role) => (<MenuItem key={role.name} value={role.name} title={role.description}>{role.name}</MenuItem>))}
+                </TextField>
+            )}
 
             {isAdmin && (
               <TextField select margin="dense" label="Business Partner" fullWidth value={formBusinessPartnerId} onChange={(e) => setFormBusinessPartnerId(e.target.value)} sx={{ mt: 2 }} disabled={isAssistant}>
@@ -522,7 +704,7 @@ const AdminUserManagementPage: React.FC = () => {
               {membershipLevels && Object.values(membershipLevels).map((level) => level && (<MenuItem key={level} value={level}>{level}</MenuItem>))}
             </TextField>
 
-            <FormControlLabel control={<Switch checked={formIsActive} onChange={(e) => setFormIsActive(e.target.checked)} color="primary" />} label="Aktiv" sx={{ mt: 2 }} />
+            <FormControlLabel control={<Switch checked={formIsActive} onChange={(e) => setFormIsActive(e.target.checked)} color="primary" />} label="Nutzerkonto Aktiv" sx={{ mt: 2 }} />
           </DialogContent>
           <DialogActions>
             <Button onClick={handleCloseDialog}>Abbrechen</Button>
@@ -530,7 +712,7 @@ const AdminUserManagementPage: React.FC = () => {
           </DialogActions>
         </Dialog>
         
-        {/* --- NEU: Dialog für Benutzer-Statistiken --- */}
+        {/* --- Dialog für Benutzer-Statistiken --- */}
         <Dialog open={statsModalOpen} onClose={handleCloseStats} fullWidth maxWidth="sm">
             <DialogTitle>
                 Profil & Statistiken: {selectedUserForStats?.first_name} {selectedUserForStats?.last_name}
@@ -584,13 +766,13 @@ const AdminUserManagementPage: React.FC = () => {
                         <Grid item xs={12}>
                             <Typography variant="subtitle2" sx={{ mb: 1, mt: 1 }}>Übersicht der genutzten Widgets</Typography>
                             <Paper variant="outlined">
-                                {userStats.installed_widgets.length === 0 ? (
+                                {!userStats.installed_widgets || userStats.installed_widgets.length === 0 ? (
                                     <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
                                         Dieser Nutzer hat noch keine Widgets konfiguriert.
                                     </Typography>
                                 ) : (
                                     <List dense disablePadding>
-                                        {userStats.installed_widgets.map((widget, index) => (
+                                        {(userStats.installed_widgets || []).map((widget, index) => (
                                             <React.Fragment key={widget.type_key}>
                                                 <ListItem>
                                                     <ListItemText 
@@ -630,8 +812,10 @@ const AdminUserManagementPage: React.FC = () => {
         <Dialog open={openImportDialog} onClose={() => setOpenImportDialog(false)} fullWidth maxWidth="sm">
           <DialogTitle>Benutzer importieren</DialogTitle>
           <DialogContent>
-            <Typography gutterBottom>Importieren (Aktualisieren oder Erstellen) von Benutzern per CSV.<br />- <strong>Bestehende Benutzer</strong> (Abgleich per <strong>E-Mail</strong>) werden aktualisiert. Das Passwort wird nur geändert, wenn es angegeben ist.<br />- <strong>Neue Benutzer</strong> werden erstellt.</Typography>
-            <Typography gutterBottom variant="body2" sx={{ mt: 2 }}><strong>Pflichtfelder:</strong> <strong>email</strong>, <strong>role</strong>.<br /><strong>Pflichtfeld (nur für neue Benutzer):</strong> <strong>password</strong>.<br /><strong>Optionale Felder:</strong> <strong>username</strong> (wird sonst aus E-Mail generiert), <strong>first_name</strong>, <strong>last_name</strong>, <strong>organization_name</strong>, <strong>linkedin_url</strong>, <strong>membership_level</strong>, <strong>business_partner_name</strong>.</Typography>
+            <Typography gutterBottom>Importieren (Aktualisieren oder Erstellen) von Benutzern per CSV.<br />- <strong>Bestehende Benutzer</strong> (Abgleich per E-Mail) werden aktualisiert.<br />- <strong>Neue Benutzer</strong> werden erstellt.</Typography>
+            <Typography gutterBottom variant="body2" sx={{ mt: 2 }}><strong>Neu: </strong><code>is_active</code> (true/false) und <code>active_until</code> (z.B. YYYY-MM-DD).</Typography>
+            <Typography gutterBottom variant="body2" sx={{ mt: 1 }}><strong>Pflichtfelder:</strong> <code>email</code>, <code>role</code>.<br /><strong>Pflichtfeld (neu):</strong> <code>password</code>.<br /><strong>Optionale Felder:</strong> <code>username</code>, <code>first_name</code>, <code>last_name</code>, <code>organization_name</code>, <code>linkedin_url</code>, <code>membership_level</code>, <code>business_partner_name</code>.</Typography>
+            
             <Box sx={{ mt: 1 }}><Button onClick={handleDownloadTemplate} size="small">Vorlage herunterladen</Button></Box>        
             <Button variant="contained" component="label" sx={{ mt: 2 }}>
               Datei auswählen
@@ -645,7 +829,7 @@ const AdminUserManagementPage: React.FC = () => {
                 <Typography color="success.main">Erfolgreich: {importReport.successCount || 0}</Typography>
                 <Typography color="error.main">Fehlerhaft: {importReport.errorCount || 0}</Typography>
                 {importReport.errors && importReport.errors.length > 0 && (
-                  <Box component="ul" sx={{ pl: 2, maxHeight: 150, overflowY: 'auto' }}>
+                  <Box component="ul" sx={{ pl: 2 }}>
                     {importReport.errors.map((e: string, i: number) => (
                       <li key={i}><Typography variant="body2" color="error">{e}</Typography></li>
                     ))}

@@ -361,12 +361,13 @@ exports.login = async (req, res) => {
   try {
     const normalizedIdentifier = String(identifier).trim().toLowerCase();
 
-    // HIER WURDE category_name ZUM SELECT HINZUGEFÜGT (1. Branche des BPs)
+    // 1. NEU: u.is_active und u.active_until in den SELECT aufnehmen
     const r = await db.query(
       `SELECT
           u.id, u.username, u.email, u.role, u.password_hash,
           u.is_email_verified, u.contribution_score, u.profile_image_url,
           u.business_partner_id, u.has_completed_onboarding,
+          u.is_active, u.active_until, 
           bp.name as business_partner_name,
           bp.dashboard_title,
           bp.is_active as business_partner_is_active,
@@ -408,6 +409,16 @@ exports.login = async (req, res) => {
         ipAddress: req.ip,
       });
       return res.status(401).json({ message: 'Ungültige Anmeldedaten.' });
+    }
+
+    if (user.is_active === false) {
+      return res.status(403).json({ message: 'Account gesperrt.' });
+    }
+
+    if (user.active_until && new Date(user.active_until) < new Date()) {
+      // Automatisches Update auf false, wenn das Datum überschritten ist
+      await db.query('UPDATE users SET is_active = false WHERE id = $1', [user.id]);
+      return res.status(403).json({ message: 'Account abgelaufen.' });
     }
 
     if (user.business_partner_id) {
@@ -626,8 +637,16 @@ exports.forgotPassword = async (req, res) => {
   }
 
   try {
+    // KORREKTUR: Wir holen jetzt zusätzlich die Business-Partner-Daten und Farben mit einem JOIN!
     const r = await db.query(
-      'SELECT id, username FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+      `SELECT 
+          u.id, u.username, u.business_partner_id,
+          bp.name as partner_name, bp.logo_url, bp.dashboard_title, bp.email as partner_email, bp.url_businesspartner,
+          cs.primary_color, cs.primary_text_color
+       FROM users u
+       LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
+       LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id
+       WHERE LOWER(u.email) = LOWER($1) LIMIT 1`,
       [normalizedEmail]
     );
 
@@ -647,12 +666,30 @@ exports.forgotPassword = async (req, res) => {
       [token, expires, user.id]
     );
 
+    // KORREKTUR: Wir bauen das Partner-Objekt exakt so zusammen, wie das E-Mail-Template es erwartet
+    let partnerObj = null;
+    if (user.business_partner_id) {
+        partnerObj = {
+            id: user.business_partner_id,
+            name: user.partner_name,
+            logo_url: user.logo_url,
+            dashboard_title: user.dashboard_title,
+            email: user.partner_email,
+            url_businesspartner: user.url_businesspartner,
+            color_scheme: {
+                primary_color: user.primary_color,
+                primary_text_color: user.primary_text_color
+            }
+        };
+    }
+
     const resetUrl = buildResetUrl(token);
     try {
       await sendPasswordResetEmail({
         to: normalizedEmail,
         username: user.username,
         resetUrl,
+        partner: partnerObj // <-- HIER ÜBERGEBEN WIR DAS KORREKTE BRANDING
       });
     } catch (e) {
       console.error('Passwort-Reset-Mail Fehler:', e);
@@ -822,7 +859,7 @@ async function handleSSOLoginOrRegister(res, profile, partnerCode) {
     try {
         const normalizedEmail = normalizeEmail(profile.email);
         
-        // HIER WURDE category_name ZUM SELECT HINZUGEFÜGT
+        // Da du hier "SELECT u.*" nutzt, sind is_active und active_until bereits im Objekt
         const r = await db.query(
             `SELECT u.*, bp.name as business_partner_name, bp.dashboard_title, bp.is_active as business_partner_is_active,
              (
@@ -845,6 +882,17 @@ async function handleSSOLoginOrRegister(res, profile, partnerCode) {
             // ---> LOGIN
             user = r.rows[0];
             
+            // --- NEU: Status- und Ablauf-Prüfung für SSO ---
+            if (user.is_active === false) {
+                return safeFrontendRedirect(res, '/login', { error: 'account_locked' });
+            }
+
+            if (user.active_until && new Date(user.active_until) < new Date()) {
+                await db.query('UPDATE users SET is_active = false WHERE id = $1', [user.id]);
+                return safeFrontendRedirect(res, '/login', { error: 'account_expired' });
+            }
+            // ------------------------------------------------
+
             if (user.business_partner_id && user.business_partner_is_active === false) {
                 return safeFrontendRedirect(res, '/login', { error: 'account_disabled' });
             }

@@ -45,8 +45,9 @@ interface ScrapedContentItem {
     region: string | null;
     is_trusted_source: boolean;
     thumbnail_url?: string | null;
-    logo_url?: string | null; // NEU: Logo Unterstützung
+    logo_url?: string | null;
     tags?: string[] | null;
+    tag_details?: { name: string; logo_url: string | null }[] | null;
 }
 
 interface Tag { name: string; count: number; }
@@ -66,6 +67,17 @@ const getImageUrl = (url?: string | null) => {
     let cleanPath = url.startsWith('/') ? url : `/${url}`;
     cleanPath = cleanPath.replace(/^\/public\//, '/');
     return `${baseUrl}${cleanPath}`;
+};
+
+const formatDate = (dateString?: string | null) => {
+  if (!dateString || typeof dateString !== 'string') return '';
+
+  // Erwartet ISO-Format wie 2026-02-10 oder 2026-02-10T00:00:00.000Z
+  const match = dateString.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return dateString;
+
+  const [, year, month, day] = match;
+  return `${day}.${month}.${year}`;
 };
 
 const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, alt, size = 20 }) => {
@@ -137,7 +149,7 @@ const NewsItemRow = React.memo(({ item, index, itemsLength, activeGlobalTags, on
                 </CardActionArea>
                 <Box sx={{ px: 2, pb: 2, pt: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-                        <Typography variant="caption" color="text.secondary" fontWeight={500}>{new Date(displayDate).toLocaleDateString('de-AT')}</Typography>
+                        <Typography variant="caption" color="text.secondary" fontWeight={500}>{formatDate(displayDate)}</Typography>
                         {domain && (
                             <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
                                 {/* NEU: Logo in der Zeile */}
@@ -186,7 +198,7 @@ const NewsItemRow = React.memo(({ item, index, itemsLength, activeGlobalTags, on
                 )}
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 'auto' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-                        <Typography variant="caption" color="text.secondary" fontWeight={500}>{new Date(displayDate).toLocaleDateString('de-AT')}</Typography>
+                        <Typography variant="caption" color="text.secondary" fontWeight={500}>{formatDate(displayDate)}</Typography>
                         {domain && (
                             <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
                                 {/* NEU: Logo in der Zeile */}
@@ -496,15 +508,37 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                 <DialogTitle sx={{ m: 0, p: { xs: 2, sm: 3 }, pb: 2 }}>
                     <Box display="flex" justifyContent="space-between" alignItems="flex-start">
                         <Box sx={{ flexGrow: 1, pr: 2 }}>
-                            {/* NEU: Header-Info im Detail-Dialog mit Logo */}
+                            {/* Header-Info im Detail-Dialog mit Logo */}
                             {selectedArticle?.is_trusted_source && (
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, bgcolor: alpha(theme.palette.success.main, 0.08), p: '4px 12px', borderRadius: 10, width: 'fit-content', border: '1px solid', borderColor: alpha(theme.palette.success.main, 0.2) }}>
                                     {selectedArticle.logo_url ? (
-                                        <Box component="img" src={getImageUrl(selectedArticle.logo_url)} sx={{ height: 18, width: 'auto', objectFit: 'contain' }} />
+                                        <Box 
+                                            component="a" 
+                                            href={selectedArticle.original_url || undefined} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            sx={{ display: 'flex', alignItems: 'center', '&:hover': { opacity: 0.8 } }}
+                                        >
+                                            <Box component="img" src={getImageUrl(selectedArticle.logo_url)} sx={{ height: 18, width: 'auto', objectFit: 'contain' }} alt="Quelle Logo" />
+                                        </Box>
                                     ) : (
-                                        <VerifiedUserIcon sx={{ fontSize: 16, color: 'success.main' }} />
+                                        <>
+                                            <VerifiedUserIcon sx={{ fontSize: 16, color: 'success.main' }} />
+                                            <Typography variant="caption" sx={{ color: 'success.main', fontWeight: 700, textTransform: 'uppercase' }}>
+                                                Geprüfte Quelle: 
+                                                <Box component="a" href={selectedArticle.original_url || undefined} target="_blank" rel="noopener noreferrer" sx={{ color: 'inherit', textDecoration: 'none', ml: 0.5, '&:hover': { textDecoration: 'underline' } }}>
+                                                    {getDomain(selectedArticle.original_url)}
+                                                </Box>
+                                            </Typography>
+                                        </>
                                     )}
-                                    <Typography variant="caption" sx={{ color: 'success.main', fontWeight: 700, textTransform: 'uppercase' }}>Geprüfte Quelle: {getDomain(selectedArticle.original_url)}</Typography>
+                                    
+                                    {/* Wenn ein Logo da ist, zeigen wir nur den kurzen Text */}
+                                    {selectedArticle.logo_url && (
+                                        <Typography variant="caption" sx={{ color: 'success.main', fontWeight: 700, textTransform: 'uppercase', ml: 0.5 }}>
+                                            Geprüfte Quelle
+                                        </Typography>
+                                    )}
                                 </Box>
                             )}
                             <Typography variant="h5" component="div" sx={{ fontWeight: 800, lineHeight: 1.3 }}>
@@ -523,10 +557,34 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                     )}
                     <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
                         {selectedArticle?.published_date && (
-                            <Typography variant="caption" color="text.secondary" fontWeight={500}>{new Date(selectedArticle.published_date).toLocaleDateString('de-AT', { day: '2-digit', month: 'short', year: 'numeric' })}</Typography>
+                            <Typography variant="caption" color="text.secondary" fontWeight={500}>{formatDate(selectedArticle.published_date)}</Typography>
                         )}
-                         {selectedArticle?.tags && selectedArticle.tags.length > 0 && (
-                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{selectedArticle.tags.map(tag => <Chip key={tag} label={tag} size="small" sx={{ height: 20, fontSize: '0.7rem', bgcolor: 'action.hover' }} />)}</Box>
+                        {selectedArticle?.tag_details && selectedArticle.tag_details.length > 0 && (
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                                {[...selectedArticle.tag_details]
+                                    .sort((a, b) => {
+                                        // 1. Priorität: Hat ein Logo? Dann nach vorne.
+                                        if (a.logo_url && !b.logo_url) return -1;
+                                        if (!a.logo_url && b.logo_url) return 1;
+                                        
+                                        // 2. Priorität: Name alphabetisch absteigend (Z bis A)
+                                        return b.name.localeCompare(a.name, 'de-AT');
+                                    })
+                                    .map(tagObj => (
+                                        <Chip 
+                                            key={tagObj.name} 
+                                            label={tagObj.name} 
+                                            size="small" 
+                                            avatar={tagObj.logo_url ? <Avatar src={getImageUrl(tagObj.logo_url)} alt={tagObj.name} /> : undefined}
+                                            sx={{ 
+                                                height: 24, 
+                                                fontSize: '0.75rem', 
+                                                bgcolor: 'action.hover',
+                                                '& .MuiChip-avatar': { width: 18, height: 18 } 
+                                            }} 
+                                        />
+                                    ))}
+                            </Box>
                         )}
                     </Box>
                      <Box sx={{ flexGrow: 1, pb: 10 }}>

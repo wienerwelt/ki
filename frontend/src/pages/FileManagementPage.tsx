@@ -15,10 +15,15 @@ import { useSnackbar } from '../context/SnackbarContext';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteIcon from '@mui/icons-material/Delete';
+import EditIcon from '@mui/icons-material/Edit';
 import SearchIcon from '@mui/icons-material/Search';
 import StorageIcon from '@mui/icons-material/Storage';
 import ShareIcon from '@mui/icons-material/Share';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import ImageIcon from '@mui/icons-material/Image';
+import DescriptionIcon from '@mui/icons-material/Description';
+import AssessmentIcon from '@mui/icons-material/Assessment';
 
 interface PartnerFile {
   id: string;
@@ -33,6 +38,8 @@ interface PartnerFile {
 interface BusinessPartner {
   id: string;
   name: string;
+  storage_usage_bytes?: number;
+  storage_limit_bytes?: number;
 }
 interface Category { id: string; name: string; }
 
@@ -45,6 +52,16 @@ const formatFileSize = (bytes: number | null | undefined, decimals = 2) => {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 };
+
+const getFileIcon = (fileType: string) => {
+  if (!fileType) return <InsertDriveFileIcon color="action" />;
+  if (fileType.includes('pdf')) return <PictureAsPdfIcon sx={{ color: '#D32F2F' }} />;
+  if (fileType.includes('image')) return <ImageIcon sx={{ color: '#388E3C' }} />;
+  if (fileType.includes('word') || fileType.includes('document')) return <DescriptionIcon sx={{ color: '#1976D2' }} />;
+  if (fileType.includes('sheet') || fileType.includes('csv') || fileType.includes('excel')) return <AssessmentIcon sx={{ color: '#0288D1' }} />;
+  return <InsertDriveFileIcon color="action" />;
+};
+
 function descendingComparator(a: PartnerFile, b: PartnerFile, orderBy: keyof PartnerFile) {
   const valA = (a[orderBy] as any) ?? '';
   const valB = (b[orderBy] as any) ?? '';
@@ -57,7 +74,6 @@ function getComparator(order: Order, orderBy: keyof PartnerFile): (a: PartnerFil
     ? (a, b) => descendingComparator(a, b, orderBy)
     : (a, b) => -descendingComparator(a, b, orderBy);
 }
-
 
 const FileManagementPage: React.FC = () => {
   const { user, businessPartner, fetchBusinessPartnerData } = useAuth();
@@ -79,8 +95,8 @@ const FileManagementPage: React.FC = () => {
   const [fileTags, setFileTags] = useState('');
 
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
-  const [selectedPartnerId, setSelectedPartnerId] = useState<string>(''); // Für den Upload
-  const [filterPartnerId, setFilterPartnerId] = useState<string>('all'); // NEU: Für die Listenansicht
+  const [selectedPartnerId, setSelectedPartnerId] = useState<string>(''); 
+  const [filterPartnerId, setFilterPartnerId] = useState<string>('all'); 
   const [isPartnerListLoading, setIsPartnerListLoading] = useState(false);
   
   const [shareOpen, setShareOpen] = useState(false);
@@ -90,6 +106,14 @@ const FileManagementPage: React.FC = () => {
   const [sharing, setSharing] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]); 
 
+  // --- NEU: Edit State ---
+  const [openEditDialog, setOpenEditDialog] = useState(false);
+  const [fileToEdit, setFileToEdit] = useState<PartnerFile | null>(null);
+  const [editFilename, setEditFilename] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editTags, setEditTags] = useState('');
+  const [editing, setEditing] = useState(false);
+
   const isAdmin = user?.role === 'admin';
   const isAssistent = user?.role === 'assistenz';
   const isUploader = isAdmin || isAssistent;
@@ -98,14 +122,10 @@ const FileManagementPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      // Limit erhöhen, um verlässliche Statistiken (Anzahl/Größe) für den Admin zu haben
       let url = '/api/files?limit=200';
-      
-      // Wenn Admin und ein spezifischer Partner im Filter gewählt ist
       if (isAdmin && filterPartnerId !== 'all') {
           url += `&businessPartnerId=${filterPartnerId}`;
       }
-
       const response = await apiClient.get(url);
       setFiles(response.data || []);
     } catch (err: any) {
@@ -139,11 +159,11 @@ const FileManagementPage: React.FC = () => {
     fetchPartners();
   }, [fetchFiles, fetchPartners]);
 
+  // --- UPLOAD HANDLERS ---
   const handleOpenUploadDialog = () => {
     setError(null);
     setOpenUploadDialog(true);
   };
-
   const handleCloseUploadDialog = () => {
     setOpenUploadDialog(false);
     setFileToUpload(null);
@@ -151,20 +171,16 @@ const FileManagementPage: React.FC = () => {
     setFileTags('');
     setSelectedPartnerId('');
   };
-
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) setFileToUpload(file);
   };
-
   const handleFileUpload = async () => {
     if (!fileToUpload) return;
-
     if (isAdmin && !selectedPartnerId) {
       setError('Bitte wählen Sie einen Business Partner aus.');
       return;
     }
-
     setUploading(true);
     setError(null);
 
@@ -189,6 +205,38 @@ const FileManagementPage: React.FC = () => {
     }
   };
 
+  // --- EDIT HANDLERS (NEU) ---
+  const handleOpenEditDialog = (file: PartnerFile) => {
+      setFileToEdit(file);
+      setEditFilename(file.filename);
+      setEditDescription(file.description || '');
+      setEditTags(file.tags ? file.tags.join(', ') : '');
+      setOpenEditDialog(true);
+  };
+  const handleCloseEditDialog = () => {
+      setOpenEditDialog(false);
+      setFileToEdit(null);
+  };
+  const handleFileEdit = async () => {
+      if (!fileToEdit || !editFilename.trim()) return;
+      setEditing(true);
+      try {
+          await apiClient.put(`/api/files/${fileToEdit.id}`, {
+              filename: editFilename,
+              description: editDescription,
+              tags: editTags
+          });
+          handleCloseEditDialog();
+          await fetchFiles();
+          showSnackbar('Datei aktualisiert.', 'success');
+      } catch (err: any) {
+          showSnackbar(err?.response?.data?.message || 'Fehler beim Bearbeiten.', 'error');
+      } finally {
+          setEditing(false);
+      }
+  };
+
+  // --- DELETE & DOWNLOAD & SHARE ---
   const handleFileDelete = async (fileId: string) => {
     if (!window.confirm('Sind Sie sicher, dass Sie diese Datei endgültig löschen möchten?')) return;
     try {
@@ -226,22 +274,14 @@ const FileManagementPage: React.FC = () => {
         return;
     }
     setSharing(true);
-
     try {
         const urlRes = await apiClient.get(`/api/files/${fileToShare.id}/download`);
         const signedUrl = urlRes.data.url;
         const publicUrl = signedUrl.split('?')[0]; 
-
-        await apiClient.post('/api/community/feed', {
-            content: shareText,
-            categoryId: shareCategory,
-            existingFileUrl: publicUrl
-        });
-
+        await apiClient.post('/api/community/feed', { content: shareText, categoryId: shareCategory, existingFileUrl: publicUrl });
         showSnackbar('Datei erfolgreich in der Community geteilt!', 'success');
         setShareOpen(false);
     } catch (err) {
-        console.error(err);
         showSnackbar('Fehler beim Teilen.', 'error');
     } finally {
         setSharing(false);
@@ -265,9 +305,20 @@ const FileManagementPage: React.FC = () => {
     return filtered.sort(getComparator(order, orderBy));
   }, [files, searchTerm, order, orderBy, isAdmin]);
   
-  const usageBytes = businessPartner?.storage_usage_bytes ?? 0;
-  const limitBytes = businessPartner?.storage_limit_bytes ?? 0;
-  const usagePercent = limitBytes > 0 ? (Math.max(0, usageBytes) / limitBytes) * 100 : 0;
+  // --- SPEICHER-ANZEIGE LOGIK ---
+  let displayUsage = businessPartner?.storage_usage_bytes ?? 0;
+  let displayLimit = businessPartner?.storage_limit_bytes ?? 0;
+  
+  // Wenn Admin einen spezifischen Partner auswählt, zeigen wir DESSEN Speicher an
+  if (isAdmin && filterPartnerId !== 'all') {
+      const selectedPartner = partners.find(p => p.id === filterPartnerId);
+      if (selectedPartner) {
+          displayUsage = selectedPartner.storage_usage_bytes ?? 0;
+          displayLimit = selectedPartner.storage_limit_bytes ?? 0;
+      }
+  }
+
+  const usagePercent = displayLimit > 0 ? (Math.max(0, displayUsage) / displayLimit) * 100 : 0;
   
   const canUpload = useMemo(() => {
     if (isAssistent) {
@@ -275,9 +326,7 @@ const FileManagementPage: React.FC = () => {
       const usage = parseInt(String(businessPartner?.storage_usage_bytes ?? 0), 10);
       return limit > 0 && usage < limit;
     }
-    if (isAdmin) {
-      return true;
-    }
+    if (isAdmin) return true;
     return false;
   }, [isAdmin, isAssistent, businessPartner]);
 
@@ -286,15 +335,9 @@ const FileManagementPage: React.FC = () => {
     <Box sx={{ p: isMobile ? 1 : 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant={isMobile ? "h5" : "h4"}>Datencloud</Typography>
-        {/* Mobile: Upload Button in Header */}
         {isMobile && isUploader && (
             <Tooltip title={!canUpload ? 'Speicherlimit erreicht.' : 'Hochladen'}>
-                <IconButton 
-                    color="primary" 
-                    onClick={handleOpenUploadDialog} 
-                    disabled={!canUpload}
-                    sx={{ bgcolor: 'action.hover' }}
-                >
+                <IconButton color="primary" onClick={handleOpenUploadDialog} disabled={!canUpload} sx={{ bgcolor: 'action.hover' }}>
                     <UploadFileIcon />
                 </IconButton>
             </Tooltip>
@@ -302,34 +345,28 @@ const FileManagementPage: React.FC = () => {
       </Box>
 
       {/* SPEICHER-ANZEIGE */}
-{/* SPEICHER-ANZEIGE */}
       {(isAdmin || businessPartner) && (
         <Paper sx={{ p: 2, mb: 3 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: isAdmin ? 0 : 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: (isAdmin && filterPartnerId === 'all') ? 0 : 1 }}>
             <StorageIcon color="action" />
             <Typography variant="body1" sx={{ flexGrow: 1 }}>
               {isAdmin 
-                ? (filterPartnerId === 'all' ? 'Gesamtspeicher (Alle Partner)' : 'Speicher (Gefilterter Partner)')
+                ? (filterPartnerId === 'all' ? 'Gesamtspeicher (Alle sichtbaren Dateien)' : 'Speicher dieses Partners')
                 : `Speicher ${isMobile ? '' : `(Paket: ${businessPartner?.storage_tier || 'Basis'})`}`}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 'bold' }}>
               {files.length} Datei(en) | {' '}
-              {isAdmin 
-                ? `${formatFileSize(files.reduce((acc, f) => acc + Number(f.file_size), 0))} belegt` 
-                : `${formatFileSize(usageBytes)} / ${formatFileSize(limitBytes)}`}
+              {(isAdmin && filterPartnerId === 'all')
+                ? `${formatFileSize(files.reduce((acc, f) => acc + Number(f.file_size), 0))} in dieser Ansicht` 
+                : `${formatFileSize(displayUsage)} / ${formatFileSize(displayLimit)}`}
             </Typography>
           </Box>
-          {!isAdmin && (
+          {(!isAdmin || filterPartnerId !== 'all') && (
             <LinearProgress 
                 variant="determinate" 
                 value={usagePercent} 
-                // NEU: Dynamische Farben (Rot ab 90%, Gelb ab 75%, sonst Grün)
                 color={usagePercent > 90 ? 'error' : usagePercent > 75 ? 'warning' : 'success'}
-                sx={{ 
-                    height: 8, 
-                    borderRadius: 4, 
-                    bgcolor: theme.palette.mode === 'dark' ? 'grey.800' : 'grey.200' 
-                }} 
+                sx={{ height: 8, borderRadius: 4, bgcolor: theme.palette.mode === 'dark' ? 'grey.800' : 'grey.200' }} 
             />
           )}
         </Paper>
@@ -349,18 +386,15 @@ const FileManagementPage: React.FC = () => {
               fullWidth={isMobile}
               sx={{ minWidth: isMobile ? '100%' : '300px' }}
             />
-            {/* NEU: Admin Business Partner Filter */}
             {isAdmin && (
               <FormControl size="small" sx={{ minWidth: isMobile ? '100%' : '250px' }}>
                 <InputLabel>Partner filtern</InputLabel>
-                <Select
-                  value={filterPartnerId}
-                  label="Partner filtern"
-                  onChange={(e) => setFilterPartnerId(e.target.value)}
-                >
+                <Select value={filterPartnerId} label="Partner filtern" onChange={(e) => setFilterPartnerId(e.target.value)}>
                   <MenuItem value="all"><em>Alle Partner anzeigen</em></MenuItem>
                   {partners.map(p => (
-                    <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>
+                    <MenuItem key={p.id} value={p.id}>
+                        {p.name} ({formatFileSize(p.storage_usage_bytes)} / {formatFileSize(p.storage_limit_bytes)})
+                    </MenuItem>
                   ))}
                 </Select>
               </FormControl>
@@ -370,12 +404,7 @@ const FileManagementPage: React.FC = () => {
           {!isMobile && isUploader && (
             <Tooltip title={!canUpload ? 'Speicherlimit erreicht oder Paket erlaubt keine Uploads.' : ''}>
               <span>
-                <Button
-                  variant="contained"
-                  startIcon={<UploadFileIcon />}
-                  disabled={!canUpload}
-                  onClick={handleOpenUploadDialog}
-                >
+                <Button variant="contained" startIcon={<UploadFileIcon />} disabled={!canUpload} onClick={handleOpenUploadDialog}>
                   Datei hochladen
                 </Button>
               </span>
@@ -384,17 +413,8 @@ const FileManagementPage: React.FC = () => {
         </Box>
       </Paper>
 
-      {error && (
-        <Box sx={{ mb: 2 }}>
-          <Alert severity="error">{error}</Alert>
-        </Box>
-      )}
-
-      {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', my: 5 }}>
-          <CircularProgress />
-        </Box>
-      )}
+      {error && <Box sx={{ mb: 2 }}><Alert severity="error">{error}</Alert></Box>}
+      {loading && <Box sx={{ display: 'flex', justifyContent: 'center', my: 5 }}><CircularProgress /></Box>}
 
       {/* UPLOAD DIALOG */}
       <Dialog open={openUploadDialog} onClose={handleCloseUploadDialog} fullWidth maxWidth="sm" fullScreen={isMobile}>
@@ -403,18 +423,10 @@ const FileManagementPage: React.FC = () => {
           <Stack spacing={3} sx={{ mt: 1 }}>
             {isAdmin && (
               <FormControl fullWidth required>
-                <InputLabel id="partner-select-label">Business Partner</InputLabel>
-                <Select
-                  labelId="partner-select-label"
-                  value={selectedPartnerId}
-                  label="Business Partner"
-                  onChange={(e) => setSelectedPartnerId(e.target.value as string)}
-                  disabled={isPartnerListLoading}
-                >
+                <InputLabel>Business Partner</InputLabel>
+                <Select value={selectedPartnerId} label="Business Partner" onChange={(e) => setSelectedPartnerId(e.target.value as string)} disabled={isPartnerListLoading}>
                   {isPartnerListLoading && <MenuItem disabled>Lade Partner...</MenuItem>}
-                  {partners.map((p) => (
-                    <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>
-                  ))}
+                  {partners.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
                 </Select>
               </FormControl>
             )}
@@ -423,22 +435,8 @@ const FileManagementPage: React.FC = () => {
               {fileToUpload ? fileToUpload.name : <Box sx={{textAlign:'center'}}><UploadFileIcon sx={{fontSize: 40, color: 'text.secondary'}} /><br/>Datei auswählen</Box>}
               <input type="file" hidden onChange={handleFileSelect} />
             </Button>
-
-            <TextField
-              label="Beschreibung"
-              fullWidth
-              variant="outlined"
-              value={fileDescription}
-              onChange={(e) => setFileDescription(e.target.value)}
-            />
-
-            <TextField
-              label="Tags (Komma getrennt)"
-              fullWidth
-              variant="outlined"
-              value={fileTags}
-              onChange={(e) => setFileTags(e.target.value)}
-            />
+            <TextField label="Beschreibung" fullWidth variant="outlined" value={fileDescription} onChange={(e) => setFileDescription(e.target.value)} />
+            <TextField label="Tags (Komma getrennt)" fullWidth variant="outlined" value={fileTags} onChange={(e) => setFileTags(e.target.value)} />
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -449,22 +447,31 @@ const FileManagementPage: React.FC = () => {
         </DialogActions>
       </Dialog>
       
+      {/* EDIT DIALOG */}
+      <Dialog open={openEditDialog} onClose={handleCloseEditDialog} fullWidth maxWidth="sm" fullScreen={isMobile}>
+          <DialogTitle>Datei bearbeiten</DialogTitle>
+          <DialogContent dividers>
+              <Stack spacing={3} sx={{ mt: 1 }}>
+                  <TextField label="Dateiname" fullWidth variant="outlined" value={editFilename} onChange={(e) => setEditFilename(e.target.value)} required />
+                  <TextField label="Beschreibung" fullWidth variant="outlined" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} />
+                  <TextField label="Tags (Komma getrennt)" fullWidth variant="outlined" value={editTags} onChange={(e) => setEditTags(e.target.value)} />
+              </Stack>
+          </DialogContent>
+          <DialogActions>
+              <Button onClick={handleCloseEditDialog}>Abbrechen</Button>
+              <Button onClick={handleFileEdit} variant="contained" disabled={editing || !editFilename.trim()}>
+                  {editing ? <CircularProgress size={24} /> : 'Speichern'}
+              </Button>
+          </DialogActions>
+      </Dialog>
+
       {/* SHARE DIALOG */}
       <Dialog open={shareOpen} onClose={() => setShareOpen(false)} fullWidth maxWidth="sm" fullScreen={isMobile}>
             <DialogTitle>Datei teilen</DialogTitle>
             <DialogContent dividers>
-                <DialogContentText sx={{ mb: 2 }}>
-                    Poste <strong>{fileToShare?.filename}</strong> in der Community.
-                </DialogContentText>
+                <DialogContentText sx={{ mb: 2 }}>Poste <strong>{fileToShare?.filename}</strong> in der Community.</DialogContentText>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <TextField
-                        label="Nachricht"
-                        fullWidth
-                        multiline
-                        rows={3}
-                        value={shareText}
-                        onChange={(e) => setShareText(e.target.value)}
-                    />
+                    <TextField label="Nachricht" fullWidth multiline rows={3} value={shareText} onChange={(e) => setShareText(e.target.value)} />
                     <FormControl fullWidth>
                         <InputLabel>Kategorie *</InputLabel>
                         <Select value={shareCategory} label="Kategorie *" onChange={(e) => setShareCategory(e.target.value)}>
@@ -521,7 +528,7 @@ const FileManagementPage: React.FC = () => {
                         <TableRow key={file.id} hover>
                         <TableCell component="th" scope="row">
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <InsertDriveFileIcon color="action" />
+                                {getFileIcon(file.file_type)}
                                 {file.filename}
                             </Box>
                         </TableCell>
@@ -545,6 +552,13 @@ const FileManagementPage: React.FC = () => {
                         <TableCell align="right">{formatFileSize(file.file_size, 2)}</TableCell>
                         <TableCell align="right">{new Date(file.created_at).toLocaleDateString('de-DE')}</TableCell>
                         <TableCell align="center">
+                            {isUploader && (
+                                <Tooltip title="Bearbeiten">
+                                    <IconButton color="primary" onClick={() => handleOpenEditDialog(file)} size="small">
+                                        <EditIcon fontSize="small" />
+                                    </IconButton>
+                                </Tooltip>
+                            )}
                             {isUploader && (
                                 <Tooltip title="Teilen">
                                     <IconButton color="primary" onClick={() => handleOpenShare(file)} size="small">
@@ -587,7 +601,7 @@ const FileManagementPage: React.FC = () => {
                         <Card key={file.id}>
                             <CardContent sx={{ pb: 1 }}>
                                 <Box sx={{ display: 'flex', gap: 2, mb: 1 }}>
-                                    <InsertDriveFileIcon color="action" fontSize="large" />
+                                    {getFileIcon(file.file_type)}
                                     <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                                         <Typography variant="subtitle1" fontWeight="bold" noWrap>{file.filename}</Typography>
                                         <Typography variant="caption" color="text.secondary" display="block">
@@ -604,6 +618,11 @@ const FileManagementPage: React.FC = () => {
                             </CardContent>
                             <Divider />
                             <CardActions sx={{ justifyContent: 'flex-end' }}>
+                                {isUploader && (
+                                    <IconButton onClick={() => handleOpenEditDialog(file)} size="small" color="primary">
+                                        <EditIcon />
+                                    </IconButton>
+                                )}
                                 {isUploader && (
                                     <IconButton onClick={() => handleOpenShare(file)} size="small" color="primary">
                                         <ShareIcon />

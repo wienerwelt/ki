@@ -2,65 +2,29 @@
 const express = require('express');
 const router = express.Router();
 const publicController = require('../controllers/publicController');
-const adminBusinessPartnerController = require('../controllers/adminBusinessPartnerController');
 
-const rateLimit = require('express-rate-limit');
-const { RedisStore } = require('rate-limit-redis');
-const Redis = require('ioredis');
+// --- 1. BRANDING & KONTEXT ---
+router.get('/context', publicController.getPublicContext);
 
-let redisClient;
-try {
-  redisClient = new Redis(
-    process.env.REDIS_URL || {
-      host: process.env.REDIS_HOST || '127.0.0.1',
-      port: process.env.REDIS_PORT ? Number(process.env.REDIS_PORT) : 6379,
-      password: process.env.REDIS_PASS || undefined,
-    }
-  );
-  redisClient.on('error', (err) => console.error('[public-routes] Redis error:', err?.message || err));
-} catch (e) {
-  redisClient = null;
-}
+// --- 2. PUBLIC PARTNER CARD (HIER IST DIE NEUE ROUTE!) ---
+router.get('/partner-card/:id', publicController.getPublicPartnerCard);
 
-function makeRedisStore(prefix) {
-  if (!redisClient) return undefined; 
-  return new RedisStore({
-    prefix: prefix || 'rl:public:',
-    sendCommand: (...args) => redisClient.call(...args),
-  });
-}
+// --- 3. KONTAKTFORMULAR ---
+router.post('/contact', publicController.submitContactForm);
 
-// Erlaubt maximal 60 Anfragen pro Minute von der selben IP
-const publicDataLimiter = rateLimit({
-  store: makeRedisStore('rl:public:data:'),
-  windowMs: 1 * 60 * 1000, 
-  max: 60, 
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { message: 'Zu viele Anfragen an die öffentliche API. Bitte warten Sie einen Moment.' },
-});
+// --- 4. DER NEUE GENERIC WIDGET HUB (Für alle zukünftigen Widgets) ---
+router.get('/widget-data/:widgetKey', publicController.getGenericWidgetData);
 
-// ==========================================
-// Öffentliche Routen (Keine Auth-Middleware!)
-// ==========================================
-
-router.get('/context', publicDataLimiter, publicController.getPublicContext);
-router.get('/widget-data', publicDataLimiter, publicController.getPublicWidgetData);
-router.get('/partner-card/:id', publicDataLimiter, adminBusinessPartnerController.getPublicPartnerCard);
-
-// Route für das Formular auf der Landingpage
-router.post('/contact', publicDataLimiter, publicController.submitContactForm);
-
-// ==========================================
-// LIVE-DATEN WRAPPER FÜR LANDINGPAGE WIDGETS
-// ==========================================
-router.get('/sentiment', publicDataLimiter, publicController.getPublicSentiment);
-router.get('/enhanced-calendar-events', publicDataLimiter, publicController.getPublicEvents);
-router.get('/holidays', publicDataLimiter, publicController.getPublicHolidays);
-router.get('/regions', publicDataLimiter, publicController.getPublicRegions);
-router.get('/commodities', publicDataLimiter, publicController.getPublicCommodities);
-
-// NEU: Hier fehlte die Route für das Daily Briefing!
-router.get('/daily-briefing', publicDataLimiter, publicController.getPublicDailyBriefing);
+// =====================================================================
+// 5. LEGACY ROUTEN (Rückwärtskompatibilität für dein aktuelles Frontend)
+// =====================================================================
+router.get('/regions', publicController.getPublicRegions);
+router.get('/enhanced-calendar-events', publicController.getPublicEvents);
+router.get('/holidays', publicController.getPublicHolidays);
+router.get('/actions', publicController.getPublicActions);
+router.get('/commodities', publicController.getPublicCommodities);
+router.get('/sentiment', publicController.getPublicSentiment);
+router.get('/daily-briefing', publicController.getPublicDailyBriefing);
+router.get('/directory', publicController.getPublicDirectory);
 
 module.exports = router;

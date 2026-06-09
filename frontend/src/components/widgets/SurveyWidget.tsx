@@ -212,18 +212,14 @@ const renderTakingSurvey = () => {
         const progress = ((currentStep) / currentSurvey.questions.length) * 100;
         const isLastStep = currentStep === currentSurvey.questions.length - 1;
         
-        // Validierung für "Weiter"-Button
         const currentAnswer = responses[currentQ.id];
         const hasAnsweredCurrent = currentAnswer !== undefined && 
                                   (typeof currentAnswer === 'string' ? currentAnswer.trim() !== '' : currentAnswer.length > 0);
 
-        // NEU: Logik für den Zurück-Button
         const handleBack = () => {
             if (currentStep > 0) {
-                // Gehe zur vorherigen Frage
                 setCurrentStep(prev => prev - 1);
             } else {
-                // Wir sind bei Frage 1 -> Umfrage abbrechen und zurück zur Übersicht
                 setCurrentSurvey(null);
                 setView('active');
             }
@@ -236,7 +232,8 @@ const renderTakingSurvey = () => {
         };
 
         return (
-            <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', height: '100%' }}>
+            // 1. Die äußere Box bekommt overflow: 'hidden', damit die Buttons nicht aus dem Widget rutschen
+            <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
                 <Typography variant="h6" gutterBottom>{currentSurvey.title}</Typography>
                 <LinearProgress variant="determinate" value={progress} sx={{ mb: 3, height: 8, borderRadius: 4 }} />
                 <Typography variant="caption" color="text.secondary" sx={{ mb: 2 }}>
@@ -244,7 +241,16 @@ const renderTakingSurvey = () => {
                 </Typography>
 
                 <Fade in={true} key={currentStep}>
-                    <Card variant="outlined" sx={{ flexGrow: 1, p: 3, borderRadius: 2 }}>
+                    {/* 2. Die Card bekommt flexGrow, minHeight: 0 und overflowY: 'auto' */}
+                    <Card variant="outlined" sx={{ 
+                        flexGrow: 1, 
+                        p: 3, 
+                        borderRadius: 2, 
+                        minHeight: 0, // Sehr wichtig für Flexbox, damit es nicht endlos wächst!
+                        overflowY: 'auto', // Macht NUR diesen Bereich scrollbar
+                        '&::-webkit-scrollbar': { width: '6px' },
+                        '&::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,0.15)', borderRadius: '4px' }
+                    }}>
                         <Typography variant="h6" sx={{ mb: 3 }}>{currentQ.question_text}</Typography>
                         
                         {currentQ.question_type === 'single-choice' && (
@@ -284,8 +290,8 @@ const renderTakingSurvey = () => {
                     </Card>
                 </Fade>
 
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 3 }}>
-                    {/* ZURÜCK BUTTON: Ist jetzt nie komplett deaktiviert (außer beim Laden) */}
+                {/* 3. Container für die Buttons bleibt fix unten stehen */}
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 3, pt: 1 }}>
                     <Button 
                         disabled={isSubmitting} 
                         onClick={handleBack}
@@ -295,7 +301,6 @@ const renderTakingSurvey = () => {
                         {currentStep === 0 ? 'Abbrechen' : 'Zurück'}
                     </Button>
                     
-                    {/* WEITER / ABSENDEN BUTTON */}
                     {isLastStep ? (
                         <Button 
                             variant="contained" 
@@ -392,7 +397,21 @@ const renderTakingSurvey = () => {
                     <Tab label="Archiv" disabled={view === 'taking' || view === 'results'} />
                 </Tabs>
             </Box>
-            <Box sx={{ minHeight: '350px', position: 'relative' }}>
+            <Box 
+                sx={{ 
+                    flexGrow: 1, 
+                    overflowY: 'auto',
+                    minHeight: '350px', 
+                    position: 'relative',
+                    '&::-webkit-scrollbar': {
+                        width: '6px',
+                    },
+                    '&::-webkit-scrollbar-thumb': {
+                        backgroundColor: 'rgba(0,0,0,0.15)',
+                        borderRadius: '4px',
+                    }
+                }}
+            >
                 {renderContent()}
             </Box>
         </WidgetPaper>

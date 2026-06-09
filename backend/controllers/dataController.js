@@ -1688,9 +1688,26 @@ exports.getAIPromptRulesForUser = async (req, res) => {
 };
 
 exports.getCategoriesForUser = async (req, res) => {
+    const { type } = req.query;
+
     try {
-        const result = await db.query('SELECT id, name FROM categories ORDER BY name ASC');
-        res.json(result.rows);
+        // Wir holen name_lang dazu, damit das Dropdown "Fuhrpark" statt "fleet" anzeigt!
+        let query = 'SELECT id, name, name_lang FROM categories WHERE 1=1';
+        const params = [];
+        let paramIndex = 1;
+
+        if (type) {
+            query += ` AND category_type = $${paramIndex++}`;
+            params.push(type);
+        }
+
+        // Alphabetisch nach dem deutschen Namen sortieren
+        query += ' ORDER BY COALESCE(name_lang, name) ASC';
+
+        const result = await db.query(query, params);
+        
+        // Array erzwingen
+        res.json(result.rows || []);
     } catch (err) {
         console.error('Error fetching categories for user:', err.message);
         res.status(500).send('Server error');
@@ -2125,7 +2142,7 @@ exports.getScrapedContent = async (req, res) => {
         let orderByClause = 'ORDER BY sc.published_date DESC NULLS LAST, sc.event_date DESC NULLS LAST, sc.scraped_at DESC';
         if (sortBy === 'relevance') orderByClause = 'ORDER BY sc.relevance_score DESC, sc.published_date DESC NULLS LAST, sc.scraped_at DESC';
 
-        const dataQuery = `
+const dataQuery = `
             SELECT
                 sc.id,
                 sc.title,
@@ -2138,7 +2155,7 @@ exports.getScrapedContent = async (req, res) => {
                 sc.relevance_score,
                 sc.region,
                 sc.thumbnail_url,
-                s.logo_url, -- ✅ HIER ERGÄNZT
+                s.logo_url, 
                 s.status = 'approved' AS is_trusted_source,
                 EXISTS (
                     SELECT 1
@@ -2146,7 +2163,19 @@ exports.getScrapedContent = async (req, res) => {
                     WHERE ursc.scraped_content_id = sc.id
                       AND ursc.user_id = $${pd}
                 ) as is_read,
-                COALESCE(crv.vote, 0) as user_vote
+                COALESCE(crv.vote, 0) as user_vote,
+                (
+                    SELECT COALESCE(array_agg(t.name), ARRAY[]::text[])
+                    FROM scraped_content_tags sct
+                    JOIN tags t ON sct.tag_id = t.id
+                    WHERE sct.scraped_content_id = sc.id
+                ) as tags,
+                (
+                    SELECT COALESCE(json_agg(json_build_object('name', t.name, 'logo_url', t.logo_url)), '[]'::json)
+                    FROM scraped_content_tags sct
+                    JOIN tags t ON sct.tag_id = t.id
+                    WHERE sct.scraped_content_id = sc.id
+                ) as tag_details
             FROM scraped_content sc
             LEFT JOIN sources s ON sc.original_url LIKE s.url || '%'
             LEFT JOIN content_relevance_votes crv ON crv.content_id = sc.id AND crv.user_id = $${pd}
@@ -3407,51 +3436,65 @@ exports.getNotificationCounts = async (req, res) => {
         const userRes = await db.query('SELECT last_login_at FROM users WHERE id = $1', [userId]);
         const lastLogin = userRes.rows[0]?.last_login_at || new Date(0);
 
-        // Wir führen die Zählungen parallel aus
-        const [scrapedNew, aiNew, actionsNew] = await Promise.all([
+        // Wir feuern alle Zählungen gleichzeitig (parallel) ab für maximale Performance
+        const [scrapedNew, aiNew, actionsNew, communityNew, filesNew, directoryNew, sourcesNew] = await Promise.all([
+            // 1. Scraped Content
+            db.query(`SELECT COUNT(id) as cnt FROM scraped_content WHERE created_at > $1`, [lastLogin]),
             
-            // --- KORREKTUR ---
-            // 1. Zählt 'scraped_content', das NEUER als der letzte Login ist
-            db.query(
-                `SELECT COUNT(sc.id) 
-                 FROM scraped_content sc 
-                 WHERE sc.created_at > $1`, // Statt "NOT EXISTS"
-                [lastLogin]
-            ),
-            
-            // --- KORREKTUR ---
-            // 2. Zählt 'ai_content', das NEUER als der letzte Login ist
-            db.query(
-                `SELECT COUNT(ac.id) 
-                 FROM ai_generated_content ac 
-                 WHERE ac.created_at > $1`, // Statt "NOT EXISTS"
-                [lastLogin]
-            ),
+            // 2. AI Content
+            db.query(`SELECT COUNT(id) as cnt FROM ai_generated_content WHERE created_at > $1`, [lastLogin]),
 
-            // 3. Neue 'business_partner_actions' (Diese Logik war bereits korrekt)
+            // 3. Actions (Mandantenbezogen)
             isValidUUID(businessPartnerId)
-                ? db.query(
-                    `SELECT COUNT(bpa.id) 
-                     FROM business_partner_actions bpa 
-                     WHERE bpa.business_partner_id = $1 AND bpa.created_at > $2`,
-                    [businessPartnerId, lastLogin]
-                  )
-                : Promise.resolve({ rows: [{ count: 0 }] })
+                ? db.query(`SELECT COUNT(id) as cnt FROM business_partner_actions WHERE business_partner_id = $1 AND created_at > $2`, [businessPartnerId, lastLogin])
+                : Promise.resolve({ rows: [{ cnt: 0 }] }),
+
+            // 4. NEU: Community Posts (Mandantenbezogen)
+            isValidUUID(businessPartnerId)
+                ? db.query(`SELECT COUNT(id) as cnt FROM community_posts WHERE business_partner_id = $1 AND created_at > $2`, [businessPartnerId, lastLogin])
+                : Promise.resolve({ rows: [{ cnt: 0 }] }),
+
+            // 5. NEU: Dateien (Mandantenbezogen)
+            isValidUUID(businessPartnerId)
+                ? db.query(`SELECT COUNT(id) as cnt FROM business_partner_files WHERE business_partner_id = $1 AND created_at > $2`, [businessPartnerId, lastLogin])
+                : Promise.resolve({ rows: [{ cnt: 0 }] }),
+
+            // 6. NEU: Partner-Netzwerk (Mandantenbezogen über Verknüpfungstabelle)
+            isValidUUID(businessPartnerId)
+                ? db.query(`
+                    SELECT COUNT(p.id) as cnt 
+                    FROM directory_providers p
+                    INNER JOIN directory_provider_mandant_settings ms ON p.id = ms.provider_id
+                    WHERE ms.business_partner_id = $1 AND ms.status = 'active' AND p.created_at > $2
+                  `, [businessPartnerId, lastLogin])
+                : Promise.resolve({ rows: [{ cnt: 0 }] }),
+
+            // 7. NEU: Quellen (Global, da für alle genehmigt)
+            db.query(`SELECT COUNT(id) as cnt FROM sources WHERE status = 'approved' AND created_at > $1`, [lastLogin])
         ]);
 
-        const totalCount = 
-            parseInt(scrapedNew.rows[0].count, 10) +
-            parseInt(aiNew.rows[0].count, 10) +
-            parseInt(actionsNew.rows[0].count, 10);
+        const counts = {
+            scraped: parseInt(scrapedNew.rows[0].cnt, 10),
+            ai: parseInt(aiNew.rows[0].cnt, 10),
+            actions: parseInt(actionsNew.rows[0].cnt, 10),
+            community: parseInt(communityNew.rows[0].cnt, 10),
+            files: parseInt(filesNew.rows[0].cnt, 10),
+            directory: parseInt(directoryNew.rows[0].cnt, 10),
+            sources: parseInt(sourcesNew.rows[0].cnt, 10)
+        };
 
-        res.json({ totalCount: totalCount });
+        const totalCount = counts.scraped + counts.ai + counts.actions;
+
+        res.json({ 
+            totalCount: totalCount,
+            menuCounts: counts // Dieses Objekt nutzen wir im Frontend für die Menü-Badges!
+        });
 
     } catch (err) {
         console.error('Fehler beim Abrufen der Benachrichtigungszählungen:', err.message);
         res.status(500).json({ message: 'Serverfehler.' });
     }
 };
-
 
 
 exports.getBusinessPartnerMembersPreview = async (req, res) => {

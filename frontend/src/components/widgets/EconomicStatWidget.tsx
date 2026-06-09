@@ -77,7 +77,11 @@ const subtypeIcons: { [key: string]: { icon: React.ReactElement; tooltip: string
   default: { icon: <HelpOutlineIcon />, tooltip: 'Unbekannt' }
 };
 
-const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#0088FE', '#00C49F'];
+const COLORS = [
+  '#0088FE', '#00C49F', '#FFBB28', '#FF8042', 
+  '#8884d8', '#82ca9d', '#a4de6c', '#d0ed57', 
+  '#ffc658', '#d0a2ff'
+];
 const integerFormatter = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
 
 const Flag: React.FC<{ code?: string; alt?: string; size?: number }> = ({ code, alt, size = 20 }) => {
@@ -128,13 +132,12 @@ const CustomTooltip = ({ active, payload, label }: any) => {
         <Typography variant="body2" component="div" sx={{ mb: 1, fontWeight: 'bold' }}>
           {date}
         </Typography>
-        {payload.map((pld: any) => {
+        {payload
+          .filter((pld: any) => pld.value > 0)
+          .map((pld: any) => {
           const percentage = total > 0 ? ((pld.value / total) * 100).toFixed(1) : 0;
           return (
-            <Box
-              key={pld.dataKey}
-              sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', my: 0.5 }}
-            >
+            <Box key={pld.dataKey} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', my: 0.5 }}>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <Box sx={{ width: 10, height: 10, bgcolor: pld.fill, mr: 1, borderRadius: '50%' }} />
                 <Typography variant="body2" component="span">{`${pld.name}:`}</Typography>
@@ -162,7 +165,11 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 const imageToBase64 = async (url: string): Promise<string | null> => {
   try {
-    const resp = await fetch(url, { mode: 'cors' });
+    // KORREKTUR: Cache-Busting Parameter anhängen! 
+    // Zwingt den Browser, das Bild frisch von AWS (inklusive der neuen CORS-Header) zu laden.
+    const fetchUrl = url.includes('?') ? `${url}&_cb=${Date.now()}` : `${url}?_cb=${Date.now()}`;
+    
+    const resp = await fetch(fetchUrl, { mode: 'cors' });
     if (!resp.ok) return null;
     const blob = await resp.blob();
     return await new Promise((resolve, reject) => {
@@ -171,7 +178,8 @@ const imageToBase64 = async (url: string): Promise<string | null> => {
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
-  } catch {
+  } catch (error) {
+    console.error("CORS oder Fetch Fehler beim Logo:", error);
     return null;
   }
 };
@@ -300,37 +308,38 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
     setPdfError(null);
     setIsDownloading(true);
     try {
-      const doc = new jsPDF('p', 'mm', 'a4');
+      // NACHHER: 'l' steht für Landscape (Querformat), damit die Tabelle Platz hat
+      const doc = new jsPDF('l', 'mm', 'a4');
       const margin = 14;
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
 
-      const reportTitle = title || 'Economic Statistics';
+      const brandColor = (businessPartner as any)?.primary_color || (businessPartner as any)?.branding?.primaryColor || '#333333';
+
       const latestDate = data.length > 0 ? new Date(data[data.length - 1].date) : null;
-      const latestDateLabel = latestDate ? format(latestDate, 'dd.MM.yyyy', { locale: de }) : '-';
+      const latestDateLabel = latestDate ? format(latestDate, 'MMMM yyyy', { locale: de }) : '-';
 
       // Header
       doc.setFontSize(16);
-      doc.text(reportTitle, margin, 16);
-
-      doc.setFontSize(10);
       doc.text(
-        `Land: ${selectedCountry} | Typ: ${category} | Stand: ${latestDateLabel}`,
+        `Land: ${selectedCountry} | Typ: ${category} | Berichtsmonat: ${latestDateLabel}`,
         margin,
         22
       );
+
+      doc.setFontSize(10);
       doc.text(`Export: ${new Date().toLocaleDateString('de-DE')}`, margin, 27);
 
-      // Optional Logo
+      // Logo (aus Business Partner)
       if (businessPartner?.logo_url) {
         const logo = await imageToBase64(businessPartner.logo_url);
         if (logo) {
-          const logoW = 26;
+          const logoW = 35; // Etwas größer im Querformat
           doc.addImage(logo, 'PNG', pageWidth - logoW - margin, 10, logoW, 0);
         }
       }
 
-      // Screenshot (Chart + KPIs + Quelle, ohne abgeschnittenen WidgetPaper-Container)
+      // Screenshot vom Chart ziehen
       const canvas = await html2canvas(exportRef.current, {
         scale: 2,
         useCORS: true,
@@ -341,11 +350,11 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
       const imgW = pageWidth - margin * 2;
       const imgH = (canvas.height * imgW) / canvas.width;
 
-      let y = 32;
+      let y = 35;
       doc.addImage(imgData, 'PNG', margin, y, imgW, imgH);
-      y += imgH + 6;
+      y += imgH + 10;
 
-      // Daten-Tabelle (letzte 12 Monate aus kompletter Zeitreihe)
+      // Daten-Tabelle
       const last = data.slice(Math.max(0, data.length - 12));
       const cols = ['Monat', ...selectedSubtypes];
 
@@ -367,26 +376,34 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
         body: rows,
         theme: 'grid',
         styles: { fontSize: 8 },
-        headStyles: { fontSize: 8 },
+        // NACHHER: Färbt den Tabellenkopf in der Business Partner CI-Farbe!
+        headStyles: { fontSize: 8, fillColor: brandColor, textColor: '#ffffff' },
         margin: { left: margin, right: margin }
       });
 
       const finalY = (doc as any).lastAutoTable?.finalY ?? y;
 
-      // Footer: Source (wenn vorhanden)
-      const srcLine = source?.name ? `${source.name}${source.url ? ` (${source.url})` : ''}` : '';
+      // NACHHER: Umbruch und Formatierung für lange URL & Quelle
       doc.setFontSize(9);
-      const footerY = Math.min(finalY + 10, pageHeight - 10);
-      if (srcLine) doc.text(`Quelle: ${srcLine}`, margin, footerY);
+      let footerY = Math.min(finalY + 12, pageHeight - 20);
+      
+      if (source?.name) {
+        doc.text(`Quelle: ${source.name}`, margin, footerY);
+        footerY += 5;
+        if (source.url) {
+          const urlLines = doc.splitTextToSize(`URL: ${source.url}`, pageWidth - margin * 2);
+          doc.text(urlLines, margin, footerY);
+        }
+      }
 
       // Save
       doc.save(`economic-stats_${category}_${selectedCountry}.pdf`);
-      } catch (e: any) {
-        console.error('PDF Export fehlgeschlagen:', e);
-        setPdfError(e?.message || 'PDF konnte nicht erstellt werden.');
-      } finally {
-        setIsDownloading(false);
-      }
+    } catch (e: any) {
+      console.error('PDF Export fehlgeschlagen:', e);
+      setPdfError(e?.message || 'PDF konnte nicht erstellt werden.');
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   const renderContent = () => {
@@ -406,7 +423,8 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
 
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        {/* Export-Bereich: bewusst ein innerer Container, damit html2canvas nicht an WidgetPaper maxHeight/overflow scheitert */}
+        
+        {/* NACHHER: Hier endet der Bereich, der in das PDF als Bild kopiert wird */}
         <Box
           ref={exportRef}
           sx={{
@@ -422,7 +440,7 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {data.length > 0
-                ? format(new Date(data[data.length - 1].date), "'(Stand:' dd.MM.yyyy')'", { locale: de })
+                ? format(new Date(data[data.length - 1].date), "'Monat:' MMMM yyyy", { locale: de })
                 : ''}
             </Typography>
           </Box>
@@ -507,19 +525,6 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
             </ResponsiveContainer>
           </Box>
 
-          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1 }}>
-            {pdfError && <Alert severity="error" sx={{ py: 0.5, mr: 1 }}>{pdfError}</Alert>}
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={isDownloading ? <CircularProgress size={16} /> : <DownloadIcon />}
-              onClick={handleDownloadPdf}
-              disabled={isDownloading || loading || !!error || data.length === 0}
-            >
-              {isDownloading ? 'Exportiere...' : 'PDF Export'}
-            </Button>
-          </Box>          
-
           {source && (
             <Typography
               variant="caption"
@@ -556,6 +561,22 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
             </Typography>
           )}
         </Box>
+        {/* NACHHER: Hier endet der Bereich für das Foto */}
+
+
+        {/* NACHHER: Der Button-Bereich ist jetzt sicher ausgeklammert und rutscht nicht ins PDF */}
+        <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1 }}>
+          {pdfError && <Alert severity="error" sx={{ py: 0.5, mr: 1 }}>{pdfError}</Alert>}
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={isDownloading ? <CircularProgress size={16} /> : <DownloadIcon />}
+            onClick={handleDownloadPdf}
+            disabled={isDownloading || loading || !!error || data.length === 0}
+          >
+            {isDownloading ? 'Exportiere...' : 'PDF Export'}
+          </Button>
+        </Box>          
       </Box>
     );
   };

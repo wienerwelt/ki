@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate, Link as RouterLink } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
     Autocomplete, Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
-    TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
+    TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, Stack,
     TextField, MenuItem, Switch, FormControlLabel, Tooltip as MuiTooltip, TableSortLabel, InputAdornment, Chip,
-    Tabs, Tab, Grid, Link as MuiLink, LinearProgress
+    Tabs, Tab, Grid, LinearProgress, ToggleButtonGroup, ToggleButton, Divider
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -12,20 +12,29 @@ import AddIcon from '@mui/icons-material/Add';
 import GroupIcon from '@mui/icons-material/Group';
 import SearchIcon from '@mui/icons-material/Search';
 import WidgetsIcon from '@mui/icons-material/Widgets';
-import FolderZipIcon from '@mui/icons-material/FolderZip';
-import DashboardLayout from '../components/DashboardLayout';
 import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
 import UploadIcon from '@mui/icons-material/Upload';
 import LinkIcon from '@mui/icons-material/Link'; 
-import QrCodeIcon from '@mui/icons-material/QrCode'; // ✅ NEU: Icon importiert
+import QrCodeIcon from '@mui/icons-material/QrCode';
+import PaletteIcon from '@mui/icons-material/Palette';
+import ColorLensIcon from '@mui/icons-material/ColorLens';
 
+import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
 
-interface Region {
+interface Region { id: string; name: string; is_default?: boolean; }
+interface Category { id: string; name: string; }
+
+interface ColorScheme {
     id: string;
     name: string;
-    is_default?: boolean;
+    primary_color: string;
+    secondary_color: string;
+    text_color_light: string;
+    background_color_light: string;
+    paper_color_light: string;
+    primary_text_color: string;
 }
 
 interface BusinessPartner {
@@ -58,53 +67,53 @@ interface BusinessPartner {
     dashboard_focus: 'information' | 'sales';
 }
 
-interface Category { id: string; name: string; }
-
-interface ColorScheme {
-    id: string;
-    name: string;
-    primary_color: string;
-}
-
 type Order = 'asc' | 'desc';
 
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
-    let valA = a[orderBy];
-    let valB = b[orderBy];
-
+    let valA = a[orderBy]; let valB = b[orderBy];
     if (orderBy === 'user_count' || orderBy === 'widget_count') {
-        valA = parseInt(valA as string || '0', 10) as any;
-        valB = parseInt(valB as string || '0', 10) as any;
+        valA = parseInt(valA as string || '0', 10) as any; valB = parseInt(valB as string || '0', 10) as any;
     }
-    
     if (orderBy === 'subscription_end_date') {
-        valA = (valA ? new Date(valA as string).getTime() : 0) as any;
-        valB = (valB ? new Date(valB as string).getTime() : 0) as any;
+        valA = (valA ? new Date(valA as string).getTime() : 0) as any; valB = (valB ? new Date(valB as string).getTime() : 0) as any;
     }
-
-    if (valB < valA) return -1;
-    if (valB > valA) return 1;
-    return 0;
+    if (valB < valA) return -1; if (valB > valA) return 1; return 0;
 }
 
-function getComparator<Key extends keyof any>(
-    order: Order,
-    orderBy: Key,
-): (a: { [key in Key]: any }, b: { [key in Key]: any }) => number {
-    return order === 'desc'
-        ? (a, b) => descendingComparator(a, b, orderBy)
-        : (a, b) => -descendingComparator(a, b, orderBy);
+function getComparator<Key extends keyof any>(order: Order, orderBy: Key): (a: { [key in Key]: any }, b: { [key in Key]: any }) => number {
+    return order === 'desc' ? (a, b) => descendingComparator(a, b, orderBy) : (a, b) => -descendingComparator(a, b, orderBy);
 }
 
 const formatFileSize = (bytes: number | string | null | undefined) => {
     const numBytes = Number(bytes);
     if (numBytes == null || isNaN(numBytes) || numBytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const k = 1024; const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(numBytes) / Math.log(k));
     return parseFloat((numBytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
+// --- HILFSKOMPONENTE FÜR DEN COLOR PICKER ---
+const ColorPickerInput = ({ label, value, onChange }: { label: string, value: string, onChange: (val: string) => void }) => (
+    <TextField
+        label={label}
+        size="small"
+        fullWidth
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        InputProps={{
+            startAdornment: (
+                <InputAdornment position="start">
+                    <input
+                        type="color"
+                        value={value}
+                        onChange={(e) => onChange(e.target.value)}
+                        style={{ width: 28, height: 28, border: 'none', padding: 0, cursor: 'pointer', borderRadius: 4, backgroundColor: 'transparent' }}
+                    />
+                </InputAdornment>
+            )
+        }}
+    />
+);
 
 const AdminBusinessPartnersPage: React.FC = () => {
     const [businessPartners, setBusinessPartners] = useState<BusinessPartner[]>([]);
@@ -130,7 +139,6 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [formLogoUrl, setFormLogoUrl] = useState('');
     const [formSubscriptionStartDate, setFormSubscriptionStartDate] = useState('');
     const [formSubscriptionEndDate, setFormSubscriptionEndDate] = useState('');
-    const [formColorSchemeId, setFormColorSchemeId] = useState<string | null>('');
     const [formRegionIds, setFormRegionIds] = useState<string[]>([]);
     const [formDefaultRegionId, setFormDefaultRegionId] = useState<string | null>(null);
     const [formIsActive, setFormIsActive] = useState(true);
@@ -143,12 +151,23 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [formDashboardFocus, setFormDashboardFocus] = useState<'information' | 'sales'>('information');
     const [formIndustryIds, setFormIndustryIds] = useState<string[]>([]);
 
+    // --- NEUE FORM STATES FÜR FARBEN ---
+    const [formColorMode, setFormColorMode] = useState<'select' | 'custom'>('select');
+    const [formColorSchemeId, setFormColorSchemeId] = useState<string>('');
+    const [formCustomColors, setFormCustomColors] = useState({
+        primary_color: '#2196f3',
+        secondary_color: '#ff9800',
+        background_color_light: '#f4f6f8',
+        paper_color_light: '#ffffff',
+        text_color_light: '#333333',
+        primary_text_color: '#ffffff'
+    });
+
     const navigate = useNavigate();
     const { showSnackbar } = useSnackbar();
 
     const fetchData = async () => {
-        setLoading(true);
-        setError(null);
+        setLoading(true); setError(null);
         try {
             const token = localStorage.getItem('jwt_token');
             const [bpRes, csRes, regRes, indRes] = await Promise.all([
@@ -157,135 +176,100 @@ const AdminBusinessPartnersPage: React.FC = () => {
                 apiClient.get('/api/admin/business-partners/regions', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/admin/categories/industries', { headers: { 'x-auth-token': token } })
             ]);
-            setBusinessPartners(bpRes.data);
-            setColorSchemes(csRes.data);
-            setRegions(regRes.data);
-            setAllIndustries(indRes.data);
-        } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Laden der Daten.');
-        } finally {
-            setLoading(false);
-        }
+            setBusinessPartners(bpRes.data); setColorSchemes(csRes.data); setRegions(regRes.data); setAllIndustries(indRes.data);
+        } catch (err: any) { setError(err.response?.data?.message || 'Fehler beim Laden der Daten.'); } 
+        finally { setLoading(false); }
     };
 
-    useEffect(() => {
-        fetchData();
-    }, []);
+    useEffect(() => { fetchData(); }, []);
     
     const handleOpenAddDialog = () => {
-        setEditingBp(null);
-        setFormName('');
-        setFormDashboardTitle('');
-        setFormAddress('');
-        setFormEmail('');
-        setFormLogoUrl('');
-        setFormSubscriptionStartDate('');
-        setFormSubscriptionEndDate('');
+        setEditingBp(null); setFormName(''); setFormDashboardTitle(''); setFormAddress(''); setFormEmail(''); setFormLogoUrl('');
+        setFormSubscriptionStartDate(''); setFormSubscriptionEndDate(''); setFormRegionIds([]); setFormDefaultRegionId(null);
+        setFormIsActive(true); setFormUrlBusinessPartner(''); setFormLevel1Name(''); setFormLevel2Name(''); setFormLevel3Name('');
+        setFormStorageTier('free'); setFormAllowNewsletter(false); setFormDashboardFocus('information'); setFormIndustryIds([]);
+        
+        // Farben Reset
+        setFormColorMode('select');
         setFormColorSchemeId('');
-        setFormRegionIds([]);
-        setFormDefaultRegionId(null);
-        setFormIsActive(true);
-        setFormUrlBusinessPartner('');
-        setFormLevel1Name('');
-        setFormLevel2Name('');
-        setFormLevel3Name('');
-        setFormStorageTier('free');
-        setFormAllowNewsletter(false);
+        setFormCustomColors({ primary_color: '#2196f3', secondary_color: '#ff9800', background_color_light: '#f4f6f8', paper_color_light: '#ffffff', text_color_light: '#333333', primary_text_color: '#ffffff' });
+        
         setOpenDialog(true);
-        setFormDashboardFocus('information');
-        setFormIndustryIds([]);     
     };
 
     const handleOpenEditDialog = (bp: BusinessPartner) => {
-        setEditingBp(bp);
-        setFormName(bp.name);
-        setFormDashboardTitle(bp.dashboard_title || '');
-        setFormAddress(bp.address || '');
-        setFormEmail(bp.email || '');
-        setFormLogoUrl(bp.logo_url || '');
-        setFormSubscriptionStartDate(bp.subscription_start_date ? bp.subscription_start_date.split('T')[0] : '');
-        setFormSubscriptionEndDate(bp.subscription_end_date ? bp.subscription_end_date.split('T')[0] : '');
-        setFormColorSchemeId(bp.color_scheme_id || '');
-        setFormRegionIds(bp.regions.map(r => r.id));
-        const defaultRegion = bp.regions.find(r => r.is_default);
-        setFormDefaultRegionId(defaultRegion?.id || bp.regions[0]?.id || null);
-        setFormIsActive(bp.is_active);
-        setFormUrlBusinessPartner(bp.url_businesspartner || '');
-        setFormLevel1Name(bp.level_1_name || '');
-        setFormLevel2Name(bp.level_2_name || '');
-        setFormLevel3Name(bp.level_3_name || '');
-        setFormStorageTier(bp.storage_tier || 'free');
-        setFormAllowNewsletter(bp.allow_automated_newsletter);
+        setEditingBp(bp); setFormName(bp.name); setFormDashboardTitle(bp.dashboard_title || ''); setFormAddress(bp.address || '');
+        setFormEmail(bp.email || ''); setFormLogoUrl(bp.logo_url || ''); setFormSubscriptionStartDate(bp.subscription_start_date ? bp.subscription_start_date.split('T')[0] : '');
+        setFormSubscriptionEndDate(bp.subscription_end_date ? bp.subscription_end_date.split('T')[0] : ''); setFormRegionIds(bp.regions.map(r => r.id));
+        const defaultRegion = bp.regions.find(r => r.is_default); setFormDefaultRegionId(defaultRegion?.id || bp.regions[0]?.id || null);
+        setFormIsActive(bp.is_active); setFormUrlBusinessPartner(bp.url_businesspartner || ''); setFormLevel1Name(bp.level_1_name || '');
+        setFormLevel2Name(bp.level_2_name || ''); setFormLevel3Name(bp.level_3_name || ''); setFormStorageTier(bp.storage_tier || 'free');
+        setFormAllowNewsletter(bp.allow_automated_newsletter); setFormDashboardFocus(bp.dashboard_focus || 'information'); setFormIndustryIds(bp.industries.map(ind => ind.id));
+        
+        // Farben setzen
+        if (bp.color_scheme_id) {
+            const existingScheme = colorSchemes.find(cs => cs.id === bp.color_scheme_id);
+            if (existingScheme && existingScheme.name.startsWith('Custom -')) {
+                setFormColorMode('custom');
+                setFormCustomColors({
+                    primary_color: existingScheme.primary_color || '#2196f3',
+                    secondary_color: existingScheme.secondary_color || '#ff9800',
+                    background_color_light: existingScheme.background_color_light || '#f4f6f8',
+                    paper_color_light: existingScheme.paper_color_light || '#ffffff',
+                    text_color_light: existingScheme.text_color_light || '#333333',
+                    primary_text_color: existingScheme.primary_text_color || '#ffffff'
+                });
+            } else {
+                setFormColorMode('select');
+                setFormColorSchemeId(bp.color_scheme_id);
+                // Lade trotzdem die Farben in den Custom-State, falls der User auf "Individuell" wechselt
+                if (existingScheme) {
+                    setFormCustomColors({
+                        primary_color: existingScheme.primary_color, secondary_color: existingScheme.secondary_color,
+                        background_color_light: existingScheme.background_color_light, paper_color_light: existingScheme.paper_color_light,
+                        text_color_light: existingScheme.text_color_light, primary_text_color: existingScheme.primary_text_color || '#ffffff'
+                    });
+                }
+            }
+        } else {
+            setFormColorMode('select'); setFormColorSchemeId('');
+        }
+        
         setOpenDialog(true);
-        setFormDashboardFocus(bp.dashboard_focus || 'information');
-        setFormIndustryIds(bp.industries.map(ind => ind.id));        
     };
 
-    const handleCloseDialog = () => {
-        setOpenDialog(false);
-        setEditingBp(null);
-        setError(null);
-    };
+    const handleCloseDialog = () => { setOpenDialog(false); setEditingBp(null); setError(null); };
 
     const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-
-        setIsUploadingLogo(true);
-        setError(null);
-        const formData = new FormData();
-        formData.append('logo', file);
-
+        const file = event.target.files?.[0]; if (!file) return;
+        setIsUploadingLogo(true); setError(null); const formData = new FormData(); formData.append('logo', file);
         try {
             const token = localStorage.getItem('jwt_token');
-            const response = await apiClient.post('/api/admin/business-partners/logo-upload', formData, {
-                headers: {
-                    'x-auth-token': token,
-                },
-            });
+            const response = await apiClient.post('/api/admin/business-partners/logo-upload', formData, { headers: { 'x-auth-token': token } });
             setFormLogoUrl(response.data.url);
-        } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Logo-Upload.');
-        } finally {
-            setIsUploadingLogo(false);
-        }
+        } catch (err: any) { setError(err.response?.data?.message || 'Fehler beim Logo-Upload.'); } 
+        finally { setIsUploadingLogo(false); }
     };
 
     const handleSubmit = async () => {
         const token = localStorage.getItem('jwt_token');
         const bpData = {
-            name: formName,
-            dashboard_title: formDashboardTitle || null,
-            address: formAddress || null,
-            email: formEmail || null,
-            logo_url: formLogoUrl || null,
-            subscription_start_date: formSubscriptionStartDate,
-            subscription_end_date: formSubscriptionEndDate,
-            color_scheme_id: formColorSchemeId || null,
-            region_ids: formRegionIds,
-            default_region_id: formDefaultRegionId,
-            is_active: formIsActive,
-            url_businesspartner: formUrlBusinessPartner || null,
-            level_1_name: formLevel1Name || null,
-            level_2_name: formLevel2Name || null,
-            level_3_name: formLevel3Name || null,
-            storage_tier: formStorageTier,
-            allow_automated_newsletter: formAllowNewsletter,
-            category_ids: formIndustryIds,
-            dashboard_focus: formDashboardFocus           
+            name: formName, dashboard_title: formDashboardTitle || null, address: formAddress || null, email: formEmail || null,
+            logo_url: formLogoUrl || null, subscription_start_date: formSubscriptionStartDate, subscription_end_date: formSubscriptionEndDate,
+            region_ids: formRegionIds, default_region_id: formDefaultRegionId, is_active: formIsActive, url_businesspartner: formUrlBusinessPartner || null,
+            level_1_name: formLevel1Name || null, level_2_name: formLevel2Name || null, level_3_name: formLevel3Name || null,
+            storage_tier: formStorageTier, allow_automated_newsletter: formAllowNewsletter, category_ids: formIndustryIds, dashboard_focus: formDashboardFocus,
+            // NEU: Übermittlung der Farbdaten
+            color_mode: formColorMode,
+            color_scheme_id: formColorMode === 'select' ? (formColorSchemeId || null) : null,
+            custom_colors: formColorMode === 'custom' ? formCustomColors : null
         };
 
         try {
-            if (editingBp) {
-                await apiClient.put(`/api/admin/business-partners/${editingBp.id}`, bpData, { headers: { 'x-auth-token': token } });
-            } else {
-                await apiClient.post('/api/admin/business-partners', bpData, { headers: { 'x-auth-token': token } });
-            }
-            handleCloseDialog();
-            fetchData();
-        } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Speichern.');
-        }
+            if (editingBp) { await apiClient.put(`/api/admin/business-partners/${editingBp.id}`, bpData, { headers: { 'x-auth-token': token } }); } 
+            else { await apiClient.post('/api/admin/business-partners', bpData, { headers: { 'x-auth-token': token } }); }
+            handleCloseDialog(); fetchData(); showSnackbar('Erfolgreich gespeichert', 'success');
+        } catch (err: any) { setError(err.response?.data?.message || 'Fehler beim Speichern.'); }
     };
 
     const handleDelete = async (id: string) => {
@@ -293,62 +277,34 @@ const AdminBusinessPartnersPage: React.FC = () => {
         try {
             const token = localStorage.getItem('jwt_token');
             await apiClient.delete(`/api/admin/business-partners/${id}`, { headers: { 'x-auth-token': token } });
-            fetchData();
-        } catch (err: any) {
-            alert(err.response?.data?.message || 'Fehler beim Löschen.');
-        }
-    };
-
-    const handleViewUsers = (bpId: string, bpName: string) => {
-        navigate(`/admin/users/${bpId}`, { state: { businessPartnerName: bpName } });
-    };
-    
-    const handleWidgetAccess = (bpId: string, bpName: string) => {
-        navigate(`/admin/bp-widget-access/${bpId}`, { state: { businessPartnerName: bpName } });
+            fetchData(); showSnackbar('Partner gelöscht', 'info');
+        } catch (err: any) { alert(err.response?.data?.message || 'Fehler beim Löschen.'); }
     };
 
     const handleCopyPartnerLink = (bpId: string) => {
-        const voucherCode = bpId.slice(-8); 
-        const link = `${window.location.origin}/register?partner=${voucherCode}`;
-        
-        navigator.clipboard.writeText(link).then(() => {
-            showSnackbar('Registrierungs-Link in die Zwischenablage kopiert!', 'success');
-        }).catch(() => {
-            showSnackbar('Fehler beim Kopieren des Links.', 'error');
-        });
+        const voucherCode = bpId.slice(-8); const link = `${window.location.origin}/register?partner=${voucherCode}`;
+        navigator.clipboard.writeText(link).then(() => { showSnackbar('Registrierungs-Link kopiert!', 'success'); })
+        .catch(() => { showSnackbar('Fehler beim Kopieren des Links.', 'error'); });
     };
 
-    const getDaysRemaining = (endDateString: string | null): { text: string; color: string } => {
+    const getDaysRemaining = (endDateString: string | null) => {
         if (!endDateString) return { text: 'Unbefristet', color: 'text.secondary' };
-        const endDate = new Date(endDateString);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const diffTime = endDate.getTime() - today.getTime();
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
+        const diffDays = Math.ceil((new Date(endDateString).getTime() - new Date().setHours(0,0,0,0)) / (1000 * 60 * 60 * 24));
         if (diffDays < 0) return { text: `${diffDays} Tage`, color: 'error.main' };
         if (diffDays <= 30) return { text: `+${diffDays} Tage`, color: 'warning.main' };
         return { text: `+${diffDays} Tage`, color: 'success.main' };
     };
 
     const handleSortRequest = (property: keyof BusinessPartner) => {
-        const isAsc = orderBy === property && order === 'asc';
-        setOrder(isAsc ? 'desc' : 'asc');
-        setOrderBy(property);
+        setOrder(orderBy === property && order === 'asc' ? 'desc' : 'asc'); setOrderBy(property);
     };
 
     const sortedAndFilteredPartners = useMemo(() => {
         let filtered = [...businessPartners];
-        if (statusFilter !== 'all') {
-            filtered = filtered.filter(bp => bp.is_active === (statusFilter === 'active'));
-        }
+        if (statusFilter !== 'all') filtered = filtered.filter(bp => bp.is_active === (statusFilter === 'active'));
         if (searchTerm) {
-            const lowercasedFilter = searchTerm.toLowerCase();
-            filtered = filtered.filter(bp =>
-                bp.name.toLowerCase().includes(lowercasedFilter) ||
-                (bp.address?.toLowerCase() || '').includes(lowercasedFilter) ||
-                (bp.email?.toLowerCase() || '').includes(lowercasedFilter)
-            );
+            const lower = searchTerm.toLowerCase();
+            filtered = filtered.filter(bp => bp.name.toLowerCase().includes(lower) || (bp.address?.toLowerCase() || '').includes(lower) || (bp.email?.toLowerCase() || '').includes(lower));
         }
         return filtered.sort(getComparator(order, orderBy));
     }, [businessPartners, searchTerm, order, orderBy, statusFilter]);
@@ -365,7 +321,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
                 </Box>
 
                 <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-                    <Tabs value={statusFilter} onChange={(_, newValue) => setStatusFilter(newValue)}>
+                    <Tabs value={statusFilter} onChange={(_, val) => setStatusFilter(val)}>
                         <Tab label={`Alle (${businessPartners.length})`} value="all" />
                         <Tab label={`Aktiv (${businessPartners.filter(bp => bp.is_active).length})`} value="active" />
                         <Tab label={`Inaktiv (${businessPartners.filter(bp => !bp.is_active).length})`} value="inactive" />
@@ -393,113 +349,42 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                 </TableHead>
                                 <TableBody>
                                     {sortedAndFilteredPartners.map((bp) => {
-                                        const usage = Number(bp.storage_usage_bytes);
-                                        const limit = Number(bp.storage_limit_bytes);
-                                        const usagePercent = limit > 0 ? (usage / limit) * 100 : 0;
-                                        const defaultRegion = bp.regions.find(r => r.is_default);
-
+                                        const usagePercent = Number(bp.storage_limit_bytes) > 0 ? (Number(bp.storage_usage_bytes) / Number(bp.storage_limit_bytes)) * 100 : 0;
                                         return (
                                             <TableRow key={bp.id} hover sx={{ '& > *': { verticalAlign: 'top' } }}>
-                                                <TableCell sx={{ p: 1 }}>
-                                                    <MuiLink href={bp.url_businesspartner || '#'} target="_blank" rel="noopener noreferrer">
-                                                        <img src={bp.logo_url || 'https://placehold.co/60x40/eee/ccc?text=Logo'} alt="Logo" style={{ height: '40px', width: '60px', objectFit: 'contain', borderRadius: '4px' }} />
-                                                    </MuiLink>
-                                                </TableCell>
+                                                <TableCell sx={{ p: 1 }}><img src={bp.logo_url || 'https://placehold.co/60x40/eee/ccc?text=Logo'} alt="Logo" style={{ height: '40px', width: '60px', objectFit: 'contain', borderRadius: '4px' }} /></TableCell>
                                                 <TableCell>
                                                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                                        <MuiTooltip title={bp.allow_automated_newsletter ? "Newsletter erlaubt" : "Newsletter nicht erlaubt"}>
-                                                            <Box
-                                                                component="span"
-                                                                sx={{
-                                                                    width: 10,
-                                                                    height: 10,
-                                                                    borderRadius: '50%',
-                                                                    backgroundColor: bp.allow_automated_newsletter ? 'success.main' : 'error.main',
-                                                                    mr: 1.5,
-                                                                    flexShrink: 0
-                                                                }}
-                                                            />
-                                                        </MuiTooltip>
+                                                        <MuiTooltip title={bp.allow_automated_newsletter ? "Newsletter erlaubt" : "Newsletter nicht erlaubt"}><Box component="span" sx={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: bp.allow_automated_newsletter ? 'success.main' : 'error.main', mr: 1.5, flexShrink: 0 }} /></MuiTooltip>
                                                         <Box>
                                                             <Typography component="span" sx={{ fontWeight: 'bold' }}>{bp.name}</Typography>
-                                                            
-                                                            {/* === ID ANZEIGE MIT KOPIER-BUTTON & EINLADUNGS-BUTTON === */}
                                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
-                                                                <Typography variant="body2" color="text.secondary" component="span" sx={{ fontFamily: 'monospace' }}>
-                                                                    ...<Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>{bp.id.slice(-8)}</Box>
-                                                                </Typography>
-                                                                
-                                                                <MuiTooltip title="Registrierungs-Link kopieren">
-                                                                    <IconButton size="small" onClick={() => handleCopyPartnerLink(bp.id)} sx={{ padding: '2px' }}>
-                                                                        <LinkIcon fontSize="small" />
-                                                                    </IconButton>
-                                                                </MuiTooltip>
-
-                                                                {/* ✅ NEU: Button zur Einladungskarte */}
-                                                                <MuiTooltip title="Einladungskarte öffnen (QR-Code)">
-                                                                    <IconButton size="small" onClick={() => window.open(`/invite/${bp.id}`, '_blank')} sx={{ padding: '2px', ml: 0.5 }}>
-                                                                        <QrCodeIcon fontSize="small" />
-                                                                    </IconButton>
-                                                                </MuiTooltip>
+                                                                <Typography variant="body2" color="text.secondary" component="span" sx={{ fontFamily: 'monospace' }}>...<Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>{bp.id.slice(-8)}</Box></Typography>
+                                                                <MuiTooltip title="Registrierungs-Link kopieren"><IconButton size="small" onClick={() => handleCopyPartnerLink(bp.id)} sx={{ padding: '2px' }}><LinkIcon fontSize="small" /></IconButton></MuiTooltip>
+                                                                <MuiTooltip title="Einladungskarte öffnen (QR-Code)"><IconButton size="small" onClick={() => window.open(`/invite/${bp.id}`, '_blank')} sx={{ padding: '2px', ml: 0.5 }}><QrCodeIcon fontSize="small" /></IconButton></MuiTooltip>
                                                             </Box>
-                                                            
-                                                            {/* === VOLLSTÄNDIGE ID (KLEIN & GRAU) === */}
-                                                            <Typography variant="caption" color="text.disabled" sx={{ display: 'block', fontSize: '0.7rem', mt: 0.2 }}>
-                                                                {bp.id}
-                                                            </Typography>
+                                                            <Typography variant="caption" color="text.disabled" sx={{ display: 'block', fontSize: '0.7rem', mt: 0.2 }}>{bp.id}</Typography>
                                                         </Box>
                                                     </Box>
                                                 </TableCell>
                                                 <TableCell>
-                                                    {defaultRegion && <Chip label={defaultRegion.name} size="small" sx={{ fontWeight: 'bold' }} />}
-                                                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
-                                                        {bp.regions.length > 1 ? `+${bp.regions.length - 1} weitere` : (bp.regions.length === 0 ? 'Keine zugewiesen' : '')}
-                                                    </Typography>
+                                                    {bp.regions.find(r => r.is_default) && <Chip label={bp.regions.find(r => r.is_default)?.name} size="small" sx={{ fontWeight: 'bold' }} />}
+                                                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>{bp.regions.length > 1 ? `+${bp.regions.length - 1} weitere` : (bp.regions.length === 0 ? 'Keine' : '')}</Typography>
                                                 </TableCell>
                                                 <TableCell>
                                                     <Chip label={bp.storage_tier} size="small" variant="outlined" />
                                                     <Box sx={{ mt: 1 }}>
                                                         <LinearProgress variant="determinate" value={usagePercent} sx={{ height: 8, borderRadius: 4, mb: 0.5 }} />
-                                                        <Typography variant="caption" color="text.secondary">
-                                                            {`${formatFileSize(usage)} / ${formatFileSize(limit)} (${usagePercent.toFixed(1)}%)`}
-                                                        </Typography>
-                                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary', mt: 0.5 }}>
-                                                            <FolderZipIcon sx={{ fontSize: '1rem' }} />
-                                                            {Number(bp.file_count) > 0 ? (
-                                                                <MuiLink component={RouterLink} to={`/files`} state={{ filterByBp: bp.id, bpName: bp.name }} sx={{ cursor: 'pointer' }}>
-                                                                    {bp.file_count} Dateien
-                                                                </MuiLink>
-                                                            ) : (
-                                                                <Typography variant="caption">0 Dateien</Typography>
-                                                            )}
-                                                        </Box>
+                                                        <Typography variant="caption" color="text.secondary">{`${formatFileSize(bp.storage_usage_bytes)} / ${formatFileSize(bp.storage_limit_bytes)}`}</Typography>
                                                     </Box>
                                                 </TableCell>
                                                 <TableCell>
                                                     <Typography variant="body2" display="block">{bp.subscription_end_date ? new Date(bp.subscription_end_date).toLocaleDateString('de-DE') : 'N/A'}</Typography>
-                                                    <Typography variant="body2" display="block" sx={{ color: getDaysRemaining(bp.subscription_end_date).color, fontWeight: 'bold' }}>
-                                                        {getDaysRemaining(bp.subscription_end_date).text}
-                                                    </Typography>
+                                                    <Typography variant="body2" display="block" sx={{ color: getDaysRemaining(bp.subscription_end_date).color, fontWeight: 'bold' }}>{getDaysRemaining(bp.subscription_end_date).text}</Typography>
                                                 </TableCell>
-                                                <TableCell align="center">
-                                                    <MuiTooltip title="Benutzer verwalten"><span><IconButton color="info" onClick={() => handleViewUsers(bp.id, bp.name)} disabled={parseInt(bp.user_count) === 0}><GroupIcon /> {bp.user_count}</IconButton></span></MuiTooltip>
-                                                </TableCell>
-                                                <TableCell align="center">
-                                                    <MuiTooltip title="Accounts verwalten">
-                                                        <span>
-                                                            <IconButton
-                                                                color="primary"
-                                                                onClick={() => navigate(`/admin/business-partners/${bp.id}/accounts`)}
-                                                            >
-                                                                <SwitchAccountIcon />
-                                                                <Typography component="span" sx={{ ml: 1, fontWeight: 'bold' }}>{bp.account_count}</Typography>
-                                                            </IconButton>
-                                                        </span>
-                                                    </MuiTooltip>
-                                                </TableCell>                                                
-                                                <TableCell align="center">
-                                                    <MuiTooltip title="Widget-Zugriff verwalten"><span><IconButton color="secondary" onClick={() => handleWidgetAccess(bp.id, bp.name)} disabled={parseInt(bp.widget_count) === 0}><WidgetsIcon /> {bp.widget_count}</IconButton></span></MuiTooltip>
-                                                </TableCell>
+                                                <TableCell align="center"><IconButton color="info" onClick={() => navigate(`/admin/users/${bp.id}`)}><GroupIcon /> {bp.user_count}</IconButton></TableCell>
+                                                <TableCell align="center"><IconButton color="primary" onClick={() => navigate(`/admin/business-partners/${bp.id}/accounts`)}><SwitchAccountIcon /> {bp.account_count}</IconButton></TableCell>                                                
+                                                <TableCell align="center"><IconButton color="secondary" onClick={() => navigate(`/admin/bp-widget-access/${bp.id}`)}><WidgetsIcon /> {bp.widget_count}</IconButton></TableCell>
                                                 <TableCell>
                                                     <MuiTooltip title="Bearbeiten"><IconButton color="primary" onClick={() => handleOpenEditDialog(bp)}><EditIcon /></IconButton></MuiTooltip>
                                                     <MuiTooltip title="Löschen"><IconButton color="error" onClick={() => handleDelete(bp.id)}><DeleteIcon /></IconButton></MuiTooltip>
@@ -514,19 +399,15 @@ const AdminBusinessPartnersPage: React.FC = () => {
                 )}
                 
                 <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
-                    {/* ... (Dialog Content wie gehabt) ... */}
                     <DialogTitle>{editingBp ? 'Business Partner bearbeiten' : 'Neuen Business Partner hinzufügen'}</DialogTitle>
                     <DialogContent>
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
                         <Grid container spacing={2} sx={{ mt: 1 }}>
-                            <Grid item xs={12} sm={8}>
-                                <TextField label="Name" fullWidth value={formName} onChange={(e) => setFormName(e.target.value)} required />
-                            </Grid>
+                            {/* Standard Felder */}
+                            <Grid item xs={12} sm={8}><TextField label="Name" fullWidth value={formName} onChange={(e) => setFormName(e.target.value)} required /></Grid>
                             <Grid item xs={12} sm={4}>
                                 <TextField select label="Speicher-Paket" fullWidth value={formStorageTier} onChange={(e) => setFormStorageTier(e.target.value as any)}>
-                                    <MenuItem value="free">Free (0 MB)</MenuItem>
-                                    <MenuItem value="standard">Standard (100 MB)</MenuItem>
-                                    <MenuItem value="premium">Premium (1 GB)</MenuItem>
+                                    <MenuItem value="free">Free (0 MB)</MenuItem><MenuItem value="standard">Standard (100 MB)</MenuItem><MenuItem value="premium">Premium (1 GB)</MenuItem>
                                 </TextField>
                             </Grid>
                             <Grid item xs={12}><TextField label="Dashboard-Titel" fullWidth value={formDashboardTitle} onChange={(e) => setFormDashboardTitle(e.target.value)} helperText="Dieser Titel wird im Dashboard angezeigt." /></Grid>
@@ -535,58 +416,122 @@ const AdminBusinessPartnersPage: React.FC = () => {
                             <Grid item xs={12} sm={6}><TextField label="Homepage URL" type="url" fullWidth value={formUrlBusinessPartner} onChange={(e) => setFormUrlBusinessPartner(e.target.value)} /></Grid>
                             <Grid item xs={12}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                    <TextField
-                                        label="Logo URL"
-                                        fullWidth
-                                        value={formLogoUrl}
-                                        onChange={(e) => setFormLogoUrl(e.target.value)}
-                                        InputProps={{
-                                            endAdornment: formLogoUrl && (
-                                                <InputAdornment position="end">
-                                                    <img src={formLogoUrl} alt="Logo Vorschau" style={{ height: '25px', borderRadius: '4px' }} />
-                                                </InputAdornment>
-                                            )
-                                        }}
-                                    />
-                                    <Button
-                                        component="label"
-                                        variant="outlined"
-                                        startIcon={isUploadingLogo ? <CircularProgress size={20} /> : <UploadIcon />}
-                                        disabled={isUploadingLogo}
-                                    >
-                                        Upload
-                                        <input type="file" hidden accept="image/*" onChange={handleLogoUpload} />
-                                    </Button>
+                                    <TextField label="Logo URL" fullWidth value={formLogoUrl} onChange={(e) => setFormLogoUrl(e.target.value)} InputProps={{ endAdornment: formLogoUrl && (<InputAdornment position="end"><img src={formLogoUrl} alt="Logo" style={{ height: '25px', borderRadius: '4px' }} /></InputAdornment>) }} />
+                                    <Button component="label" variant="outlined" startIcon={isUploadingLogo ? <CircularProgress size={20} /> : <UploadIcon />} disabled={isUploadingLogo}>Upload<input type="file" hidden accept="image/*" onChange={handleLogoUpload} /></Button>
                                 </Box>
                             </Grid>
+                            
                             <Grid item xs={12}><Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>Mitgliedslevel-Bezeichnungen</Typography></Grid>
                             <Grid item xs={12} sm={4}><TextField label="Level 1 Name" fullWidth value={formLevel1Name} onChange={(e) => setFormLevel1Name(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={4}><TextField label="Level 2 Name" fullWidth value={formLevel2Name} onChange={(e) => setFormLevel2Name(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={4}><TextField label="Level 3 Name" fullWidth value={formLevel3Name} onChange={(e) => setFormLevel3Name(e.target.value)} /></Grid>
+                            
                             <Grid item xs={12} sm={8}>
-                                <Autocomplete
-                                    multiple
-                                    options={allIndustries}
-                                    getOptionLabel={(option) => option.name}
-                                    value={allIndustries.filter(ind => formIndustryIds.includes(ind.id))}
-                                    onChange={(_, newValue) => { setFormIndustryIds(newValue.map(v => v.id)); }}
-                                    isOptionEqualToValue={(option, value) => option.id === value.id}
-                                    renderInput={(params) => <TextField {...params} label="Branchen" placeholder="Branchen auswählen" />}
-                                />
+                                <Autocomplete multiple options={allIndustries} getOptionLabel={(option) => option.name} value={allIndustries.filter(ind => formIndustryIds.includes(ind.id))} onChange={(_, newValue) => { setFormIndustryIds(newValue.map(v => v.id)); }} isOptionEqualToValue={(option, value) => option.id === value.id} renderInput={(params) => <TextField {...params} label="Branchen" placeholder="Branchen auswählen" />} />
                             </Grid>
                             <Grid item xs={12} sm={4}>
                                 <TextField select label="Dashboard Fokus" fullWidth value={formDashboardFocus} onChange={(e) => setFormDashboardFocus(e.target.value as any)}>
-                                    <MenuItem value="information">Information</MenuItem>
-                                    <MenuItem value="sales">Sales</MenuItem>
+                                    <MenuItem value="information">Information</MenuItem><MenuItem value="sales">Sales</MenuItem>
                                 </TextField>
                             </Grid>                            
                             <Grid item xs={12}><TextField select label="Regionen" fullWidth value={formRegionIds} onChange={(e) => setFormRegionIds(e.target.value as unknown as string[])} SelectProps={{ multiple: true, renderValue: (selected) => (<Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{(selected as string[]).map(id => <Chip key={id} size="small" label={regions.find(r => r.id === id)?.name} />)}</Box>) }} > {regions.map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))} </TextField></Grid>
                             <Grid item xs={12}><TextField select label="Standard-Region" fullWidth value={formDefaultRegionId || ''} onChange={(e) => setFormDefaultRegionId(e.target.value)} disabled={formRegionIds.length === 0} helperText="Diese Region wird als Voreinstellung in den Widgets verwendet." > <MenuItem value=""><em>Keine</em></MenuItem> {regions.filter(r => formRegionIds.includes(r.id)).map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))} </TextField></Grid>
                             <Grid item xs={12} sm={6}><TextField label="Abo Startdatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formSubscriptionStartDate} onChange={(e) => setFormSubscriptionStartDate(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={6}><TextField label="Abo Enddatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formSubscriptionEndDate} onChange={(e) => setFormSubscriptionEndDate(e.target.value)} /></Grid>
-                            <Grid item xs={12}><TextField select label="Farbschema" fullWidth value={formColorSchemeId} onChange={(e) => setFormColorSchemeId(e.target.value)}> <MenuItem value=""><em>Kein Farbschema</em></MenuItem> {colorSchemes.map((cs) => (<MenuItem key={cs.id} value={cs.id}>{cs.name} <Box sx={{ width: 20, height: 20, bgcolor: cs.primary_color, border: '1px solid grey', ml: 1, display: 'inline-block', verticalAlign: 'middle' }} /></MenuItem>))} </TextField></Grid>
                             <Grid item xs={12} sm={6}><FormControlLabel control={<Switch checked={formIsActive} onChange={(e) => setFormIsActive(e.target.checked)} color="primary" />} label="Partner-Account aktiv" /></Grid>
                             <Grid item xs={12} sm={6}><FormControlLabel control={<Switch checked={formAllowNewsletter} onChange={(e) => setFormAllowNewsletter(e.target.checked)} color="primary" />} label="Automatisierte Newsletter erlaubt" /></Grid>
+
+                            {/* --- NEUER BEREICH: BRANDING & FARBSCHEMA --- */}
+                            <Grid item xs={12}>
+                                <Divider sx={{ my: 2 }} />
+                                <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <PaletteIcon color="primary" /> Branding & Farbschema
+                                </Typography>
+                                
+                                <ToggleButtonGroup
+                                    color="primary"
+                                    value={formColorMode}
+                                    exclusive
+                                    onChange={(_, newMode) => { if (newMode) setFormColorMode(newMode); }}
+                                    fullWidth
+                                    sx={{ mb: 3 }}
+                                >
+                                    <ToggleButton value="select"><ColorLensIcon sx={{ mr: 1 }}/> Vordefiniertes Schema</ToggleButton>
+                                    <ToggleButton value="custom"><PaletteIcon sx={{ mr: 1 }}/> Individuelles Branding</ToggleButton>
+                                </ToggleButtonGroup>
+
+                                {formColorMode === 'select' ? (
+                                    <TextField select label="Farbschema auswählen" fullWidth value={formColorSchemeId} onChange={(e) => setFormColorSchemeId(e.target.value)}>
+                                        <MenuItem value=""><em>Kein Farbschema (Standard nutzen)</em></MenuItem>
+                                        {colorSchemes.filter(cs => !cs.name.startsWith('Custom -')).map((cs) => (
+                                            <MenuItem key={cs.id} value={cs.id}>
+                                                {cs.name} <Box sx={{ width: 20, height: 20, bgcolor: cs.primary_color, border: '1px solid grey', ml: 1, display: 'inline-block', verticalAlign: 'middle' }} />
+                                            </MenuItem>
+                                        ))}
+                                    </TextField>
+                                ) : (
+                                    <Box sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2, bgcolor: 'background.default' }}>
+                                        <Grid container spacing={3}>
+                                            {/* Linke Seite: Farbauswahl */}
+                                            <Grid item xs={12} md={6}>
+                                                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>Hauptfarben (Branding)</Typography>
+                                                <Stack spacing={2} sx={{ mb: 3 }}>
+                                                    <ColorPickerInput label="Primärfarbe (Buttons, Header)" value={formCustomColors.primary_color} onChange={(val) => setFormCustomColors(p => ({ ...p, primary_color: val }))} />
+                                                    <ColorPickerInput label="Sekundärfarbe (Highlights)" value={formCustomColors.secondary_color} onChange={(val) => setFormCustomColors(p => ({ ...p, secondary_color: val }))} />
+                                                    <ColorPickerInput label="Textfarbe auf Primärfarbe (z.B. Button-Text)" value={formCustomColors.primary_text_color} onChange={(val) => setFormCustomColors(p => ({ ...p, primary_text_color: val }))} />
+                                                </Stack>
+
+                                                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>Hintergründe & Text</Typography>
+                                                <Stack spacing={2}>
+                                                    <ColorPickerInput label="Seiten-Hintergrund" value={formCustomColors.background_color_light} onChange={(val) => setFormCustomColors(p => ({ ...p, background_color_light: val }))} />
+                                                    <ColorPickerInput label="Karten-Hintergrund (Widgets)" value={formCustomColors.paper_color_light} onChange={(val) => setFormCustomColors(p => ({ ...p, paper_color_light: val }))} />
+                                                    <ColorPickerInput label="Allgemeine Textfarbe" value={formCustomColors.text_color_light} onChange={(val) => setFormCustomColors(p => ({ ...p, text_color_light: val }))} />
+                                                </Stack>
+                                            </Grid>
+
+                                            {/* Rechte Seite: Live Preview */}
+                                            <Grid item xs={12} md={6}>
+                                                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold', textAlign: 'center' }}>Live Vorschau</Typography>
+                                                <Box sx={{ 
+                                                    p: 3, 
+                                                    borderRadius: 2, 
+                                                    bgcolor: formCustomColors.background_color_light,
+                                                    border: '1px solid',
+                                                    borderColor: 'divider',
+                                                    height: '100%',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: 2
+                                                }}>
+                                                    {/* Fake Widget */}
+                                                    <Paper elevation={3} sx={{ 
+                                                        p: 3, 
+                                                        bgcolor: formCustomColors.paper_color_light, 
+                                                        color: formCustomColors.text_color_light,
+                                                        borderRadius: 3
+                                                    }}>
+                                                        <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: formCustomColors.text_color_light }}>
+                                                            {formDashboardTitle || formName || 'Mein Dashboard'}
+                                                        </Typography>
+                                                        <Typography variant="body2" sx={{ mb: 3, opacity: 0.8 }}>
+                                                            So wird das Dashboard mit diesen Farben für die Kunden aussehen.
+                                                        </Typography>
+                                                        <Box sx={{ display: 'flex', gap: 1 }}>
+                                                            <Button variant="contained" sx={{ bgcolor: formCustomColors.primary_color, color: formCustomColors.primary_text_color, '&:hover': { bgcolor: formCustomColors.primary_color, opacity: 0.9 } }}>
+                                                                Primär
+                                                            </Button>
+                                                            <Button variant="outlined" sx={{ borderColor: formCustomColors.secondary_color, color: formCustomColors.secondary_color, '&:hover': { borderColor: formCustomColors.secondary_color, bgcolor: formCustomColors.secondary_color + '10' } }}>
+                                                                Sekundär
+                                                            </Button>
+                                                        </Box>
+                                                    </Paper>
+                                                </Box>
+                                            </Grid>
+                                        </Grid>
+                                    </Box>
+                                )}
+                            </Grid>
+
                         </Grid>
                     </DialogContent>
                     <DialogActions>

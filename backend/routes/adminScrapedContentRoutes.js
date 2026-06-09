@@ -10,7 +10,10 @@ router.use(adminAuth);
 router.get('/events', adminScController.getAllScrapedEventsForAdmin);
 router.post('/events', adminScController.createManualEvent);
 router.put('/events/:id', adminScController.updateScrapedEvent);
-router.get('/regions', adminScController.getAllRegions); // NEUE ROUTE
+router.get('/regions', adminScController.getAllRegions);
+
+// ---> NEUE ROUTE FÜR DEN S3 DOWNLOAD <---
+router.get('/statistics/:id/download', adminScController.downloadStatisticArchive);
 
 // Allgemeine Routen
 router.get('/', adminScController.getAllScrapedContent);

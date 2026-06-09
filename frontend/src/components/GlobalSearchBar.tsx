@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Autocomplete, TextField, InputAdornment, IconButton, Tooltip, 
-  Box, Typography, Chip, CircularProgress
+    Autocomplete, TextField, InputAdornment, IconButton, Tooltip, 
+    Box, Typography, Chip, CircularProgress
 } from '@mui/material';
-import { styled, alpha, useTheme } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
 
 // Icons
 import SearchIcon from '@mui/icons-material/Search';
@@ -20,138 +20,122 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import apiClient from '../apiClient';
 
 interface SearchResult {
-  id: string;
-  title: string;
-  summary: string | null;
-  type: 'scraped' | 'ai' | 'tracked_account_news' | 'file' | 'community_post';
-  url: string | null;
-  published_date: string;
+    id: string;
+    title: string;
+    summary: string | null;
+    type: 'scraped' | 'ai' | 'tracked_account_news' | 'file' | 'community_post';
+    url: string | null;
+    published_date: string;
 }
 
-const SearchWrapper = styled('div')(({ theme }) => ({
-  position: 'relative',
-  borderRadius: theme.shape.borderRadius,
-  backgroundColor: alpha(theme.palette.common.white, 0.15),
-  '&:hover': {
-    backgroundColor: alpha(theme.palette.common.white, 0.25),
-  },
-  marginRight: theme.spacing(2),
-  marginLeft: 0,
-  width: '100%',
-  [theme.breakpoints.up('sm')]: {
-    marginLeft: theme.spacing(3),
-    width: 'auto',
-  },
-}));
-
 const GlobalSearchBar: React.FC = () => {
-  const navigate = useNavigate();
-  const theme = useTheme();
-  
-  const [open, setOpen] = useState(false);
-  const [options, setOptions] = useState<SearchResult[]>([]);
-  const [inputValue, setInputValue] = useState('');
-  const [loading, setLoading] = useState(false);
-  
-  const debounceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const navigate = useNavigate();
+    const theme = useTheme();
+    
+    const [open, setOpen] = useState(false);
+    const [options, setOptions] = useState<SearchResult[]>([]);
+    const [inputValue, setInputValue] = useState('');
+    const [loading, setLoading] = useState(false);
+    
+    const debounceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    const trimmedInput = inputValue.trim();
+    useEffect(() => {
+        const trimmedInput = inputValue.trim();
 
-    if (trimmedInput.length < 3) {
-        setOptions([]);
-        setLoading(false);
-        return;
-    }
-
-    setLoading(true);
-
-    if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
-
-    debounceTimeout.current = setTimeout(async () => {
-        try {
-            const response = await apiClient.get(`/api/data/search?term=${encodeURIComponent(trimmedInput)}`);
-            if (response.data && Array.isArray(response.data)) {
-                setOptions(response.data);
-            } else {
-                setOptions([]);
-            }
-        } catch (err) {
-            console.error("Search error:", err);
-            setOptions([]); 
-        } finally {
+        if (trimmedInput.length < 3) {
+            setOptions([]);
             setLoading(false);
+            return;
         }
-    }, 400);
 
-    return () => {
+        setLoading(true);
+
         if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
-    };
-  }, [inputValue]);
 
-  const handleAiSearch = () => {
-    if (inputValue.trim()) {
-      navigate(`/ask?question=${encodeURIComponent(inputValue.trim())}`);
-      setOpen(false);
-    }
-  };
+        debounceTimeout.current = setTimeout(async () => {
+            try {
+                const response = await apiClient.get(`/api/data/search?term=${encodeURIComponent(trimmedInput)}`);
+                if (response.data && Array.isArray(response.data)) {
+                    setOptions(response.data);
+                } else {
+                    setOptions([]);
+                }
+            } catch (err) {
+                console.error("Search error:", err);
+                setOptions([]); 
+            } finally {
+                setLoading(false);
+            }
+        }, 400);
 
-  const handleClear = () => {
-      setInputValue('');
-      setOptions([]);
-      setOpen(false);
-  };
+        return () => {
+            if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
+        };
+    }, [inputValue]);
 
-  const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      handleAiSearch();
-    }
-  };
-
-  const handleOptionSelect = (_event: React.SyntheticEvent, value: SearchResult | string | null) => {
-    if (!value) return;
-
-    if (typeof value === 'string') {
-        navigate(`/search?term=${encodeURIComponent(value)}`);
-        return;
-    }
-
-    if (value.url) {
-        if (value.url.startsWith('/')) {
-            navigate(value.url);
-        } else {
-            window.open(value.url, '_blank', 'noopener,noreferrer');
+    const handleAiSearch = () => {
+        if (inputValue.trim()) {
+            navigate(`/ask?question=${encodeURIComponent(inputValue.trim())}`);
+            setOpen(false);
         }
-    }
-    setOpen(false);
-  };
+    };
 
-  const getIcon = (type: string) => {
-      switch (type) {
-          case 'file': return <FolderIcon sx={{ color: 'info.main' }} />;
-          case 'community_post': return <ForumIcon sx={{ color: 'warning.main' }} />;
-          case 'ai': return <SmartToyIcon sx={{ color: 'secondary.main' }} />;
-          case 'tracked_account_news': return <BusinessIcon sx={{ color: 'primary.main' }} />;
-          default: return <ArticleIcon sx={{ color: 'text.secondary' }} />;
-      }
-  };
+    const handleClear = () => {
+        setInputValue('');
+        setOptions([]);
+        setOpen(false);
+    };
 
-  const getTypeLabel = (type: string) => {
-      switch (type) {
-          case 'file': return 'Datei';
-          case 'community_post': return 'Community';
-          case 'ai': return 'KI';
-          case 'tracked_account_news': return 'News';
-          default: return 'Web';
-      }
-  };
+    const handleKeyDown = (event: React.KeyboardEvent) => {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault();
+            handleAiSearch();
+        }
+    };
 
-  return (
-    <SearchWrapper>
+    const handleOptionSelect = (_event: React.SyntheticEvent, value: SearchResult | string | null) => {
+        if (!value) return;
+
+        if (typeof value === 'string') {
+            navigate(`/search?term=${encodeURIComponent(value)}`);
+            return;
+        }
+
+        if (value.url) {
+            if (value.url.startsWith('/')) {
+                navigate(value.url);
+            } else {
+                window.open(value.url, '_blank', 'noopener,noreferrer');
+            }
+        }
+        setOpen(false);
+    };
+
+    const getIcon = (type: string) => {
+        switch (type) {
+            case 'file': return <FolderIcon sx={{ color: 'info.main' }} />;
+            case 'community_post': return <ForumIcon sx={{ color: 'warning.main' }} />;
+            case 'ai': return <SmartToyIcon sx={{ color: 'secondary.main' }} />;
+            case 'tracked_account_news': return <BusinessIcon sx={{ color: 'primary.main' }} />;
+            default: return <ArticleIcon sx={{ color: 'text.secondary' }} />;
+        }
+    };
+
+    const getTypeLabel = (type: string) => {
+        switch (type) {
+            case 'file': return 'Datei';
+            case 'community_post': return 'Community';
+            case 'ai': return 'KI';
+            case 'tracked_account_news': return 'News';
+            default: return 'Web';
+        }
+    };
+
+    return (
         <Autocomplete
             id="global-search-bar"
             freeSolo
+            disableClearable // WICHTIG: Verhindert, dass MUI ein zweites, schwebendes X-Icon hinzufügt!
             open={open}
             onOpen={() => { if (inputValue.trim().length >= 3) setOpen(true); }}
             onClose={() => setOpen(false)}
@@ -163,6 +147,7 @@ const GlobalSearchBar: React.FC = () => {
             loading={loading}
             filterOptions={(x) => x}
             noOptionsText={inputValue.trim().length < 3 ? "Tippen Sie mind. 3 Zeichen..." : "Keine Treffer gefunden"}
+            sx={{ width: '100%' }} // Nimmt nun exakt die Breite ein, die das Layout vorgibt
             
             renderInput={(params) => (
                 <TextField
@@ -175,13 +160,17 @@ const GlobalSearchBar: React.FC = () => {
                         disableUnderline: true,
                         sx: {
                             color: 'inherit',
-                            padding: theme.spacing(0.5, 1), 
-                            width: { xs: '100%', sm: '25ch', md: '35ch' },
-                            transition: theme.transitions.create('width'),
-                            '&:focus-within': { width: { sm: '40ch', md: '50ch' } },
+                            padding: theme.spacing(0.5, 1.5),
+                            width: '100%',
                             display: 'flex',
                             alignItems: 'center',
-                            gap: 1
+                            gap: 1,
+                            // Das Styling liegt nun direkt auf dem Input-Feld, was den Wrapper überflüssig macht
+                            backgroundColor: alpha(theme.palette.common.white, 0.15),
+                            borderRadius: 1,
+                            '&:hover': {
+                                backgroundColor: alpha(theme.palette.common.white, 0.25),
+                            }
                         },
                         startAdornment: (
                             <InputAdornment position="start" sx={{ color: 'inherit', mr: 0 }}>
@@ -190,44 +179,44 @@ const GlobalSearchBar: React.FC = () => {
                         ),
                         endAdornment: (
                             <InputAdornment position="end" sx={{ ml: 0 }}> 
-                                {inputValue.length > 0 && (
-                                    <Tooltip title="Suche leeren">
-                                        <IconButton
-                                            color="inherit"
-                                            size="small"
-                                            onClick={handleClear}
-                                            sx={{ p: 0.5, mr: 0.5 }}
-                                        >
-                                            <ClearIcon fontSize="small" />
-                                        </IconButton>
+                                <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'nowrap', gap: 0.5 }}>
+                                    
+                                    {inputValue.length > 0 && (
+                                        <Tooltip title="Suche leeren">
+                                            <IconButton
+                                                color="inherit"
+                                                size="small"
+                                                onClick={handleClear}
+                                                sx={{ p: 0.5 }}
+                                            >
+                                                <ClearIcon fontSize="small" />
+                                            </IconButton>
+                                        </Tooltip>
+                                    )}
+                                    
+                                    {loading ? <CircularProgress color="inherit" size={16} sx={{ mx: 0.5 }} /> : null}
+                                    
+                                    <Tooltip title="KI-Frage stellen (Ctrl+Enter)">
+                                        <span>
+                                            <IconButton
+                                                color="inherit"
+                                                onClick={handleAiSearch}
+                                                disabled={!inputValue.trim()}
+                                                size="small"
+                                                sx={{ 
+                                                    p: 0.5,
+                                                    bgcolor: inputValue.trim() ? alpha(theme.palette.common.white, 0.15) : 'transparent',
+                                                    '&:hover': {
+                                                        bgcolor: inputValue.trim() ? alpha(theme.palette.common.white, 0.25) : 'transparent',
+                                                    }
+                                                }}
+                                            >
+                                                <AutoAwesomeIcon fontSize="small" />
+                                            </IconButton>
+                                        </span>
                                     </Tooltip>
-                                )}
-                                
-                                {loading ? <CircularProgress color="inherit" size={16} sx={{ mx: 1 }} /> : null}
-                                
-                                <Tooltip title="KI-Frage stellen (Ctrl+Enter)">
-                                    <span>
-                                        <IconButton
-                                            // FIX: 'inherit' sorgt dafür, dass es Weiß bleibt (wie Briefing Icon).
-                                            // 'disabled' sorgt automatisch für das Ausgrauen bei leerem Text.
-                                            color="inherit"
-                                            onClick={handleAiSearch}
-                                            disabled={!inputValue.trim()}
-                                            size="small"
-                                            sx={{ 
-                                                p: 0.5,
-                                                // FIX: Wir nutzen common.white mit Transparenz, damit es zum Suchfeld passt
-                                                // statt primary color, die auf dem blauen Header untergeht.
-                                                bgcolor: inputValue.trim() ? alpha(theme.palette.common.white, 0.15) : 'transparent',
-                                                '&:hover': {
-                                                    bgcolor: inputValue.trim() ? alpha(theme.palette.common.white, 0.25) : 'transparent',
-                                                }
-                                            }}
-                                        >
-                                            <AutoAwesomeIcon fontSize="small" />
-                                        </IconButton>
-                                    </span>
-                                </Tooltip>
+
+                                </Box>
                             </InputAdornment>
                         )
                     }}
@@ -268,8 +257,7 @@ const GlobalSearchBar: React.FC = () => {
                 );
             }}
         />
-    </SearchWrapper>
-  );
+    );
 };
 
 export default GlobalSearchBar;

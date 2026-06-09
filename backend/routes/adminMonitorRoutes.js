@@ -46,7 +46,7 @@ router.get('/activity', adminMonitorController.getActivityLogs);
 router.delete('/logs', adminMonitorController.deleteLogs);
 router.get('/status', adminStatusController.getSystemHealth);
 
-// --- ENTFERNT ---
-// Die Routen für /templates und /entries wurden in adminLegalMonitorRoutes.js verschoben.
+router.get('/archive-files', adminMonitorController.getArchiveFiles);
+router.get('/archive-files/download', adminMonitorController.getArchiveDownloadUrl);
 
 module.exports = router;

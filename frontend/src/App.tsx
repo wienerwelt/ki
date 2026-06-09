@@ -35,6 +35,7 @@ import CommunityPage from './pages/CommunityPage';
 import TrustedSourcesPage from './pages/TrustedSourcesPage';
 import FeedbackCenterPage from './pages/FeedbackCenterPage';
 import FileManagementPage from './pages/FileManagementPage';
+import InternalDirectoryPage from './pages/InternalDirectoryPage';
 
 // Admin / Assistenz Seiten
 import AdminDashboardPage from './pages/AdminDashboardPage';
@@ -63,6 +64,8 @@ import AdminBpTrackedArticlesPage from './pages/AdminBpTrackedArticlesPage';
 import AdminCommunityPage from './pages/AdminCommunityPage';
 import AdminLegalMonitorPage from './pages/AdminLegalMonitorPage';
 import AdminEditorialBriefingPage from './pages/AdminEditorialBriefingPage';
+import AdminSocialMediaGenerator from './pages/AdminSocialMediaGenerator';
+import AdminDirectoryPage from './pages/AdminDirectoryPage';
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
@@ -222,6 +225,7 @@ function App() {
             <Route path="/funding-search" element={<FundingSearchPage />} />
             <Route path="/funding-detail/:id" element={<FundingDetailPage />} />
             <Route path="/community" element={<CommunityPage />} />
+            <Route path="/directory" element={<InternalDirectoryPage />} />
 
             {/* ✅ Assistenz & Admin Routen */}
             <Route element={<BpStaffAllowedRoutes />}>
@@ -257,6 +261,8 @@ function App() {
               <Route path="sources" element={<AdminSourcesPage />} />
               <Route path="events" element={<AdminEventsPage />} />
               <Route path="funding" element={<AdminFundingPage />} />
+              <Route path="social-media" element={<AdminSocialMediaGenerator />} />
+              <Route path="directory" element={<AdminDirectoryPage />} />
             </Route>
           </Route>
 

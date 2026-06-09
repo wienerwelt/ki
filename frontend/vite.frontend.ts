@@ -1,4 +1,3 @@
-
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -39,21 +38,49 @@ export default defineConfig({
         ],
       },
       devOptions: {
-        enabled: true, // Für die Entwicklung
+        enabled: false,
       },
     }),
   ],
-  // ======================================================
-  // KORREKTER PROXY-BLOCK
-  // ======================================================
   server: {
     proxy: {
       '/api': {
-      //  target: 'http://localhost:5000', // prod
-        target: 'http://localhost:5001', // dev
+        target: 'http://127.0.0.1:5001',
+        changeOrigin: true,
+      },
+      '/directory_logos': {
+        target: 'http://127.0.0.1:5001',
         changeOrigin: true,
       },
     },
   },
-  // ======================================================
+  build: {
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+
+          if (
+            id.includes('/react/') ||
+            id.includes('react-dom') ||
+            id.includes('react-router') ||
+            id.includes('scheduler')
+          ) {
+            return 'react-vendor';
+          }
+
+          if (id.includes('@mui') || id.includes('@emotion')) {
+            return 'mui';
+          }
+
+          if (id.includes('leaflet')) {
+            return 'leaflet';
+          }
+
+          return 'vendor';
+        },
+      },
+    },
+  },
 });

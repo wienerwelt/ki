@@ -83,6 +83,37 @@ const AdminMonitorPage: React.FC = () => {
     const [isHealthLoading, setIsHealthLoading] = useState(true);
     const [healthError, setHealthError] = useState<string | null>(null);
 
+    // --- STATE FÜR S3 ARCHIV ---
+    const [showArchiveList, setShowArchiveList] = useState(false);
+    const [archiveFiles, setArchiveFiles] = useState<any[]>([]);
+    const [isArchiveLoading, setIsArchiveLoading] = useState(false);
+
+    // --- FUNKTIONEN FÜR S3 ARCHIV ---
+    const fetchArchiveFiles = async () => {
+        setIsArchiveLoading(true);
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const res = await apiClient.get('/api/admin/monitor/archive-files', { headers: { 'x-auth-token': token } });
+            setArchiveFiles(res.data.files);
+        } catch (err) {
+            setSnackbar({ open: true, message: 'Fehler beim Laden des Archivs', severity: 'error' });
+        } finally {
+            setIsArchiveLoading(false);
+        }
+    };
+
+    const handleDownloadArchiveFile = async (key: string) => {
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const res = await apiClient.get(`/api/admin/monitor/archive-files/download?key=${encodeURIComponent(key)}`, { headers: { 'x-auth-token': token } });
+            if (res.data && res.data.url) {
+                window.open(res.data.url, '_blank');
+            }
+        } catch (err) {
+            setSnackbar({ open: true, message: 'Download-Link konnte nicht generiert werden', severity: 'error' });
+        }
+    };
+
     useEffect(() => {
         const fetchHealth = async () => {
             const controller = new AbortController();
@@ -282,17 +313,75 @@ const AdminMonitorPage: React.FC = () => {
                                             <Divider sx={{ my: 1 }} />
                                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
                                                 <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                                    <CloudQueueIcon fontSize="small" color="primary" /> S3 Speicher
+                                                    <CloudQueueIcon fontSize="small" color="primary" /> AWS Speicher
                                                 </Typography>
                                                 <Typography variant="body2" fontWeight="bold">
                                                     {healthData.server.s3Storage.sizeMb.toFixed(2)} MB
                                                 </Typography>
                                             </Box>
                                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
-                                                <Typography variant="body2">S3 Dateien</Typography>
-                                                <Typography variant="body2" fontWeight="bold">
-                                                    {healthData.server.s3Storage.count}
-                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary">Business Partner</Typography>
+                                                <Typography variant="body2" fontWeight="bold">{healthData.server.s3Storage.count}</Typography>
+                                            </Box>
+                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
+                                                <Typography variant="body2" color="text.secondary">Archiv Dateien</Typography>
+                                                <Typography variant="body2" fontWeight="bold"></Typography>
+                                            </Box>
+
+                                            {/* LAZY LOADING ARCHIV LISTE */}
+                                            <Box sx={{ mt: 2 }}>
+                                                <Button 
+                                                    variant="outlined" 
+                                                    size="small" 
+                                                    fullWidth 
+                                                    onClick={() => {
+                                                        setShowArchiveList(!showArchiveList);
+                                                        if (!showArchiveList && (!archiveFiles || archiveFiles.length === 0)) fetchArchiveFiles();
+                                                    }}
+                                                >
+                                                    {showArchiveList ? 'Archiv ausblenden' : 'Archiv-Dateien verwalten'}
+                                                </Button>
+
+                                                {showArchiveList && (
+                                                    <Box sx={{ mt: 2, maxHeight: 300, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 1 }}>
+                                                        {isArchiveLoading ? (
+                                                            <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}><CircularProgress size={20} /></Box>
+                                                        ) : (!archiveFiles || archiveFiles.length === 0) ? (
+                                                            <Typography variant="body2" sx={{ p: 2, textAlign: 'center', color: 'text.secondary' }}>Keine Dateien im Archiv.</Typography>
+                                                        ) : (
+                                                            <Table size="small" stickyHeader>
+                                                                <TableHead>
+                                                                    <TableRow>
+                                                                        <TableCell>Datei</TableCell>
+                                                                        <TableCell align="right">Größe</TableCell>
+                                                                        <TableCell align="center">Aktionen</TableCell>
+                                                                    </TableRow>
+                                                                </TableHead>
+                                                                <TableBody>
+                                                                    {(archiveFiles || []).map((file: any) => (
+                                                                        <TableRow key={file.key} hover>
+                                                                            <TableCell sx={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                                <Tooltip title={file.filename}>
+                                                                                    <Typography variant="caption">{file.filename}</Typography>
+                                                                                </Tooltip>
+                                                                                <br/>
+                                                                                <Typography variant="caption" color="text.secondary">
+                                                                                    {new Date(file.lastModified).toLocaleDateString('de-DE')}
+                                                                                </Typography>
+                                                                            </TableCell>
+                                                                            <TableCell align="right"><Typography variant="caption">{file.sizeMb} MB</Typography></TableCell>
+                                                                            <TableCell align="center">
+                                                                                <Tooltip title="Herunterladen">
+                                                                                    <IconButton size="small" onClick={() => handleDownloadArchiveFile(file.key)}><CloudQueueIcon fontSize="small" /></IconButton>
+                                                                                </Tooltip>
+                                                                            </TableCell>
+                                                                        </TableRow>
+                                                                    ))}
+                                                                </TableBody>
+                                                            </Table>
+                                                        )}
+                                                    </Box>
+                                                )}
                                             </Box>
                                         </>
                                     )}

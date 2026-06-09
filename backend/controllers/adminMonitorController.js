@@ -1,6 +1,9 @@
 // backend/controllers/adminMonitorController.js
 const db = require('../config/db');
 const geoip = require('geoip-lite');
+const { ListObjectsV2Command, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const s3Client = require("../config/s3Client.js");
 
 exports.getActivityLogs = async (req, res) => {
     const { page = 1, limit = 20, actionType, username, startDate, endDate, sortBy = 'timestamp', sortOrder = 'desc' } = req.query;
@@ -117,5 +120,57 @@ exports.deleteLogs = async (req, res) => {
     } catch (error) {
         console.error('Fehler beim Löschen der Protokolle:', error);
         res.status(500).json({ message: 'Serverfehler beim Löschen der Protokolle.' });
+    }
+};
+
+
+exports.getArchiveFiles = async (req, res) => {
+    try {
+        const bucketName = process.env.AWS_S3_BUCKET_NAME;
+        if (!bucketName) {
+            return res.status(500).json({ message: "S3 Bucket Name ist nicht konfiguriert." });
+        }
+
+        const command = new ListObjectsV2Command({
+            Bucket: bucketName,
+            Prefix: 'system-archive/'
+        });
+
+        const s3Response = await s3Client.send(command);
+        
+        // Map auf ein sauberes JSON-Array für das Frontend
+        const files = (s3Response.Contents || []).map(file => ({
+            key: file.Key,
+            filename: file.Key.split('/').pop(),
+            sizeMb: (file.Size / 1024 / 1024).toFixed(2),
+            lastModified: file.LastModified
+        }));
+
+        // Neueste zuerst sortieren
+        files.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+
+        res.status(200).json({ files });
+    } catch (error) {
+        console.error("Fehler beim Abrufen der S3 Archivdateien:", error);
+        res.status(500).json({ message: "Fehler beim Laden der Archivdateien." });
+    }
+};
+
+// --- NEU: Download-URL für EINE bestimmte S3 Datei generieren ---
+exports.getArchiveDownloadUrl = async (req, res) => {
+    try {
+        const { key } = req.query; // Der S3 Path, z.B. "system-archive/..."
+        if (!key) return res.status(400).json({ message: "Kein Dateischlüssel angegeben." });
+
+        const command = new GetObjectCommand({
+            Bucket: process.env.AWS_S3_BUCKET_NAME,
+            Key: key,
+        });
+
+        const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 60 });
+        res.status(200).json({ url: signedUrl });
+    } catch (error) {
+        console.error("Fehler beim Generieren der S3 Download-URL:", error);
+        res.status(500).json({ message: "Download-Link konnte nicht generiert werden." });
     }
 };

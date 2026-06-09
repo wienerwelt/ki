@@ -1,3 +1,4 @@
+// backend/controllers/adminBriefingEditorialController.js
 const db = require('../config/db');
 const { Queue } = require('bullmq');
 const { connection } = require('../services/queueService');
@@ -36,7 +37,7 @@ exports.getDebugStatus = async (req, res) => {
     if (!bpId) return res.status(400).json({ message: "Keine BP-ID übergeben" });
 
     try {
-        const configRes = await db.query(`SELECT name, briefing_frequency, auto_approve_briefings FROM business_partners WHERE id = $1::uuid`, [bpId]);
+        const configRes = await db.query(`SELECT name, briefing_frequency, newsletter_frequency, auto_approve_briefings FROM business_partners WHERE id = $1::uuid`, [bpId]);
         const freq = configRes.rows[0]?.briefing_frequency || 'daily';
         
         let interval = '3 days';
@@ -49,31 +50,22 @@ exports.getDebugStatus = async (req, res) => {
              JOIN business_partner_categories bpc ON c.id = bpc.category_id
              WHERE bpc.business_partner_id = $1::uuid AND c.category_type = 'industry'`, [bpId]);
 
-        // OFFENER REGEX-TÜRSTEHER FÜR DAS DASHBOARD
         const newsRes = await db.query(
             `SELECT COUNT(*) as count_period
              FROM scraped_content sc
-             WHERE (
-                 sc.source_identifier = $1
-                 OR sc.source_identifier = $2
-                 -- Lässt alle allgemeinen News (wie audi_news, bmw_news) durch:
-                 OR sc.source_identifier !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}_(news|events)$'
-             )
-             AND (
-                 -- Sicherheitsnetz für das Datum
-                 COALESCE(sc.published_date, DATE(sc.created_at)) >= NOW() - INTERVAL '${interval}' 
-                 OR sc.event_date >= CURRENT_DATE
-             )`, 
+             WHERE (sc.source_identifier = $1 OR sc.source_identifier = $2 OR sc.source_identifier !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}_(news|events)$')
+             AND (COALESCE(sc.published_date, DATE(sc.created_at)) >= NOW() - INTERVAL '${interval}' OR sc.event_date >= CURRENT_DATE)`, 
              [`${bpId}_news`, `${bpId}_events`]
         );
 
         const historyRes = await db.query(`SELECT created_at, headline, briefing_type FROM business_partner_intelligence_briefings WHERE business_partner_id = $1::uuid ORDER BY created_at DESC LIMIT 10`, [bpId]);
-        const recRes = await db.query(`SELECT COUNT(*) FROM users WHERE business_partner_id = $1::uuid AND newsletter_opt_in = TRUE AND is_active = TRUE`, [bpId]);
-        const jobRes = await db.query(`SELECT COUNT(*) FROM ai_jobs WHERE status = 'running' AND updated_at >= NOW() - INTERVAL '15 minutes'`);
+        const recRes = await db.query(`SELECT COUNT(*) as count FROM users WHERE business_partner_id = $1::uuid AND newsletter_opt_in = TRUE AND is_active = TRUE`, [bpId]);
+        const jobRes = await db.query(`SELECT COUNT(*) as count FROM ai_jobs WHERE status = 'running' AND updated_at >= NOW() - INTERVAL '15 minutes'`);
 
         res.json({
             bpName: configRes.rows[0]?.name || 'Unbekannt',
             briefing_frequency: freq,
+            newsletter_frequency: configRes.rows[0]?.newsletter_frequency || 'never', // NEU
             auto_approve_briefings: configRes.rows[0]?.auto_approve_briefings || false,
             categories: catRes.rows.map(r => r.name),
             newsCount3d: parseInt(newsRes.rows[0]?.count_period || 0),
@@ -89,13 +81,17 @@ exports.getDebugStatus = async (req, res) => {
 };
 
 exports.updateBriefingSettings = async (req, res) => {
-    const { bpId, frequency, autoApprove } = req.body;
+    const { bpId, frequency, newsletterFrequency, autoApprove } = req.body;
     const targetBpId = req.user.role === 'admin' ? bpId : req.user.business_partner_id;
 
     try {
         await db.query(
-            `UPDATE business_partners SET briefing_frequency = $1, auto_approve_briefings = $2 WHERE id = $3::uuid`,
-            [frequency, autoApprove, targetBpId]
+            `UPDATE business_partners 
+             SET briefing_frequency = $1, 
+                 newsletter_frequency = $2, 
+                 auto_approve_briefings = $3 
+             WHERE id = $4::uuid`,
+            [frequency, newsletterFrequency, autoApprove, targetBpId]
         );
         res.json({ message: "Einstellungen gespeichert." });
     } catch (err) {

@@ -28,6 +28,8 @@ const jobManager = require('./services/jobManagerService');
 // Scheduler
 const { runScheduledJobs } = require('./services/cronjobScheduler');
 
+const { dispatchAutomatedNewsletters } = require('./services/marketBriefingService');
+
 // Bull Board & Queue
 const { createBullBoard } = require('@bull-board/api');
 const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
@@ -84,6 +86,9 @@ const adminLegalMonitorRoutes = require('./routes/adminLegalMonitorRoutes');
 const communityRoutes = require('./routes/communityRoutes');
 const updateLastActive = require('./middleware/activityLogger');
 const adminBriefingRoutes = require('./routes/adminBriefingEditorialRoutes');
+const directoryRoutes = require('./routes/directoryRoutes');
+const adminDirectoryRoutes = require('./routes/adminDirectoryRoutes');
+
 
 
 // --- 2. HILFSFUNKTIONEN / BOOT-LOGS ---
@@ -153,11 +158,17 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 
 app.use('/logos', express.static(path.join(__dirname, 'public', 'logos')));
 app.use('/api/logos', express.static(path.join(__dirname, 'public', 'logos')));
+app.use('/api/social-media', express.static(path.join(__dirname, 'public', 'social-media')));
+app.use('/api/grafiken', express.static(path.join(__dirname, 'public', 'grafiken')));
+app.use('/social-media', express.static(path.join(__dirname, 'public', 'social-media')));
+app.use('/directory_logos', express.static(path.join(__dirname, 'public', 'directory_logos')));
+app.use('/api/directory_logos', express.static(path.join(__dirname, 'public', 'directory_logos')));
 
 // Request-Logging verbessert
 app.use((req, res, next) => {
@@ -221,6 +232,10 @@ app.use('/api/community', communityRoutes);
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/admin/briefing', adminBriefingRoutes);
 app.use('/api/onboarding', require('./routes/onboardingRoutes'));
+app.use('/api/admin/social-media', require('./routes/adminSocialMediaRoutes'));
+app.use('/api/admin/directory', adminDirectoryRoutes);
+app.use('/api/directory', directoryRoutes);
+
 
 // Debug-Routen
 app.get('/api/debug/db-inspector', async (req, res) => {
@@ -334,6 +349,16 @@ async function startServer() {
         await runScheduledJobs();
       } catch (err) {
         console.error('[Scheduler] Fehler im Minutentakt:', err);
+      }
+    });
+    
+    console.log('[Scheduler] Starte Cron für täglichen E-Mail-Newsletter Check (08:30 Uhr)...');
+    cron.schedule('30 8 * * *', async () => {
+      try {
+        console.log(`[Scheduler ${nowIso()}] Führe dispatchAutomatedNewsletters aus`);
+        await dispatchAutomatedNewsletters();
+      } catch (err) {
+        console.error('[Scheduler] Fehler beim automatischen Newsletter-Versand:', err);
       }
     });
 

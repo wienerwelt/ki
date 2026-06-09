@@ -20,13 +20,14 @@ import { commoditiesConfig } from '../CommoditiesConfig';
 import { useTranslation } from 'react-i18next';
 import { format } from 'date-fns';
 
-
+// NEU: partnerId hinzugefügt
 interface CommodityPricesWidgetProps extends Partial<BaseWidgetProps> {
     icon?: React.ReactNode;
     title: string;
     widgetTypeKey: string;
     widgetId: string;
     isPublic?: boolean;
+    partnerId?: string; 
 }
 
 interface HistoricalData {
@@ -145,8 +146,9 @@ const CommodityItem: React.FC<{ indicatorKey: string; data: CommodityData; isPub
 };
 
 // --- Hauptkomponente ---
+// NEU: partnerId in den Props empfangen
 const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({ 
-    onDelete, widgetId, isRemovable, icon, title, widgetTypeKey, isPublic = false 
+    onDelete, widgetId, isRemovable, icon, title, widgetTypeKey, isPublic = false, partnerId 
 }) => {
     const { t } = useTranslation();
     const [data, setData] = useState<ApiData | null>(null);
@@ -159,41 +161,57 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({
     const [chartTimeframe, setChartTimeframe] = useState('6M');
     const [isChartLoading, setIsChartLoading] = useState(false);
 
-    // Daten laden (Mock oder API)
-// Daten laden (Dynamisch: Public-Wrapper oder geschützte API)
+    // Daten laden (Dynamisch: Public Hub oder geschützte API)
     useEffect(() => {
         const fetchData = async () => {
             setIsLoading(true);
             setError(null);
 
             try {
-                // 1. Pfad wählen: Public-Wrapper für Landingpage, sonst geschützte Route
-                const endpoint = isPublic ? '/api/public/commodities' : '/api/data/commodities';
+                // 1. Pfad wählen: Public Hub oder interne Route
+                const endpoint = isPublic 
+                    ? `/api/public/widget-data/${widgetTypeKey || 'CommodityPrices'}` 
+                    : '/api/data/commodities';
                 
-                // 2. Auth-Header nur setzen, wenn wir nicht im Public-Mode sind
-                const config = !isPublic ? {
-                    headers: { 'x-auth-token': localStorage.getItem('jwt_token') }
-                } : {};
+                // 2. Config für axios vorbereiten
+                const config: any = { params: {} };
+                
+                if (isPublic) {
+                    if (!partnerId) {
+                        setData(null);
+                        setIsLoading(false);
+                        return; // Ohne PartnerID im Public-Mode abbrechen
+                    }
+                    config.params.partnerId = partnerId;
+                } else {
+                    config.headers = { 'x-auth-token': localStorage.getItem('jwt_token') };
+                }
 
                 const response = await apiClient.get(endpoint, config);
 
-                if (response.data.ok) {
-                    setData(response.data.data);
+                // Je nachdem, wie der Controller antwortet (ok: true, oder direkt data)
+                const payloadData = response.data?.data || response.data;
+
+                if (response.data.ok || (payloadData && Object.keys(payloadData).length > 0)) {
+                    setData(payloadData);
                 } else {
                     throw new Error(response.data.message || t('widgets.commodities.errorLoad'));
                 }
             } catch (err: any) {
-                console.error('Fehler beim Laden der Commodities:', err);
-                setError(err?.response?.data?.message || t('widgets.commodities.errorGeneral'));
+                // AbortErrors ignorieren wir sauber
+                if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+                    console.warn('Fehler beim Laden der Commodities:', err);
+                    setError(err?.response?.data?.message || t('widgets.commodities.errorGeneral'));
+                }
             } finally {
                 setIsLoading(false);
             }
         };
 
         fetchData();
-    }, [isPublic, t]);
+    }, [isPublic, partnerId, widgetTypeKey, t]);
 
-    // Chart Daten laden
+    // Chart Daten laden (nur für interne User)
     useEffect(() => {
         if (isPublic || viewMode !== 'chart') return;
 
@@ -211,7 +229,9 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({
                    throw new Error(response.data.message || t('widgets.commodities.errorHistory'));
                 }
             } catch (err: any) {
-                setError(err?.response?.data?.message || t('widgets.commodities.errorHistory'));
+                if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+                    setError(err?.response?.data?.message || t('widgets.commodities.errorHistory'));
+                }
             } finally {
                 setIsChartLoading(false);
             }
@@ -304,7 +324,7 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({
                                 ))}
                             </Box>
                             
-                            {/* NEU: Zeitstempel-Footer */}
+                            {/* Zeitstempel-Footer */}
                             {latestUpdate && latestUpdate.getTime() > 0 && (
                                 <Box sx={{ mt: 2, textAlign: 'right' }}>
                                     <Typography variant="caption" color="text.secondary">

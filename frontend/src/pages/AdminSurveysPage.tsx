@@ -16,12 +16,17 @@ import {
     RemoveCircleOutline as RemoveCircleOutlineIcon,
     Download as DownloadIcon,
     PieChart as PieChartIcon,
-    BarChartOutlined as BarChartOutlinedIcon
+    BarChartOutlined as BarChartOutlinedIcon,
+    PictureAsPdf as PictureAsPdfIcon
 } from '@mui/icons-material';
 import { 
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
     PieChart, Pie, Cell, Legend
 } from 'recharts';
+
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import html2canvas from 'html2canvas';
 
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../apiClient';
@@ -37,7 +42,7 @@ interface Survey {
     start_date?: string;
     end_date?: string;
     created_at: string;
-    participant_count?: number; // NEU: Anzahl der eindeutigen Teilnehmer
+    participant_count?: number; 
 }
 
 interface Question {
@@ -53,7 +58,7 @@ interface SurveyResult {
     question_type: 'single-choice' | 'multiple-choice' | 'free-text';
     options: string[];
     results: any[];
-    unique_users?: number; // NEU: Wie viele echte Nutzer haben hier geantwortet?
+    unique_users?: number; 
 }
 
 interface BusinessPartner {
@@ -66,13 +71,12 @@ type SortConfig = {
     direction: 'asc' | 'desc';
 };
 
-const PIE_COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#ff6666'];
+const PIE_COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#ff6666', '#a3e635', '#f472b6'];
 
-// NEU: Helfer-Funktion für das automatische Schließen abgelaufener Umfragen im Frontend
 const getEffectiveStatus = (survey: Survey): 'draft' | 'active' | 'closed' => {
     if (survey.status === 'active' && survey.end_date) {
         if (new Date(survey.end_date) < new Date()) {
-            return 'closed'; // Wird im UI als geschlossen angezeigt, auch wenn DB noch 'active' sagt
+            return 'closed'; 
         }
     }
     return survey.status;
@@ -82,29 +86,23 @@ const AdminSurveysPage: React.FC = () => {
     const { user } = useAuth();
     const { showSnackbar } = useSnackbar();
     
-    // --- States ---
     const [surveys, setSurveys] = useState<Survey[]>([]);
     const [businessPartners, setBusinessPartners] = useState<BusinessPartner[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     
-    // Filter & Sortierung
     const [bpFilter, setBpFilter] = useState<string>('all');
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'created_at', direction: 'desc' });
 
-    // Dialoge
     const [dialogOpen, setDialogOpen] = useState(false);
     const [resultsOpen, setResultsOpen] = useState(false);
     const [isEditMode, setIsEditMode] = useState(false);
     const [currentSurvey, setCurrentSurvey] = useState<Partial<Survey> & { questions: Question[] }>({ title: '', description: '', status: 'draft', questions: [], business_partner_id: '' });
     const [currentResults, setCurrentResults] = useState<SurveyResult[]>([]);
-    
-    // NEU: Steuert, ob Balken- oder Tortendiagramm angezeigt wird
     const [chartTypes, setChartTypes] = useState<Record<string, 'bar' | 'pie'>>({});
     
     const isAssistant = user?.role === 'assistenz';
 
-    // --- Daten laden ---
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
@@ -124,7 +122,6 @@ const AdminSurveysPage: React.FC = () => {
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
-    // --- Sortier- und Filter-Logik ---
     const handleSort = (key: keyof Survey) => {
         let direction: 'asc' | 'desc' = 'asc';
         if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
@@ -145,7 +142,6 @@ const AdminSurveysPage: React.FC = () => {
         });
     }, [surveys, bpFilter, sortConfig]);
 
-    // --- Editor-Logik ---
     const handleOpenDialog = async (survey: Survey | null = null, isCopy: boolean = false) => {
         if (survey) {
             setIsEditMode(!isCopy);
@@ -158,7 +154,7 @@ const AdminSurveysPage: React.FC = () => {
                     ...surveyData,
                     id: isCopy ? undefined : surveyData.id,
                     title: isCopy ? `${surveyData.title} (Kopie)` : surveyData.title,
-                    status: isCopy ? 'draft' : getEffectiveStatus(survey), // Kopie ist immer Entwurf
+                    status: isCopy ? 'draft' : getEffectiveStatus(survey), 
                     start_date: isCopy ? '' : formatDateTime(surveyData.start_date),
                     end_date: isCopy ? '' : formatDateTime(surveyData.end_date)
                 });
@@ -244,14 +240,12 @@ const AdminSurveysPage: React.FC = () => {
         }
     };
 
-    // --- Ergebnisse & Export ---
     const handleShowResults = async (survey: Survey) => {
         try {
             const response = await apiClient.get(`/api/surveys/admin/${survey.id}/results`);
             setCurrentSurvey({ ...survey, questions: [] });
             setCurrentResults(response.data);
             
-            // Standardmäßig alle auf Balkendiagramm setzen
             const initialChartTypes: Record<string, 'bar'|'pie'> = {};
             response.data.forEach((q: SurveyResult) => { initialChartTypes[q.id] = 'bar'; });
             setChartTypes(initialChartTypes);
@@ -288,7 +282,7 @@ const AdminSurveysPage: React.FC = () => {
     const handleDownloadCSV = () => {
         let csvContent = "Frage,Typ,Antwort,Anzahl\n";
         currentResults.forEach(q => {
-            const safeQuestion = q.question_text.replace(/"/g, '""'); // CSV Escape
+            const safeQuestion = q.question_text.replace(/"/g, '""'); 
             if (q.question_type === 'free-text') {
                 q.results.forEach(res => {
                     const safeResponse = res.response_text.replace(/"/g, '""');
@@ -312,11 +306,129 @@ const AdminSurveysPage: React.FC = () => {
         document.body.removeChild(link);
     };
 
+    const handleDownloadPDF = async () => {
+        try {
+            showSnackbar('PDF wird generiert (Diagramme werden geladen)...', 'info');
+            const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+            const margin = 15;
+            const pageWidth = doc.internal.pageSize.getWidth();
+            let yPos = margin;
+
+            // Header
+            doc.setFontSize(16);
+            doc.text(`Auswertung: ${currentSurvey.title || 'Umfrage'}`, margin, yPos);
+            yPos += 8;
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.text(`${currentSurvey.business_partner_name || ''}`, margin, yPos);
+            yPos += 6;
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(100);
+            doc.text(`Umfrage ID: ${currentSurvey.id || ''} | Datum: ${new Date().toLocaleDateString('de-DE')}`, margin, yPos);
+            yPos += 15;
+            doc.setTextColor(0);
+
+            for (let index = 0; index < currentResults.length; index++) {
+                const q = currentResults[index];
+                const isChoice = q.question_type !== 'free-text';
+                const totalVotes = isChoice ? q.results.reduce((acc, r) => acc + parseInt(r.count, 10), 0) : q.results.length;
+                const uniqueUsers = q.unique_users || '-';
+
+                // Seitenumbruch prüfen für Fragen-Titel
+                if (yPos > doc.internal.pageSize.getHeight() - 40) {
+                    doc.addPage();
+                    yPos = margin;
+                }
+
+                doc.setFontSize(11);
+                doc.setFont('helvetica', 'bold');
+                const titleLines = doc.splitTextToSize(`${index + 1}. ${q.question_text}`, pageWidth - 2 * margin);
+                doc.text(titleLines, margin, yPos);
+                yPos += (titleLines.length * 5) + 2;
+
+                doc.setFontSize(9);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(100);
+                doc.text(isChoice ? `Teilnehmer: ${uniqueUsers} | Stimmen: ${totalVotes}` : `Freitext-Antworten: ${totalVotes}`, margin, yPos);
+                yPos += 8;
+                doc.setTextColor(0);
+
+                // --- DIAGRAMM EXPORT ---
+                if (isChoice) {
+                    const chartElem = document.getElementById(`chart-pdf-${q.id}`);
+                    if (chartElem) {
+                        try {
+                            const canvas = await html2canvas(chartElem, { 
+                                scale: 2, 
+                                logging: false, 
+                                useCORS: true, 
+                                backgroundColor: '#ffffff' 
+                            });
+                            const imgData = canvas.toDataURL('image/png');
+                            const imgWidth = pageWidth - 2 * margin;
+                            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+                            // Prüfen ob Diagramm auf Seite passt
+                            if (yPos + imgHeight > doc.internal.pageSize.getHeight() - margin) {
+                                doc.addPage();
+                                yPos = margin;
+                            }
+
+                            doc.addImage(imgData, 'PNG', margin, yPos, imgWidth, imgHeight);
+                            yPos += imgHeight + 10;
+                        } catch (e) {
+                            console.error("Diagramm konnte nicht gerendert werden", e);
+                        }
+                    }
+                }
+
+                // --- TABELLE ---
+                if (isChoice) {
+                    const tableData = q.results.map(res => [
+                        res.response_text, 
+                        res.count.toString(), 
+                        totalVotes > 0 ? `${((parseInt(res.count, 10) / totalVotes) * 100).toFixed(1)} %` : "0.0 %"
+                    ]);
+
+                    autoTable(doc, {
+                        startY: yPos,
+                        head: [['Antwort', 'Stimmen', 'Anteil']],
+                        body: tableData,
+                        margin: { left: margin, right: margin },
+                        theme: 'grid',
+                        styles: { fontSize: 8 },
+                        headStyles: { fillColor: [59, 130, 246] }
+                    });
+                    yPos = (doc as any).lastAutoTable.finalY + 15;
+                } else {
+                    const tableData = q.results.map(res => [res.response_text]);
+                    autoTable(doc, {
+                        startY: yPos,
+                        head: [['Antworten']],
+                        body: tableData,
+                        margin: { left: margin, right: margin },
+                        theme: 'grid',
+                        styles: { fontSize: 8 },
+                        headStyles: { fillColor: [100, 116, 139] }
+                    });
+                    yPos = (doc as any).lastAutoTable.finalY + 15;
+                }
+            }
+
+            const safeTitle = (currentSurvey.title || 'Umfrage').substring(0, 20).replace(/[^a-zA-Z0-9]/g, '_');
+            doc.save(`Auswertung_${safeTitle}_${new Date().toISOString().split('T')[0]}.pdf`);
+            showSnackbar('PDF erfolgreich erstellt.', 'success');
+        } catch (err: any) {
+            console.error(err);
+            showSnackbar('Fehler bei der PDF-Erstellung', 'error');
+        }
+    };
+
     return (
         <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                 <Typography variant="h4">Umfragen verwalten</Typography>
-                
                 <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
                     {user?.role === 'admin' && businessPartners.length > 0 && (
                         <FormControl size="small" sx={{ minWidth: 200, bgcolor: 'background.paper' }}>
@@ -337,29 +449,11 @@ const AdminSurveysPage: React.FC = () => {
                 <Paper><TableContainer><Table>
                     <TableHead>
                         <TableRow>
-                            <TableCell>
-                                <TableSortLabel active={sortConfig.key === 'title'} direction={sortConfig.key === 'title' ? sortConfig.direction : 'asc'} onClick={() => handleSort('title')}>
-                                    Titel
-                                </TableSortLabel>
-                            </TableCell>
-                            <TableCell>
-                                <TableSortLabel active={sortConfig.key === 'status'} direction={sortConfig.key === 'status' ? sortConfig.direction : 'asc'} onClick={() => handleSort('status')}>
-                                    Status
-                                </TableSortLabel>
-                            </TableCell>
+                            <TableCell><TableSortLabel active={sortConfig.key === 'title'} direction={sortConfig.key === 'title' ? sortConfig.direction : 'asc'} onClick={() => handleSort('title')}>Titel</TableSortLabel></TableCell>
+                            <TableCell><TableSortLabel active={sortConfig.key === 'status'} direction={sortConfig.key === 'status' ? sortConfig.direction : 'asc'} onClick={() => handleSort('status')}>Status</TableSortLabel></TableCell>
                             <TableCell>Gültigkeit</TableCell>
-                            <TableCell align="center">
-                                <TableSortLabel active={sortConfig.key === 'participant_count'} direction={sortConfig.key === 'participant_count' ? sortConfig.direction : 'asc'} onClick={() => handleSort('participant_count')}>
-                                    Teilnahmen
-                                </TableSortLabel>
-                            </TableCell>
-                            {user?.role === 'admin' && (
-                                <TableCell>
-                                    <TableSortLabel active={sortConfig.key === 'business_partner_name'} direction={sortConfig.key === 'business_partner_name' ? sortConfig.direction : 'asc'} onClick={() => handleSort('business_partner_name')}>
-                                        Business Partner
-                                    </TableSortLabel>
-                                </TableCell>
-                            )}
+                            <TableCell align="center"><TableSortLabel active={sortConfig.key === 'participant_count'} direction={sortConfig.key === 'participant_count' ? sortConfig.direction : 'asc'} onClick={() => handleSort('participant_count')}>Teilnahmen</TableSortLabel></TableCell>
+                            {user?.role === 'admin' && (<TableCell><TableSortLabel active={sortConfig.key === 'business_partner_name'} direction={sortConfig.key === 'business_partner_name' ? sortConfig.direction : 'asc'} onClick={() => handleSort('business_partner_name')}>Business Partner</TableSortLabel></TableCell>)}
                             <TableCell align="right">Aktionen</TableCell>
                         </TableRow>
                     </TableHead>
@@ -368,23 +462,17 @@ const AdminSurveysPage: React.FC = () => {
                             const effectiveStatus = getEffectiveStatus(s);
                             return (
                                 <TableRow key={s.id}>
-                                    <TableCell>{s.title}</TableCell>
                                     <TableCell>
-                                        <Chip 
-                                            label={effectiveStatus === 'closed' && s.status === 'active' ? 'Geschlossen (Auto)' : effectiveStatus} 
-                                            color={effectiveStatus === 'active' ? 'success' : effectiveStatus === 'closed' ? 'error' : 'default'} 
-                                            size="small" 
-                                        />
+                                        <Box>
+                                            <Typography variant="body2">{s.title}</Typography>
+                                            <Typography variant="caption" color="text.disabled" sx={{ display: 'block', fontSize: '0.7rem' }}>{s.id}</Typography>
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Chip label={effectiveStatus === 'closed' && s.status === 'active' ? 'Geschlossen (Auto)' : effectiveStatus} color={effectiveStatus === 'active' ? 'success' : effectiveStatus === 'closed' ? 'error' : 'default'} size="small" />
                                     </TableCell>
                                     <TableCell>{s.start_date ? new Date(s.start_date).toLocaleDateString() : 'Unbegrenzt'} - {s.end_date ? new Date(s.end_date).toLocaleDateString() : 'Unbegrenzt'}</TableCell>
-                                    
-                                    {/* NEUE SPALTE: TEILNAHMEN */}
-                                    <TableCell align="center">
-                                        <Typography variant="body2" fontWeight="bold">
-                                            {s.participant_count || 0}
-                                        </Typography>
-                                    </TableCell>
-
+                                    <TableCell align="center"><Typography variant="body2" fontWeight="bold">{s.participant_count || 0}</Typography></TableCell>
                                     {user?.role === 'admin' && <TableCell>{s.business_partner_name}</TableCell>}
                                     <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
                                         <Tooltip title="Ergebnisse anzeigen"><IconButton onClick={() => handleShowResults(s)} color="primary"><BarChartIcon /></IconButton></Tooltip>
@@ -395,24 +483,25 @@ const AdminSurveysPage: React.FC = () => {
                                 </TableRow>
                             );
                         })}
-                        {sortedAndFilteredSurveys.length === 0 && (
-                            <TableRow><TableCell colSpan={6} align="center">Keine Umfragen gefunden.</TableCell></TableRow>
-                        )}
                     </TableBody>
                 </Table></TableContainer></Paper>
             }
 
             {/* --- RESULTS DIALOG --- */}
             <Dialog open={resultsOpen} onClose={() => setResultsOpen(false)} fullWidth maxWidth="md" scroll="paper">
-                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Typography variant="h6" component="span">Ergebnisse für "{currentSurvey.title}"</Typography>
+                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', pb: 1 }}>
+                    <Box>
+                        <Typography variant="h6">Ergebnisse für "{currentSurvey.title}"</Typography>
+                        <Typography variant="subtitle1" color="primary" sx={{ fontWeight: 'bold' }}>{currentSurvey.business_partner_name}</Typography>
+                        <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5 }}>Umfrage ID: {currentSurvey.id}</Typography>
+                    </Box>
                     <IconButton onClick={() => setResultsOpen(false)} size="small"><CloseIcon /></IconButton>
                 </DialogTitle>
                 <DialogContent dividers sx={{ bgcolor: '#f8fafc' }}>
                     {currentResults.map((q, index) => {
                         const isChoice = q.question_type !== 'free-text';
                         const totalVotes = isChoice ? q.results.reduce((acc, r) => acc + parseInt(r.count, 10), 0) : q.results.length;
-                        const uniqueUsers = q.unique_users || '-'; // Vom Backend geliefert
+                        const uniqueUsers = q.unique_users || '-'; 
                         const isMulti = q.question_type === 'multiple-choice';
 
                         return (
@@ -421,68 +510,36 @@ const AdminSurveysPage: React.FC = () => {
                                     <Box>
                                         <Typography variant="h6" sx={{ fontWeight: 'bold' }}>{index + 1}. {q.question_text}</Typography>
                                         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                                            {isChoice ? (
-                                                isMulti ? (
-                                                    `Insgesamt ${totalVotes} Antwort(en) von ${uniqueUsers} Teilnehmern. (Mehrfachauswahl)`
-                                                ) : (
-                                                    `Insgesamt ${totalVotes} Antwort(en) abgegeben.`
-                                                )
-                                            ) : (
-                                                `Insgesamt ${totalVotes} Freitext-Antwort(en).`
-                                            )}
+                                            {isChoice ? (isMulti ? `Insgesamt ${totalVotes} Antwort(en) von ${uniqueUsers} Teilnehmern. (Mehrfachauswahl)` : `Insgesamt ${totalVotes} Antwort(en) abgegeben.`) : `Insgesamt ${totalVotes} Freitext-Antwort(en).`}
                                         </Typography>
                                     </Box>
-                                    
-                                    {/* DIAGRAMM-TYP WECHSELN */}
                                     {isChoice && (
-                                        <ToggleButtonGroup
-                                            value={chartTypes[q.id] || 'bar'}
-                                            exclusive
-                                            onChange={(_, val) => val && setChartTypes(prev => ({...prev, [q.id]: val}))}
-                                            size="small"
-                                        >
-                                            <ToggleButton value="bar" aria-label="Balkendiagramm">
-                                                <BarChartOutlinedIcon fontSize="small" />
-                                            </ToggleButton>
-                                            <ToggleButton value="pie" aria-label="Tortendiagramm">
-                                                <PieChartIcon fontSize="small" />
-                                            </ToggleButton>
+                                        <ToggleButtonGroup value={chartTypes[q.id] || 'bar'} exclusive onChange={(_, val) => val && setChartTypes(prev => ({...prev, [q.id]: val}))} size="small">
+                                            <ToggleButton value="bar"><BarChartOutlinedIcon fontSize="small" /></ToggleButton>
+                                            <ToggleButton value="pie"><PieChartIcon fontSize="small" /></ToggleButton>
                                         </ToggleButtonGroup>
                                     )}
                                 </Box>
 
                                 {isChoice && (
-                                    <Box sx={{ height: 260, mt: 3, mb: 2 }}>
+                                    <Box id={`chart-pdf-${q.id}`} sx={{ height: 400, mt: 3, mb: 2, bgcolor: 'white' }}>
                                         <ResponsiveContainer width="100%" height="100%">
                                             {chartTypes[q.id] === 'pie' ? (
                                                 <PieChart>
-                                                    <Pie
-                                                        data={q.results}
-                                                        dataKey="count"
-                                                        nameKey="response_text"
-                                                        cx="50%"
-                                                        cy="50%"
-                                                        outerRadius={90}
-                                                        innerRadius={40}
-                                                        label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
-                                                    >
-                                                        {q.results.map((_, idx) => (
-                                                            <Cell key={`cell-${idx}`} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
-                                                        ))}
+                                                    <Pie data={q.results} dataKey="count" nameKey="response_text" cx="50%" cy="45%" outerRadius={100} innerRadius={50} paddingAngle={2} label={({ percent }) => percent > 0 ? `${(percent * 100).toFixed(0)}%` : ''}>
+                                                        {q.results.map((_, idx) => (<Cell key={`cell-${idx}`} fill={PIE_COLORS[idx % PIE_COLORS.length]} />))}
                                                     </Pie>
                                                     <RechartsTooltip formatter={(value: number) => [`${value} Stimmen`, 'Anzahl']} />
-                                                    <Legend verticalAlign="bottom" height={36}/>
+                                                    <Legend verticalAlign="bottom" align="center" layout="horizontal" wrapperStyle={{ paddingTop: '30px', fontSize: '12px' }} />
                                                 </PieChart>
                                             ) : (
                                                 <BarChart data={q.results} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 5 }}>
                                                     <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
                                                     <XAxis type="number" allowDecimals={false} />
-                                                    <YAxis type="category" dataKey="response_text" width={180} tick={{ fontSize: 13 }} />
+                                                    <YAxis type="category" dataKey="response_text" width={180} tick={{ fontSize: 12 }} />
                                                     <RechartsTooltip cursor={{ fill: 'rgba(0,0,0,0.05)' }} formatter={(value: number) => [`${value} Stimmen`, 'Anzahl']} />
                                                     <Bar dataKey="count" fill="#3b82f6" barSize={25} radius={[0, 4, 4, 0]}>
-                                                        {q.results.map((_, idx) => (
-                                                            <Cell key={`cell-${idx}`} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
-                                                        ))}
+                                                        {q.results.map((_, idx) => (<Cell key={`cell-${idx}`} fill={PIE_COLORS[idx % PIE_COLORS.length]} />))}
                                                     </Bar>
                                                 </BarChart>
                                             )}
@@ -490,14 +547,10 @@ const AdminSurveysPage: React.FC = () => {
                                     </Box>
                                 )}
 
-                                {q.question_type === 'free-text' && (
+                                {!isChoice && (
                                     <Box component="ul" sx={{ pl: 2, maxHeight: 200, overflowY: 'auto', bgcolor: '#f1f5f9', p: 2, borderRadius: 1 }}>
                                         {q.results.length === 0 ? <Typography variant="body2" color="text.secondary">Keine Antworten vorhanden.</Typography> : 
-                                            q.results.map((res: any, i) => (
-                                                <li key={i} style={{ marginBottom: '8px' }}>
-                                                    <Typography variant="body2">"{res.response_text}"</Typography>
-                                                </li>
-                                            ))
+                                            q.results.map((res: any, i) => (<li key={i} style={{ marginBottom: '8px' }}><Typography variant="body2">"{res.response_text}"</Typography></li>))
                                         }
                                     </Box>
                                 )}
@@ -505,9 +558,10 @@ const AdminSurveysPage: React.FC = () => {
                         );
                     })}
                 </DialogContent>
-                <DialogActions sx={{ p: 2, bgcolor: '#f8fafc' }}>
+                <DialogActions sx={{ p: 2, bgcolor: '#f8fafc', gap: 1 }}>
                     <Button onClick={copyResultsToClipboard} startIcon={<ContentCopyIcon />} variant="outlined">Kopieren</Button>
-                    <Button onClick={handleDownloadCSV} startIcon={<DownloadIcon />} variant="contained" color="success">CSV Export</Button>
+                    <Button onClick={handleDownloadCSV} startIcon={<DownloadIcon />} variant="outlined" color="success">CSV</Button>
+                    <Button onClick={handleDownloadPDF} startIcon={<PictureAsPdfIcon />} variant="contained" color="primary">PDF Export</Button>
                     <Button onClick={() => setResultsOpen(false)} sx={{ ml: 'auto' }}>Schließen</Button>
                 </DialogActions>
             </Dialog>
@@ -521,14 +575,8 @@ const AdminSurveysPage: React.FC = () => {
                              <Grid item xs={12}>
                                 <FormControl fullWidth required>
                                     <InputLabel>Business Partner</InputLabel>
-                                    <Select
-                                        value={currentSurvey.business_partner_id || ''}
-                                        label="Business Partner"
-                                        onChange={(e: SelectChangeEvent) => setCurrentSurvey(p => ({...p, business_partner_id: e.target.value}))}
-                                    >
-                                        {businessPartners.map(bp => (
-                                            <MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>
-                                        ))}
+                                    <Select value={currentSurvey.business_partner_id || ''} label="Business Partner" onChange={(e: SelectChangeEvent) => setCurrentSurvey(p => ({...p, business_partner_id: e.target.value}))}>
+                                        {businessPartners.map(bp => (<MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>))}
                                     </Select>
                                 </FormControl>
                             </Grid>
@@ -547,9 +595,7 @@ const AdminSurveysPage: React.FC = () => {
                                 </Select>
                             </FormControl>
                         </Grid>
-                        
                         <Grid item xs={12}><Typography variant="h6" sx={{ mt: 2 }}>Fragen</Typography></Grid>
-                        
                         {currentSurvey.questions.map((q, qIndex) => (
                             <Grid item xs={12} component={Paper} variant="outlined" sx={{ p: 2, mt: 2, ml: 2 }} key={qIndex}>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -557,14 +603,14 @@ const AdminSurveysPage: React.FC = () => {
                                     <Tooltip title="Frage entfernen"><IconButton size="small" onClick={() => handleRemoveQuestion(qIndex)}><RemoveCircleOutlineIcon/></IconButton></Tooltip>
                                 </Box>
                                 <TextField fullWidth label="Frage-Text" value={q.question_text} onChange={e => handleQuestionChange(qIndex, 'question_text', e.target.value)} sx={{ mb: 2 }} />
-                                    <FormControl fullWidth>
-                                        <InputLabel>Frage-Typ</InputLabel>
-                                        <Select value={q.question_type} label="Frage-Typ" onChange={e => handleQuestionChange(qIndex, 'question_type', e.target.value as 'single-choice' | 'multiple-choice' | 'free-text')}>
-                                            <MenuItem value="single-choice">Single-Choice (1 Antwort)</MenuItem>
-                                            <MenuItem value="multiple-choice">Multiple-Choice (Mehrere Antworten)</MenuItem>
-                                            <MenuItem value="free-text">Freitext</MenuItem>
-                                        </Select>
-                                    </FormControl>
+                                <FormControl fullWidth>
+                                    <InputLabel>Frage-Typ</InputLabel>
+                                    <Select value={q.question_type} label="Frage-Typ" onChange={e => handleQuestionChange(qIndex, 'question_type', e.target.value as 'single-choice' | 'multiple-choice' | 'free-text')}>
+                                        <MenuItem value="single-choice">Single-Choice (1 Antwort)</MenuItem>
+                                        <MenuItem value="multiple-choice">Multiple-Choice (Mehrere Antworten)</MenuItem>
+                                        <MenuItem value="free-text">Freitext</MenuItem>
+                                    </Select>
+                                </FormControl>
                                 {q.question_type !== 'free-text' && (
                                     <Box sx={{ mt: 2, pl: 2 }}>
                                         {q.options.map((opt, oIndex) => (

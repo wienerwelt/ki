@@ -18,7 +18,7 @@ interface Category {
     name_lang: string | null;
     name_lang_en: string | null;
     description: string | null;
-    category_type: 'industry' | 'content' | 'community'; 
+    category_type: 'industry' | 'content' | 'community' | 'directory_service';
     created_at: string;
     updated_at: string;
 }
@@ -54,7 +54,7 @@ const AdminCategoriesPage: React.FC = () => {
         name_lang: '', 
         name_lang_en: '', 
         description: '', 
-        category_type: 'content' as 'industry' | 'content' | 'community' 
+        category_type: 'content' as 'industry' | 'content' | 'community' | 'directory_service'
     });
     
     const [dialogError, setDialogError] = useState<string | null>(null);
@@ -191,6 +191,7 @@ const AdminCategoriesPage: React.FC = () => {
                             <MenuItem value="content">Content</MenuItem>
                             <MenuItem value="industry">Branche</MenuItem>
                             <MenuItem value="community">Community</MenuItem>
+                            <MenuItem value="directory_service">Dienstleistung (Verzeichnis)</MenuItem>
                         </TextField>
 
                         <TextField
@@ -266,6 +267,7 @@ const AdminCategoriesPage: React.FC = () => {
                         <MenuItem value="content">Content-Kategorie (News, Artikel)</MenuItem>
                         <MenuItem value="industry">Branche (für Business Partner)</MenuItem>
                         <MenuItem value="community">Community / Wissen (für Experten & Posts)</MenuItem>
+                        <MenuItem value="directory_service">Dienstleistung (für Branchenverzeichnis)</MenuItem>
                     </TextField>                  
                     <TextField margin="dense" name="description" label="Beschreibung" type="text" fullWidth multiline rows={3} variant="outlined" value={formState.description} onChange={handleFormChange} />
                 </DialogContent>

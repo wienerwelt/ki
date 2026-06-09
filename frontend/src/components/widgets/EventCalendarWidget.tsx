@@ -800,8 +800,15 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
               )}
             </Stack>
           )}
-        </DialogContent>
-        <DialogActions sx={{ p: 3, pt: 2, flexDirection: 'column', gap: 2, bgcolor: '#f8fafc' }}>
+</DialogContent>
+        <DialogActions sx={{ 
+            p: 3, 
+            pt: 2, 
+            flexDirection: 'column', 
+            gap: 2, 
+            // FIX: Heller Hintergrund im Light-Mode, transparenter dunkler Hintergrund im Dark-Mode
+            bgcolor: theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.02)' : '#f8fafc' 
+        }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                 <Typography variant="body2" fontWeight="bold">Deine Antwort:</Typography>
                 <Stack direction="row" spacing={1}>

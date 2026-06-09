@@ -1,9 +1,12 @@
 // backend/services/updateCommodityPrices.js
+const https = require('https');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const Papa = require('papaparse');
 const xlsx = require('xlsx');
 const db = require('../config/db');
+const { PutObjectCommand } = require("@aws-sdk/client-s3");
+const s3Client = require('../config/s3Client.js');
 
 const METALPRICE_API_KEY = process.env.METALPRICE_API_KEY;
 const OILPRICE_API_KEY = process.env.OILPRICE_API_KEY;
@@ -288,11 +291,10 @@ const fetchAndStoreCO2Price = async () => {
 };
 
 
-// Die 'upsertStatistic' Funktion bleibt unverändert
 const upsertStatistic = async (client, statistic) => {
     const {
         country_code, statistic_type, statistic_subtype, time_period,
-        value, unit, source_name, source_url
+        value, unit, source_name, source_url, archive_path // <-- NEU
     } = statistic;
 
     const existing = await client.query(
@@ -303,104 +305,192 @@ const upsertStatistic = async (client, statistic) => {
 
     if (existing.rows.length > 0) {
         await client.query(
-            `UPDATE economic_statistics SET value = $1, last_updated = NOW() WHERE id = $2`,
-            [value, existing.rows[0].id]
+            `UPDATE economic_statistics 
+             SET value = $1, 
+                 source_url = $2, 
+                 source_name = $3, 
+                 archive_path = COALESCE($4, archive_path), -- Behält alten Pfad, falls leer
+                 last_updated = NOW() 
+             WHERE id = $5`,
+            [value, source_url, source_name, archive_path, existing.rows[0].id]
         );
     } else {
         await client.query(
             `INSERT INTO economic_statistics (
                 country_code, statistic_type, statistic_subtype, time_period, time_period_granularity,
-                value, unit, source_name, source_url
-            ) VALUES ($1, $2, $3, $4, 'monthly', $5, $6, $7, $8)`,
-            [country_code, statistic_type, statistic_subtype, time_period, value, unit, source_name, source_url]
+                value, unit, source_name, source_url, archive_path
+            ) VALUES ($1, $2, $3, $4, 'monthly', $5, $6, $7, $8, $9)`,
+            [country_code, statistic_type, statistic_subtype, time_period, value, unit, source_name, source_url, archive_path]
         );
     }
 };
 
 
 const fetchAndStoreCarRegistrationsDE = async () => {
-    console.log('[data-update] Starte Abruf der KFZ-Neuzulassungen für Deutschland (KBA)...');
-
-    const today = new Date();
-    const targetDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-    const year = targetDate.getFullYear();
-    const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
-
-    const csvUrl = `https://www.kba.de/DE/Statistik/Fahrzeuge/Umwelt/Diagramme/Monatliche_NZL/${year}${month}_NZL_Pkw_KREN_csv.html?nn=852372&view=kbawebdiagramcsvexport`;
-    console.log(`[data-update] Dynamisch erstellte KBA-URL: ${csvUrl}`);
+    console.log('[data-update] Starte Abruf der KFZ-Neuzulassungen für Deutschland (KBA FZ8)...');
 
     const client = await db.connect();
+    const today = new Date();
+    
+    // Wir probieren bis zu 2 Monate rückwirkend, falls das KBA spät dran ist
+    const monthsToTry = [1, 2]; 
+    let excelResponse = null;
+    let successfulYear = null;
+    let successfulMonth = null;
+    let successfulUrl = null;
+
+    for (const monthOffset of monthsToTry) {
+        const targetDate = new Date(today.getFullYear(), today.getMonth() - monthOffset, 1);
+        const year = targetDate.getFullYear();
+        const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
+
+        // NEUES URL-SCHEMA FÜR DIE FZ8 EXCEL DATEI
+        const excelUrl = `https://www.kba.de/SharedDocs/Downloads/DE/Statistik/Fahrzeuge/FZ8/fz8_${year}${month}.xlsx?__blob=publicationFile`;
+        console.log(`[data-update] Versuche KBA-URL: ${excelUrl}`);
+
+        try {
+
+            excelResponse = await axios.get(excelUrl, { 
+                responseType: 'arraybuffer',
+                timeout: 60000, // Gibt dem Server großzügige 60 Sekunden Zeit
+                httpsAgent: new https.Agent({ keepAlive: true }), // Verhindert, dass der Socket zu früh schließt
+                headers: { 
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive'
+                }
+            });
+            
+            successfulYear = year;
+            successfulMonth = month;
+            successfulUrl = excelUrl;
+            console.log(`[data-update] KBA-Datei für ${year}-${month} erfolgreich gefunden!`);
+            break; // Erfolgreich gefunden, Schleife abbrechen
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) {
+                console.warn(`[data-update] KBA-Daten für ${year}-${month} noch nicht verfügbar (404).`);
+            } else {
+                console.error(`[data-update] Unerwarteter Fehler beim KBA-Abruf (${year}-${month}):`, error.message);
+            }
+        }
+    }
+
+    if (!excelResponse) {
+        console.warn(`[data-update] KBA-Abbruch: Keine neuen FZ8-Daten für die letzten Monate gefunden.`);
+        client.release();
+        return;
+    }
 
     try {
-        const csvResponse = await axios.get(csvUrl, { responseType: 'arraybuffer' });
-        const csvData = new TextDecoder('windows-1252').decode(csvResponse.data);
+        let s3ArchivePath = null;
+        try {
+            const fileName = `DE_KBA_Neuzulassungen_FZ8_${successfulYear}_${successfulMonth}_${Date.now()}.xlsx`;
+            s3ArchivePath = `system-archive/kba/${fileName}`;
+            
+            await s3Client.send(new PutObjectCommand({
+                Bucket: process.env.AWS_S3_BUCKET_NAME,
+                Key: s3ArchivePath,
+                Body: excelResponse.data,
+                ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            }));
+            console.log(`[data-update] KBA Excel in S3 archiviert: ${s3ArchivePath}`);
+        } catch (s3Err) {
+            console.error(`[data-update] Fehler beim S3-Archivieren (KBA):`, s3Err.message);
+        }
 
-        const parsedData = Papa.parse(csvData, {
-            header: true,
-            skipEmptyLines: true,
-            delimiter: ';',
-        });
+        // Excel parsen
+        const workbook = xlsx.read(excelResponse.data, { type: 'array' });
+        
+        // Zwingend das Blatt FZ 8.4 suchen (Kraftstoffe), ansonsten Abbruch
+        const targetSheetName = workbook.SheetNames.find(name => name.includes('FZ 8.4'));
+        if (!targetSheetName) {
+            throw new Error('Das Tabellenblatt "FZ 8.4" (Kraftstoffarten) wurde in der Excel-Datei nicht gefunden.');
+        }
 
-        let upsertCount = 0;
+        const worksheet = workbook.Sheets[targetSheetName];
+        const sheetData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: null });
+
+        // Datum für die Datenbank aufbauen
+        const monthIndex = parseInt(successfulMonth, 10) - 1;
+        const time_period = new Date(Date.UTC(successfulYear, monthIndex + 1, 0));
+
+        let currentBlock = null; // Speichert, ob wir gerade Zeilen für 'Benzin' oder 'Diesel' scannen
+        let parsedTotals = {};   // Zwischenspeicher für die gelesenen Werte
+
+        // Zeile für Zeile durch die FZ 8.4 scannen
+        for (const row of sheetData) {
+            if (!row) continue;
+
+            const colB = String(row[1] || '').trim(); // Spalte B: Kraftstoffart
+            const colC = String(row[2] || '').trim(); // Spalte C: CO2-Emission bzw. "Zusammen"
+            const colE = row[4];                      // Spalte E: Wert für aktuellen Monat
+
+            if (colE === null || colE === undefined) continue;
+
+            // 1. Direkte Treffer in derselben Zeile (Elektro, Hybrid, Plug-in)
+            if (colB === 'Elektro (BEV)') {
+                parsedTotals['Elektro'] = parseInt(String(colE).replace(/\D/g, ''), 10);
+            }
+            else if (colB === 'Hybrid') {
+                parsedTotals['Hybrid-Total'] = parseInt(String(colE).replace(/\D/g, ''), 10);
+            }
+            else if (colB.includes('Plug-in')) {
+                parsedTotals['Plug-in-Hybrid'] = parseInt(String(colE).replace(/\D/g, ''), 10);
+            }
+
+            // 2. Block-Tracking für Benzin & Diesel initiieren
+            if (colB === 'Benzin') currentBlock = 'Benzin';
+            if (colB === 'Diesel') currentBlock = 'Diesel';
+            // Sobald wir "Benzin und Diesel zusammen" erreichen, beenden wir das Tracking
+            if (colB.includes('Benzin und Diesel zusammen')) currentBlock = null;
+
+            // 3. Gesamtsumme für den aktuellen Block finden ("Zusammen" in Spalte C)
+            if (colC === 'Zusammen' && currentBlock) {
+                parsedTotals[currentBlock] = parseInt(String(colE).replace(/\D/g, ''), 10);
+                currentBlock = null; // Block resetten, da wir die Summe haben
+            }
+        }
+
+        // Mathematik für Hybride (Gesamthybrid - Plug-in)
+        const hybridOhnePlugIn = Math.max(0, (parsedTotals['Hybrid-Total'] || 0) - (parsedTotals['Plug-in-Hybrid'] || 0));
+        if (hybridOhnePlugIn > 0) {
+            parsedTotals['Hybrid (ohne Plug-in)'] = hybridOhnePlugIn;
+        }
+
         await client.query('BEGIN');
+        let upsertCount = 0;
 
-        const parseMonth = (monthStr) => {
-            if (!monthStr || typeof monthStr !== 'string') return null;
-            const parts = monthStr.split('. ');
-            if (parts.length !== 2) return null;
+        // Die ermittelten Werte in die Datenbank schreiben
+        const finalTypesToSave = ['Elektro', 'Plug-in-Hybrid', 'Hybrid (ohne Plug-in)', 'Benzin', 'Diesel'];
+        
+        for (const dbName of finalTypesToSave) {
+            const value = parsedTotals[dbName];
+            if (value === undefined || isNaN(value)) continue;
 
-            const [mon, yearPart] = parts;
-            const monthMap = { 'Jan': 0, 'Feb': 1, 'Mär': 2, 'Apr': 3, 'Mai': 4, 'Jun': 5, 'Jul': 6, 'Aug': 7, 'Sep': 8, 'Okt': 9, 'Nov': 10, 'Dez': 11 };
-            const monthIndex = monthMap[mon];
-            const fullYear = parseInt(`20${yearPart}`, 10);
+            const statistic = {
+                country_code: 'DE',
+                statistic_type: 'fleet_statistics',
+                statistic_subtype: dbName,
+                time_period: time_period,
+                value: value,
+                unit: 'Stück',
+                source_name: 'Kraftfahrt-Bundesamt (KBA)',
+                archive_path: s3ArchivePath,
+                source_url: successfulUrl
+            };
 
-            if (monthIndex === undefined || isNaN(fullYear)) return null;
-
-            // Erstellt ein Datum für den LETZTEN Tag des Monats in UTC
-            return new Date(Date.UTC(fullYear, monthIndex + 1, 0));
-        };
-
-        for (const row of parsedData.data) {
-            const monthString = row['Berichtsmonat'];
-            const time_period = parseMonth(monthString);
-
-            if (!time_period) {
-                console.warn(`[data-update] Konnte Datum nicht parsen: "${monthString}". Überspringe Zeile.`);
-                continue;
-            }
-
-            for (const driveType in row) {
-                if (driveType === 'Berichtsmonat' || !row[driveType]) continue;
-
-                const registrationCount = parseInt(row[driveType], 10);
-                if (isNaN(registrationCount)) continue;
-
-                const statistic = {
-                    country_code: 'DE',
-                    statistic_type: 'fleet_statistics',
-                    statistic_subtype: driveType,
-                    time_period: time_period,
-                    value: registrationCount,
-                    unit: 'Stück',
-                    source_name: 'Kraftfahrt-Bundesamt (KBA)',
-                    source_url: 'https://www.kba.de/'
-                };
-
-                await upsertStatistic(client, statistic);
-                upsertCount++;
-            }
+            await upsertStatistic(client, statistic);
+            upsertCount++;
         }
 
         await client.query('COMMIT');
-        console.log(`[data-update] ${upsertCount} Einträge für KFZ-Neuzulassungen (DE) erfolgreich gespeichert/aktualisiert.`);
+        console.log(`[data-update] ${upsertCount} Einträge für KFZ-Neuzulassungen (DE) für ${successfulYear}-${successfulMonth} erfolgreich gespeichert/aktualisiert.`);
 
     } catch (error) {
         await client.query('ROLLBACK');
-        if (axios.isAxiosError(error) && error.response?.status === 404) {
-            console.warn(`[data-update] KBA-Daten für ${year}-${month} noch nicht verfügbar (404). Überspringe...`);
-            return;
-        }
-        console.error(`[data-update] Fehler beim Verarbeiten der KBA-Daten für ${year}-${month}:`, error);
+        console.error(`[data-update] Fehler beim Verarbeiten der KBA-Excel für ${successfulYear}-${successfulMonth}:`, error);
         throw new Error(`Update der KFZ-Neuzulassungen (DE) fehlgeschlagen: ${error.message}`);
     } finally {
         client.release();
@@ -420,14 +510,11 @@ const fetchAndStoreCarRegistrations = async () => {
     const monthNames = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
     const urlMonthNames = ["Jaenner", "Februar", "Maerz", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
     
-    // BACKFILL-LOGIK: Wir prüfen IMMER das Vorjahr komplett (bis Dezember) UND das aktuelle Jahr (bis zum Vormonat).
-    // So werden fehlende Daten (wie 12/2025) garantiert nachgetragen!
     const filesToFetch = [
-        { year: currentYear - 1, monthIndex: 11 } // Das Vorjahr holen wir immer bis "Dezember"
+        { year: currentYear - 1, monthIndex: 11 }
     ];
     
     if (currentMonth > 0) {
-        // Das aktuelle Jahr holen wir bis zum vergangenen Monat
         filesToFetch.push({ year: currentYear, monthIndex: currentMonth - 1 });
     }
 
@@ -435,37 +522,61 @@ const fetchAndStoreCarRegistrations = async () => {
 
     for (const fileInfo of filesToFetch) {
         const targetYear = fileInfo.year;
-        const targetMonthIndex = fileInfo.monthIndex;
-        const endMonthNameUrl = urlMonthNames[targetMonthIndex];
-        
-
-        let urlsToTry = [
-            `https://www.statistik.at/fileadmin/pages/77/NeuzulassungenFahrzeugeJaennerBis${endMonthNameUrl}${targetYear}.ods`,
-            `https://www.statistik.at/fileadmin/pages/77/NeuzulassungenFahrzeuge${endMonthNameUrl}${targetYear}.ods`
-        ];
-
-        // Dynamische Generierung der neuen CMS-Präfixe für die Abfrage
-        for (let i = 1; i <= 5; i++) {
-            urlsToTry.push(`https://www.statistik.at/fileadmin/pages/77/DE${i}_NeuzulassungenFahrzeugeJaennerBis${endMonthNameUrl}${targetYear}.ods`);
-            urlsToTry.push(`https://www.statistik.at/fileadmin/pages/77/DE${i}_NeuzulassungenFahrzeuge${endMonthNameUrl}${targetYear}.ods`);
-        }
+        const startMonthIndex = fileInfo.monthIndex;
 
         let fileData = null;
         let successfulUrl = "";
+        let actualMonthIndex = startMonthIndex;
+        let s3ArchivePath = null;
 
-        // URL Auto-Finder
-        for (const url of urlsToTry) {
-            try {
-                console.log(`[data-update] Versuche URL: ${url}`);
-                const response = await axios.get(url, { responseType: 'arraybuffer' });
-                fileData = new Uint8Array(response.data);
-                successfulUrl = url;
-                console.log(`[data-update] Datei erfolgreich gefunden!`);
-                break; // Schleife abbrechen, wir haben die Datei
-            } catch (err) {
-                // Bei 404 Fehler (Not Found) versuchen wir einfach das nächste URL-Muster
-                continue;
+        console.log(`[data-update] Suche aktuellste ODS-Datei für das Jahr ${targetYear} (Start ab Index ${startMonthIndex})...`);
+
+        for (let m = startMonthIndex; m >= 0; m--) {
+            const endMonthNameUrl = urlMonthNames[m];
+            
+            let urlsToTry = [
+                `https://www.statistik.at/fileadmin/pages/77/NeuzulassungenFahrzeugeJaennerBis${endMonthNameUrl}${targetYear}.ods`,
+                `https://www.statistik.at/fileadmin/pages/77/NeuzulassungenFahrzeuge${endMonthNameUrl}${targetYear}.ods`
+            ];
+
+            for (let i = 1; i <= 5; i++) {
+                urlsToTry.push(`https://www.statistik.at/fileadmin/pages/77/DE${i}_NeuzulassungenFahrzeugeJaennerBis${endMonthNameUrl}${targetYear}.ods`);
+                urlsToTry.push(`https://www.statistik.at/fileadmin/pages/77/DE${i}_NeuzulassungenFahrzeuge${endMonthNameUrl}${targetYear}.ods`);
             }
+
+            for (const url of urlsToTry) {
+                try {
+                    console.log(`[data-update] Versuche URL: ${url}`);
+                    const response = await axios.get(url, { responseType: 'arraybuffer' });
+                    fileData = new Uint8Array(response.data);
+                    successfulUrl = url;
+                    actualMonthIndex = m; 
+                    console.log(`[data-update] Datei erfolgreich gefunden!`);
+
+                    // --- S3 Upload ---
+                    try {
+                        const displayMonth = String(actualMonthIndex + 1).padStart(2, '0');
+                        const fileName = `AT_Statistik_Neuzulassungen_${targetYear}_${displayMonth}_${Date.now()}.ods`;
+                        s3ArchivePath = `system-archive/statistik_at/${fileName}`;
+                        
+                        await s3Client.send(new PutObjectCommand({
+                            Bucket: process.env.AWS_S3_BUCKET_NAME,
+                            Key: s3ArchivePath,
+                            Body: response.data,
+                            ContentType: 'application/vnd.oasis.opendocument.spreadsheet'
+                        }));
+                        console.log(`[data-update] Statistik AT Rohdatei in S3 archiviert: ${s3ArchivePath}`);
+                    } catch (s3Err) {
+                        console.error(`[data-update] Fehler beim S3-Archivieren (AT):`, s3Err.message);
+                    }
+                    
+                    break; 
+                } catch (err) {
+                    continue; 
+                }
+            }
+
+            if (fileData) break; 
         }
 
         if (!fileData) {
@@ -479,8 +590,6 @@ const fetchAndStoreCarRegistrations = async () => {
 
             for (const sheetName of workbook.SheetNames) {
                 const sheetClean = sheetName.trim().toLowerCase();
-                
-                // Fuzzy Matching: Findet den Monat auch, wenn er "Jänner 2026" oder ähnlich heißt
                 const monthIndex = monthNames.findIndex(m => sheetClean.includes(m.toLowerCase()));
                 
                 if (monthIndex === -1) {
@@ -488,7 +597,6 @@ const fetchAndStoreCarRegistrations = async () => {
                     continue;
                 }
 
-                // Datum: Letzter Tag des jeweiligen Monats
                 const time_period = new Date(Date.UTC(targetYear, monthIndex + 1, 0));
                 console.log(`[data-update] Verarbeite Daten für ${time_period.toISOString().split('T')[0]}...`);
 
@@ -497,6 +605,12 @@ const fetchAndStoreCarRegistrations = async () => {
                 
                 const monthlyTotals = {};
                 const foundFlags = {};
+
+                // --- NEU: Temporäre Variablen für die Hybrid-Mathematik ---
+                let totalHybridBenzin = 0;
+                let totalHybridDiesel = 0;
+                let pluginBenzin = 0;
+                let pluginDiesel = 0;
 
                 for (const row of sheetData) {
                     if (!row || !row[0] || row[1] === null) continue;
@@ -507,16 +621,18 @@ const fetchAndStoreCarRegistrations = async () => {
                     if (!driveTypeRaw || isNaN(registrationCount)) continue;
 
                     if (driveTypeRaw.startsWith('darunter Benzin/Elektro (hybrid) – Plug-In') && !foundFlags['plug-in-benzin']) {
+                        pluginBenzin = registrationCount; // Wert für spätere Berechnung merken
                         monthlyTotals['Plug-in-Hybrid'] = (monthlyTotals['Plug-in-Hybrid'] || 0) + registrationCount;
                         foundFlags['plug-in-benzin'] = true;
                     } else if (driveTypeRaw.startsWith('darunter Diesel/Elektro (hybrid) – Plug-In') && !foundFlags['plug-in-diesel']) {
+                        pluginDiesel = registrationCount; // Wert für spätere Berechnung merken
                         monthlyTotals['Plug-in-Hybrid'] = (monthlyTotals['Plug-in-Hybrid'] || 0) + registrationCount;
                         foundFlags['plug-in-diesel'] = true;
                     } else if (driveTypeRaw.startsWith('Benzin/Elektro (hybrid)') && !foundFlags['hybrid-benzin']) {
-                        monthlyTotals['Hybrid (ohne Plug-in)'] = (monthlyTotals['Hybrid (ohne Plug-in)'] || 0) + registrationCount;
+                        totalHybridBenzin = registrationCount; // ACHTUNG: Hier nur den Basiswert merken, nicht direkt speichern!
                         foundFlags['hybrid-benzin'] = true;
                     } else if (driveTypeRaw.startsWith('Diesel/Elektro (hybrid)') && !foundFlags['hybrid-diesel']) {
-                        monthlyTotals['Hybrid (ohne Plug-in)'] = (monthlyTotals['Hybrid (ohne Plug-in)'] || 0) + registrationCount;
+                        totalHybridDiesel = registrationCount; // ACHTUNG: Hier nur den Basiswert merken, nicht direkt speichern!
                         foundFlags['hybrid-diesel'] = true;
                     } else if (['Benzin', 'Diesel', 'Elektro'].includes(driveTypeRaw)) {
                         if (!foundFlags[driveTypeRaw]) {
@@ -526,6 +642,15 @@ const fetchAndStoreCarRegistrations = async () => {
                     }
                 }
                 
+                // --- NEU: NACH der Schleife die echten Hybrid-Werte (ohne Plug-in) berechnen ---
+                const echteHybridBenzin = Math.max(0, totalHybridBenzin - pluginBenzin);
+                const echteHybridDiesel = Math.max(0, totalHybridDiesel - pluginDiesel);
+                
+                // Nur ins Objekt schreiben, wenn überhaupt Hybrid-Zulassungen da waren
+                if (totalHybridBenzin > 0 || totalHybridDiesel > 0) {
+                    monthlyTotals['Hybrid (ohne Plug-in)'] = echteHybridBenzin + echteHybridDiesel;
+                }
+
                 for (const driveType in monthlyTotals) {
                     const statistic = {
                         country_code: 'AT',
@@ -535,7 +660,8 @@ const fetchAndStoreCarRegistrations = async () => {
                         value: monthlyTotals[driveType],
                         unit: 'Stück',
                         source_name: 'Statistik Austria',
-                        source_url: successfulUrl
+                        source_url: successfulUrl,
+                        archive_path: s3ArchivePath 
                     };
                     
                     await upsertStatistic(client, statistic);
@@ -547,6 +673,7 @@ const fetchAndStoreCarRegistrations = async () => {
         } catch (error) {
             await client.query('ROLLBACK');
             console.error(`[data-update] Fehler beim Verarbeiten der ODS-Datei für ${targetYear}:`, error.message);
+            throw error; 
         }
     }
 

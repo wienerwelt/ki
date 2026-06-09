@@ -230,7 +230,7 @@ exports.createPost = async (req, res) => {
             }
         }
         
-        await client.query('UPDATE users SET contribution_score = contribution_score + 5 WHERE id = $1', [userId]);
+        await client.query('UPDATE users SET contribution_score = contribution_score + 10 WHERE id = $1', [userId]);
         await client.query('COMMIT');
 
         const fullPostRes = await client.query(`
@@ -350,8 +350,8 @@ exports.createComment = async (req, res) => {
             }
         }
 
-        await client.query('UPDATE users SET contribution_score = contribution_score + 2 WHERE id = $1', [userId]);
-        await client.query(`INSERT INTO user_score_logs (user_id, points_change, action_type, description, reference_id) VALUES ($1, 2, 'COMMUNITY_COMMENT', 'Kommentar verfasst', $2)`, [userId, insertRes.rows[0].id]);
+await client.query('UPDATE users SET contribution_score = contribution_score + 5 WHERE id = $1', [userId]);
+await client.query(`INSERT INTO user_score_logs (user_id, points_change, action_type, description, reference_id) VALUES ($1, 5, 'COMMUNITY_COMMENT', 'Kommentar verfasst', $2)`, [userId, insertRes.rows[0].id]);
 
         await client.query('COMMIT');
 

@@ -1,10 +1,11 @@
+// frontend/src/components/DashboardLayout.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
     AppBar, Toolbar, Typography, Box, Drawer, List, ListItem, ListItemText,
     IconButton, Divider, Menu, MenuItem, Tooltip, Chip, Switch,
     useTheme, useMediaQuery, Dialog, DialogContent, DialogTitle,
-    Avatar, Badge
+    Avatar, Badge, Collapse
 } from '@mui/material';
 
 // Icons
@@ -35,13 +36,14 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import SearchIcon from '@mui/icons-material/Search';
 import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
 import PollIcon from '@mui/icons-material/Poll';
-import TuneIcon from '@mui/icons-material/Tune';
 import InsightsIcon from '@mui/icons-material/Insights';
 import CloseIcon from '@mui/icons-material/Close';
 import GavelIcon from '@mui/icons-material/Gavel';
 import ForumIcon from '@mui/icons-material/Forum';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
+import ShareIcon from '@mui/icons-material/Share';
+import StorefrontIcon from '@mui/icons-material/Storefront';
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -65,9 +67,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
       businessPartner, 
       logout, 
       updateUser,
-      triggerDashboardRefresh, 
-      userTags, 
-      refreshUserTags 
+      triggerDashboardRefresh
     } = useAuth();
     
     const { t } = useTranslation();
@@ -84,6 +84,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [notifAnchorEl, setNotifAnchorEl] = useState<null | HTMLElement>(null);
     const [notifications, setNotifications] = useState<any[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [desktopSearchExpanded, setDesktopSearchExpanded] = useState(false);
     
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -93,6 +94,35 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in);
     const isNewsletterAllowed = businessPartner?.allow_automated_newsletter !== false;
     const effectiveSubscription = isNewsletterAllowed && isSubscribed;
+
+    // --- NEU: MENU BADGES ---
+    const [menuBadges, setMenuBadges] = useState({
+        community: 0,
+        files: 0,
+        directory: 0,
+        sources: 0
+    });
+
+    const fetchMenuBadges = useCallback(async () => {
+        if (!user) return;
+        try {
+            // Passe die URL an, falls deine Notification-Counts-Route anders heißt!
+            // Häufig ist es '/api/data/notification-counts' oder '/api/users/notification-counts'
+            const res = await apiClient.get('/api/data/notification-counts'); 
+            if (res.data && res.data.menuCounts) {
+                setMenuBadges(res.data.menuCounts);
+            }
+        } catch (e: any) {
+            if (e.name === 'AbortError' || e.name === 'CanceledError' || e.code === 'ERR_CANCELED') return;
+            console.error("Fehler beim Laden der Menü-Badges", e);
+        }
+    }, [user]);
+
+    useEffect(() => {
+        fetchMenuBadges();
+        const badgeInterval = setInterval(fetchMenuBadges, 60000); // Check jede Minute
+        return () => clearInterval(badgeInterval);
+    }, [fetchMenuBadges]);
 
     useEffect(() => {
         setIsSubscribed(!!user?.newsletter_opt_in);
@@ -128,9 +158,11 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             const res = await apiClient.get('/api/notifications');
             setNotifications(res.data.items);
             setUnreadCount(res.data.unreadCount);
-        } catch (e) { 
-            console.error("Fehler beim Laden der Notifications", e); 
-        }
+} catch (e: any) { 
+    // Native AbortErrors und Axios CanceledErrors stumm schalten
+    if (e.name === 'AbortError' || e.name === 'CanceledError' || e.code === 'ERR_CANCELED') return;
+    console.error("Fehler beim Laden der Notifications", e); 
+}
     }, [user]);
 
     useEffect(() => {
@@ -143,12 +175,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const fetchAd = useCallback(async () => {
         try {
             const { data } = await apiClient.get('/api/data/active-advertisement');
-            if (data && data.content) {
+            // NEU: Zeige die Ad nur, wenn sie nicht im sessionStorage als "geschlossen" markiert ist
+            if (data && data.content && sessionStorage.getItem(`ad_closed_${data.id}`) !== 'true') {
                 setAd(data);
                 setIsAdVisible(true);
             }
-        } catch (error) {
-            console.error('Error fetching advertisement:', error);
+        } catch (e: any) {
+            if (e.name === 'AbortError' || e.name === 'CanceledError' || e.code === 'ERR_CANCELED') return;
+            console.error('Error fetching advertisement:', e);
         }
     }, []);
 
@@ -156,7 +190,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         if (token) fetchAd();
     }, [token, user, fetchAd]);
 
-    const handleCloseAd = async () => setIsAdVisible(false);
+    const handleCloseAd = async () => {
+    setIsAdVisible(false);
+    // NEU: Merken, dass der User DIESE spezifische Werbung weggedrückt hat
+    if (ad?.id) {
+        sessionStorage.setItem(`ad_closed_${ad.id}`, 'true');
+    }
+    };
 
     // --- MENU HANDLERS ---
     const handleMenu = (event: React.MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget);
@@ -217,20 +257,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             } 
         });
     };
-
-    const handleRemoveTag = (tagToRemove: string) => async () => {
-        if (user?.role === 'demo') return;
-        try {
-            await apiClient.delete(`/api/users/tags/${encodeURIComponent(tagToRemove)}`);
-            showSnackbar(`Thema "${tagToRemove}" entfernt.`, 'info');
-            refreshUserTags();
-            triggerDashboardRefresh();
-        } catch (err) {
-            console.error("Fehler beim Entfernen des Tags:", err);
-            showSnackbar('Fehler beim Entfernen des Themas.', 'error');
-            refreshUserTags();
-        }
-    };
     
     const handleSearchOpen = () => setSearchOpen(true);
     const handleSearchClose = () => setSearchOpen(false);
@@ -244,12 +270,39 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         <Box sx={{ width: 250 }} role="presentation" onClick={toggleDrawer(false)} onKeyDown={toggleDrawer(false)}>
             <Toolbar />
             <Divider />
-            <List>
-                <ListItem button component={RouterLink} to="/dashboard"><DashboardIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.myDashboard')} /></ListItem>
-                <ListItem button component={RouterLink} to="/community"><ForumIcon sx={{ mr: 2 }} /><ListItemText primary="Community" /></ListItem>
-                <ListItem button component={RouterLink} to="/files"><FolderIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.fileDirectory')} /></ListItem>
-                <ListItem button component={RouterLink} to="/trusted-sources"><FactCheckIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.trustedSources')} /></ListItem>
-                <ListItem button component={RouterLink} to="/feedback"><FeedbackIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.feedbackAndIdeas')} /></ListItem>                
+<List>
+    <ListItem button component={RouterLink} to="/dashboard"><DashboardIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.myDashboard')} /></ListItem>
+    
+    <ListItem button component={RouterLink} to="/community">
+        <Badge badgeContent={menuBadges.community} color="error" max={99} sx={{ mr: 2 }}>
+            <ForumIcon />
+        </Badge>
+        <ListItemText primary="Community" />
+    </ListItem>
+
+    <ListItem button component={RouterLink} to="/directory">
+        <Badge badgeContent={menuBadges.directory} color="error" max={99} sx={{ mr: 2 }}>
+            <StorefrontIcon />
+        </Badge>
+        <ListItemText primary="Partner-Netzwerk" />
+    </ListItem>
+
+    <ListItem button component={RouterLink} to="/files">
+        <Badge badgeContent={menuBadges.files} color="error" max={99} sx={{ mr: 2 }}>
+            <FolderIcon />
+        </Badge>
+        <ListItemText primary={t('layout.fileDirectory')} />
+    </ListItem>
+
+    <ListItem button component={RouterLink} to="/trusted-sources">
+        <Badge badgeContent={menuBadges.sources} color="error" max={99} sx={{ mr: 2 }}>
+            <FactCheckIcon />
+        </Badge>
+        <ListItemText primary={t('layout.trustedSources')} />
+    </ListItem>
+
+    <ListItem button component={RouterLink} to="/feedback"><FeedbackIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.feedbackAndIdeas')} /></ListItem>                
+    <Divider sx={{ my: 1 }} />            
                 <Divider sx={{ my: 1 }} />
                 {user?.role === 'assistenz' && (
                    <>
@@ -267,6 +320,11 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItem button component={RouterLink} to="/admin/briefing-editorial">
                                 <HistoryEduIcon sx={{ mr: 2 }} />
                                 <ListItemText primary="Briefing Redaktion" />
+                            </ListItem>
+                            {/* ✅ NEU: Social Media Route */}
+                            <ListItem button component={RouterLink} to="/admin/social-media">
+                                <ShareIcon sx={{ mr: 2 }} />
+                                <ListItemText primary="Social Media" />
                             </ListItem>
                             <ListItem button component={RouterLink} to="/admin/business-partners"><BusinessIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.businessPartners')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/users"><GroupIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.users')} /></ListItem>
@@ -288,7 +346,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             
                             <ListItem button component={RouterLink} to="/admin/categories"><CategoryIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.categories')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/tags"><TagIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.tags')} /></ListItem>
-
+                            <ListItem button component={RouterLink} to="/admin/directory"><StorefrontIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.directory')} /></ListItem>  
                             <ListItem button component={RouterLink} to="/admin/sources"><FactCheckIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.sourceManagement')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/cronjobs"><ScheduleIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.automatedTasks')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/statistics"><QueryStatsIcon sx={{ mr: 2 }} /><ListItemText primary={t('layout.statistics')} /></ListItem>
@@ -351,51 +409,45 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                       </Typography>
                     </RouterLink>
 
-                    <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: isMobile ? 'flex-end' : 'center', alignItems: 'center', ml: { xs: 1, md: 3 }, mr: 2 }}>
-                        {isMobile ? (
-                            <>
-                                <IconButton color="inherit" onClick={handleBriefingOpen}>
-                                    <InsightsIcon />
-                                </IconButton>
-                                <IconButton color="inherit" onClick={handleSearchOpen}><SearchIcon /></IconButton>
-                            </>
-                        ) : (
-                            <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                                <Box sx={{ flexGrow: 1, maxWidth: '50%' }}><GlobalSearchBar /></Box>
-                                <Tooltip title="Tägliches Briefing anzeigen">
-                                    <IconButton color="inherit" onClick={handleBriefingOpen} sx={{ ml: 2 }}>
-                                        <InsightsIcon />
-                                    </IconButton>
-                                </Tooltip>
-                                <Tooltip title={t('layout.tagsTooltip')}>
-                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, ml: 2 }}>
-                                    {userTags.map(tag => (
-                                        <Chip
-                                            key={tag}
-                                            label={tag}
-                                            onDelete={user?.role !== 'demo' ? handleRemoveTag(tag) : undefined}
-                                            sx={{
-                                                color: 'inherit',
-                                                borderColor: 'inherit',
-                                                '& .MuiChip-deleteIcon': {
-                                                    color: 'inherit',
-                                                    opacity: 0.7,
-                                                    '&:hover': { opacity: 1 }
-                                                }
-                                            }}
-                                            variant="outlined"
-                                        />
-                                    ))}
-                                </Box>
-                                </Tooltip>
-                                <Tooltip title="Meine Themen im Profil bearbeiten">
-                                    <IconButton component={RouterLink} to="/profile#my-tags" color="inherit" size="small" sx={{ ml: 1 }}>
-                                        <TuneIcon />
-                                    </IconButton>
-                                </Tooltip>
-                            </Box>
-                        )}
-                    </Box>
+<Box sx={{ flexGrow: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', ml: { xs: 1, md: 3 }, mr: 2 }}>
+    {isMobile ? (
+        <>
+            <IconButton color="inherit" onClick={handleBriefingOpen}>
+                <InsightsIcon />
+            </IconButton>
+            <IconButton color="inherit" onClick={handleSearchOpen}>
+                <SearchIcon />
+            </IconButton>
+        </>
+    ) : (
+        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            
+            {/* Animierte, ausklappbare Suche */}
+            <Collapse in={desktopSearchExpanded} orientation="horizontal" unmountOnExit>
+                <Box sx={{ width: { sm: '250px', md: '400px' }, mr: 1, py: 0.5 }}>
+                    <GlobalSearchBar />
+                </Box>
+            </Collapse>
+            
+            <Tooltip title={desktopSearchExpanded ? "Suche schließen" : "Suchen"}>
+                <IconButton 
+                    color="inherit" 
+                    onClick={() => setDesktopSearchExpanded(!desktopSearchExpanded)}
+                >
+                    {desktopSearchExpanded ? <CloseIcon /> : <SearchIcon />}
+                </IconButton>
+            </Tooltip>
+
+            {/* Tägliches Briefing */}
+            <Tooltip title="Tägliches Briefing anzeigen">
+                <IconButton color="inherit" onClick={handleBriefingOpen} sx={{ ml: 1 }}>
+                    <InsightsIcon />
+                </IconButton>
+            </Tooltip>
+            
+        </Box>
+    )}
+</Box>
                     
                     <SessionTimer />
                     

@@ -1,3 +1,4 @@
+// frontend/src/components/widgets/BusinessPartnerInfoWidget.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -140,7 +141,12 @@ const formatDate = (dateString: string | null | undefined) => {
 
 const getDisplayUrl = (url: string | null | undefined): string => {
   if (!url) return '';
-  return url.replace(/^(https?:\/\/)?(www\.)?/, '');
+  try {
+    const { hostname } = new URL(url);
+    return hostname.replace(/^www\./, '');
+  } catch (e) {
+    return url.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0];
+  }
 };
 
 const getUrgencyColor = (daysLeft: number, theme: any) => {
@@ -734,6 +740,11 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
     );
   };
 
+// LOGIK FÜR DEN TITEL: Öffentlich (Business Partner Name) vs. Privat (Willkommen [Vorname])
+  const displayTitle = isPublic 
+    ? (businessPartner?.name || 'Business Partner') 
+    : `Willkommen${user?.first_name ? `, ${user.first_name}` : ''}`;
+
   return (
     <WidgetPaper
       widgetTitle={businessPartner?.name || 'Business Partner'}
@@ -745,7 +756,11 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
       error={error}
       noPadding
       isPublic={isPublic}
-      title={<Box sx={{ display: 'none' }} />}
+      title={
+        <Typography variant="h6" noWrap>
+          {displayTitle}
+        </Typography>
+      }
     >
       {!businessPartner ? (
         <Box sx={{ p: 4, textAlign: 'center' }}>
@@ -786,7 +801,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                     variant="h5"
                     sx={{ fontWeight: 900, color: 'text.primary', letterSpacing: '-0.5px' }}
                   >
-                    {businessPartner.name}
+                    {businessPartner.name} {/* <-- Hier steht wieder fest der Firmenname */}
                   </Typography>
                   {defaultRegion && <Flag code={defaultRegion.code} size={20} />}
                 </Stack>
@@ -798,6 +813,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                       target="_blank"
                       rel="noopener noreferrer"
                       variant="caption"
+                      underline="none"
                       sx={{
                         display: 'flex',
                         alignItems: 'center',
@@ -814,12 +830,12 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                     <MuiLink
                       href={isPublic ? undefined : `mailto:${businessPartner.email}`}
                       variant="caption"
+                      underline="none"
                       sx={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: 0.5,
                         color: 'text.secondary',
-                        textDecoration: 'none',
                         cursor: isPublic ? 'default' : 'pointer',
                         '&:hover': { color: 'primary.main' }
                       }}
@@ -836,6 +852,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                       target="_blank"
                       rel="noopener noreferrer"
                       variant="caption"
+                      underline="none"
                       sx={{
                         display: 'flex',
                         alignItems: 'center',
@@ -884,7 +901,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
               <Tab
                 icon={<EventIcon sx={{ fontSize: 18 }} />}
                 iconPosition="start"
-                label="Events"
+                label={`Events (${bpEvents.length})`}
               />
               {canViewAdminInfo && (
                 <Tab
@@ -1040,7 +1057,7 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                   </Box>
                 )}
 
-{activeTab === 3 && canViewAdminInfo && (
+                {activeTab === 3 && canViewAdminInfo && (
                   <Stack spacing={2}>
                     <Paper elevation={0} sx={{ p: 2, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
                       <Typography variant="overline" color="primary" fontWeight="bold">
@@ -1056,7 +1073,6 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                           </Typography>
                         </Box>
 
-                        {/* NEU: Newsletter Status */}
                         <Box display="flex" alignItems="center">
                           <EmailIcon color="action" sx={{ mr: 1.5, fontSize: '1.2rem' }} />
                           <Typography variant="body2">

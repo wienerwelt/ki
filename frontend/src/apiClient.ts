@@ -1,13 +1,10 @@
 // frontend/src/apiClient.ts
 
-// Basis-URL: bevorzugt VITE_API_BASE_URL, dann VITE_API_URL, sonst im Dev http://localhost:5000
+// Basis-URL: Wir nutzen im Dev-Modus einen leeren String, damit der Vite-Proxy greift.
 const API_BASE: string =
   (import.meta as any).env?.VITE_API_BASE_URL ??
   (import.meta as any).env?.VITE_API_URL ??
-  ((typeof window !== 'undefined' &&
-    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
-    ? 'http://localhost:5000'
-    : '');
+  '';
 
 export interface ApiResult<T = any> {
   res: Response;
@@ -29,7 +26,17 @@ function isFormData(value: any): value is FormData {
 }
 
 function buildBase(urlPath: string): string {
-  return API_BASE ? `${API_BASE}${urlPath}` : urlPath;
+  // Verhindere doppelte Slashes am Anfang, die DNS-Fehler verursachen!
+  let cleanPath = urlPath.replace(/^\/+/, '/'); 
+  
+  if (API_BASE) {
+     // Falls eine API Base in Prod gesetzt ist (z.B. https://api.mobiliti.at)
+     // Verhindere doppelte Slashes beim Zusammenbauen
+     return `${API_BASE.replace(/\/+$/, '')}${cleanPath}`;
+  }
+  
+  // Im Dev-Modus: Stelle sicher, dass die Route mit einem EINZELNEN Slash beginnt
+  return cleanPath;
 }
 
 function toQueryString(params?: QueryParams): string {
@@ -101,20 +108,38 @@ function normalizeHeaders(init?: LooseInit): HeadersInit {
 
 // ---------- Low-level: apiRequest ----------
 export async function apiRequest<T = any>(path: string, init: LooseInit = {}): Promise<ApiResult<T>> {
-  // Query-String aus init.params anhängen
   const qs = toQueryString(init.params);
   const url = buildBase(`${path}${qs}`);
+  
+  // Tracking-ID für die Konsole
+  const reqId = Math.random().toString(36).substring(2, 6).toUpperCase();
+  const method = init.method || 'GET';
+  
+  console.log(`🚀 [API START] [${reqId}] ${method} ${url}`);
+  const startTime = performance.now();
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
+  const timeout = setTimeout(() => {
+      console.warn(`⏳ [API TIMEOUT 20s] [${reqId}] Das Backend antwortet nicht auf: ${url}`);
+      controller.abort();
+  }, 20_000);
 
   try {
     const res = await fetch(url, {
       signal: controller.signal,
-      credentials: 'include', // 🔑 HttpOnly-Cookies immer mitsenden
+      credentials: 'include',
       ...init,
       headers: normalizeHeaders(init),
     });
+
+    const endTime = performance.now();
+    const duration = Math.round(endTime - startTime);
+    
+    if (res.ok) {
+        console.log(`✅ [API SUCCESS] [${reqId}] ${res.status} ${url} (${duration}ms)`);
+    } else {
+        console.error(`❌ [API ERROR] [${reqId}] ${res.status} ${url} (${duration}ms)`);
+    }
 
     let data: any = null;
     const ct = (res.headers.get('content-type') ?? '').toLowerCase();
@@ -129,6 +154,10 @@ export async function apiRequest<T = any>(path: string, init: LooseInit = {}): P
     }
 
     return { res, data };
+  } catch (error: any) {
+    const endTime = performance.now();
+    console.error(`💥 [API CRASH] [${reqId}] ${url} nach ${Math.round(endTime - startTime)}ms. Grund:`, error.name, error.message);
+    throw error; // Fehler weiterwerfen, damit das Frontend darauf reagieren kann
   } finally {
     clearTimeout(timeout);
   }

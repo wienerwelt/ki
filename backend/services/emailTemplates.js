@@ -11,10 +11,19 @@ function escapeHtml(str = '') {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// NEU: Stellt sicher, dass Links im Postfach nicht kaputt sind
+function toAbsoluteUrl(pathOrUrl) {
+  if (!pathOrUrl) return null;
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  return `${getBaseUrl()}${pathOrUrl.startsWith('/') ? '' : '/'}${pathOrUrl}`;
+}
+
 function resolveLogoRef(logoUrl) {
-  if (logoUrl) return { type: 'url', url: logoUrl };
+  if (logoUrl) return { type: 'url', url: toAbsoluteUrl(logoUrl) };
   if ((process.env.EMAIL_EMBED_LOGO_PATH || '').trim()) return { type: 'cid', id: 'brand-logo' };
-  return { type: 'url', url: `${getBaseUrl()}/favicon.svg` }; // Fallback
+  
+  // Fallback: E-Mail-Clients blockieren SVGs. Wir nutzen ein sicheres PNG.
+  return { type: 'url', url: `${getBaseUrl()}/logos/de-mobiliti.png` }; 
 }
 
 // Zentrales Layout (Abwärtskompatibel mit alten Aufrufen und neuem partner-Objekt)

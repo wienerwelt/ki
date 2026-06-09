@@ -171,9 +171,7 @@ exports.getSourceReports = async (req, res) => {
     }
 };
 
-// --- NEUE FUNKTION UNTEN ANFÜGEN ---
-
-// @desc    Quelle bearbeiten (Beschreibung, Kategorie, Logo)
+// @desc    Quelle bearbeiten (URL, Beschreibung, Kategorie, Logo)
 // @route   PUT /api/admin/sources/:id
 // @access  Admin
 exports.updateSource = async (req, res) => {
@@ -184,17 +182,21 @@ exports.updateSource = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
 
-    // URL muss vom Frontend mitgeschickt werden, um den Namen zu generieren
-    const { description, category_id, url } = req.body; 
+    const { url, description, category_id } = req.body; 
+
+    if (!url) {
+        return res.status(400).json({ message: 'Die URL ist ein Pflichtfeld.' });
+    }
 
     try {
-        let updateQuery = 'UPDATE sources SET description = $1, category_id = $2, updated_at = CURRENT_TIMESTAMP';
-        const values = [description || null, category_id || null];
-        let paramIndex = 3;
+        // HIER GEFIXT: URL wird jetzt mit aktualisiert ($1)
+        let updateQuery = 'UPDATE sources SET url = $1, description = $2, category_id = $3, updated_at = CURRENT_TIMESTAMP';
+        const values = [url, description || null, category_id || null];
+        let paramIndex = 4;
         
         // 1. Neues Logo hochgeladen
         if (req.file) {
-            const logoUrl = await processAndSaveSourceLogo(req.file.buffer, url || 'source');
+            const logoUrl = await processAndSaveSourceLogo(req.file.buffer, url);
             updateQuery += `, logo_url = $${paramIndex}`;
             values.push(logoUrl);
             paramIndex++;
@@ -213,29 +215,39 @@ exports.updateSource = async (req, res) => {
         res.json(updatedSource.rows[0]);
     } catch (err) {
         console.error('Error updating source:', err.message);
+        if (err.code === '23505') {
+            return res.status(409).json({ message: 'Diese URL existiert bereits in der Datenbank.' });
+        }
         res.status(500).send('Server error');
     }
 };
 
-// Ergänzung für adminSourcesController.js
+// @desc    Neue Quelle erstellen
+// @route   POST /api/admin/sources
+// @access  Admin
 exports.adminCreateSource = async (req, res) => {
     const { url, description, category_id, status } = req.body;
     let logoUrl = null;
 
-    if (req.file) {
-        // Falls du Multer verwendest, ist hier das Logo
-        logoUrl = `/logos/${req.file.filename}`;
-    }
+    if (!url) return res.status(400).json({ message: 'Die URL ist ein Pflichtfeld.' });
 
     try {
+        // HIER GEFIXT: Nutzt jetzt auch die WebP-Komprimierung aus dem Hilfs-Skript
+        if (req.file) {
+            logoUrl = await processAndSaveSourceLogo(req.file.buffer, url);
+        }
+
         const result = await db.query(
             `INSERT INTO sources (url, description, category_id, status, logo_url) 
              VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [url, description, category_id || null, status || 'approved', logoUrl]
+            [url, description || null, category_id || null, status || 'approved', logoUrl]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
-        console.error(err);
+        console.error('Error creating source:', err.message);
+        if (err.code === '23505') {
+            return res.status(409).json({ message: 'Diese URL existiert bereits in der Datenbank.' });
+        }
         res.status(500).json({ message: 'Fehler beim Erstellen der Quelle' });
     }
 };

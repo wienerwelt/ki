@@ -1,3 +1,4 @@
+// frontend/src/pages/CommunityPage.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Container, Grid, Paper, Typography, Box, Avatar, Button,
@@ -5,10 +6,14 @@ import {
   Divider, CircularProgress, Tooltip, Chip, useTheme, useMediaQuery,
   MenuItem, Select, FormControl, InputLabel, Collapse, Popover,
   Tabs, Tab, List, ListItem, ListItemAvatar, ListItemText, InputAdornment,
-  TextField, Badge, Alert, Link as MuiLink, Dialog, DialogTitle, DialogContent,
-  alpha
+  TextField, Badge, Alert, Dialog, DialogTitle, DialogContent,
+  DialogActions, alpha
 } from '@mui/material';
 import { useLocation, useNavigate } from 'react-router-dom';
+import ReactQuill from 'react-quill-new';
+
+import 'react-quill-new/dist/quill.snow.css';
+import DOMPurify from 'dompurify';
 
 // Icons
 import SendIcon from '@mui/icons-material/Send';
@@ -35,6 +40,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
 import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit'; // NEU für Editieren
 
 // App Context & Utils
 import { useAuth } from '../context/AuthContext';
@@ -42,9 +48,6 @@ import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
 import { formatDistanceToNow } from 'date-fns';
 import { de } from 'date-fns/locale';
-
-// Components
-import MentionInput from '../components/MentionInput';
 
 // --- TYPES ---
 interface UserProfileData {
@@ -81,10 +84,12 @@ interface PollOption {
 }
 
 interface CommunityPost extends UserProfileData {
+    id: string; // NEU
     content: string;
     image_url: string | null;
     created_at: string;
     category_name?: string;
+    category_id?: string; // NEU
     author_id: string;
     like_count: number;
     comment_count: number;
@@ -113,19 +118,15 @@ interface RecentComment {
     profile_image_url: string | null;
 }
 
-// --- HELPER: Status Logic ---
+// --- HELPER ---
 const getUserStatus = (lastLoginDate?: string) => {
     if (!lastLoginDate) return 'offline';
-    const loginTime = new Date(lastLoginDate).getTime();
-    const now = new Date().getTime();
-    const diffMinutes = (now - loginTime) / (1000 * 60);
-    
+    const diffMinutes = (new Date().getTime() - new Date(lastLoginDate).getTime()) / (1000 * 60);
     if (diffMinutes < 15) return 'online';
     if (diffMinutes < 60 * 24) return 'active_today';
     return 'offline';
 };
 
-// --- HELPER: Safe Date Format ---
 const safeFormatDistance = (dateString: string | undefined | null) => {
     if (!dateString) return 'Gerade eben';
     try {
@@ -137,21 +138,33 @@ const safeFormatDistance = (dateString: string | undefined | null) => {
     }
 };
 
-// --- HELPER: Render Media ---
 const renderMedia = (url: string) => {
     const isVideo = url.match(/\.(mp4|webm|mov)$/i);
     if (isVideo) return <Box sx={{ bgcolor: 'black', display: 'flex', justifyContent: 'center', py: 1 }}><video controls src={url} style={{ maxHeight: 500, maxWidth: '100%' }} /></Box>;
     return <CardMedia component="img" image={url} alt="Post attachment" sx={{ maxHeight: 500, objectFit: 'contain', bgcolor: '#f0f0f0' }} />;
 };
 
-// --- COMPONENT: User Avatar with Status ---
+// --- REACT QUILL MODULES ---
+const quillModules = {
+    toolbar: [
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+        ['link'],
+        ['clean']
+    ]
+};
+
+const quillFormats = [
+    'bold', 'italic', 'underline', 'strike',
+    'list', 'bullet',
+    'link'
+];
+
 const UserAvatarWithStatus: React.FC<{ user: UserProfileData | RecentComment, size?: number, onClick?: (e: React.MouseEvent) => void }> = ({ user, size = 40, onClick }) => {
     const lastLogin = 'last_login_at' in user ? user.last_login_at : undefined;
     const status = getUserStatus(lastLogin);
-    
     const tooltip = status === 'online' ? 'Online' : (status === 'active_today' ? 'War heute aktiv' : '');
     const invisible = status === 'offline';
-    
     const letter = user.first_name ? user.first_name.charAt(0).toUpperCase() : (user.username ? user.username.charAt(0).toUpperCase() : '?');
 
     return (
@@ -183,173 +196,85 @@ const UserAvatarWithStatus: React.FC<{ user: UserProfileData | RecentComment, si
     );
 };
 
-// --- COMPONENT: Einheitliche Profil-Karte (Weiße Ränder gefixt) ---
-const ProfileCard: React.FC<{ user: UserProfileData }> = ({ user }) => {
-    return (
-        <Box sx={{ width: '100%', p: 0, overflow: 'hidden' }}>
-            {/* Header / Cover Image */}
-            <Box sx={{ height: 70, bgcolor: 'primary.main', opacity: 0.9, width: '100%' }}></Box>
-            
-            <Box sx={{ px: 3, pb: 3, mt: -4 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'flex-start' }}>
-                    <Box sx={{ border: '4px solid white', borderRadius: '50%', bgcolor: 'white' }}>
-                        <UserAvatarWithStatus user={user} size={70} />
-                    </Box>
+const ProfileCard: React.FC<{ user: UserProfileData }> = ({ user }) => (
+    <Box sx={{ width: '100%', p: 0, overflow: 'hidden' }}>
+        <Box sx={{ height: 70, bgcolor: 'primary.main', opacity: 0.9, width: '100%' }}></Box>
+        <Box sx={{ px: 3, pb: 3, mt: -4 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-start' }}>
+                <Box sx={{ border: '4px solid white', borderRadius: '50%', bgcolor: 'white' }}>
+                    <UserAvatarWithStatus user={user} size={70} />
                 </Box>
-                
-                <Box sx={{ mt: 1 }}>
-                    <Typography variant="h6" fontWeight="bold" lineHeight={1.2}>
-                        {user.first_name} {user.last_name}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                        {user.role === 'admin' ? 'Administrator' : (user.role === 'assistenz' ? 'Assistenz' : 'Mitglied')} 
-                        {user.organization_name && ` • ${user.organization_name}`}
-                    </Typography>
-                    {user.membership_level && (
-                        <Chip label={user.membership_level} size="small" color="secondary" variant="outlined" sx={{ mt: 1, height: 20, fontSize: '0.7rem', fontWeight: 'bold' }} />
-                    )}
-                </Box>
-
-                <Divider sx={{ my: 2 }} />
-                
-                <Grid container spacing={1}>
-                    <Grid item xs={6}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary' }}>
-                            <EventIcon fontSize="inherit" />
-                            <Typography variant="caption">
-                                Seit {user.member_since ? new Date(user.member_since).toLocaleDateString('de-DE', {month: 'short', year: 'numeric'}) : '-'}
-                            </Typography>
-                        </Box>
-                    </Grid>
-                    <Grid item xs={6}>
-                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary' }}>
-                            <StarsIcon fontSize="inherit" color="warning" />
-                            <Typography variant="caption" fontWeight="bold">{user.contribution_score || 0} Punkte</Typography>
-                        </Box>
-                    </Grid>
-                </Grid>
-
-                {user.linkedin_url && (
-                    <Box sx={{ mt: 2 }}>
-                        <Button 
-                            variant="outlined" 
-                            startIcon={<LinkedInIcon />} 
-                            fullWidth 
-                            size="small"
-                            href={user.linkedin_url} 
-                            target="_blank"
-                            sx={{ color: '#0077b5', borderColor: '#0077b5', '&:hover': { bgcolor: '#0077b5', color: 'white' } }}
-                        >
-                            LinkedIn Profil
-                        </Button>
-                    </Box>
+            </Box>
+            <Box sx={{ mt: 1 }}>
+                <Typography variant="h6" fontWeight="bold" lineHeight={1.2}>
+                    {user.first_name} {user.last_name}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                    {user.role === 'admin' ? 'Administrator' : (user.role === 'assistenz' ? 'Assistenz' : 'Mitglied')} 
+                    {user.organization_name && ` • ${user.organization_name}`}
+                </Typography>
+                {user.membership_level && (
+                    <Chip label={user.membership_level} size="small" color="secondary" variant="outlined" sx={{ mt: 1, height: 20, fontSize: '0.7rem', fontWeight: 'bold' }} />
                 )}
             </Box>
-        </Box>
-    );
-};
-
-// --- COMPONENT: Mention Link (mit Hover-Profil) ---
-const MentionLink: React.FC<{ username: string }> = ({ username }) => {
-    const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-    const [user, setUser] = useState<UserProfileData | null>(null);
-    const [loading, setLoading] = useState(false);
-    
-    const handleMouseEnter = async (event: React.MouseEvent<HTMLElement>) => {
-        setAnchorEl(event.currentTarget);
-        if (!user && !loading) {
-            setLoading(true);
-            try {
-                const cleanName = username.substring(1); 
-                const res = await apiClient.get(`/api/community/members?search=${encodeURIComponent(cleanName)}`);
-                const found = res.data.find((u: any) => u.username === cleanName);
-                if (found) setUser(found);
-            } catch (e) {
-                console.error("Fehler beim Laden des erwähnten Nutzers", e);
-            } finally {
-                setLoading(false);
-            }
-        }
-    };
-
-    const handleMouseLeave = () => {
-        setAnchorEl(null);
-    };
-    
-    const open = Boolean(anchorEl);
-
-    return (
-        <>
-            <Typography
-                component="span"
-                color="primary"
-                fontWeight="bold"
-                onMouseEnter={handleMouseEnter}
-                onMouseLeave={handleMouseLeave}
-                sx={{ cursor: 'pointer', display: 'inline' }}
-            >
-                {username}
-            </Typography>
-            
-            <Popover
-                sx={{ pointerEvents: 'none' }}
-                open={open}
-                anchorEl={anchorEl}
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-                transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-                onClose={handleMouseLeave}
-                disableRestoreFocus
-                PaperProps={{ sx: { borderRadius: 3, overflow: 'hidden', width: 300 } }}
-            >
-                {loading ? (
-                     <Box sx={{ p: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <CircularProgress size={20} /> <Typography variant="body2" color="text.secondary">Lade Profil...</Typography>
+            <Divider sx={{ my: 2 }} />
+            <Grid container spacing={1}>
+                <Grid item xs={6}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary' }}>
+                        <EventIcon fontSize="inherit" />
+                        <Typography variant="caption">
+                            Seit {user.member_since ? new Date(user.member_since).toLocaleDateString('de-DE', {month: 'short', year: 'numeric'}) : '-'}
+                        </Typography>
                     </Box>
-                ) : user ? (
-                    <ProfileCard user={user} />
-                ) : (
-                    <Box sx={{ p: 2 }}><Typography variant="caption" color="text.disabled">Nutzer nicht gefunden</Typography></Box>
-                )}
-            </Popover>
-        </>
-    );
-};
+                </Grid>
+                <Grid item xs={6}>
+                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary' }}>
+                        <StarsIcon fontSize="inherit" color="warning" />
+                        <Typography variant="caption" fontWeight="bold">{user.contribution_score || 0} Punkte</Typography>
+                    </Box>
+                </Grid>
+            </Grid>
+            {user.linkedin_url && (
+                <Box sx={{ mt: 2 }}>
+                    <Button 
+                        variant="outlined" 
+                        startIcon={<LinkedInIcon />} 
+                        fullWidth 
+                        size="small"
+                        href={user.linkedin_url} 
+                        target="_blank"
+                        sx={{ color: '#0077b5', borderColor: '#0077b5', '&:hover': { bgcolor: '#0077b5', color: 'white' } }}
+                    >
+                        LinkedIn Profil
+                    </Button>
+                </Box>
+            )}
+        </Box>
+    </Box>
+);
 
-// --- HELPER: Text with Mentions & Links ---
-const ContentWithMentions: React.FC<{ text: string }> = ({ text }) => {
-    if (!text) return null;
-    const regex = /(@[a-zA-Z0-9_.-]+)|((?:https?:\/\/|www\.)[^\s]+)/g;
-    const parts = text.split(regex);
+const HTMLContentRenderer: React.FC<{ html: string }> = ({ html }) => {
+    // Sanitizing HTML mit DOMPurify um XSS zu verhindern, target="_blank" für Links erlauben
+    DOMPurify.addHook('afterSanitizeAttributes', function (node) {
+        if ('target' in node) {
+            node.setAttribute('target', '_blank');
+            node.setAttribute('rel', 'noopener noreferrer');
+        }
+    });
+    const cleanHtml = DOMPurify.sanitize(html || '');
 
     return (
-        <Typography variant="body1" component="span" style={{ whiteSpace: 'pre-wrap' }}>
-            {parts.filter(part => part).map((part, i) => {
-                if (part.startsWith('@')) {
-                    return <MentionLink key={i} username={part} />;
-                } else if (part.match(/^(https?:\/\/|www\.)/)) {
-                    const href = part.startsWith('www.') ? `https://${part}` : part;
-                    return (
-                        <MuiLink 
-                            key={i} 
-                            href={href} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            sx={{ wordBreak: 'break-all', cursor: 'pointer', fontWeight: 'medium' }}
-                        >
-                            {part}
-                        </MuiLink>
-                    );
-                } else {
-                    return <span key={i}>{part}</span>;
-                }
-            })}
-        </Typography>
+        <Typography 
+            variant="body1" 
+            component="div" 
+            className="ql-editor" // Wendet Quill Styles auf den Output an
+            sx={{ p: 0, '& p': { m: 0, mb: 1 }, '& a': { color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } } }}
+            dangerouslySetInnerHTML={{ __html: cleanHtml }} 
+        />
     );
 };
 
 
-// --- MAIN COMPONENT ---
 const CommunityPage: React.FC = () => {
   const { user, userTags } = useAuth();
   const { showSnackbar } = useSnackbar();
@@ -390,6 +315,12 @@ const CommunityPage: React.FC = () => {
   const [isPollMode, setIsPollMode] = useState(false);
   const [pollOptions, setPollOptions] = useState(['', '']);
 
+  // Editieren States
+  const [editingPost, setEditingPost] = useState<CommunityPost | null>(null);
+  const [editContent, setEditContent] = useState('');
+  const [editCategoryId, setEditCategoryId] = useState('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [commentInputs, setCommentInputs] = useState<{ [postId: string]: string }>({});
 
@@ -406,7 +337,6 @@ const CommunityPage: React.FC = () => {
         setLeaderboard(lbRes.data);
         setRecentComments(commentsRes.data);
     } catch (err) {
-        console.error(err);
         showSnackbar('Fehler beim Laden des Feeds.', 'error');
     } finally {
         setLoading(false);
@@ -421,7 +351,6 @@ const CommunityPage: React.FC = () => {
         const res = await apiClient.get(`/api/community/members?search=${encodeURIComponent(memberSearch)}`);
         setMembers(res.data);
     } catch (e) { 
-        console.error(e);
         showSnackbar('Mitglieder konnten nicht geladen werden.', 'error'); 
     } finally { 
         setMembersLoading(false); 
@@ -443,7 +372,6 @@ const CommunityPage: React.FC = () => {
         const res = await apiClient.get(`/api/community/experts?query=${encodeURIComponent(term)}`);
         setExperts(res.data);
     } catch (e) {
-        console.error(e);
         showSnackbar('Fehler bei der Expertensuche.', 'error');
     } finally {
         setExpertsLoading(false);
@@ -465,9 +393,7 @@ const CommunityPage: React.FC = () => {
       const existingPost = posts.find(p => p.id === postId);
       if (existingPost) {
           setDetailPost(existingPost);
-          if (!existingPost.commentsOpen) {
-             toggleComments(postId);
-          }
+          if (!existingPost.commentsOpen) toggleComments(postId);
           return;
       }
       try {
@@ -484,12 +410,14 @@ const CommunityPage: React.FC = () => {
 
   const handleCreatePost = async () => {
     if (isDemo) return; 
-    if (!newContent.trim() && !selectedImage && (!isPollMode || pollOptions.every(o => !o.trim()))) return;
+    // Strip HTML Tags nur für leeren Check
+    const cleanText = newContent.replace(/<[^>]*>?/gm, '').trim();
+    if (!cleanText && !selectedImage && (!isPollMode || pollOptions.every(o => !o.trim()))) return;
     if (!selectedCategory) { showSnackbar('Bitte wähle eine Kategorie.', 'warning'); return; }
 
     setCreateLoading(true);
     const formData = new FormData();
-    formData.append('content', newContent);
+    formData.append('content', newContent); // Schickt sauberes HTML
     formData.append('categoryId', selectedCategory);
     if (selectedImage) formData.append('image', selectedImage);
 
@@ -512,12 +440,10 @@ const CommunityPage: React.FC = () => {
       setSelectedCategory('');
       setIsPollMode(false);
       setPollOptions(['', '']);
-
       if (fileInputRef.current) fileInputRef.current.value = '';
       
-      showSnackbar('Beitrag veröffentlicht! (+5 Punkte)', 'success');
+      showSnackbar('Beitrag veröffentlicht! (+10 Punkte)', 'success');
     } catch (err) { 
-        console.error(err);
         showSnackbar('Fehler beim Veröffentlichen.', 'error'); 
     } finally { 
         setCreateLoading(false); 
@@ -533,6 +459,35 @@ const CommunityPage: React.FC = () => {
           if (detailPost?.id === postId) setDetailPost(null);
           showSnackbar('Gelöscht.', 'info');
       } catch (e) { showSnackbar('Fehler.', 'error'); }
+  };
+
+  // --- NEU: EDIT LOGIK ---
+  const handleOpenEdit = (post: CommunityPost) => {
+      setEditingPost(post);
+      setEditContent(post.content);
+      setEditCategoryId(post.category_id || '');
+  };
+
+  const handleSaveEdit = async () => {
+      if (!editingPost) return;
+      setIsSavingEdit(true);
+      try {
+          await apiClient.put(`/api/community/feed/${editingPost.id}`, {
+              content: editContent,
+              categoryId: editCategoryId
+          });
+          
+          setPosts(posts.map(p => p.id === editingPost.id ? { ...p, content: editContent, category_id: editCategoryId, category_name: categories.find(c => c.id === editCategoryId)?.name } : p));
+          if (detailPost?.id === editingPost.id) {
+              setDetailPost(prev => prev ? { ...prev, content: editContent, category_id: editCategoryId, category_name: categories.find(c => c.id === editCategoryId)?.name } : null);
+          }
+          setEditingPost(null);
+          showSnackbar('Beitrag aktualisiert.', 'success');
+      } catch (err) {
+          showSnackbar('Fehler beim Speichern.', 'error');
+      } finally {
+          setIsSavingEdit(false);
+      }
   };
 
   const handleLike = async (postId: string) => {
@@ -553,10 +508,7 @@ const CommunityPage: React.FC = () => {
         };
 
         setPosts(prev => prev.map(updateLogic));
-        if (detailPost && detailPost.id === postId) {
-            setDetailPost(prev => prev ? updateLogic(prev) : null);
-        }
-
+        if (detailPost && detailPost.id === postId) setDetailPost(prev => prev ? updateLogic(prev) : null);
     } catch (e) { showSnackbar('Fehler.', 'error'); }
   };
 
@@ -582,31 +534,20 @@ const CommunityPage: React.FC = () => {
           };
 
           setPosts(prev => prev.map(updateLogic));
-          if (detailPost && detailPost.id === postId) {
-             setDetailPost(prev => prev ? updateLogic(prev) : null);
-          }
-          
+          if (detailPost && detailPost.id === postId) setDetailPost(prev => prev ? updateLogic(prev) : null);
           showSnackbar('Stimme gezählt!', 'success');
       } catch (e) { showSnackbar('Fehler bei der Abstimmung.', 'error'); }
   };
 
   const toggleComments = async (postId: string) => {
-      const updatePostsState = (pList: CommunityPost[]) => {
-          return pList.map(p => {
-              if (p.id !== postId) return p;
-              if (p.commentsOpen) return { ...p, commentsOpen: false };
-              return { ...p, commentsOpen: true };
-          });
-      };
-
-      setPosts(prev => updatePostsState(prev));
+      setPosts(prev => prev.map(p => p.id === postId ? { ...p, commentsOpen: !p.commentsOpen } : p));
       
       const targetPost = posts.find(p => p.id === postId);
       if (targetPost && !targetPost.commentsOpen && !targetPost.comments) {
            try {
               const res = await apiClient.get(`/api/community/feed/${postId}/comments`);
               setPosts(prev => prev.map(p => p.id === postId ? { ...p, comments: res.data } : p));
-          } catch (e) { /* ignore */ }
+          } catch (e) {}
       }
   };
 
@@ -616,23 +557,20 @@ const CommunityPage: React.FC = () => {
 
   const handleSendComment = async (postId: string, text: string) => {
       if (isDemo) return; 
-      if(!text.trim()) return;
+      const cleanText = text.replace(/<[^>]*>?/gm, '').trim();
+      if(!cleanText) return;
       try {
-          const res = await apiClient.post(`/api/community/feed/${postId}/comments`, { content: text });
+          const res = await apiClient.post(`/api/community/feed/${postId}/comments`, { content: text }); // Schickt HTML
           const updateLogic = (p: CommunityPost) => {
-              if (p.id === postId) {
-                  return { ...p, comment_count: p.comment_count + 1, comments: [...(p.comments || []), res.data] };
-              }
+              if (p.id === postId) return { ...p, comment_count: p.comment_count + 1, comments: [...(p.comments || []), res.data] };
               return p;
           };
 
           setPosts(prev => prev.map(updateLogic));
-          if (detailPost && detailPost.id === postId) {
-              setDetailPost(prev => prev ? updateLogic(prev) : null);
-          }
+          if (detailPost && detailPost.id === postId) setDetailPost(prev => prev ? updateLogic(prev) : null);
 
           setCommentInputs(prev => ({ ...prev, [postId]: '' }));
-          showSnackbar('Kommentar gesendet (+2 Punkte)', 'success');
+          showSnackbar('Kommentar gesendet (+5 Punkte)', 'success');
       } catch (e) { showSnackbar('Fehler.', 'error'); }
   };
 
@@ -676,7 +614,10 @@ const CommunityPage: React.FC = () => {
   const popoverOpen = Boolean(anchorEl);
 
   // --- RENDER POST HELPER ---
-  const renderPostCard = (post: CommunityPost, isDialog: boolean = false) => (
+  const renderPostCard = (post: CommunityPost, isDialog: boolean = false) => {
+      const isMyPost = user?.id === post.author_id;
+
+      return (
       <Card key={post.id} sx={{ mb: isDialog ? 0 : 3, borderRadius: isDialog ? 0 : 3, boxShadow: isDialog ? 'none' : theme.shadows[2], border: post.is_pinned ? `1px solid ${theme.palette.primary.main}` : 'none' }}>
         <CardHeader
             avatar={
@@ -684,8 +625,7 @@ const CommunityPage: React.FC = () => {
             }
             action={
                 <Box sx={{ display: 'flex', gap: 0.5 }}>
-                    {/* Eigene Beiträge kann man nicht melden */}
-                    {user?.id !== post.author_id && (
+                    {!isMyPost && (
                         <Tooltip title={isDemo ? "Deaktiviert" : "Melden"}>
                             <span>
                                 <IconButton onClick={() => handleReportPost(post.id)} size="small" disabled={isDemo}>
@@ -701,7 +641,21 @@ const CommunityPage: React.FC = () => {
                             </IconButton>
                         </Tooltip>
                     )}
-                    {(user?.id === post.author_id || user?.role === 'admin') && <IconButton onClick={() => handleDeletePost(post.id)} size="small" disabled={isDemo}><DeleteIcon fontSize="small" /></IconButton>}
+                    {/* EDIT Button für eigene Posts */}
+                    {(isMyPost || user?.role === 'admin') && (
+                        <Tooltip title="Bearbeiten">
+                            <IconButton onClick={() => handleOpenEdit(post)} size="small" disabled={isDemo}>
+                                <EditIcon fontSize="small" />
+                            </IconButton>
+                        </Tooltip>
+                    )}
+                    {(isMyPost || user?.role === 'admin') && (
+                        <Tooltip title="Löschen">
+                            <IconButton onClick={() => handleDeletePost(post.id)} size="small" disabled={isDemo}>
+                                <DeleteIcon fontSize="small" />
+                            </IconButton>
+                        </Tooltip>
+                    )}
                 </Box>
             }
             title={
@@ -716,7 +670,7 @@ const CommunityPage: React.FC = () => {
             subheader={<Typography variant="caption" color="text.secondary">{safeFormatDistance(post.created_at)}</Typography>}
         />
         <CardContent sx={{ pt: 0, pb: 1, px: 3 }}>
-            <ContentWithMentions text={post.content} />
+            <HTMLContentRenderer html={post.content} />
             
             {post.poll_options && post.poll_options.length > 0 && (
                 <Box sx={{ mt: 3 }}>
@@ -774,30 +728,30 @@ const CommunityPage: React.FC = () => {
                                 </Typography>
                                 <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>{safeFormatDistance(c.created_at)}</Typography>
                             </Box>
-                            <Typography variant="body2" sx={{ fontSize: '0.9rem', color: 'text.primary' }}><ContentWithMentions text={c.content} /></Typography>
+                            <HTMLContentRenderer html={c.content} />
                         </Box>
                     </Box>
                 ))}
                 <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', mt: 3 }}>
                     {user && <UserAvatarWithStatus user={user as any} size={36} />}
-                    <Box sx={{ flexGrow: 1 }}>
-                        <MentionInput 
-                            value={commentInputs[post.id] || ''} 
-                            onChange={(val) => handleCommentInputChange(post.id, val)} 
-                            placeholder={isDemo ? "Kommentieren deaktiviert" : "Schreibe eine Antwort..."}
-                            disabled={isDemo}
-                            onKeyDown={(e) => { 
-                                if (e.key === 'Enter' && !e.shiftKey) { 
-                                    e.preventDefault(); 
-                                    handleSendComment(post.id, commentInputs[post.id] || ''); 
-                                } 
-                            }} 
-                        />
+                    <Box sx={{ flexGrow: 1, bgcolor: 'background.paper', borderRadius: 1 }}>
+                        <div>
+                            <ReactQuill 
+                                theme="snow"
+                                value={commentInputs[post.id] || ''}
+                                onChange={(val) => handleCommentInputChange(post.id, val)}
+                                modules={quillModules}
+                                formats={quillFormats}
+                                placeholder={isDemo ? "Kommentieren deaktiviert" : "Schreibe eine Antwort..."}
+                                readOnly={isDemo}
+                                style={{ height: 'auto', minHeight: '60px' }}
+                            />
+                        </div>
                     </Box>
                     <IconButton 
                         onClick={() => handleSendComment(post.id, commentInputs[post.id] || '')} 
                         color="primary" 
-                        disabled={isDemo || !commentInputs[post.id]?.trim()}
+                        disabled={isDemo || !(commentInputs[post.id] || '').replace(/<[^>]*>?/gm, '').trim()}
                         sx={{ bgcolor: 'background.paper', border: `1px solid ${theme.palette.divider}`, '&:hover': {bgcolor: 'primary.light', color: 'white'} }}
                     >
                         <SendIcon />
@@ -806,7 +760,7 @@ const CommunityPage: React.FC = () => {
             </Box>
         </Collapse>
       </Card>
-  );
+  )};
 
   if (loading) return <Box sx={{ p: 4, display: 'flex', justifyContent: 'center', minHeight: '50vh', alignItems: 'center' }}><CircularProgress /></Box>;
 
@@ -862,13 +816,20 @@ const CommunityPage: React.FC = () => {
                             {user && <UserAvatarWithStatus user={user as any} size={48} onClick={() => navigate('/profile')} />}
                         </Box>
                     )}
-                    <Box sx={{ flexGrow: 1 }}>
-                        <MentionInput 
-                            value={newContent} 
-                            onChange={setNewContent} 
-                            placeholder={isDemo ? "Posten ist im Demo-Modus deaktiviert." : `Was möchten Sie der Community mitteilen, ${user?.first_name}?`} 
-                            disabled={isDemo}
-                        />
+                        <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            {/* FIX: Ein natives div blockt die findDOMNode-Warnung für äußere Komponenten */}
+                            <div>
+                                <ReactQuill 
+                                    theme="snow"
+                                    value={newContent} 
+                                    onChange={setNewContent} 
+                                    modules={quillModules}
+                                    formats={quillFormats}
+                                    placeholder={isDemo ? "Posten ist im Demo-Modus deaktiviert." : `Was möchten Sie der Community mitteilen, ${user?.first_name}?`} 
+                                    readOnly={isDemo}
+                                    style={{ height: '150px', marginBottom: '40px' }} // Platz für die Toolbar
+                                />
+                            </div>
                         
                         {isPollMode && (
                             <Box sx={{ mt: 2, p: 2, border: `1px solid ${theme.palette.divider}`, borderRadius: 2, bgcolor: alpha(theme.palette.primary.main, 0.02) }}>
@@ -893,7 +854,7 @@ const CommunityPage: React.FC = () => {
                             </Box>
                         )}
 
-                        <Box sx={{ display: 'flex', mt: 2, gap: 2 }}>
+                        <Box sx={{ display: 'flex', mt: 1, gap: 2 }}>
                             <FormControl fullWidth size="small" disabled={isDemo}>
                                 <InputLabel>Kategorie zuordnen *</InputLabel>
                                 <Select value={selectedCategory} label="Kategorie zuordnen *" onChange={(e) => setSelectedCategory(e.target.value)} sx={{ bgcolor: 'background.paper' }}>
@@ -903,7 +864,7 @@ const CommunityPage: React.FC = () => {
                         </Box>
 
                         {selectedImage && (
-                            <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, bgcolor: alpha(theme.palette.info.main, 0.1), p: 1.5, borderRadius: 2, border: `1px solid ${theme.palette.info.light}` }}>
+                            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1, bgcolor: alpha(theme.palette.info.main, 0.1), p: 1.5, borderRadius: 2, border: `1px solid ${theme.palette.info.light}` }}>
                                 <ImageIcon fontSize="small" color="info" />
                                 <Typography variant="body2" fontWeight="medium" noWrap sx={{ maxWidth: 200, flexGrow: 1 }}>{selectedImage.name}</Typography>
                                 <IconButton size="small" onClick={() => {setSelectedImage(null); if(fileInputRef.current) fileInputRef.current.value='';}}>
@@ -912,7 +873,7 @@ const CommunityPage: React.FC = () => {
                             </Box>
                         )}
                         
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2, pt: 2, borderTop: `1px solid ${theme.palette.divider}` }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1, pt: 2, borderTop: `1px solid ${theme.palette.divider}` }}>
                             <Box sx={{ display: 'flex', gap: 1 }}>
                                 <Tooltip title="Bild/Video anhängen">
                                     <IconButton onClick={() => fileInputRef.current?.click()} size="small" sx={{ bgcolor: 'action.hover', color: 'text.secondary' }} disabled={isDemo}>
@@ -958,7 +919,7 @@ const CommunityPage: React.FC = () => {
             </Box>
           )}
 
-          {/* TAB: MEMBERS */}
+          {/* TAB: MEMBERS & EXPERTS (Unverändert übernommen) */}
           {currentTab === 'members' && (
              <Paper sx={{ p: isMobile ? 2 : 4, borderRadius: 3, boxShadow: theme.shadows[2], animation: 'fadeIn 0.3s ease-in-out' }}>
                  <Box sx={{ mb: 4 }}>
@@ -991,7 +952,7 @@ const CommunityPage: React.FC = () => {
                                             </Typography>
                                         }
                                         secondary={
-                                            <Box sx={{ mt: 0.5 }}>
+                                            <Box component="span" sx={{ display: 'block', mt: 0.5 }}>
                                                 <Typography component="span" variant="body2" color="text.primary" display="block">
                                                     {member.role} {member.organization_name ? `bei ${member.organization_name}` : ''}
                                                 </Typography>
@@ -1011,7 +972,6 @@ const CommunityPage: React.FC = () => {
              </Paper>
           )}
 
-          {/* TAB: EXPERTS */}
           {currentTab === 'experts' && (
              <Paper sx={{ p: isMobile ? 2 : 4, borderRadius: 3, boxShadow: theme.shadows[2], animation: 'fadeIn 0.3s ease-in-out' }}>
                  <Box sx={{ mb: 4 }}>
@@ -1027,7 +987,7 @@ const CommunityPage: React.FC = () => {
                             display: 'flex', 
                             gap: 1, 
                             width: '100%',
-                            flexDirection: { xs: 'column', sm: 'row' } // Auf sehr kleinen Screens untereinander, sonst nebeneinander
+                            flexDirection: { xs: 'column', sm: 'row' }
                         }}>
                             <TextField 
                                 fullWidth 
@@ -1048,9 +1008,9 @@ const CommunityPage: React.FC = () => {
                                 sx={{ 
                                     borderRadius: 3, 
                                     px: 4, 
-                                    minWidth: { sm: 140 }, // Gute Mindestbreite auf Desktop
-                                    height: { sm: 'auto' }, // Passt sich der Höhe des Textfeldes an
-                                    py: { xs: 1.5, sm: 0 }, // Ein bisschen Padding auf Mobile
+                                    minWidth: { sm: 140 },
+                                    height: { sm: 'auto' },
+                                    py: { xs: 1.5, sm: 0 },
                                     fontWeight: 'bold',
                                     boxShadow: theme.shadows[2],
                                     '&:hover': { boxShadow: theme.shadows[4] }
@@ -1066,7 +1026,6 @@ const CommunityPage: React.FC = () => {
                             <LocalOfferIcon fontSize="small" color="primary" /> Mein hinterlegtes Wissen:
                         </Typography>
                         
-                        {/* --- LÖSUNG FÜR DAS LEERE "MEIN WISSEN" --- */}
                         {userTags && userTags.length > 0 ? (
                             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
                                 {userTags.map(tag => (
@@ -1128,12 +1087,12 @@ const CommunityPage: React.FC = () => {
                                             </Box>
                                         }
                                         secondary={
-                                            <Box>
+                                            <Box component="span" sx={{ display: 'block' }}>
                                                 <Typography component="span" variant="body2" color="text.primary" display="block" sx={{ mb: 1 }}>
                                                     {expert.role} {expert.organization_name ? `bei ${expert.organization_name}` : ''}
                                                 </Typography>
-                                                {expert.tags && expert.tags.length > 0 && (
-                                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                                                        {expert.tags && expert.tags.length > 0 && (
+                                                                    <Box component="span" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
                                                         {expert.tags.map(tag => (
                                                             <Chip key={tag} label={tag} size="small" sx={{ height: 22, fontSize: '0.7rem', bgcolor: alpha(theme.palette.primary.main, 0.05), border: `1px solid ${alpha(theme.palette.primary.main, 0.2)}` }} />
                                                         ))}
@@ -1197,14 +1156,13 @@ const CommunityPage: React.FC = () => {
                         <StarsIcon sx={{ color: '#ffd700', fontSize: 28 }} /> Top Mitglieder
                     </Typography>
                     
-                    {/* --- LÖSUNG FÜR DIE PUNKTE-ERKLÄRUNG --- */}
                     <Tooltip 
                         title={
                             <Box sx={{ p: 1 }}>
                                 <Typography variant="subtitle2" fontWeight="bold" gutterBottom>So funktioniert's:</Typography>
                                 <ul style={{ paddingLeft: 16, margin: 0 }}>
-                                    <li><b>+5</b> für eigene Beiträge</li>
-                                    <li><b>+2</b> für Kommentare</li>
+                                    <li><b>+10</b> für eigene Beiträge</li>
+                                    <li><b>+5</b> für Kommentare</li>
                                     <li><b>+1</b> für Likes / Umfragen</li>
                                     <li>Wird ein Inhalt gelöscht, werden die Punkte wieder abgezogen.</li>
                                 </ul>
@@ -1271,7 +1229,7 @@ const CommunityPage: React.FC = () => {
                                     </ListItemAvatar>
                                     <ListItemText
                                         primary={
-                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                                            <Box component="span" sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
                                                 <Typography variant="body2" noWrap sx={{ fontWeight: 'bold', cursor: 'pointer' }} onClick={(e) => handleProfileClick(e, comment as any)}>
                                                     {comment.first_name}
                                                 </Typography>
@@ -1280,7 +1238,8 @@ const CommunityPage: React.FC = () => {
                                         }
                                         secondary={
                                             <Typography variant="body2" color="text.secondary" sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.4 }}>
-                                                "{comment.content}"
+                                                {/* Purify the comment snippet just in case */}
+                                                <span dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(comment.content || '').substring(0, 50) + '...' }} />
                                             </Typography>
                                         }
                                     />
@@ -1295,7 +1254,7 @@ const CommunityPage: React.FC = () => {
         )}
       </Grid>
 
-      {/* VISITING CARD POPOVER (Mit reparierter Breite!) */}
+      {/* VISITING CARD POPOVER */}
       <Popover
         open={popoverOpen}
         anchorEl={anchorEl}
@@ -1303,7 +1262,6 @@ const CommunityPage: React.FC = () => {
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         transformOrigin={{ vertical: 'top', horizontal: 'center' }}
         PaperProps={{
-            // WICHTIG: Hier wurde der weiße Rand entfernt, indem die Breite exakt definiert ist
             sx: { borderRadius: 4, overflow: 'hidden', width: 320, maxWidth: '95vw', boxShadow: theme.shadows[8] }
         }}
       >
@@ -1327,6 +1285,41 @@ const CommunityPage: React.FC = () => {
         <DialogContent sx={{ p: {xs: 1, md: 3} }}>
             {detailPost && renderPostCard(detailPost, true)}
         </DialogContent>
+      </Dialog>
+
+      {/* EDIT POST DIALOG */}
+      <Dialog 
+        open={!!editingPost} 
+        onClose={() => setEditingPost(null)} 
+        fullWidth 
+        maxWidth="sm"
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
+        <DialogTitle>Beitrag bearbeiten</DialogTitle>
+            <DialogContent dividers>
+                <div>
+                    <ReactQuill 
+                        theme="snow"
+                        value={editContent} 
+                        onChange={setEditContent} 
+                        modules={quillModules}
+                        formats={quillFormats}
+                        style={{ height: '200px', marginBottom: '50px' }}
+                    />
+                </div>
+                <FormControl fullWidth size="small" sx={{ mt: 2 }}>
+                <InputLabel>Kategorie</InputLabel>
+                <Select value={editCategoryId} label="Kategorie" onChange={(e) => setEditCategoryId(e.target.value)}>
+                    {categories.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+                </Select>
+            </FormControl>
+        </DialogContent>
+        <DialogActions>
+            <Button onClick={() => setEditingPost(null)}>Abbrechen</Button>
+            <Button variant="contained" onClick={handleSaveEdit} disabled={isSavingEdit}>
+                {isSavingEdit ? 'Speichert...' : 'Speichern'}
+            </Button>
+        </DialogActions>
       </Dialog>
 
     </Container>

@@ -27,6 +27,8 @@ import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
 import GavelIcon from '@mui/icons-material/Gavel';
 import ForumIcon from '@mui/icons-material/Forum';
 import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
+import ShareIcon from '@mui/icons-material/Share';
+import StorefrontIcon from '@mui/icons-material/Storefront'; // ✅ NEU: Icon für Branchenverzeichnis
 
 const AdminDashboardPage: React.FC = () => {
     return (
@@ -40,13 +42,23 @@ const AdminDashboardPage: React.FC = () => {
                 </Typography>
 
                 <Grid container spacing={3}>
-                    {/* ✅ NEU: Tages-Briefing Redaktion (Ganz oben/vorne, da täglich genutzt) */}
+                    {/* ✅ NEU: Tages-Briefing Redaktion */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <HistoryEduIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
                             <Typography variant="h6" component="h2" gutterBottom>Briefing Redaktion</Typography>
                             <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>KI-Entwürfe prüfen, veredeln und für Mandanten freigeben.</Typography>
                             <Button component={Link} to="/admin/briefing-editorial" variant="contained" color="primary">Zum Redaktions-Tool</Button>
+                        </Paper>
+                    </Grid>
+                    
+                    {/* ✅ NEU: Social Media Generator */}
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <ShareIcon sx={{ fontSize: 60, mb: 2 }} color="info" />
+                            <Typography variant="h6" component="h2" gutterBottom>Social Media Generator</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>LinkedIn-Posts und Grafiken aus KFZ-Statistiken erstellen.</Typography>
+                            <Button component={Link} to="/admin/social-media" variant="contained" color="info">Generator öffnen</Button>
                         </Paper>
                     </Grid>
                     
@@ -69,7 +81,6 @@ const AdminDashboardPage: React.FC = () => {
                         </Paper>
                     </Grid>
                     
-                    {/* ... (Restliche Kacheln wie zuvor) ... */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <ScheduleIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
@@ -78,6 +89,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/cronjobs" variant="contained" color="primary">Verwalten</Button>
                         </Paper>
                     </Grid>
+
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <BusinessIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
@@ -86,6 +98,17 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/business-partners" variant="contained" color="primary">Verwalten</Button>
                         </Paper>
                     </Grid>
+
+                    {/* ✅ NEU: Branchenverzeichnis Kachel */}
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <StorefrontIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
+                            <Typography variant="h6" component="h2" gutterBottom>Branchenverzeichnis</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Dienstleister, Kategorien und Mandanten-Freigaben steuern.</Typography>
+                            <Button component={Link} to="/admin/directory" variant="contained" color="success">Verwalten</Button>
+                        </Paper>
+                    </Grid>
+
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <GroupIcon sx={{ fontSize: 60, mb: 2 }} color="info" />
@@ -94,6 +117,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/users" variant="contained" color="info">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <WidgetsIcon sx={{ fontSize: 60, mb: 2 }} color="secondary" />
@@ -102,6 +126,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/widget-types" variant="contained" color="secondary">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <StarsIcon sx={{ fontSize: 60, mb: 2 }} color="warning" />
@@ -110,6 +135,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/actions" variant="contained" color="warning">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <CampaignIcon sx={{ fontSize: 60, mb: 2 }} color="secondary" />
@@ -118,6 +144,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/advertisements" variant="contained" color="secondary">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <PolicyIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
@@ -126,6 +153,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/scraping-rules" variant="contained" color="primary">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                      <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <AutoAwesomeIcon sx={{ fontSize: 60, mb: 2 }} color="info" />
@@ -134,6 +162,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/ai-prompt-rules" variant="contained" color="info">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <FactCheckIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
@@ -142,6 +171,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/sources" variant="contained" color="success">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <CalendarMonthIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
@@ -168,6 +198,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/scraped-content" variant="contained" color="warning">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <ArticleIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
@@ -176,6 +207,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/ai-content" variant="contained" color="success">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <CategoryIcon sx={{ fontSize: 60, mb: 2 }} color="secondary" />
@@ -184,6 +216,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/categories" variant="contained" color="secondary">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <TagIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
@@ -192,6 +225,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/tags" variant="contained" color="success">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                      <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <SubscriptionsIcon sx={{ fontSize: 60, mb: 2 }} color="error" />
@@ -200,6 +234,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/bp-widget-access" variant="contained" color="error">Verwalten</Button>
                         </Paper>
                     </Grid>
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <MonitorIcon sx={{ fontSize: 60, mb: 2 }} color="action" />
@@ -208,6 +243,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/monitor" variant="contained" color="secondary">Anzeigen</Button>
                         </Paper>
                     </Grid>
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <PollIcon sx={{ fontSize: 60, mb: 2 }} color="info" />
@@ -216,6 +252,7 @@ const AdminDashboardPage: React.FC = () => {
                             <Button component={Link} to="/admin/surveys" variant="contained" color="info">Verwalten</Button>
                         </Paper>
                     </Grid>                    
+                    
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <QueryStatsIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />

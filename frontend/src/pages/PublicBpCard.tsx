@@ -112,7 +112,7 @@ const PublicBpCard: React.FC = () => {
                                     <img src={partner.logo_url} alt={partner.name} style={{ maxWidth: '80%', maxHeight: '80%', objectFit: 'contain' }} />
                                 ) : (
                                     <Typography variant="h4" fontWeight="bold" color="primary">
-                                        {partner.name.charAt(0)}
+                                        {partner?.name ? partner.name.charAt(0).toUpperCase() : '?'}
                                     </Typography>
                                 )}
                             </Box>

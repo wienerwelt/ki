@@ -51,7 +51,7 @@ const AdvertisementBanner: React.FC<AdvertisementBannerProps> = ({ content, onCl
         <Box
             sx={{
                 height: '40px', // Höhe auf 40px reduziert
-                backgroundColor: businessPartner?.secondary_color || 'secondary.main',
+                backgroundColor: (businessPartner as any)?.secondary_color || 'secondary.main',
                 py: 0.5,
                 px: 2,
                 display: 'flex',
@@ -101,7 +101,7 @@ const AdvertisementBanner: React.FC<AdvertisementBannerProps> = ({ content, onCl
                     height: '2px',
                     backgroundColor: 'rgba(255,255,255,0.3)',
                     '& .MuiLinearProgress-bar': {
-                        backgroundColor: businessPartner?.primary_color || 'primary.main',
+                        backgroundColor: (businessPartner as any)?.primary_color || 'primary.main',
                     },
                 }}
             />

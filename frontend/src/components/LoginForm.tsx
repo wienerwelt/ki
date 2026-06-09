@@ -88,6 +88,24 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
     }
   }, [partnerCode, setPartnerByCode]);
 
+  useEffect(() => {
+    const errorParam = searchParams.get('error');
+    if (errorParam) {
+      if (errorParam === 'account_locked') {
+        showSnackbar('Account gesperrt.', 'error');
+      } else if (errorParam === 'account_expired') {
+        showSnackbar('Account abgelaufen.', 'error');
+      } else if (errorParam === 'account_disabled') {
+        showSnackbar('Ihr Mandantenkonto ist derzeit deaktiviert.', 'error');
+      } else if (errorParam === 'sso_failed' || errorParam === 'google_auth_failed' || errorParam === 'linkedin_auth_failed') {
+        showSnackbar('SSO Anmeldung fehlgeschlagen.', 'error');
+      }
+      
+      searchParams.delete('error');
+      navigate({ search: searchParams.toString() }, { replace: true });
+    }
+  }, [searchParams, showSnackbar, navigate]);
+
   const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/;
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
 
@@ -175,7 +193,14 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
             password,
           };
 
-      const { data } = await apiClient.post(`/api/auth/${endpoint}`, body);
+      const { res, data } = await apiClient.post(`/api/auth/${endpoint}`, body);
+
+if (!res.ok) {
+  throw {
+    status: res.status,
+    data,
+  };
+}
 
       if (isRegister) {
         showSnackbar(data?.message || 'Registrierung erfolgreich! Bitte E-Mail bestätigen.', 'success');
@@ -188,17 +213,22 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
         showSnackbar('Erfolgreich angemeldet.', 'success');
         navigate('/dashboard');
       }
-    } catch (err: any) {
-      const status = err.response?.status;
-      const msg = err.response?.data?.message || 'Ein Fehler ist aufgetreten.';
-      const suggestions = err.response?.data?.suggestions;
+} catch (err: any) {
+  const status = err.status;
+  const msg =
+    err.data?.message ||
+    err.data?.error ||
+    err.message ||
+    'Ein Fehler ist aufgetreten.';
 
-      if (status === 409 && Array.isArray(suggestions) && suggestions.length) {
-        showSnackbar(`${msg} Vorschläge: ${suggestions.join(', ')}`, 'warning');
-      } else {
-        showSnackbar(msg, 'error');
-      }
-    } finally {
+  const suggestions = err.data?.suggestions;
+
+  if (status === 409 && Array.isArray(suggestions) && suggestions.length) {
+    showSnackbar(`${msg} Vorschläge: ${suggestions.join(', ')}`, 'warning');
+  } else {
+    showSnackbar(msg, 'error');
+  }
+} finally {
       setLoading(false);
     }
   };
@@ -274,21 +304,38 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
           </>
         )}
 
-        {!isRegister && (
-          <TextField
-            margin="normal"
-            required
-            fullWidth
-            id="identifier"
-            label="Benutzername oder E-Mail"
-            name="identifier"
-            autoComplete="username"
-            autoFocus
-            value={username || email}
-            onChange={(e) => setUsername(e.target.value)}
+{!isRegister && (
+  <TextField
+    margin="normal"
+    required
+    fullWidth
+    id="identifier"
+    label="Benutzername oder E-Mail"
+    name="identifier"
+    autoComplete="username"
+    autoFocus
+    value={username || email}
+    onChange={(e) => setUsername(e.target.value)}
+    disabled={loading}
+    InputProps={{
+      endAdornment: (username || email) ? (
+        <InputAdornment position="end">
+          <IconButton
+            aria-label="Eingabe löschen"
+            onClick={() => {
+              setUsername('');
+              setEmail('');
+            }}
+            edge="end"
             disabled={loading}
-          />
-        )}
+          >
+            <CloseIcon />
+          </IconButton>
+        </InputAdornment>
+      ) : null,
+    }}
+  />
+)}
 
         <TextField
           margin="normal"

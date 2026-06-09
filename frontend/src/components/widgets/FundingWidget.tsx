@@ -4,6 +4,7 @@ import {
   Button, Link as MuiLink, Chip, Tooltip, Stack, useTheme, useMediaQuery
 } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
@@ -17,8 +18,10 @@ interface FundingOpportunity {
   categories?: string[];
 }
 
+// NEU: Interface um isPublic erweitern
 interface FundingWidgetProps extends BaseWidgetProps {
   icon?: React.ReactNode;
+  isPublic?: boolean; 
 }
 
 const FundingWidget: React.FC<FundingWidgetProps> = ({
@@ -28,10 +31,10 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
   widgetTypeKey,
   title,
   icon,
+  isPublic = false, // Standardmäßig false (für interne Dashboards)
 }) => {
   const { showSnackbar } = useSnackbar();
   const theme = useTheme();
-  // NEU: Mobile Detection für Responsive Layout
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
   const [data, setData] = useState<{ profile_incomplete: boolean; opportunities: FundingOpportunity[] }>({
@@ -42,6 +45,23 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
+    // --- NEU: PUBLIC MOCK-DATEN ---
+    // Wenn das Widget öffentlich ist, laden wir keine echten Profil-Treffer, 
+    // sondern zeigen eine attraktive Demo-Ansicht.
+    if (isPublic) {
+        setData({
+            profile_incomplete: false,
+            opportunities: [
+                { id: 'mock-1', title: 'Transformations-Förderung Elektromobilität', deadline_end: '2026-12-31', match_count: 5, categories: ['E-Mobilität', 'KMU'] },
+                { id: 'mock-2', title: 'Ladeinfrastruktur für Betriebe (Klimafonds)', deadline_end: null, match_count: 3, categories: ['Infrastruktur', 'Gewerbe'] },
+                { id: 'mock-3', title: 'Flottenumstellung auf Null-Emission', deadline_end: '2026-06-30', match_count: 2, categories: ['Flotte', 'Innovation'] }
+            ]
+        });
+        setLoading(false);
+        return;
+    }
+
+    // --- INTERNE ABFRAGE FÜR EINGELOGGTE USER ---
     setLoading(true);
     setError(null);
     try {
@@ -57,7 +77,7 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [showSnackbar]);
+  }, [showSnackbar, isPublic]);
 
   useEffect(() => {
     fetchData();
@@ -77,11 +97,11 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
     if (error) {
       return <Alert severity="warning" sx={{ m: 2 }}>{error}</Alert>;
     }
-    if (data.profile_incomplete) {
+    if (data.profile_incomplete && !isPublic) {
       return (
         <Box sx={{ p: 3, textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Vervollständigen Sie Ihr Profil, um passende Förderungen zu erhalten!
+            Vervollständigen Sie Ihr Profil, um passende KI-Förder-Vorschläge zu erhalten!
           </Typography>
           <Button component={RouterLink} to="/profile" variant="outlined" size="small">
             Profil bearbeiten
@@ -106,13 +126,19 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
       <Box sx={{ 
           display: 'flex', 
           flexDirection: 'column', 
-          // FIX: Auf Mobile automatische Höhe, damit WidgetPaper "Show More" funktioniert
           height: isMobile ? 'auto' : '100%' 
       }}>
+        {/* KI-Badge im Public Modus */}
+        {isPublic && (
+            <Box sx={{ bgcolor: theme.palette.mode === 'dark' ? 'rgba(59, 130, 246, 0.1)' : '#e0f2fe', p: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
+                <AutoAwesomeIcon sx={{ fontSize: 16, color: '#3b82f6' }} />
+                <Typography variant="caption" sx={{ color: '#3b82f6', fontWeight: 'bold' }}>KI-Matching Vorschau</Typography>
+            </Box>
+        )}
+
         <List dense sx={{ 
             p: 0, 
             flexGrow: 1, 
-            // FIX: Auf Mobile kein interner Scrollbalken
             overflowY: isMobile ? 'visible' : 'auto' 
         }}>
           {data.opportunities.map((opp) => (
@@ -130,11 +156,11 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
               <ListItemText
                 primary={
                   <MuiLink
-                    component={RouterLink}
-                    to={`/funding-detail/${opp.id}`}
-                    underline="hover"
+                    component={isPublic ? 'div' : RouterLink} // Verhindert 404 Klicks im Public Modus
+                    to={isPublic ? undefined : `/funding-detail/${opp.id}`}
+                    underline={isPublic ? "none" : "hover"}
                     color="inherit"
-                    sx={{ fontWeight: 600, display: 'block', mb: 0.5, lineHeight: 1.3 }}
+                    sx={{ fontWeight: 600, display: 'block', mb: 0.5, lineHeight: 1.3, cursor: isPublic ? 'default' : 'pointer' }}
                   >
                     {opp.title}
                   </MuiLink>
@@ -165,13 +191,14 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
               />
               
               <Box sx={{ display: 'flex', alignItems: 'center', width: isMobile ? '100%' : 'auto', justifyContent: isMobile ? 'space-between' : 'flex-end' }}>
-                  {isMobile && <Button size="small" component={RouterLink} to={`/funding-detail/${opp.id}`}>Details</Button>}
+                  {isMobile && !isPublic && <Button size="small" component={RouterLink} to={`/funding-detail/${opp.id}`}>Details</Button>}
                   
-                  <Tooltip title={`Diese Förderung passt zu ${opp.match_count} Ihrer Interessen`}>
+                  <Tooltip title={isPublic ? "Beispiel-Anzeige für KI-Treffer" : `Diese Förderung passt zu ${opp.match_count} Ihrer Interessen`}>
                     <Chip
+                      icon={<AutoAwesomeIcon />}
                       label={`${opp.match_count} Treffer`}
                       size="small"
-                      color="success"
+                      color="primary"
                       variant={theme.palette.mode === 'dark' ? 'filled' : 'outlined'}
                       sx={{ fontWeight: 'bold' }}
                     />
@@ -182,11 +209,13 @@ const FundingWidget: React.FC<FundingWidgetProps> = ({
         </List>
         
         {/* FOOTER: Fixiert am unteren Rand */}
-        <Box sx={{ p: 1.5, textAlign: 'center', borderTop: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}>
-            <Button component={RouterLink} to="/funding-search" size="small" fullWidth={isMobile}>
-                Alle Förderungen anzeigen
-            </Button>
-        </Box>
+        {!isPublic && (
+            <Box sx={{ p: 1.5, textAlign: 'center', borderTop: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}>
+                <Button component={RouterLink} to="/funding-search" size="small" fullWidth={isMobile}>
+                    Alle Förderungen anzeigen
+                </Button>
+            </Box>
+        )}
       </Box>
     );
   };

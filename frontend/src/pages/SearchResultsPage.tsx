@@ -1,3 +1,4 @@
+// frontend/src/pages/SearchResultsPage.tsx
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
@@ -5,14 +6,12 @@ import {
   Paper, Divider, Chip, ListItemButton, Button
 } from '@mui/material';
 
-// Icons
 import ArticleIcon from '@mui/icons-material/Article';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import BusinessIcon from '@mui/icons-material/Business';
 import FolderIcon from '@mui/icons-material/Folder';
 import ForumIcon from '@mui/icons-material/Forum';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-// ✅ NEUE ICONS FÜR MEDIEN
 import PodcastsIcon from '@mui/icons-material/Podcasts';
 import YouTubeIcon from '@mui/icons-material/YouTube';
 

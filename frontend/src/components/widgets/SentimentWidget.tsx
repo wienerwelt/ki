@@ -52,7 +52,10 @@ const SentimentWidget: React.FC<SentimentWidgetProps> = ({ widgetId, onDelete, i
             const endpoint = isPublic ? '/api/public/sentiment' : '/api/data/sentiment';
             const res = await apiClient.get(endpoint);
             setData(res.data);
-        } catch (e) {
+        } catch (e: any) {
+            // Fängt jetzt auch den nativen AbortError ab!
+            if (e.name === 'AbortError' || e.name === 'CanceledError' || e.code === 'ERR_CANCELED') return;
+            
             console.error('Fehler beim Laden des Sentiments:', e);
         } finally {
             setLoading(false);
