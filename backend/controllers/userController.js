@@ -19,6 +19,7 @@ exports.getProfile = async (req, res) => {
                 u.profile_image_url,
                 u.last_login_at,
                 u.phone,
+                u.created_at,
 
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
@@ -50,7 +51,7 @@ exports.updateProfile = async (req, res) => {
             first_name, last_name, organization_name, linkedin_url, password,
             article_score_min, article_score_max, preferred_theme, preferred_language,
             newsletter_opt_in,
-            phone // <--- NEU: HIER HINZUFÜGEN
+            phone
         } = req.body;
 
         // 1. Telefonnummer Validierung (Einfach & Sinnvoll)
@@ -82,7 +83,7 @@ exports.updateProfile = async (req, res) => {
                 first_name = $1, last_name = $2, organization_name = $3, linkedin_url = $4, password_hash = $5,
                 article_score_min = $6, article_score_max = $7, preferred_theme = $8, preferred_language = $9,
                 newsletter_opt_in = $10,
-                phone = $11, -- <--- NEU: Feld in der Query
+                phone = $11,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $12 RETURNING *`,
             [

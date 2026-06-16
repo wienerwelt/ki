@@ -250,38 +250,106 @@ async function fetchATStationsByCoords(lat, lng, includeClosed = true) {
 }
 
 
-exports.getDailyBriefingPdfByToken = async (req, res) => {
-  const token = String(req.query.token || '').trim();
-  if (!token) return res.status(400).json({ message: 'token fehlt' });
-
-  try {
-    const exportRes = await db.query(
-      `SELECT pdf_path, expires_at
-       FROM business_partner_daily_briefing_exports
-       WHERE token = $1
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [token]
-    );
-
-    if (exportRes.rows.length === 0) return res.status(404).json({ message: 'PDF nicht gefunden' });
-
-    const row = exportRes.rows[0];
-    if (new Date(row.expires_at).getTime() < Date.now()) {
-      return res.status(410).json({ message: 'Link abgelaufen' });
+exports.getDailyBriefing = async (req, res) => {
+    const { business_partner_id: bpId, id: userId } = req.user;
+    
+    if (!bpId) {
+        return res.status(404).json({ message: "Kein Partner zugeordnet." });
     }
 
-    if (!fs.existsSync(row.pdf_path)) {
-      return res.status(404).json({ message: 'PDF-Datei fehlt am Server' });
-    }
+    try {
+        console.log(`\n--- [DEBUG getDailyBriefing] Starte Abfrage ---`);
+        console.log(`User: ${userId} | BP: ${bpId}`);
 
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'inline; filename="fuhrpark-daily.pdf"');
-    fs.createReadStream(row.pdf_path).pipe(res);
-  } catch (err) {
-    console.error('PDF download error:', err.message);
-    res.status(500).json({ message: 'Server error' });
-  }
+        // 1. Standard-Briefing-Items abfragen (Strategie & Regulatorik)
+        const briefingQuery = `
+            WITH LatestBriefing AS (
+                SELECT DATE(MAX(created_at)) as max_date
+                FROM business_partner_intelligence_briefings
+                WHERE business_partner_id = $1 
+                AND status = 'published'
+                AND created_at >= NOW() - INTERVAL '48 hours'
+            )
+            SELECT id, briefing_type, headline, analysis_summary, prognosis, talking_point, related_articles 
+            FROM business_partner_intelligence_briefings 
+            WHERE business_partner_id = $1 
+            AND status = 'published'
+            AND DATE(created_at) = (SELECT max_date FROM LatestBriefing)
+            ORDER BY id ASC
+        `;
+        
+        // 2. Markt-Barometer Status abrufen (Lock-Screen Bedingung)
+        const sentimentQuery = `
+            SELECT EXISTS(
+                SELECT 1 FROM survey_responses sr 
+                JOIN survey_questions sq ON sr.question_id = sq.id
+                JOIN surveys s ON sq.survey_id = s.id
+                WHERE sr.user_id = $1 AND s.title = 'Markt-Barometer' AND s.business_partner_id = $2 
+                AND sr.created_at >= NOW() - INTERVAL '48 hours'
+            ) as "hasVotedToday"
+        `;
+
+        // 3. NEU: Echte Sales Triggers aus den überwachten Artikeln extrahieren
+        const salesTriggersQuery = `
+            SELECT 
+                bpta.id::text,
+                bpta.article_title AS headline,
+                COALESCE(bpta.summary, 'Keine Zusammenfassung verfügbar.') AS analysis_summary,
+                bpa.name AS account_name
+            FROM public.business_partner_tracked_articles bpta
+            JOIN public.business_partner_accounts bpa ON bpta.account_id = bpa.id
+            WHERE bpa.business_partner_id = $1 AND bpa.is_active = true
+            ORDER BY bpta.published_at DESC NULLS LAST, bpta.created_at DESC
+            LIMIT 5
+        `;
+
+        // 4. NEU: Alle überwachten Firmen- und Wettbewerbernamen für das Highlighting im Frontend sammeln
+        const linkableNamesQuery = `
+            SELECT name FROM public.business_partner_accounts WHERE business_partner_id = $1 AND is_active = true
+            UNION
+            SELECT bpc.name FROM public.business_partner_competitors bpc
+            JOIN public.business_partner_accounts bpa ON bpc.account_id = bpa.id
+            WHERE bpa.business_partner_id = $1
+        `;
+
+        // Alle Abfragen parallel ausführen für maximale Performance
+        const [briefingRes, sentimentRes, salesTriggersRes, linkableNamesRes] = await Promise.all([
+            db.query(briefingQuery, [bpId]),
+            db.query(sentimentQuery, [userId, bpId]),
+            db.query(salesTriggersQuery, [bpId]),
+            db.query(linkableNamesQuery, [bpId])
+        ]);
+
+        // Gesprächsaufhänger dynamisch für das Vertriebsteam vorformulieren
+        const salesTriggers = salesTriggersRes.rows.map(trigger => ({
+            id: trigger.id,
+            headline: trigger.headline,
+            analysis_summary: trigger.analysis_summary,
+            talking_point: `Hallo Team, ich habe gesehen, dass es bei Ihnen aktuelle Marktentwicklungen zum Thema "${trigger.headline}" gibt. Das betrifft auch unsere laufenden Projekte – lassen Sie uns dazu kurz telefonieren!`,
+            account_name: trigger.account_name
+        }));
+
+        // Namen flachlegen für das Frontend-Array
+        const linkableNames = linkableNamesRes.rows.map(row => row.name);
+
+        console.log(`[getDailyBriefing] Daten erfolgreich geladen:`);
+        console.log(`  -> Briefings: ${briefingRes.rows.length}`);
+        console.log(`  -> Sales Leads: ${salesTriggers.length}`);
+        console.log(`  -> Highlighting-Keywords: ${linkableNames.length}`);
+        console.log(`-------------------------------------------------\n`);
+
+        res.json({
+            items: briefingRes.rows, 
+            hasVotedToday: sentimentRes.rows[0]?.hasVotedToday || false,
+            sales_triggers: salesTriggers, 
+            linkable_names: linkableNames  
+        });
+
+    } catch (err) {
+        console.error("--- SCHWERWIEGENDER FEHLER IN getDailyBriefing ---");
+        console.error(err.message);
+        res.status(500).json({ message: 'Fehler beim Laden des Briefings' });
+    }
 };
 
 function normalizeATStation(station) {
@@ -1395,8 +1463,6 @@ exports.getAccountIntelligence = async (req, res) => {
     }
 
     try {
-        // Diese Abfrage holt alle Daten in einem einzigen Datenbankaufruf
-        // und verwendet den korrekten Tabellennamen 'business_partner_tracked_articles'.
         const query = `
             SELECT
                 acc.id,
@@ -1405,7 +1471,8 @@ exports.getAccountIntelligence = async (req, res) => {
                 (
                     SELECT COALESCE(json_agg(news.*), '[]'::json)
                     FROM (
-                        SELECT article_title, article_url, source_name, published_at
+                        -- FIX: 'summary' hinzugefügt
+                        SELECT article_title, article_url, source_name, published_at, summary
                         FROM business_partner_tracked_articles
                         WHERE account_id = acc.id AND competitor_name IS NULL
                         ORDER BY published_at DESC
@@ -1416,7 +1483,8 @@ exports.getAccountIntelligence = async (req, res) => {
                 (
                     SELECT COALESCE(json_agg(comp_news.*), '[]'::json)
                     FROM (
-                        SELECT competitor_name, article_title, article_url, source_name, published_at
+                        -- FIX: 'summary' hinzugefügt
+                        SELECT competitor_name, article_title, article_url, source_name, published_at, summary
                         FROM business_partner_tracked_articles
                         WHERE account_id = acc.id AND competitor_name IS NOT NULL
                         ORDER BY published_at DESC

@@ -1,3 +1,4 @@
+// backend/routes/dataRoutes.js
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
@@ -48,12 +49,11 @@ router.get('/economic-statistics', dataController.getEconomicStatistics);
 router.get('/economic-statistics/countries', dataController.getUniqueStatCountries);
 router.post('/generate-draft-from-content', dataController.generateDraftFromContent);
 router.get('/account-intelligence', dataController.getAccountIntelligence);
-router.get('/daily-briefing', dataController.getDailyBriefing);
 router.get('/notifications/count', dataController.getNotificationCounts);
 router.get('/monitor-entries', dataController.getMonitorEntries);
 router.get('/bp-members-preview', dataController.getBusinessPartnerMembersPreview);
 router.get('/daily-briefing', authMiddleware, dataController.getDailyBriefing);
-router.get('/daily-briefing/pdf', dataController.getDailyBriefingPdfByToken);
+//router.get('/daily-briefing/pdf', dataController.getDailyBriefingPdfByToken);
 router.get('/notification-counts', dataController.getNotificationCounts);
 
 router.get('/sentiment', dataController.getMarketSentiment);

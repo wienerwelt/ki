@@ -8,32 +8,53 @@ const s3Client = require("../config/s3Client.js");
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
 exports.getAllScrapedContent = async (req, res) => {
-    // NEU: category_id hinzugefügt
     const { source_identifier, startDate, endDate, region, category_id, limit = 50, offset = 0 } = req.query;
     
     try {
-const baseQuery = `
+        // FIX: Alle Spalten werden strikt auf denselben Datentyp (::text, ::timestamp, ::numeric) gecastet, 
+        // um den "UNION ALL" Crash in PostgreSQL zu verhindern!
+        const baseQuery = `
             SELECT 
-                sc.id, sc.source_identifier, sr.name as rule_name, sc.title, sc.original_url, sc.category,
-                sc.category_id,
-                sc.summary, sc.published_date, sc.event_date, sc.region, sc.scraped_at, sc.relevance_score,
-                sc.created_at, -- <--- HIER EINGEFÜGT
-                sc.thumbnail_url, 'content' as data_type,
-                (SELECT array_agg(t.name) FROM tags t JOIN scraped_content_tags sct ON t.id = sct.tag_id WHERE sct.scraped_content_id = sc.id) as tags
+                sc.id::text, 
+                sc.source_identifier::text, 
+                sr.name::text as rule_name, 
+                sc.title::text, 
+                sc.original_url::text, 
+                sc.category::text,
+                sc.category_id::text,
+                sc.summary::text, 
+                sc.published_date, 
+                sc.event_date, 
+                sc.region::text, 
+                sc.scraped_at, 
+                sc.relevance_score::numeric,
+                sc.created_at,
+                sc.thumbnail_url::text, 
+                'content'::text as data_type,
+                (SELECT array_agg(t.name::text) FROM tags t JOIN scraped_content_tags sct ON t.id = sct.tag_id WHERE sct.scraped_content_id = sc.id) as tags
             FROM scraped_content sc
             LEFT JOIN scraping_rules sr ON sc.source_identifier = sr.source_identifier
             
             UNION ALL
             
             SELECT 
-                ti.id, ti.source_identifier, sr.name as rule_name, ti.title, ti.link as original_url,
-                ti.type as category, 
-                NULL::uuid as category_id,
-                null as summary, ti.published_at as published_date, null as event_date,
-                ti.region, ti.published_at as scraped_at, 0 as relevance_score,
-                ti.created_at, -- <--- UND HIER EINGEFÜGT
-                null as thumbnail_url, 'traffic' as data_type,
-                (SELECT array_agg(t.name) FROM tags t JOIN traffic_incidents_tags tit ON t.id = tit.tag_id WHERE tit.traffic_incident_id = ti.id) as tags
+                ti.id::text, 
+                ti.source_identifier::text, 
+                sr.name::text as rule_name, 
+                ti.title::text, 
+                ti.link::text as original_url,
+                ti.type::text as category, 
+                NULL::text as category_id,
+                NULL::text as summary, 
+                ti.published_at as published_date, 
+                NULL::timestamp as event_date,
+                ti.region::text, 
+                ti.published_at as scraped_at, 
+                0::numeric as relevance_score,
+                ti.published_at as created_at, -- FIX: Verhindert Absturz, falls ti.created_at nicht existiert
+                NULL::text as thumbnail_url, 
+                'traffic'::text as data_type,
+                (SELECT array_agg(t.name::text) FROM tags t JOIN traffic_incidents_tags tit ON t.id = tit.tag_id WHERE tit.traffic_incident_id = ti.id) as tags
             FROM traffic_incidents ti
             LEFT JOIN scraping_rules sr ON ti.source_identifier = sr.source_identifier
         `;
@@ -60,8 +81,6 @@ const baseQuery = `
             whereClauses.push(`combined_data.region = $${paramIndex++}`);
             queryParams.push(region);
         }
-        
-        // NEU: Logik für den Kategoriefilter
         if (category_id) {
             whereClauses.push(`combined_data.category_id = $${paramIndex++}`);
             queryParams.push(category_id);
@@ -71,6 +90,7 @@ const baseQuery = `
         if (whereClauses.length > 0) {
             countQuery += ` WHERE ${whereClauses.join(' AND ')}`;
         }
+        
         const totalResult = await db.query(countQuery, queryParams);
         const totalCount = parseInt(totalResult.rows[0].total, 10);
 

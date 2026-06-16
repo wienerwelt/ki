@@ -37,54 +37,110 @@ const getFormattedTimestamp = () => {
 
 
 // GET all users
-// GET all users
+// GET /api/admin/users (Erweiterte Feinsuche)
 exports.getAllUsers = async (req, res) => {
-    const { business_partner_id } = req.query;
+    // Extrahieren der spezifischen Suchfelder aus der Query
+    const { 
+        business_partner_id, 
+        first_name, 
+        last_name, 
+        email, 
+        organization_name,
+        limit = 50, 
+        page = 1 
+    } = req.query;
+    
     const { role: requesterRole, business_partner_id: requesterBpId } = req.user;
 
     try {
-        let query = `
+        let baseQuery = `
+            FROM users u
+            LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
+        `;
+        const queryParams = [];
+        let whereClauses = [];
+        let paramIndex = 1;
+
+        // --- 1. MANDANTENSPEZIFISCHER SCHUTZ (Mandantenabhängigkeit) ---
+        if (requesterRole === 'assistenz') {
+            // Eine Assistenz darf NIEMALS die Mandantengrenze überschreiten
+            whereClauses.push(`u.business_partner_id = $${paramIndex}`);
+            queryParams.push(requesterBpId);
+            paramIndex++;
+            whereClauses.push(`u.role != 'admin'`);
+        } else if (requesterRole === 'admin') {
+            // Admins können nach einem bestimmten Mandanten filtern oder 'all' wählen
+            if (business_partner_id && business_partner_id !== 'all') {
+                if (!isValidUUID(business_partner_id)) {
+                    return res.status(400).json({ message: 'Ungültiges Mandanten-ID-Format.' });
+                }
+                whereClauses.push(`u.business_partner_id = $${paramIndex}`);
+                queryParams.push(business_partner_id);
+                paramIndex++;
+            }
+        }
+
+        // --- 2. ERWEITERTE FEINSUCHE (Feld-spezifisch) ---
+        if (first_name && first_name.trim() !== '') {
+            whereClauses.push(`u.first_name ILIKE $${paramIndex}`);
+            queryParams.push(`%${first_name.trim()}%`);
+            paramIndex++;
+        }
+        if (last_name && last_name.trim() !== '') {
+            whereClauses.push(`u.last_name ILIKE $${paramIndex}`);
+            queryParams.push(`%${last_name.trim()}%`);
+            paramIndex++;
+        }
+        if (email && email.trim() !== '') {
+            whereClauses.push(`u.email ILIKE $${paramIndex}`);
+            queryParams.push(`%${email.trim()}%`);
+            paramIndex++;
+        }
+        if (organization_name && organization_name.trim() !== '') {
+            whereClauses.push(`u.organization_name ILIKE $${paramIndex}`);
+            queryParams.push(`%${organization_name.trim()}%`);
+            paramIndex++;
+        }
+
+        // Klauseln zusammenführen
+        if (whereClauses.length > 0) {
+            baseQuery += ` WHERE ${whereClauses.join(' AND ')}`;
+        }
+
+        // Trefferanzahl für die Klammer berechnen
+        const countQuery = `SELECT COUNT(*)::int AS total_count ${baseQuery}`;
+        const countResult = await db.query(countQuery, queryParams);
+        const totalCount = countResult.rows[0].total_count;
+
+        // Daten-Query mit Paginierung aufbauen
+        let dataQuery = `
             SELECT
                 u.id, u.username, u.first_name, u.last_name, u.organization_name, u.email, 
                 u.linkedin_url, u.login_count, u.membership_level,
                 u.role, u.is_active, u.active_until, u.created_at, u.updated_at, u.last_login_at,
                 u.profile_image_url, u.newsletter_opt_in,
                 bp.name AS business_partner_name, bp.id AS business_partner_id
-            FROM users u
-            LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
+            ${baseQuery}
+            ORDER BY u.last_name ASC, u.first_name ASC
         `;
-        const queryParams = [];
-        let whereClauses = [];
 
-        if (requesterRole === 'assistenz') {
-            whereClauses.push(`u.business_partner_id = $1`);
-            queryParams.push(requesterBpId);
-            whereClauses.push(`u.role != 'admin'`);
-        } else if (requesterRole === 'admin' && business_partner_id) {
-            if (!isValidUUID(business_partner_id)) {
-                return res.status(400).json({ message: 'Invalid business_partner_id format.' });
-            }
-            whereClauses.push(`u.business_partner_id = $1`);
-            queryParams.push(business_partner_id);
-        }
+        const parsedLimit = parseInt(limit, 10);
+        const parsedPage = parseInt(page, 10);
+        const offset = (parsedPage - 1) * parsedLimit;
 
-        if (whereClauses.length > 0) {
-            query += ` WHERE ${whereClauses.join(' AND ')}`;
-        }
-        query += ` ORDER BY u.last_name ASC, u.first_name ASC`;
+        dataQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        queryParams.push(parsedLimit, offset);
 
-        const limit = parseInt(req.query.limit, 10) || 50;
-        const page = parseInt(req.query.page, 10) || 1;
-        const offset = (page - 1) * limit;
+        const result = await db.query(dataQuery, queryParams);
+        
+        res.json({
+            users: result.rows,
+            total_count: totalCount
+        });
 
-        query += ` LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
-        queryParams.push(limit, offset);
-
-        const result = await db.query(query, queryParams);
-        res.json(result.rows);
     } catch (err) {
-        console.error('Error fetching all users:', err.message);
-        res.status(500).send('Server error');
+        console.error('Fehler bei der Feinsuche:', err.message);
+        res.status(500).send('Serverfehler');
     }
 };
 

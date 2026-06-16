@@ -5,7 +5,7 @@ import {
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow, IconButton, Tooltip,
     Dialog, DialogTitle, DialogContent, DialogActions, TextField, Grid, Select, MenuItem,
     FormControl, InputLabel, Chip, FormControlLabel, Switch, Divider, Tabs, Tab, Autocomplete, Checkbox,
-    TableSortLabel, Avatar
+    TableSortLabel, Avatar, alpha, useTheme
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -19,37 +19,29 @@ import {
     CheckBox as CheckBoxIcon,
     Search as SearchIcon,
     CalendarToday as CalendarTodayIcon,
-    LocationOn as LocationOnIcon
+    LocationOn as LocationOnIcon,
+    EditNotifications as EditNotificationsIcon
 } from '@mui/icons-material';
 
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
 
 // --- UTILS ---
-
-const sanitizeEmail = (email: string) => {
-    return email.toLowerCase().trim().replace(/\/+$/, '');
-};
+const sanitizeEmail = (email: string) => email.toLowerCase().trim().replace(/\/+$/, '');
 
 const formatUrl = (url: string) => {
     let cleaned = url.trim();
-    if (cleaned && !/^https?:\/\//i.test(cleaned)) {
-        cleaned = 'https://' + cleaned;
-    }
+    if (cleaned && !/^https?:\/\//i.test(cleaned)) cleaned = 'https://' + cleaned;
     return cleaned;
 };
 
 const formatPhoneNumber = (phone: string) => {
     let cleaned = phone.replace(/[^\d+]/g, ''); 
     if (cleaned.startsWith('00')) cleaned = '+' + cleaned.substring(2);
-    
     if (!cleaned.startsWith('+')) {
         if (cleaned.startsWith('0')) {
-            if (/^06(64|60|76|50|99)/.test(cleaned)) {
-                cleaned = '+43' + cleaned.substring(1);
-            } else {
-                cleaned = '+49' + cleaned.substring(1);
-            }
+            if (/^06(64|60|76|50|99)/.test(cleaned)) cleaned = '+43' + cleaned.substring(1);
+            else cleaned = '+49' + cleaned.substring(1);
         }
     }
     return cleaned;
@@ -123,7 +115,7 @@ function CustomTabPanel(props: TabPanelProps) {
 
 const AdminDirectoryPage: React.FC = () => {
     const { showSnackbar } = useSnackbar();
-
+    const theme = useTheme();
     const [providers, setProviders] = useState<any[]>([]);
     const [businessPartners, setBusinessPartners] = useState<any[]>([]);
     const [categories, setCategories] = useState<{id: string, name: string, name_lang?: string}[]>([]);
@@ -140,6 +132,10 @@ const AdminDirectoryPage: React.FC = () => {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogTab, setDialogTab] = useState(0); 
     const [isEditMode, setIsEditMode] = useState(false);
+
+    // NEU: Wir merken uns den originalen Zustand für den Dirty-Check!
+    const [originalProvider, setOriginalProvider] = useState<DirectoryProvider | null>(null);
+
     const [currentProvider, setCurrentProvider] = useState<DirectoryProvider>({
         name: '', description: '', website_url: '', contact_email: '', contact_phone: '',
         is_public: false, subscription_tier: 'free',
@@ -149,7 +145,6 @@ const AdminDirectoryPage: React.FC = () => {
     const [logoFile, setLogoFile] = useState<File | null>(null);
     const [deleteLogo, setDeleteLogo] = useState(false);
 
-    // Google Places Autocomplete State
     const [addressSearchLoading, setAddressSearchLoading] = useState(false);
     const [addressOptions, setAddressOptions] = useState<any[]>([]);
 
@@ -175,7 +170,7 @@ const AdminDirectoryPage: React.FC = () => {
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
-const handleGoogleImport = async () => {
+    const handleGoogleImport = async () => {
         if (!(currentProvider.name || '').trim() || (currentProvider.name || '').trim().length < 3) {
             showSnackbar('Bitte Firmennamen eingeben.', 'warning');
             return;
@@ -185,16 +180,37 @@ const handleGoogleImport = async () => {
             const res = await apiClient.get(`/api/admin/directory/google-fill?companyName=${encodeURIComponent(currentProvider.name)}`);
             const gData = res.data;
 
-            setCurrentProvider(prev => ({
-                ...prev,
-                name: gData.name || prev.name || '',
-                website_url: formatUrl(gData.website_url || prev.website_url || ''),
-                contact_phone: formatPhoneNumber(gData.contact_phone || prev.contact_phone || ''),
-                locations: gData.location ? [...(prev.locations || []), gData.location] : (prev.locations || [])
-            }));
-            showSnackbar('Daten importiert.', 'success');
+            setCurrentProvider(prev => {
+                let newLocations = [...(prev.locations || [])];
+                
+                // KORREKTUR: Überschreiben des ersten Standorts statt stumpfem Anhängen
+                if (gData.location) {
+                    if (newLocations.length === 0) {
+                        newLocations.push({ ...gData.location, is_headquarter: true });
+                    } else {
+                        // Wir überschreiben nur die Felder, die Google gefunden hat, behalten den Rest
+                        newLocations[0] = {
+                            ...newLocations[0],
+                            address: gData.location.address || newLocations[0].address,
+                            zip_code: gData.location.zip_code || newLocations[0].zip_code,
+                            city: gData.location.city || newLocations[0].city,
+                            country: gData.location.country || newLocations[0].country,
+                            latitude: gData.location.latitude || newLocations[0].latitude,
+                            longitude: gData.location.longitude || newLocations[0].longitude,
+                        };
+                    }
+                }
+
+                return {
+                    ...prev,
+                    name: gData.name || prev.name || '',
+                    website_url: formatUrl(gData.website_url || prev.website_url || ''),
+                    contact_phone: formatPhoneNumber(gData.contact_phone || prev.contact_phone || ''),
+                    locations: newLocations
+                };
+            });
+            showSnackbar('Daten aus Google geladen und eingefügt.', 'success');
         } catch (err: any) {
-            // HIER ÄNDERN: Zeigt die echte Backend-Fehlermeldung an
             const errorMsg = err.response?.data?.message || 'Fehler bei der Google-Suche.';
             showSnackbar(errorMsg, 'error');
         } finally {
@@ -245,6 +261,7 @@ const handleGoogleImport = async () => {
 
         if (logoFile) {
             URL.revokeObjectURL(URL.createObjectURL(logoFile));
+            formData.append('logo', logoFile); // NEU: Fehlendes 'logo' Append ergänzt
         }
         if (deleteLogo) formData.append('delete_logo', 'true');
 
@@ -256,9 +273,9 @@ const handleGoogleImport = async () => {
             }
             setDialogOpen(false);
             fetchData();
-            showSnackbar('Gespeichert.', 'success');
+            showSnackbar('Dienstleister erfolgreich gespeichert.', 'success');
         } catch (err: any) {
-            showSnackbar('Fehler beim Speichern.', 'error');
+            showSnackbar('Fehler beim Speichern des Dienstleisters.', 'error');
         }
     };
 
@@ -267,6 +284,48 @@ const handleGoogleImport = async () => {
         setOrder(isAsc ? 'desc' : 'asc');
         setOrderBy(property);
     };
+
+    // --- DIRTY STATE CHECKER ---
+    // Vergleicht den aktuellen Feldwert mit dem Original, um Änderungen farblich hervorzuheben
+    const getDirtySx = (field: keyof DirectoryProvider) => {
+        if (!isEditMode || !originalProvider) return {};
+        const isDirty = JSON.stringify(currentProvider[field]) !== JSON.stringify(originalProvider[field]);
+        if (isDirty) {
+            return {
+                bgcolor: 'rgba(255, 152, 0, 0.05)',
+                '& .MuiOutlinedInput-notchedOutline': { borderColor: '#ff9800', borderWidth: 2 },
+                '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#ed6c02', borderWidth: 2 },
+                '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: '#e65100', borderWidth: 2 }
+            };
+        }
+        return {};
+    };
+
+    const getLocationDirtySx = (idx: number, field: keyof ProviderLocation) => {
+        if (!isEditMode || !originalProvider) return {};
+        const origLoc = originalProvider.locations?.[idx];
+        const currLoc = currentProvider.locations?.[idx];
+        
+        // Neuer Standort, der noch nicht in der DB existiert = grün (Neu)
+        if (!origLoc && currLoc) {
+            return { 
+                bgcolor: 'rgba(76, 175, 80, 0.05)', 
+                '& .MuiOutlinedInput-notchedOutline': { borderColor: '#4caf50', borderWidth: 2 } 
+            };
+        }
+        if (!currLoc) return {};
+
+        // Geänderter Standort = orange
+        if (origLoc[field] !== currLoc[field]) {
+            return {
+                bgcolor: 'rgba(255, 152, 0, 0.05)',
+                '& .MuiOutlinedInput-notchedOutline': { borderColor: '#ff9800', borderWidth: 2 }
+            };
+        }
+        return {};
+    };
+
+    const isLogoDirty = !!logoFile || deleteLogo;
 
     const filteredAndSortedProviders = useMemo(() => {
         let result = [...providers];
@@ -287,7 +346,9 @@ const handleGoogleImport = async () => {
                 <Typography variant="h4">Branchenverzeichnis</Typography>
                 <Button variant="contained" startIcon={<AddIcon />} onClick={() => {
                     setIsEditMode(false);
-                    setCurrentProvider({ name: '', description: '', website_url: '', contact_email: '', contact_phone: '', is_public: false, subscription_tier: 'free', locations: [], categories: [], tags: [], mandant_settings: [] });
+                    const emptyState: DirectoryProvider = { name: '', description: '', website_url: '', contact_email: '', contact_phone: '', is_public: false, subscription_tier: 'free', locations: [], categories: [], tags: [], mandant_settings: [] };
+                    setCurrentProvider(emptyState);
+                    setOriginalProvider(null); // Bei Neu-Anlage gibt es keinen Dirty-State
                     setLogoFile(null);
                     setDeleteLogo(false);
                     setDialogTab(0);
@@ -314,7 +375,6 @@ const handleGoogleImport = async () => {
                     <Select value={bpFilter} label="Nach Partner filtern" onChange={e => setBpFilter(e.target.value)}>
                         <MenuItem value="all">Alle Partner</MenuItem>
                         {businessPartners.map(bp => {
-                            // Berechnet sofort die Anzahl der Einträge für diesen Mandanten
                             const pCount = providers.filter(p => p.mandant_settings?.some((m: any) => m.business_partner_id === bp.id)).length;
                             return <MenuItem key={bp.id} value={bp.id}>{bp.name} ({pCount})</MenuItem>;
                         })}
@@ -345,7 +405,6 @@ const handleGoogleImport = async () => {
 <Avatar 
     variant="rounded" 
     src={getBackendAssetUrl(p.logo_url)} 
-    // Falls das Bild nicht lädt, zeige Initialen
     children={!p.logo_url ? p.name.charAt(0) : undefined}
     sx={{ width: 40, height: 40, bgcolor: '#f0f0f0' }}
 />
@@ -400,7 +459,7 @@ const handleGoogleImport = async () => {
                                             <IconButton onClick={() => {
                                                 setIsEditMode(true);
                                                 apiClient.get(`/api/admin/directory/${p.id}`).then(res => {
-                                                    setCurrentProvider({
+                                                    const formattedData: DirectoryProvider = {
                                                         ...res.data,
                                                         name: res.data.name || '',
                                                         description: res.data.description || '',
@@ -411,7 +470,9 @@ const handleGoogleImport = async () => {
                                                         categories: res.data.categories || [],
                                                         tags: res.data.tags || [],
                                                         mandant_settings: res.data.mandant_settings || []
-                                                    });
+                                                    };
+                                                    setCurrentProvider(formattedData);
+                                                    setOriginalProvider(JSON.parse(JSON.stringify(formattedData))); // Tiefenkopie für Dirty Check
                                                     setLogoFile(null);
                                                     setDeleteLogo(false);
                                                     setDialogTab(0);
@@ -457,6 +518,16 @@ const handleGoogleImport = async () => {
                 </Tabs>
 
                 <DialogContent sx={{ minHeight: '50vh' }}>
+                    {/* INFO-TEXT FÜR ADMINS ZUM DIRTY-STATE */}
+                    {isEditMode && (
+                        <Box sx={{ mb: 3, p: 1.5, bgcolor: alpha(theme.palette.warning.main, 0.1), borderRadius: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <EditNotificationsIcon color="warning" fontSize="small" />
+                            <Typography variant="caption" color="warning.dark">
+                                Ungespeicherte Änderungen werden farblich orange hervorgehoben.
+                            </Typography>
+                        </Box>
+                    )}
+
                     <CustomTabPanel value={dialogTab} index={0}>
                         <Grid container spacing={3}>
                             <Grid item xs={12} md={8}>
@@ -467,6 +538,7 @@ const handleGoogleImport = async () => {
                                         value={currentProvider.name || ''} 
                                         onChange={e => setCurrentProvider({...currentProvider, name: e.target.value})} 
                                         onBlur={e => setCurrentProvider({...currentProvider, name: e.target.value.trim()})}
+                                        sx={getDirtySx('name')}
                                     />
                                     <Tooltip title="Sucht auf Google Maps nach Adresse, Webseite & Telefon">
                                         <span>
@@ -485,34 +557,53 @@ const handleGoogleImport = async () => {
 
                                 <Grid container spacing={2}>
                                     <Grid item xs={12} sm={6}>
-<TextField 
-    fullWidth 
-    label="E-Mail" 
-    value={currentProvider.contact_email || ''} 
-    onChange={e => setCurrentProvider({...currentProvider, contact_email: e.target.value})}
-    onBlur={e => setCurrentProvider({...currentProvider, contact_email: sanitizeEmail(e.target.value)})}
-/>
+                                        <TextField 
+                                            fullWidth 
+                                            label="E-Mail" 
+                                            value={currentProvider.contact_email || ''} 
+                                            onChange={e => setCurrentProvider({...currentProvider, contact_email: e.target.value})}
+                                            onBlur={e => setCurrentProvider({...currentProvider, contact_email: sanitizeEmail(e.target.value)})}
+                                            sx={getDirtySx('contact_email')}
+                                        />
                                     </Grid>
                                     <Grid item xs={12} sm={6}>
-<TextField 
-    fullWidth 
-    label="Telefon" 
-    value={currentProvider.contact_phone || ''} 
-    onChange={e => setCurrentProvider({...currentProvider, contact_phone: e.target.value})}
-    onBlur={e => setCurrentProvider({...currentProvider, contact_phone: formatPhoneNumber(e.target.value)})}
-/>
+                                        <TextField 
+                                            fullWidth 
+                                            label="Telefon" 
+                                            value={currentProvider.contact_phone || ''} 
+                                            onChange={e => setCurrentProvider({...currentProvider, contact_phone: e.target.value})}
+                                            onBlur={e => setCurrentProvider({...currentProvider, contact_phone: formatPhoneNumber(e.target.value)})}
+                                            sx={getDirtySx('contact_phone')}
+                                        />
                                     </Grid>
                                     <Grid item xs={12}>
-                                        <TextField fullWidth label="Webseite" value={currentProvider.website_url || ''} 
-                                            onChange={e => setCurrentProvider({...currentProvider, website_url: e.target.value})} 
-                                            onBlur={e => setCurrentProvider({...currentProvider, website_url: formatUrl(e.target.value)})}
-                                        />
+                                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                            <TextField 
+                                                fullWidth 
+                                                label="Webseite" 
+                                                value={currentProvider.website_url || ''} 
+                                                onChange={e => setCurrentProvider({...currentProvider, website_url: e.target.value})} 
+                                                onBlur={e => setCurrentProvider({...currentProvider, website_url: formatUrl(e.target.value)})}
+                                                sx={getDirtySx('website_url')}
+                                            />
+                                            {currentProvider.website_url && (
+                                            <Button 
+                                                variant="outlined" 
+                                                href={currentProvider.website_url} 
+                                                target="_blank" 
+                                                rel="noopener noreferrer"
+                                                sx={{ height: 56, whiteSpace: 'nowrap' }} 
+                                            >
+                                                Öffnen
+                                            </Button>
+                                            )}
+                                        </Box>
                                     </Grid>
                                     
                                     <Grid item xs={12}>
-                                        <Paper sx={{ p: 2, bgcolor: '#f8fafc', display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap', border: '1px solid #e2e8f0' }}>
+                                        <Paper sx={{ p: 2, bgcolor: '#f8fafc', display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap', border: '1px solid #e2e8f0', ...((JSON.stringify(currentProvider.is_public) !== JSON.stringify(originalProvider?.is_public) && isEditMode) ? { borderColor: 'orange', bgcolor: 'rgba(255, 152, 0, 0.05)' } : {}) }}>
                                             <FormControlLabel control={<Switch checked={currentProvider.is_public || false} onChange={e => setCurrentProvider({...currentProvider, is_public: e.target.checked})} />} label="Öffentlich sichtbar" />
-                                            <FormControl size="small" sx={{ minWidth: 200 }}>
+                                            <FormControl size="small" sx={{ minWidth: 200, ...getDirtySx('subscription_tier') }}>
                                                 <InputLabel>Abo-Stufe</InputLabel>
                                                 <Select value={currentProvider.subscription_tier || 'free'} label="Abo-Stufe" onChange={e => setCurrentProvider({...currentProvider, subscription_tier: e.target.value as any})}>
                                                     <MenuItem value="free">Free</MenuItem>
@@ -528,14 +619,14 @@ const handleGoogleImport = async () => {
                                             onChange={e => setCurrentProvider({...currentProvider, description: e.target.value.substring(0, 200)})} 
                                             onBlur={e => setCurrentProvider({...currentProvider, description: e.target.value.trim()})}
                                             helperText={`${(currentProvider.description || '').length}/200`} 
+                                            sx={getDirtySx('description')}
                                         />
                                     </Grid>
                                 </Grid>
                             </Grid>
 
                             <Grid item xs={12} md={4}>
-                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: '1px dashed #ccc', p: 3, borderRadius: 2, height: '100%', minHeight: 250 }}>
-                                    {/* LOGO VORSCHAU: Zeigt sofort die hochgeladene Datei ODER das bestehende Bild aus der DB */}
+                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: `2px dashed ${isLogoDirty ? 'orange' : '#ccc'}`, bgcolor: isLogoDirty ? 'rgba(255, 152, 0, 0.05)' : 'transparent', p: 3, borderRadius: 2, height: '100%', minHeight: 250 }}>
                                     {logoFile || (currentProvider.logo_url && !deleteLogo) ? (
                                         <Box sx={{ textAlign: 'center' }}>
                                             <img 
@@ -633,49 +724,60 @@ const handleGoogleImport = async () => {
                                         />
                                     </Grid>
                                     <Grid item xs={12} md={6}>
-                                        <TextField fullWidth label="Manuelle Straße & Hausnummer" size="small" value={loc.address || ''} onChange={e => {
-                                            const l = [...(currentProvider.locations || [])]; l[idx].address = e.target.value;
-                                            setCurrentProvider({...currentProvider, locations: l});
-                                        }} onBlur={e => {
-                                            const l = [...(currentProvider.locations || [])]; l[idx].address = e.target.value.trim();
-                                            setCurrentProvider({...currentProvider, locations: l});
-                                        }} />
+                                        <TextField fullWidth label="Manuelle Straße & Hausnummer" size="small" value={loc.address || ''} 
+                                            sx={getLocationDirtySx(idx, 'address')}
+                                            onChange={e => {
+                                                const l = [...(currentProvider.locations || [])]; l[idx].address = e.target.value;
+                                                setCurrentProvider({...currentProvider, locations: l});
+                                            }} onBlur={e => {
+                                                const l = [...(currentProvider.locations || [])]; l[idx].address = e.target.value.trim();
+                                                setCurrentProvider({...currentProvider, locations: l});
+                                            }} />
                                     </Grid>
                                     <Grid item xs={4} md={2}>
-                                        <TextField label="PLZ" size="small" value={loc.zip_code || ''} onChange={e => {
-                                            const l = [...(currentProvider.locations || [])]; l[idx].zip_code = e.target.value.trim();
-                                            setCurrentProvider({...currentProvider, locations: l});
+                                        <TextField label="PLZ" size="small" value={loc.zip_code || ''} 
+                                            sx={getLocationDirtySx(idx, 'zip_code')}
+                                            onChange={e => {
+                                                const l = [...(currentProvider.locations || [])]; l[idx].zip_code = e.target.value.trim();
+                                                setCurrentProvider({...currentProvider, locations: l});
                                         }} />
                                     </Grid>
                                     <Grid item xs={8} md={4}>
-                                        <TextField label="Stadt" size="small" fullWidth value={loc.city || ''} onChange={e => {
-                                            const l = [...(currentProvider.locations || [])]; l[idx].city = e.target.value;
-                                            setCurrentProvider({...currentProvider, locations: l});
-                                        }} onBlur={e => {
-                                            const l = [...(currentProvider.locations || [])]; l[idx].city = e.target.value.trim();
-                                            setCurrentProvider({...currentProvider, locations: l});
+                                        <TextField label="Stadt" size="small" fullWidth value={loc.city || ''} 
+                                            sx={getLocationDirtySx(idx, 'city')}
+                                            onChange={e => {
+                                                const l = [...(currentProvider.locations || [])]; l[idx].city = e.target.value;
+                                                setCurrentProvider({...currentProvider, locations: l});
+                                            }} onBlur={e => {
+                                                const l = [...(currentProvider.locations || [])]; l[idx].city = e.target.value.trim();
+                                                setCurrentProvider({...currentProvider, locations: l});
                                         }} />
                                     </Grid>
                                     <Grid item xs={12} md={4}>
-                                        <TextField label="Land (z.B. DE)" size="small" fullWidth value={loc.country || ''} onChange={e => {
+                                        <TextField label="Land (z.B. DE)" size="small" fullWidth value={loc.country || ''} 
+                                            sx={getLocationDirtySx(idx, 'country')}
+                                            onChange={e => {
                                             const l = [...(currentProvider.locations || [])]; l[idx].country = e.target.value.trim();
                                             setCurrentProvider({...currentProvider, locations: l});
                                         }} />
                                     </Grid>
                                     <Grid item xs={6} md={4}>
-                                        <TextField label="Lat" size="small" fullWidth type="number" inputProps={{ step: "any" }} value={loc.latitude || ''} onChange={e => {
+                                        <TextField label="Lat" size="small" fullWidth type="number" inputProps={{ step: "any" }} value={loc.latitude || ''} 
+                                            sx={getLocationDirtySx(idx, 'latitude')}
+                                            onChange={e => {
                                             const l = [...(currentProvider.locations || [])]; l[idx].latitude = parseFloat(e.target.value) || null;
                                             setCurrentProvider({...currentProvider, locations: l});
                                         }} />
                                     </Grid>
                                     <Grid item xs={6} md={4}>
-                                        <TextField label="Long" size="small" fullWidth type="number" inputProps={{ step: "any" }} value={loc.longitude || ''} onChange={e => {
+                                        <TextField label="Long" size="small" fullWidth type="number" inputProps={{ step: "any" }} value={loc.longitude || ''} 
+                                            sx={getLocationDirtySx(idx, 'longitude')}
+                                            onChange={e => {
                                             const l = [...(currentProvider.locations || [])]; l[idx].longitude = parseFloat(e.target.value) || null;
                                             setCurrentProvider({...currentProvider, locations: l});
                                         }} />
                                     </Grid>
 
-                                    {/* BUTTON FÜR MANUELLE GEO-BERECHNUNG */}
                                     <Grid item xs={12} sx={{ display: 'flex', justifyContent: 'flex-end', mt: -1 }}>
                                         <Button size="small" color="secondary" onClick={() => handleGeocodeManual(idx)}>
                                             📍 Koordinaten automatisch ermitteln
@@ -714,7 +816,7 @@ const handleGoogleImport = async () => {
                                     {option.name_lang || option.name}
                                 </li>
                             )}
-                            renderInput={(params) => <TextField {...params} label="Branchen auswählen" placeholder="Suchen..." />}
+                            renderInput={(params) => <TextField {...params} label="Branchen auswählen" placeholder="Suchen..." sx={getDirtySx('categories')} />}
                             sx={{ mb: 4 }}
                         />
 
@@ -736,7 +838,7 @@ const handleGoogleImport = async () => {
                                     {option.name}
                                 </li>
                             )}
-                            renderInput={(params) => <TextField {...params} label="Tags auswählen" placeholder="Suchen..." />}
+                            renderInput={(params) => <TextField {...params} label="Tags auswählen" placeholder="Suchen..." sx={getDirtySx('tags')} />}
                         />
                     </CustomTabPanel>
 
@@ -753,9 +855,13 @@ const handleGoogleImport = async () => {
                         {(currentProvider.mandant_settings || []).map((ms, idx) => {
                             const selectedBp = businessPartners.find(bp => bp.id === ms.business_partner_id);
                             const bpLabel = selectedBp ? `${selectedBp.name} Empfohlen` : 'Als Empfohlen markieren';
+                            
+                            // Check ob dieser Mandant-Eintrag schmutzig ist (grob über existenz im original)
+                            const origMs = originalProvider?.mandant_settings?.[idx];
+                            const isMsDirty = isEditMode && (!origMs || JSON.stringify(origMs) !== JSON.stringify(ms));
 
                             return (
-                                <Box key={idx} sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2, p: 2, bgcolor: '#f8fafc', borderRadius: 1, border: '1px solid #e2e8f0', flexWrap: 'wrap' }}>
+                                <Box key={idx} sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2, p: 2, bgcolor: isMsDirty ? 'rgba(255, 152, 0, 0.05)' : '#f8fafc', borderRadius: 1, border: isMsDirty ? '2px solid orange' : '1px solid #e2e8f0', flexWrap: 'wrap' }}>
                                     <FormControl sx={{ minWidth: 200, flexGrow: 1 }} size="small">
                                         <InputLabel>Mandant (Business Partner)</InputLabel>
                                         <Select value={ms.business_partner_id || ''} label="Mandant (Business Partner)" onChange={e => {

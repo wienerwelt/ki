@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Box, Typography, CircularProgress, Alert, Accordion, AccordionSummary, AccordionDetails,
-    List, ListItem, ListItemIcon, ListItemText, Divider, Chip
+    List, ListItem, ListItemIcon, ListItemText, Divider, Chip, alpha, useTheme
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import NewspaperIcon from '@mui/icons-material/Newspaper';
@@ -19,6 +19,7 @@ interface NewsArticle {
     source_name: string;
     published_at: string;
     competitor_name?: string;
+    summary?: string; 
 }
 
 interface AccountIntelligenceData {
@@ -44,6 +45,7 @@ const AccountIntelligenceWidget: React.FC<AccountIntelligenceWidgetProps> = ({
     config,
     icon: propsIcon,
 }) => {
+    const theme = useTheme();
     const [data, setData] = useState<AccountIntelligenceData[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -70,17 +72,68 @@ const AccountIntelligenceWidget: React.FC<AccountIntelligenceWidgetProps> = ({
     const renderNewsList = (articles: NewsArticle[], type: 'account' | 'competitor') => (
         <List dense disablePadding>
             {articles.map((article, index) => (
-                <ListItem key={index} button component="a" href={article.article_url} target="_blank" rel="noopener noreferrer">
-                    <ListItemIcon sx={{ minWidth: 36 }}>
-                        {type === 'account' ? <NewspaperIcon fontSize="small" /> : <TrackChangesIcon fontSize="small" />}
+                <ListItem 
+                    key={index} 
+                    button 
+                    component="a" 
+                    href={article.article_url} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    alignItems="flex-start" 
+                    sx={{ 
+                        py: 1.5, 
+                        borderBottom: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
+                        '&:last-child': { borderBottom: 'none' },
+                        '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.04) } 
+                    }}
+                >
+                    <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}>
+                        {type === 'account' 
+                            ? <NewspaperIcon fontSize="small" sx={{ color: 'primary.main' }} /> 
+                            : <TrackChangesIcon fontSize="small" sx={{ color: 'secondary.main' }} />
+                        }
                     </ListItemIcon>
                     <ListItemText
-                        primary={article.article_title}
+                        disableTypography 
+                        primary={
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700, lineHeight: 1.3, mb: 0.5, color: 'text.primary' }}>
+                                {article.article_title}
+                            </Typography>
+                        }
                         secondary={
-                            <>
-                                {article.competitor_name && <Chip label={article.competitor_name} size="small" sx={{ mr: 1 }} />}
-                                {article.source_name} - {new Date(article.published_at).toLocaleDateString('de-DE')}
-                            </>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                {/* KI Zusammenfassung */}
+                                {article.summary && (
+                                    <Typography 
+                                        variant="body2" 
+                                        color="text.secondary" 
+                                        sx={{ 
+                                            display: '-webkit-box', 
+                                            WebkitLineClamp: 2, 
+                                            WebkitBoxOrient: 'vertical', 
+                                            overflow: 'hidden',
+                                            lineHeight: 1.4
+                                        }}
+                                    >
+                                        {article.summary}
+                                    </Typography>
+                                )}
+                                
+                                {/* Metadaten (Chips & Datum) */}
+                                <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1, mt: 0.5 }}>
+                                    {article.competitor_name && (
+                                        <Chip 
+                                            label={article.competitor_name} 
+                                            size="small" 
+                                            variant="outlined"
+                                            sx={{ height: 20, fontSize: '0.7rem', fontWeight: 'bold' }} 
+                                        />
+                                    )}
+                                    <Typography variant="caption" sx={{ color: 'text.disabled', fontWeight: 600 }}>
+                                        {article.source_name} • {new Date(article.published_at).toLocaleDateString('de-DE')}
+                                    </Typography>
+                                </Box>
+                            </Box>
                         }
                     />
                 </ListItem>
@@ -95,39 +148,71 @@ const AccountIntelligenceWidget: React.FC<AccountIntelligenceWidgetProps> = ({
 
         return (
             <Box sx={{ overflowY: 'auto', p: 1 }}>
-                {data.map((account) => (
-                    <Accordion key={account.id} TransitionProps={{ unmountOnExit: true }}>
-                        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                            <Typography sx={{ fontWeight: 'bold' }}>{account.name}</Typography>
-                        </AccordionSummary>
-                        <AccordionDetails sx={{ p: 0 }}>
-                            {account.account_news.length > 0 && (
-                                <>
-                                    <Typography variant="subtitle2" sx={{ px: 2, pt: 1 }}>Aktuelles zum Kunden</Typography>
-                                    {renderNewsList(account.account_news, 'account')}
-                                </>
-                            )}
-                            {account.competitor_news.length > 0 && (
-                                <>
-                                    <Divider sx={{ my: 1 }} />
-                                    <Typography variant="subtitle2" sx={{ px: 2 }}>Aktivitäten der Wettbewerber</Typography>
-                                    {renderNewsList(account.competitor_news, 'competitor')}
-                                </>
-                            )}
-                            {account.account_news.length === 0 && account.competitor_news.length === 0 && (
-                                <Typography sx={{ px: 2, pb: 1 }} color="text.secondary">Keine aktuellen Aktivitäten gefunden.</Typography>
-                            )}
-                        </AccordionDetails>
-                    </Accordion>
-                ))}
+                {data.map((account, index) => {
+                    // NEU: Anzahl der Meldungen berechnen
+                    const totalNewsCount = account.account_news.length + account.competitor_news.length;
+                    
+                    return (
+                        <Accordion 
+                            key={account.id} 
+                            defaultExpanded={index === 0} 
+                            elevation={0}
+                            sx={{ 
+                                '&:before': { display: 'none' }, 
+                                border: `1px solid ${theme.palette.divider}`,
+                                borderRadius: '8px !important',
+                                mb: 1
+                            }}
+                        >
+                            <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ bgcolor: alpha(theme.palette.background.default, 0.5) }}>
+                                {/* NEU: Box-Wrapper für Titel und Badge */}
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                    <Typography sx={{ fontWeight: 800, color: 'text.primary' }}>{account.name}</Typography>
+                                    {totalNewsCount > 0 && (
+                                        <Chip 
+                                            label={totalNewsCount} 
+                                            size="small" 
+                                            color="primary" 
+                                            sx={{ height: 20, minWidth: 20, fontSize: '0.75rem', fontWeight: 'bold' }} 
+                                        />
+                                    )}
+                                </Box>
+                            </AccordionSummary>
+                            <AccordionDetails sx={{ p: 0 }}>
+                                {account.account_news.length > 0 && (
+                                    <>
+                                        <Typography variant="overline" color="primary" sx={{ px: 2, pt: 1, display: 'block', fontWeight: 'bold' }}>
+                                            Aktuelles zum Kunden
+                                        </Typography>
+                                        {renderNewsList(account.account_news, 'account')}
+                                    </>
+                                )}
+                                
+                                {account.competitor_news.length > 0 && (
+                                    <>
+                                        {account.account_news.length > 0 && <Divider />}
+                                        <Typography variant="overline" color="secondary" sx={{ px: 2, pt: 1, display: 'block', fontWeight: 'bold' }}>
+                                            Aktivitäten der Wettbewerber
+                                        </Typography>
+                                        {renderNewsList(account.competitor_news, 'competitor')}
+                                    </>
+                                )}
+                                
+                                {account.account_news.length === 0 && account.competitor_news.length === 0 && (
+                                    <Typography sx={{ px: 2, py: 2 }} variant="body2" color="text.secondary">
+                                        Keine aktuellen Aktivitäten gefunden.
+                                    </Typography>
+                                )}
+                            </AccordionDetails>
+                        </Accordion>
+                    );
+                })}
             </Box>
         );
     };
 
     return (
         <WidgetPaper
-            // FIX: Wir übergeben die Props explizit, statt {...props} zu nutzen.
-            // Dadurch wird 'businessPartner' nicht in das DOM-Element geschrieben.
             widgetId={widgetId}
             onDelete={onDelete}
             isRemovable={isRemovable}

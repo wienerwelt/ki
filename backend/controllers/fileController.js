@@ -253,9 +253,11 @@ exports.deleteFile = async (req, res) => {
 };
 
 // === Download zählen (optional) ===
+// === Download zählen & im Activity Log speichern ===
 exports.trackDownload = async (req, res) => {
   const { id: fileId } = req.params;
-  const { role, business_partner_id: requestingUserBpId } = req.user || {};
+  const { id: userId, username, role, business_partner_id: requestingUserBpId } = req.user || {};
+  const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip;
 
   try {
     let query;
@@ -265,15 +267,32 @@ exports.trackDownload = async (req, res) => {
       if (!requestingUserBpId) {
         return res.status(403).json({ message: "Kein Zugriff." });
       }
-      query = `UPDATE business_partner_files SET download_count = download_count + 1 WHERE id = $1 AND business_partner_id = $2;`;
+      query = `UPDATE business_partner_files SET download_count = download_count + 1 WHERE id = $1 AND business_partner_id = $2 RETURNING filename;`;
       queryParams.push(requestingUserBpId);
     } else {
-      query = `UPDATE business_partner_files SET download_count = download_count + 1 WHERE id = $1;`;
+      query = `UPDATE business_partner_files SET download_count = download_count + 1 WHERE id = $1 RETURNING filename;`;
     }
 
     const result = await db.query(query, queryParams);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Datei nicht gefunden oder Zugriff verweigert." });
+    }
+
+    const fileName = result.rows[0].filename;
+
+    // HIER NEU: Den Download zusätzlich mit Zeitstempel im Activity Log festhalten
+    if (userId) {
+        await db.query(`
+            INSERT INTO activity_log 
+            (user_id, username, action_type, target_id, target_type, status, ip_address, details)
+            VALUES ($1, $2, 'FILE_DOWNLOAD', $3, 'file', 'success', $4, $5)
+        `, [
+            userId, 
+            username || 'Unbekannt', 
+            fileId, 
+            ipAddress || null, 
+            JSON.stringify({ filename: fileName })
+        ]);
     }
 
     return res.status(200).json({ message: "Download erfasst." });

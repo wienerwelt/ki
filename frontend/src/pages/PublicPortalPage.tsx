@@ -13,9 +13,11 @@ import {
     Dialog,
     DialogContent,
     DialogTitle,
+    Divider, // NEU importiert
     Grid,
     IconButton,
     InputBase,
+    Link, // NEU importiert
     MenuItem,
     Paper,
     Rating,
@@ -218,16 +220,25 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         return counts;
     }, [publicProviders]);
 
-    const regionOptions = useMemo(() => {
-        const regions = new Set<string>();
+    // NEU: Zählt die Regionen analog zu den Kategorien
+    const regionCounts = useMemo(() => {
+        const counts: Record<string, number> = {};
         publicProviders.forEach((p) => {
+            const handledRegions = new Set<string>(); // Verhindert, dass ein Provider in der gleichen Stadt doppelt gezählt wird
             (p.locations || []).forEach((loc: any) => {
-                if (loc?.city) regions.add(loc.city);
-                else if (loc?.zip_code) regions.add(loc.zip_code);
+                const r = loc?.city || loc?.zip_code;
+                if (r && !handledRegions.has(r)) {
+                    counts[r] = (counts[r] || 0) + 1;
+                    handledRegions.add(r);
+                }
             });
         });
-        return Array.from(regions).sort((a, b) => a.localeCompare(b, 'de'));
+        return counts;
     }, [publicProviders]);
+
+    const regionOptions = useMemo(() => {
+        return Object.keys(regionCounts).sort((a, b) => a.localeCompare(b, 'de'));
+    }, [regionCounts]);
 
     const loginTheme = useMemo(() => createTheme({
         ...theme,
@@ -380,47 +391,93 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     }
 
 const renderProviderPreviewCard = (provider: any) => {
-        const loc = provider.locations?.[0];
-        return (
-            <Paper key={provider.id} elevation={0} sx={{ p: theme.spacing(2.5), borderRadius: 3, border: `1px solid ${alpha(darkBlue, 0.1)}`, bgcolor: '#fff', height: '100%', display: 'flex', flexDirection: 'column', transition: 'all 180ms ease', '&:hover': { transform: 'translateY(-3px)', boxShadow: `0 16px 34px ${alpha(darkBlue, 0.12)}`, borderColor: alpha(primaryColor, 0.35) } }}>
-                <Box sx={{ height: 44, display: 'flex', alignItems: 'center', mb: 1.5 }}>
-                    <ImageWithFallback src={provider.logo_url ? getAssetUrl(provider.logo_url) : null} alt={provider.name} fallbackColor={primaryColor} loading="lazy" sx={{ maxHeight: 40, maxWidth: 130, objectFit: 'contain' }} />
-                </Box>
-                <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.75 }}>
-                    <Typography variant="subtitle1" fontWeight={900} color={darkBlue} noWrap>{provider.name}</Typography>
-                    {provider.is_recommended && <VerifiedUserIcon sx={{ color: primaryColor, fontSize: 17 }} />}
-                </Stack>
-                <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.58), mb: 1 }}>{provider.category || 'Netzwerkpartner'}</Typography>
-                
-                {/* --- HIER DIE ÄNDERUNG --- */}
-                <Typography 
-                    variant="body2" 
-                    sx={{ 
-                        color: alpha(darkBlue, 0.78), 
-                        display: { xs: 'none', sm: '-webkit-box' }, // Auf Mobile (xs) ausblenden, ab sm anzeigen
-                        WebkitLineClamp: 3, 
-                        WebkitBoxOrient: 'vertical', 
-                        overflow: 'hidden', 
-                        minHeight: { xs: 0, sm: 60 }, // Auf Mobile Höhe auf 0 setzen, damit der Platz frei wird
-                        lineHeight: 1.45, 
-                        mb: { xs: 1, sm: 2 }         // Auf Mobile kleinerer Abstand
-                    }}
-                >
-                    {provider.description || 'Führender Anbieter im Branchen-Netzwerk.'}
+    const loc = provider.locations?.[0];
+    return (
+        <Paper 
+            key={provider.id} 
+            elevation={0} 
+            // NEU: Die gesamte Karte ist nun klickbar (App-Feeling)
+            onClick={() => { setSelectedTeaserProvider(provider); setTeaserTab(0); }}
+            sx={{ 
+                p: { xs: 2, sm: 2.5 }, // Auf Mobile Platz sparen
+                borderRadius: 3, 
+                border: `1px solid ${alpha(darkBlue, 0.1)}`, 
+                bgcolor: '#fff', 
+                height: '100%', 
+                display: 'flex', 
+                flexDirection: 'column', 
+                cursor: 'pointer', 
+                transition: 'all 180ms ease', 
+                '&:hover': { 
+                    transform: 'translateY(-3px)', 
+                    boxShadow: `0 16px 34px ${alpha(darkBlue, 0.12)}`, 
+                    borderColor: alpha(primaryColor, 0.35) 
+                } 
+            }}
+        >
+            <Box sx={{ height: 44, display: 'flex', alignItems: 'center', mb: 1.5 }}>
+                <ImageWithFallback src={provider.logo_url ? getAssetUrl(provider.logo_url) : null} alt={provider.name} fallbackColor={primaryColor} loading="lazy" sx={{ maxHeight: 40, maxWidth: 130, objectFit: 'contain' }} />
+            </Box>
+            
+            {/* NEU: minWidth: 0 und flexShrink verhindern das Überlappen bei langen Namen */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.5, minWidth: 0 }}>
+                <Typography variant="subtitle1" fontWeight={900} color={darkBlue} noWrap sx={{ flexShrink: 1 }}>
+                    {provider.name}
                 </Typography>
-
-                {loc?.city && (
-                    <Stack direction="row" alignItems="center" spacing={0.6} sx={{ color: alpha(darkBlue, 0.58), mb: 2 }}>
-                        <PlaceOutlinedIcon sx={{ fontSize: 16 }} />
-                        <Typography variant="caption" noWrap>{loc.city}{loc.zip_code ? `, ${loc.zip_code}` : ''}</Typography>
-                    </Stack>
+                {provider.is_recommended && (
+                    <VerifiedUserIcon sx={{ color: primaryColor, fontSize: 18, flexShrink: 0 }} />
                 )}
-                <Box sx={{ mt: 'auto' }}>
-                    <Button size="small" variant="outlined" onClick={() => { setSelectedTeaserProvider(provider); setTeaserTab(0); }} sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 800, color: darkBlue, borderColor: alpha(darkBlue, 0.24), '&:hover': { borderColor: primaryColor, bgcolor: alpha(primaryColor, 0.06) } }}>Profil ansehen</Button>
+            </Box>
+            
+            <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.58), mb: 1, display: 'block' }}>
+                {provider.category || 'Netzwerkpartner'}
+            </Typography>
+            
+            {/* NEU: Auf Mobile zeigen wir 2 Zeilen Text, auf Desktop 3 Zeilen. */}
+            <Typography 
+                variant="body2" 
+                sx={{ 
+                    color: alpha(darkBlue, 0.78), 
+                    display: '-webkit-box', 
+                    WebkitLineClamp: { xs: 2, sm: 3 }, 
+                    WebkitBoxOrient: 'vertical', 
+                    overflow: 'hidden', 
+                    lineHeight: 1.45, 
+                    mb: 2 
+                }}
+            >
+                {provider.description || 'Führender Anbieter im Branchen-Netzwerk.'}
+            </Typography>
+
+            {/* Fußzeile: Ort & CTA */}
+            <Box sx={{ mt: 'auto', pt: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', minWidth: 0 }}>
+                {loc?.city ? (
+                    <Stack direction="row" alignItems="center" spacing={0.5} sx={{ color: alpha(darkBlue, 0.58), minWidth: 0, pr: 1 }}>
+                        <PlaceOutlinedIcon sx={{ fontSize: 16, flexShrink: 0 }} />
+                        {/* NEU: PLZ vor Ort */}
+                        <Typography variant="caption" noWrap sx={{ fontWeight: 600 }}>
+                            {loc.zip_code ? `${loc.zip_code} ` : ''}{loc.city}
+                        </Typography>
+                    </Stack>
+                ) : <Box />}
+                
+                {/* NEU: Moderner, dezenter CTA, da die ganze Karte klickbar ist */}
+                <Box sx={{ 
+                    color: primaryColor, 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    fontSize: '0.85rem', 
+                    fontWeight: 800,
+                    gap: 0.5,
+                    flexShrink: 0
+                }}>
+                    <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>Profil</Box>
+                    <ArrowForwardIcon fontSize="small" />
                 </Box>
-            </Paper>
-        );
-    };
+            </Box>
+        </Paper>
+    );
+};
 
     if (isPageLoading) {
         return (
@@ -658,7 +715,7 @@ const renderProviderPreviewCard = (provider: any) => {
                             <Select fullWidth value={selectedRegion} onChange={(e) => setSelectedRegion(e.target.value as string)} IconComponent={KeyboardArrowDownIcon} sx={{ minHeight: 56, borderRadius: 2, bgcolor: '#fff', color: selectedRegion === 'all' ? alpha(darkBlue, 0.58) : darkBlue, fontWeight: 800, '& .MuiOutlinedInput-notchedOutline': { borderColor: alpha(darkBlue, 0.14) } }}>
                                 <MenuItem value="all">Region auswählen</MenuItem>
                                 {regionOptions.map((region) => (
-                                    <MenuItem key={region} value={region}>{region}</MenuItem>
+                                    <MenuItem key={region} value={region}>{region} ({regionCounts[region]})</MenuItem>
                                 ))}
                             </Select>
                         </Grid>
@@ -882,6 +939,76 @@ const renderProviderPreviewCard = (provider: any) => {
                         </Box>
                     </ThemeProvider>
                 </Box>
+
+                {/* --- FOOTER (NEU HINZUGEFÜGT) --- */}
+                <Box sx={{ mt: 8, mb: 4 }}>
+                    <Divider sx={{ my: 3 }} />
+                    <Stack spacing={1} alignItems="center">
+                        <Typography variant="body2" align="center" color="text.secondary">
+                            <Link
+                                href="https://www.mobiliti.at"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                underline="hover"
+                                sx={{ color: primaryColor }}
+                            >
+                                mobiliti.at
+                            </Link>{' '}
+                            Ihr smarter Überblick.
+                        </Typography>
+
+                        <Typography variant="caption" align="center" color="text.secondary">
+                            <Link
+                                href="https://www.mobiliti.at/impressum.html"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                underline="hover"
+                                sx={{ color: primaryColor }}
+                            >
+                                Impressum
+                            </Link>
+                            {' · '}
+                            <Link
+                                component="button"
+                                type="button"
+                                underline="hover"
+                                onClick={() => {
+                                    // Öffnet den Login-Dialog, wo man die Dokumente lesen kann
+                                    // Oder du kopierst die Legal-Dialog-Logik komplett in die PublicPortalPage
+                                    setLoginDialogOpen(true); 
+                                }}
+                                sx={{ color: primaryColor, verticalAlign: 'baseline' }}
+                            >
+                                Datenschutz
+                            </Link>
+                            {' · '}
+                            <Link
+                                component="button"
+                                type="button"
+                                underline="hover"
+                                onClick={() => setLoginDialogOpen(true)}
+                                sx={{ color: primaryColor, verticalAlign: 'baseline' }}
+                            >
+                                Nutzungsbedingungen
+                            </Link>
+                            {' · '}
+                            <Link
+                                component="button"
+                                type="button"
+                                underline="hover"
+                                onClick={() => setLoginDialogOpen(true)}
+                                sx={{ color: primaryColor, verticalAlign: 'baseline' }}
+                            >
+                                Disclaimer
+                            </Link>
+                            {' · '}
+                            <Link href="/cookie-settings" underline="hover" sx={{ color: primaryColor }}>
+                                Cookie-Einstellungen
+                            </Link>
+                        </Typography>
+                    </Stack>
+                </Box>
+
             </Container>
 
             {/* --- DIALOGE --- */}
@@ -905,26 +1032,34 @@ const renderProviderPreviewCard = (provider: any) => {
                 </DialogContent>
             </Dialog>
 
-            <Dialog open={!!selectedTeaserProvider} onClose={() => setSelectedTeaserProvider(null)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.08)}` } }}>
+<Dialog open={!!selectedTeaserProvider} onClose={() => setSelectedTeaserProvider(null)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.08)}`, m: { xs: 2, sm: 3 } } }}>
                 {selectedTeaserProvider && (
                     <>
-                        <DialogTitle sx={{ p: 3, pb: 0 }}>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', minWidth: 0 }}>
-                                    <Avatar sx={{ width: 64, height: 64, bgcolor: 'transparent' }}>
-                                        <ImageWithFallback src={selectedTeaserProvider.logo_url ? getAssetUrl(selectedTeaserProvider.logo_url) : null} alt={selectedTeaserProvider.name} fallbackColor={primaryColor} sx={{ width: 64, height: 64, objectFit: 'contain' }} />
+                        <DialogTitle sx={{ p: { xs: 2, sm: 3 }, pb: 0 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
+                                <Box sx={{ display: 'flex', gap: { xs: 1.5, sm: 2 }, alignItems: 'flex-start', minWidth: 0 }}>
+                                    {/* Avatar auf Mobile leicht verkleinert, flexShrink verhindert Stauchen */}
+                                    <Avatar sx={{ width: { xs: 48, sm: 64 }, height: { xs: 48, sm: 64 }, bgcolor: 'transparent', flexShrink: 0 }}>
+                                        <ImageWithFallback src={selectedTeaserProvider.logo_url ? getAssetUrl(selectedTeaserProvider.logo_url) : null} alt={selectedTeaserProvider.name} fallbackColor={primaryColor} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                                     </Avatar>
                                     <Box sx={{ minWidth: 0 }}>
-                                        <Typography variant="h5" color={darkBlue} fontWeight={950} noWrap>{selectedTeaserProvider.name}</Typography>
-                                        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
-                                            {selectedTeaserProvider.category && <Chip label={selectedTeaserProvider.category} size="small" sx={{ bgcolor: alpha(primaryColor, 0.08), color: primaryColor, fontWeight: 900 }} />}
-                                            {selectedTeaserProvider.is_recommended && <Chip icon={<VerifiedUserIcon fontSize="small" />} label="Offizieller Partner" size="small" sx={{ bgcolor: alpha(primaryColor, 0.14), color: primaryColor, fontWeight: 900 }} />}
+                                        {/* KORREKTUR: noWrap entfernt, damit lange Namen 2-zeilig werden dürfen. Schrift auf Mobile etwas kleiner. */}
+                                        <Typography variant="h5" color={darkBlue} fontWeight={950} sx={{ fontSize: { xs: '1.3rem', sm: '1.5rem' }, lineHeight: 1.2, mb: 0.5 }}>
+                                            {selectedTeaserProvider.name}
+                                        </Typography>
+                                        
+                                        {/* KORREKTUR: flexWrap hinzugefügt, damit die Chips umbrechen anstatt abgeschnitten zu werden */}
+                                        <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.5} alignItems="center" sx={{ mt: 0.5 }}>
+                                            {selectedTeaserProvider.category && <Chip label={selectedTeaserProvider.category} size="small" sx={{ bgcolor: alpha(primaryColor, 0.08), color: primaryColor, fontWeight: 900, height: 24 }} />}
+                                            {selectedTeaserProvider.is_recommended && <Chip icon={<VerifiedUserIcon fontSize="small" />} label="Offizieller Partner" size="small" sx={{ bgcolor: alpha(primaryColor, 0.14), color: primaryColor, fontWeight: 900, height: 24 }} />}
                                         </Stack>
                                     </Box>
                                 </Box>
-                                <IconButton onClick={() => setSelectedTeaserProvider(null)}><CloseIcon /></IconButton>
+                                {/* Close-Button rückt auf Mobile etwas nach rechts oben, um Platz zu sparen */}
+                                <IconButton onClick={() => setSelectedTeaserProvider(null)} sx={{ flexShrink: 0, m: -1 }}><CloseIcon /></IconButton>
                             </Box>
-                            <Tabs value={teaserTab} onChange={(_, val) => setTeaserTab(val)} variant="fullWidth" sx={{ mt: 3, '& .MuiTab-root': { color: alpha(darkBlue, 0.56), fontWeight: 900 }, '& .Mui-selected': { color: primaryColor } }} TabIndicatorProps={{ style: { backgroundColor: primaryColor } }}>
+                            
+                            <Tabs value={teaserTab} onChange={(_, val) => setTeaserTab(val)} variant="fullWidth" sx={{ mt: 3, '& .MuiTab-root': { color: alpha(darkBlue, 0.56), fontWeight: 900, px: 1 }, '& .Mui-selected': { color: primaryColor } }} TabIndicatorProps={{ style: { backgroundColor: primaryColor } }}>
                                 <Tab label="Übersicht & Kontakt" />
                                 <Tab label={`Bewertungen (${selectedTeaserProvider.review_count || 0})`} />
                             </Tabs>
@@ -932,41 +1067,54 @@ const renderProviderPreviewCard = (provider: any) => {
 
                         <DialogContent sx={{ p: 0 }}>
                             {teaserTab === 0 && (
-                                <Box sx={{ p: 3 }}>
+                                <Box sx={{ p: { xs: 2, sm: 3 } }}>
                                     <Typography variant="body2" sx={{ color: alpha(darkBlue, 0.78), mb: 3, lineHeight: 1.65 }}>
                                         {selectedTeaserProvider.description || 'Keine weitere Beschreibung vorhanden.'}
                                     </Typography>
-                                    <Paper sx={{ p: 2, bgcolor: alpha(primaryColor, 0.04), borderRadius: 3, border: `1px solid ${alpha(primaryColor, 0.12)}` }} elevation={0}>
-{selectedTeaserProvider.website_url && (
-    <Box 
-        component="a" 
-        href={selectedTeaserProvider.website_url.startsWith('http') ? selectedTeaserProvider.website_url : `https://${selectedTeaserProvider.website_url}`} 
-        target="_blank" 
-        rel="noopener noreferrer"
-        sx={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: 1.5, 
-            mb: 1, 
-            color: primaryColor, // Nutzt jetzt die Markenfarbe, um Interaktivität zu signalisieren
-            textDecoration: 'none',
-            '&:hover': { textDecoration: 'underline' }
-        }}
-    >
-        <LanguageIcon fontSize="small" /> 
-        <Typography variant="body2">{selectedTeaserProvider.website_url}</Typography>
-    </Box>
-)}
+                                    
+                                    <Paper sx={{ p: { xs: 1.5, sm: 2 }, bgcolor: alpha(primaryColor, 0.04), borderRadius: 3, border: `1px solid ${alpha(primaryColor, 0.12)}` }} elevation={0}>
+                                        {selectedTeaserProvider.website_url && (
+                                            <Box 
+                                                component="a" 
+                                                href={selectedTeaserProvider.website_url.startsWith('http') ? selectedTeaserProvider.website_url : `https://${selectedTeaserProvider.website_url}`} 
+                                                target="_blank" 
+                                                rel="noopener noreferrer"
+                                                sx={{ 
+                                                    display: 'flex', 
+                                                    alignItems: 'flex-start', // Icon oben ausrichten falls Text umbricht
+                                                    gap: 1.5, 
+                                                    mb: 1.5, 
+                                                    color: primaryColor,
+                                                    textDecoration: 'none',
+                                                    '&:hover': { textDecoration: 'underline' }
+                                                }}
+                                            >
+                                                <LanguageIcon fontSize="small" sx={{ mt: 0.2, flexShrink: 0 }} /> 
+                                                {/* KORREKTUR: wordBreak erlaubt das Umbrechen langer URLs wie im Screenshot */}
+                                                <Typography variant="body2" sx={{ wordBreak: 'break-word', lineHeight: 1.3 }}>
+                                                    {selectedTeaserProvider.website_url}
+                                                </Typography>
+                                            </Box>
+                                        )}
+                                        
                                         {selectedTeaserProvider.contact_email && (
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, color: alpha(darkBlue, 0.72) }}>
-                                                <EmailIcon fontSize="small" /> <Typography variant="body2">{selectedTeaserProvider.contact_email}</Typography>
+                                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, mb: 1.5, color: alpha(darkBlue, 0.72) }}>
+                                                <EmailIcon fontSize="small" sx={{ mt: 0.2, flexShrink: 0 }} /> 
+                                                <Typography variant="body2" sx={{ wordBreak: 'break-all', lineHeight: 1.3 }}>
+                                                    {selectedTeaserProvider.contact_email}
+                                                </Typography>
                                             </Box>
                                         )}
+                                        
                                         {selectedTeaserProvider.contact_phone && (
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, color: alpha(darkBlue, 0.72) }}>
-                                                <PhoneIcon fontSize="small" /> <Typography variant="body2">{selectedTeaserProvider.contact_phone}</Typography>
+                                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, color: alpha(darkBlue, 0.72) }}>
+                                                <PhoneIcon fontSize="small" sx={{ mt: 0.2, flexShrink: 0 }} /> 
+                                                <Typography variant="body2" sx={{ wordBreak: 'break-word', lineHeight: 1.3 }}>
+                                                    {selectedTeaserProvider.contact_phone}
+                                                </Typography>
                                             </Box>
                                         )}
+                                        
                                         {!selectedTeaserProvider.website_url && !selectedTeaserProvider.contact_email && !selectedTeaserProvider.contact_phone && (
                                             <Typography variant="body2" color="text.secondary">Kontaktinformationen sind nur für Mitglieder einsehbar oder wurden nicht hinterlegt.</Typography>
                                         )}
@@ -975,13 +1123,13 @@ const renderProviderPreviewCard = (provider: any) => {
                                     {selectedTeaserProvider.locations?.[0]?.latitude && (
                                         <Box sx={{ mt: 3 }}>
                                             <Typography variant="subtitle2" color={darkBlue} fontWeight={800} mb={1}>Standort</Typography>
-                                            <Box ref={mapContainerRef} sx={{ height: 220, borderRadius: 3, bgcolor: alpha(primaryColor, 0.08), overflow: 'hidden', border: `1px solid ${alpha(darkBlue, 0.08)}` }} />
+                                            <Box ref={mapContainerRef} sx={{ height: 200, borderRadius: 3, bgcolor: alpha(primaryColor, 0.08), overflow: 'hidden', border: `1px solid ${alpha(darkBlue, 0.08)}`, zIndex: 0 }} />
                                         </Box>
                                     )}
                                 </Box>
                             )}
                             {teaserTab === 1 && (
-                                <Box sx={{ p: 3 }}>
+                                <Box sx={{ p: { xs: 2, sm: 3 } }}>
                                     <Box sx={{ position: 'relative', borderRadius: 3, overflow: 'hidden', border: `1px solid ${alpha(darkBlue, 0.08)}` }}>
                                         <Box sx={{ filter: 'blur(8px)', opacity: 0.5, pointerEvents: 'none', userSelect: 'none', p: 3, bgcolor: alpha(darkBlue, 0.03) }}>
                                             <Typography variant="subtitle2" color={darkBlue} mb={2} fontWeight={900}>Community Bewertungen</Typography>
@@ -990,11 +1138,11 @@ const renderProviderPreviewCard = (provider: any) => {
                                             <Typography variant="subtitle2" color={darkBlue} mb={2} fontWeight={900}>Interne Notizen & Konditionen</Typography>
                                             <Box sx={{ height: 62, width: '100%', bgcolor: alpha(darkBlue, 0.12), borderRadius: 1 }} />
                                         </Box>
-                                        <Box sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(to bottom, rgba(255,255,255,0.3), rgba(255,255,255,0.96))', p: 4, textAlign: 'center' }}>
-                                            <LockIcon sx={{ fontSize: 48, color: primaryColor, mb: 2 }} />
+                                        <Box sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(to bottom, rgba(255,255,255,0.3), rgba(255,255,255,0.96))', p: { xs: 2, sm: 4 }, textAlign: 'center' }}>
+                                            <LockIcon sx={{ fontSize: 40, color: primaryColor, mb: 1.5 }} />
                                             <Typography variant="h6" color={darkBlue} fontWeight={950} gutterBottom>Exklusive Insights</Typography>
                                             <Typography variant="body2" sx={{ color: alpha(darkBlue, 0.72), mb: 3, maxWidth: 330 }}>Melden Sie sich an, um echte Community-Erfahrungen, interne Konditionen und erweiterte Kontaktdaten zu lesen.</Typography>
-                                            <Button variant="contained" onClick={() => { setSelectedTeaserProvider(null); handleLoginCta(); }} sx={{ bgcolor: primaryColor, color: '#fff', fontWeight: 950, borderRadius: 2, px: 4, py: 1.4, textTransform: 'none' }}>
+                                            <Button variant="contained" onClick={() => { setSelectedTeaserProvider(null); handleLoginCta(); }} sx={{ bgcolor: primaryColor, color: '#fff', fontWeight: 950, borderRadius: 2, px: 4, py: 1.2, textTransform: 'none' }}>
                                                 Jetzt einloggen
                                             </Button>
                                         </Box>

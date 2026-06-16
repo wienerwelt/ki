@@ -127,6 +127,7 @@ async function callGoogleGemini(prompt, model = 'gemini-1.5-flash', options = {}
  * @param {string} prompt - Der auszuführende Text
  * @param {object} options - Zusätzliche Parameter (wie responseFormat)
  */
+
 async function executePrompt(provider, prompt, options = {}) {
     console.log(`[AI Service] Executing prompt with provider: ${provider}${options.responseFormat?.type === 'json_object' ? ' (JSON Mode)' : ''}`);
     
@@ -135,6 +136,8 @@ async function executePrompt(provider, prompt, options = {}) {
             return callOpenAI(prompt, 'gpt-4', options);
         case 'OpenAI GPT-4o':
             return callOpenAI(prompt, 'gpt-4o', options);
+        case 'OpenAI GPT-4o-mini':
+            return callOpenAI(prompt, 'gpt-4o-mini', options);
         case 'OpenAI GPT-3.5':
              return callOpenAI(prompt, 'gpt-3.5-turbo', options);            
         case 'Google Gemini':

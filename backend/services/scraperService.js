@@ -316,23 +316,58 @@ async function _processFundingXmlFeed(xmlContent, rule, jobId) {
     return itemsEnqueued;
 }
 
-async function extractTextFromUrl(url) {
+async function extractTextFromUrl(url, jobId = null) {
     if (!url) {
-        console.error('extractTextFromUrl wurde ohne URL aufgerufen.');
+        console.error('[Scraper] extractTextFromUrl wurde ohne URL aufgerufen.');
         return null;
     }
+
+    let htmlContent = null;
+
+    // VERSUCH 1: Schneller Download über Axios
     try {
         const response = await axios.get(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' },
-            timeout: 20000,
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'de,de-DE;q=0.8,en-US;q=0.5,en;q=0.3',
+                'Cache-Control': 'no-cache'
+            },
+            timeout: 15000,
             responseType: 'text'
         });
-        const { textContent } = await _extractDataFromHtml(response.data, url);
-        return textContent;
+        htmlContent = response.data;
     } catch (error) {
-        console.error(`Fehler beim Extrahieren des Textes von ${url}:`, error.message);
-        return null;
+        const status = error.response ? error.response.status : 'Netzwerk/Timeout';
+        console.warn(`[Scraper] Axios-Download blockiert für ${url} (Status: ${status}). Starte Puppeteer-Fallback...`);
+        if (jobId) await logToDb(jobId, 'WARN', `Axios blockiert (${status}) für ${url}. Starte Puppeteer-Fallback.`);
     }
+
+    // VERSUCH 2: Fallback auf Puppeteer (Stealth), falls Axios gescheitert ist
+    if (!htmlContent) {
+        try {
+            // Aufruf der bestehenden Puppeteer-Funktion (ohne waitForSelector)
+            htmlContent = await _fetchContentWithPuppeteer(url, null, jobId);
+        } catch (puppeteerError) {
+            console.error(`[Scraper] Puppeteer-Fallback fehlgeschlagen für ${url}:`, puppeteerError.message);
+            if (jobId) await logToDb(jobId, 'ERROR', `Puppeteer-Fallback fehlgeschlagen für ${url}: ${puppeteerError.message}`);
+            return null; // Wenn beides fehlschlägt, haben wir keine Chance
+        }
+    }
+
+    // HTML VERARBEITEN (Egal aus welcher der beiden Quellen es stammt)
+    if (htmlContent) {
+        try {
+            const { textContent } = await _extractDataFromHtml(htmlContent, url);
+            return textContent;
+        } catch (extractError) {
+            console.error(`[Scraper] Readability-Fehler beim Extrahieren des Textes für ${url}:`, extractError.message);
+            if (jobId) await logToDb(jobId, 'WARN', `Readability konnte keinen Text aus ${url} extrahieren.`);
+            return null;
+        }
+    }
+
+    return null;
 }
 
 
@@ -1063,57 +1098,55 @@ async function _ytVideosListBulk(jobId, videoIds) {
 async function processNewsKeywordSearch(jobData) {
     const { search_term, account_id, competitor_name } = jobData;
 
-    if (!search_term || !account_id) {
-        console.error('[NewsSearch] Job übersprungen: search_term oder account_id fehlen.');
-        return 0;
-    }
+    if (!search_term || !account_id) return 0;
 
-    console.log(`[NewsSearch] Starte Google-Suche für "${search_term}" im Kontext von Account ${account_id}`);
+    console.log(`[NewsSearch] Starte Google-Suche für "${search_term}" (Account ${account_id})`);
     const searchResults = await searchGoogle(`"${search_term}"`, { sortByDate: true, language: 'lr=lang_de' });
 
-    if (!searchResults || searchResults.length === 0) {
-        console.log(`[NewsSearch] Keine neuen Google-Ergebnisse für "${search_term}" gefunden.`);
-        return 0;
-    }
+    if (!searchResults || searchResults.length === 0) return 0;
 
     let itemsInserted = 0;
-    for (const result of searchResults) {
-        try {
-            const articleText = await extractTextFromUrl(result.link);
 
-            // NEUE ÜBERPRÜFUNG: Nur fortfahren, wenn der Text existiert UND der Suchbegriff enthalten ist.
-            if (articleText && articleText.toLowerCase().includes(search_term.toLowerCase())) {
-                
-                let articleSummary = await getSummaryForArticle(articleText, result.link);
+    // PARALLELE VERARBEITUNG: Alle 5 URLs gleichzeitig anfragen
+    const processPromises = searchResults.map(async (result) => {
+        const articleText = await extractTextFromUrl(result.link);
 
-                const insertResult = await db.query(
-                    `INSERT INTO business_partner_tracked_articles 
-                        (account_id, competitor_name, article_title, article_url, source_name, published_at, summary)
-                     VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-                     ON CONFLICT (account_id, article_url) DO NOTHING`,
-                    [
-                        account_id,
-                        competitor_name || null,
-                        result.title,
-                        result.link,
-                        new URL(result.link).hostname,
-                        articleSummary
-                    ]
-                );
+        if (articleText && articleText.toLowerCase().includes(search_term.toLowerCase())) {
+            const articleSummary = await getSummaryForArticle(articleText, result.link);
 
-                if (insertResult.rowCount > 0) {
-                    itemsInserted++;
-                }
+            const insertResult = await db.query(
+                `INSERT INTO business_partner_tracked_articles 
+                    (account_id, competitor_name, article_title, article_url, source_name, published_at, summary)
+                 VALUES ($1, $2, $3, $4, $5, NOW(), $6)
+                 ON CONFLICT (account_id, article_url) DO NOTHING`,
+                [
+                    account_id,
+                    competitor_name || null,
+                    result.title,
+                    result.link,
+                    new URL(result.link).hostname,
+                    articleSummary
+                ]
+            );
 
-            } else {
-                console.log(`[Relevance Check] Artikel übersprungen: "${result.link}" enthält den Begriff "${search_term}" nicht.`);
-            }
-        } catch (dbError) {
-            console.error(`[NewsSearch] Fehler beim Verarbeiten des Artikels "${result.link}":`, dbError.message);
+            if (insertResult.rowCount > 0) return 1;
+        } else {
+            console.log(`[Relevance Check] Übersprungen: "${result.link}" enthält "${search_term}" nicht.`);
         }
-    }
+        return 0;
+    });
 
-    console.log(`[NewsSearch] ${itemsInserted} neue und verifizierte Artikel für "${search_term}" gespeichert.`);
+    // Warten, bis alle 5 Artikel fertig sind (egal ob erfolgreich oder mit Fehler)
+    const outcomes = await Promise.allSettled(processPromises);
+    
+    // Erfolgreiche Inserts zusammenzählen
+    itemsInserted = outcomes.reduce((sum, outcome) => {
+        if (outcome.status === 'fulfilled') return sum + outcome.value;
+        console.error(`[NewsSearch] Fehler bei Parallelverarbeitung:`, outcome.reason.message);
+        return sum;
+    }, 0);
+
+    console.log(`[NewsSearch] ${itemsInserted} neue Artikel für "${search_term}" gespeichert.`);
     return itemsInserted;
 }
 
@@ -1127,10 +1160,10 @@ async function getSummaryForArticle(articleText, articleUrl) {
 
     const prompt = `Fasse den folgenden Artikeltext in 3-5 prägnanten Stichpunkten auf Deutsch zusammen. Gib nur die Stichpunkte aus, ohne Einleitung oder Fazit. TEXT: """${articleText}"""`;
 
-    await logActivity({ actionType: 'AI_SUMMARIZATION_START', status: 'info', details: { url: articleUrl, model: 'gpt-3.5-turbo' }, username: 'System' });
+    await logActivity({ actionType: 'AI_SUMMARIZATION_START', status: 'info', details: { url: articleUrl, model: 'gpt-4o-mini' }, username: 'System' });
 
     try {
-        const { content: summary, usage, model } = await callOpenAI(prompt, 'gpt-3.5-turbo');
+        const { content: summary, usage, model } = await callOpenAI(prompt, 'gpt-4o-mini');
         await logActivity({
             actionType: 'AI_SUMMARIZATION_SUCCESS', status: 'success',
             details: { url: articleUrl, model, tokenUsage: usage, summaryLength: summary.length },

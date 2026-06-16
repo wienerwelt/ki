@@ -1,3 +1,4 @@
+// frontend/src/pages/AdminScrapedContentPage.tsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
@@ -117,10 +118,17 @@ const AdminScrapedContentPage: React.FC = () => {
                 apiClient.get('/api/admin/tags', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/admin/scraped-content/regions', { headers: { 'x-auth-token': token } })
             ]);
-            setSourceIdentifierOptions(rulesRes.data);
-            setAllCategories(categoriesRes.data);
-            setAllTags(tagsRes.data);
-            setAllRegions(regionsRes.data);
+            
+            // FIX 1: Arrays absichern
+            setSourceIdentifierOptions(Array.isArray(rulesRes.data) ? rulesRes.data : []);
+            setAllCategories(Array.isArray(categoriesRes.data) ? categoriesRes.data : []);
+            setAllRegions(Array.isArray(regionsRes.data) ? regionsRes.data : []);
+
+            // FIX 2: Wenn das Backend ein Array aus reinen Strings ['Tag1', 'Tag2'] sendet, 
+            // formatieren wir es hier zu Objekten um, damit das MUI Autocomplete nicht abstürzt.
+            const fetchedTags = Array.isArray(tagsRes.data) ? tagsRes.data : [];
+            setAllTags(fetchedTags.map((t: any) => typeof t === 'string' ? { id: t, name: t } : t));
+            
         } catch (err: any) {
              setError(err.response?.data?.message || 'Fehler beim Laden der Stammdaten.');
         }
@@ -142,7 +150,10 @@ const AdminScrapedContentPage: React.FC = () => {
             if (categoryFilter) params.append('category_id', categoryFilter); 
 
             const contentRes = await apiClient.get(`/api/admin/scraped-content?${params.toString()}`, { headers: { 'x-auth-token': token } });
-            const { data, total } = contentRes.data;
+            
+            // FIX 3: Falls data kein Array ist (z.B. Fehler vom Server), fallback auf leeres Array
+            const data = Array.isArray(contentRes.data?.data) ? contentRes.data.data : [];
+            const total = contentRes.data?.total || 0;
 
             setContent(prev => replace ? data : [...prev, ...data]);
             setTotalCount(total);
@@ -201,9 +212,9 @@ const AdminScrapedContentPage: React.FC = () => {
         }
         setEditingContent(item);
         setFormState({
-            source_identifier: item.source_identifier,
-            original_url: item.original_url,
-            title: item.title,
+            source_identifier: item.source_identifier || '',
+            original_url: item.original_url || '',
+            title: item.title || '',
             summary: item.summary || '',
             full_text: item.full_text || '',
             published_date: item.published_date ? new Date(item.published_date).toISOString().split('T')[0] : '',
@@ -291,12 +302,14 @@ const AdminScrapedContentPage: React.FC = () => {
     const handleClearFilter = () => { navigate('/admin/scraped-content'); };
 
     const sortedAndFilteredContent = useMemo(() => {
-        let filtered = [...content];
+        // FIX 4: Sicherstellen, dass content immer iterierbar ist
+        let filtered = Array.isArray(content) ? [...content] : [];
         if (searchTerm) {
             const lowercasedFilter = searchTerm.toLowerCase();
-            filtered = content.filter(item =>
-                item.title.toLowerCase().includes(lowercasedFilter) ||
-                item.source_identifier.toLowerCase().includes(lowercasedFilter) ||
+            filtered = filtered.filter(item =>
+                // FIX 5: Optionals Chaining (?.) bei Strings, falls DB null liefert (z.B. bei Traffic)
+                (item.title?.toLowerCase() || '').includes(lowercasedFilter) ||
+                (item.source_identifier?.toLowerCase() || '').includes(lowercasedFilter) ||
                 (item.summary?.toLowerCase() || '').includes(lowercasedFilter) ||
                 (item.category?.toLowerCase() || '').includes(lowercasedFilter)
             );
@@ -345,7 +358,8 @@ const AdminScrapedContentPage: React.FC = () => {
         }
     };
 
-    const contentCategories = useMemo(() => allCategories.filter(c => c.category_type === 'content'), [allCategories]);
+    // FIX 6: Absichern, falls allCategories nicht existiert
+    const contentCategories = useMemo(() => (Array.isArray(allCategories) ? allCategories : []).filter(c => c.category_type === 'content'), [allCategories]);
 
     return (
         <DashboardLayout>
@@ -353,7 +367,7 @@ const AdminScrapedContentPage: React.FC = () => {
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, flexWrap: 'wrap', gap: 2 }}>
                     <Box>
                         <Typography variant="h4" component="h1">Alle Inhalte ({totalCount})</Typography>
-                        {content.length < totalCount && (
+                        {(Array.isArray(content) && content.length < totalCount) && (
                             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                                 Zeigt {content.length} von {totalCount} Einträgen. Klicken Sie auf "Mehr laden", um alle Ergebnisse zu sehen.
                             </Typography>
@@ -391,7 +405,7 @@ const AdminScrapedContentPage: React.FC = () => {
                         <Grid item xs={6} sm={3} md={2}>
                             <TextField select label="Region" size="small" fullWidth value={regionFilter} onChange={e => setRegionFilter(e.target.value)}>
                                 <MenuItem value=""><em>Alle Regionen</em></MenuItem>
-                                {(allRegions || []).map((region) => (
+                                {allRegions.map((region) => (
                                     <MenuItem key={region.id} value={region.name}>{region.name}</MenuItem>
                                 ))}
                             </TextField>
@@ -413,12 +427,11 @@ const AdminScrapedContentPage: React.FC = () => {
                     </Grid>
                 </Paper>
 
-                {loading && content.length === 0 ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box> 
+                {loading && (!content || content.length === 0) ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box> 
                 : error ? <Alert severity="error">{error}</Alert> 
                 : (
                     <>
                     <Paper>
-                        {/* KORREKTUR: maxHeight und stickyHeader entfernt -> Tabelle wächst natürlich */}
                         <TableContainer>
                             <Table size="small">
                                 <TableHead>
@@ -463,7 +476,7 @@ const AdminScrapedContentPage: React.FC = () => {
                                                                 {item.title}
                                                             </Typography>
                                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                                <Chip label={item.source_identifier} size="small" variant="outlined" color={item.data_type === 'traffic' ? 'secondary' : 'default'} sx={{ height: 20, fontSize: '0.7rem' }} />
+                                                                <Chip label={item.source_identifier || 'Unbekannt'} size="small" variant="outlined" color={item.data_type === 'traffic' ? 'secondary' : 'default'} sx={{ height: 20, fontSize: '0.7rem' }} />
                                                                 {item.region && <Typography variant="caption" color="text.secondary">• {item.region}</Typography>}
                                                             </Box>
                                                         </Box>
@@ -474,10 +487,11 @@ const AdminScrapedContentPage: React.FC = () => {
                                                 </TableCell>
                                                 <TableCell>
                                                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxWidth: 180 }}>
-                                                        {(item.tags || []).slice(0, 2).map(tag => (<Chip key={tag} label={tag} size="small" variant="filled" sx={{ height: 20, fontSize: '0.7rem' }} />))}
-                                                        {(item.tags || []).length > 2 && (
-                                                            <Tooltip title={item.tags!.slice(2).join(', ')}>
-                                                                <Chip label={`+${item.tags!.length - 2}`} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
+                                                        {/* FIX 7: filter(Boolean) schützt davor, dass leere DB-Werte das MUI-Chip zum Absturz bringen */}
+                                                        {(item.tags || []).filter(Boolean).slice(0, 2).map(tag => (<Chip key={tag} label={tag} size="small" variant="filled" sx={{ height: 20, fontSize: '0.7rem' }} />))}
+                                                        {(item.tags || []).filter(Boolean).length > 2 && (
+                                                            <Tooltip title={(item.tags || []).filter(Boolean).slice(2).join(', ')}>
+                                                                <Chip label={`+${(item.tags || []).filter(Boolean).length - 2}`} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
                                                             </Tooltip>
                                                         )}
                                                     </Box>
@@ -538,7 +552,7 @@ const AdminScrapedContentPage: React.FC = () => {
                             <Grid item xs={12} md={6}>
                                  <Autocomplete
                                     options={allCategories}
-                                    getOptionLabel={(option) => option.name}
+                                    getOptionLabel={(option) => option.name || ''}
                                     value={allCategories.find(c => c.id === formState.category_id) || null}
                                     onChange={(_, newValue) => { setFormState(p => ({...p, category_id: newValue?.id || null})); }}
                                     isOptionEqualToValue={(option, value) => option.id === value.id}
@@ -549,7 +563,7 @@ const AdminScrapedContentPage: React.FC = () => {
                                 <Autocomplete
                                     multiple
                                     options={allTags}
-                                    getOptionLabel={(option) => option.name}
+                                    getOptionLabel={(option) => option.name || ''}
                                     value={formState.tags}
                                     onChange={(_, newValue) => { setFormState(p => ({...p, tags: newValue})); }}
                                     isOptionEqualToValue={(option, value) => option.id === value.id}

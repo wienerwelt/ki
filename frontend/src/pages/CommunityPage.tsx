@@ -1,17 +1,16 @@
 // frontend/src/pages/CommunityPage.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Container, Grid, Paper, Typography, Box, Avatar, Button,
-  Card, CardHeader, CardContent, CardMedia, CardActions, IconButton,
-  Divider, CircularProgress, Tooltip, Chip, useTheme, useMediaQuery,
-  MenuItem, Select, FormControl, InputLabel, Collapse, Popover,
-  Tabs, Tab, List, ListItem, ListItemAvatar, ListItemText, InputAdornment,
-  TextField, Badge, Alert, Dialog, DialogTitle, DialogContent,
-  DialogActions, alpha
+    Container, Grid, Paper, Typography, Box, Button,
+    Card, CardHeader, CardContent, CardMedia, CardActions, IconButton,
+    Divider, CircularProgress, Tooltip, Chip, useTheme, useMediaQuery,
+    MenuItem, Select, FormControl, InputLabel, Collapse, Popover,
+    Tabs, Tab, List, ListItem, ListItemAvatar, ListItemText, InputAdornment,
+    TextField, Alert, Dialog, DialogTitle, DialogContent,
+    DialogActions, alpha
 } from '@mui/material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import ReactQuill from 'react-quill-new';
-
 import 'react-quill-new/dist/quill.snow.css';
 import DOMPurify from 'dompurify';
 
@@ -29,8 +28,6 @@ import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import DynamicFeedIcon from '@mui/icons-material/DynamicFeed';
 import PersonSearchIcon from '@mui/icons-material/PersonSearch';
 import SearchIcon from '@mui/icons-material/Search';
-import LinkedInIcon from '@mui/icons-material/LinkedIn';
-import EventIcon from '@mui/icons-material/Event';
 import ReportProblemIcon from '@mui/icons-material/ReportProblem';
 import PollIcon from '@mui/icons-material/Poll';
 import SchoolIcon from '@mui/icons-material/School';
@@ -40,31 +37,17 @@ import CloseIcon from '@mui/icons-material/Close';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
 import AddIcon from '@mui/icons-material/Add';
-import EditIcon from '@mui/icons-material/Edit'; // NEU für Editieren
+import EditIcon from '@mui/icons-material/Edit';
 
-// App Context & Utils
+// App Context, Utils & Components
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
 import { formatDistanceToNow } from 'date-fns';
 import { de } from 'date-fns/locale';
+import { ProfileCard, UserAvatarWithStatus, UserProfileData } from '../components/ProfileCard';
 
 // --- TYPES ---
-interface UserProfileData {
-    id: string;
-    first_name: string;
-    last_name: string;
-    username?: string;
-    profile_image_url: string | null;
-    membership_level?: string;
-    organization_name?: string;
-    role?: string;
-    linkedin_url?: string;
-    member_since?: string;
-    contribution_score?: number;
-    last_login_at?: string;
-}
-
 interface ExpertUser extends UserProfileData {
     tags: string[] | null;
     business_partner_name?: string;
@@ -84,12 +67,12 @@ interface PollOption {
 }
 
 interface CommunityPost extends UserProfileData {
-    id: string; // NEU
+    id: string;
     content: string;
     image_url: string | null;
     created_at: string;
     category_name?: string;
-    category_id?: string; // NEU
+    category_id?: string;
     author_id: string;
     like_count: number;
     comment_count: number;
@@ -105,7 +88,6 @@ interface Category { id: string; name: string; }
 interface LeaderboardUser extends UserProfileData {}
 interface Member extends UserProfileData {
     email: string;
-    last_login_at?: string;
 }
 interface RecentComment {
     id: string;
@@ -119,14 +101,6 @@ interface RecentComment {
 }
 
 // --- HELPER ---
-const getUserStatus = (lastLoginDate?: string) => {
-    if (!lastLoginDate) return 'offline';
-    const diffMinutes = (new Date().getTime() - new Date(lastLoginDate).getTime()) / (1000 * 60);
-    if (diffMinutes < 15) return 'online';
-    if (diffMinutes < 60 * 24) return 'active_today';
-    return 'offline';
-};
-
 const safeFormatDistance = (dateString: string | undefined | null) => {
     if (!dateString) return 'Gerade eben';
     try {
@@ -160,99 +134,6 @@ const quillFormats = [
     'link'
 ];
 
-const UserAvatarWithStatus: React.FC<{ user: UserProfileData | RecentComment, size?: number, onClick?: (e: React.MouseEvent) => void }> = ({ user, size = 40, onClick }) => {
-    const lastLogin = 'last_login_at' in user ? user.last_login_at : undefined;
-    const status = getUserStatus(lastLogin);
-    const tooltip = status === 'online' ? 'Online' : (status === 'active_today' ? 'War heute aktiv' : '');
-    const invisible = status === 'offline';
-    const letter = user.first_name ? user.first_name.charAt(0).toUpperCase() : (user.username ? user.username.charAt(0).toUpperCase() : '?');
-
-    return (
-        <Tooltip title={tooltip}>
-            <Badge
-                overlap="circular"
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-                variant="dot"
-                color={status === 'online' ? 'success' : 'warning'}
-                invisible={invisible}
-                sx={{
-                    '& .MuiBadge-badge': {
-                        backgroundColor: status === 'online' ? '#44b700' : '#ffa726',
-                        color: status === 'online' ? '#44b700' : '#ffa726',
-                        boxShadow: `0 0 0 2px white`,
-                        cursor: onClick ? 'pointer' : 'default'
-                    },
-                }}
-            >
-                <Avatar 
-                    src={user.profile_image_url || undefined} 
-                    sx={{ width: size, height: size, cursor: onClick ? 'pointer' : 'default', bgcolor: 'primary.main', color: 'white' }} 
-                    onClick={onClick}
-                >
-                    {letter}
-                </Avatar>
-            </Badge>
-        </Tooltip>
-    );
-};
-
-const ProfileCard: React.FC<{ user: UserProfileData }> = ({ user }) => (
-    <Box sx={{ width: '100%', p: 0, overflow: 'hidden' }}>
-        <Box sx={{ height: 70, bgcolor: 'primary.main', opacity: 0.9, width: '100%' }}></Box>
-        <Box sx={{ px: 3, pb: 3, mt: -4 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'flex-start' }}>
-                <Box sx={{ border: '4px solid white', borderRadius: '50%', bgcolor: 'white' }}>
-                    <UserAvatarWithStatus user={user} size={70} />
-                </Box>
-            </Box>
-            <Box sx={{ mt: 1 }}>
-                <Typography variant="h6" fontWeight="bold" lineHeight={1.2}>
-                    {user.first_name} {user.last_name}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                    {user.role === 'admin' ? 'Administrator' : (user.role === 'assistenz' ? 'Assistenz' : 'Mitglied')} 
-                    {user.organization_name && ` • ${user.organization_name}`}
-                </Typography>
-                {user.membership_level && (
-                    <Chip label={user.membership_level} size="small" color="secondary" variant="outlined" sx={{ mt: 1, height: 20, fontSize: '0.7rem', fontWeight: 'bold' }} />
-                )}
-            </Box>
-            <Divider sx={{ my: 2 }} />
-            <Grid container spacing={1}>
-                <Grid item xs={6}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary' }}>
-                        <EventIcon fontSize="inherit" />
-                        <Typography variant="caption">
-                            Seit {user.member_since ? new Date(user.member_since).toLocaleDateString('de-DE', {month: 'short', year: 'numeric'}) : '-'}
-                        </Typography>
-                    </Box>
-                </Grid>
-                <Grid item xs={6}>
-                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary' }}>
-                        <StarsIcon fontSize="inherit" color="warning" />
-                        <Typography variant="caption" fontWeight="bold">{user.contribution_score || 0} Punkte</Typography>
-                    </Box>
-                </Grid>
-            </Grid>
-            {user.linkedin_url && (
-                <Box sx={{ mt: 2 }}>
-                    <Button 
-                        variant="outlined" 
-                        startIcon={<LinkedInIcon />} 
-                        fullWidth 
-                        size="small"
-                        href={user.linkedin_url} 
-                        target="_blank"
-                        sx={{ color: '#0077b5', borderColor: '#0077b5', '&:hover': { bgcolor: '#0077b5', color: 'white' } }}
-                    >
-                        LinkedIn Profil
-                    </Button>
-                </Box>
-            )}
-        </Box>
-    </Box>
-);
-
 const HTMLContentRenderer: React.FC<{ html: string }> = ({ html }) => {
     // Sanitizing HTML mit DOMPurify um XSS zu verhindern, target="_blank" für Links erlauben
     DOMPurify.addHook('afterSanitizeAttributes', function (node) {
@@ -273,7 +154,6 @@ const HTMLContentRenderer: React.FC<{ html: string }> = ({ html }) => {
         />
     );
 };
-
 
 const CommunityPage: React.FC = () => {
   const { user, userTags } = useAuth();
@@ -560,7 +440,7 @@ const CommunityPage: React.FC = () => {
       const cleanText = text.replace(/<[^>]*>?/gm, '').trim();
       if(!cleanText) return;
       try {
-          const res = await apiClient.post(`/api/community/feed/${postId}/comments`, { content: text }); // Schickt HTML
+          const res = await apiClient.post(`/api/community/feed/${postId}/comments`, { content: text }); 
           const updateLogic = (p: CommunityPost) => {
               if (p.id === postId) return { ...p, comment_count: p.comment_count + 1, comments: [...(p.comments || []), res.data] };
               return p;
@@ -641,7 +521,6 @@ const CommunityPage: React.FC = () => {
                             </IconButton>
                         </Tooltip>
                     )}
-                    {/* EDIT Button für eigene Posts */}
                     {(isMyPost || user?.role === 'admin') && (
                         <Tooltip title="Bearbeiten">
                             <IconButton onClick={() => handleOpenEdit(post)} size="small" disabled={isDemo}>
@@ -831,79 +710,79 @@ const CommunityPage: React.FC = () => {
                                 />
                             </div>
                         
-                        {isPollMode && (
-                            <Box sx={{ mt: 2, p: 2, border: `1px solid ${theme.palette.divider}`, borderRadius: 2, bgcolor: alpha(theme.palette.primary.main, 0.02) }}>
-                                <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <PollIcon fontSize="small" color="primary"/> Umfrage erstellen:
-                                </Typography>
-                                {pollOptions.map((opt, idx) => (
-                                    <TextField 
-                                        key={idx} 
-                                        placeholder={`Antwortmöglichkeit ${idx + 1}`} 
-                                        value={opt}
-                                        onChange={(e) => {
-                                            const newOpts = [...pollOptions];
-                                            newOpts[idx] = e.target.value;
-                                            setPollOptions(newOpts);
-                                        }}
-                                        fullWidth size="small" sx={{ mb: 1.5, bgcolor: 'background.paper' }}
-                                        disabled={isDemo}
-                                    />
-                                ))}
-                                <Button size="small" startIcon={<AddIcon />} onClick={() => setPollOptions([...pollOptions, ''])} disabled={isDemo}>Weitere Option hinzufügen</Button>
-                            </Box>
-                        )}
+                            {isPollMode && (
+                                <Box sx={{ mt: 2, p: 2, border: `1px solid ${theme.palette.divider}`, borderRadius: 2, bgcolor: alpha(theme.palette.primary.main, 0.02) }}>
+                                    <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <PollIcon fontSize="small" color="primary"/> Umfrage erstellen:
+                                    </Typography>
+                                    {pollOptions.map((opt, idx) => (
+                                        <TextField 
+                                            key={idx} 
+                                            placeholder={`Antwortmöglichkeit ${idx + 1}`} 
+                                            value={opt}
+                                            onChange={(e) => {
+                                                const newOpts = [...pollOptions];
+                                                newOpts[idx] = e.target.value;
+                                                setPollOptions(newOpts);
+                                            }}
+                                            fullWidth size="small" sx={{ mb: 1.5, bgcolor: 'background.paper' }}
+                                            disabled={isDemo}
+                                        />
+                                    ))}
+                                    <Button size="small" startIcon={<AddIcon />} onClick={() => setPollOptions([...pollOptions, ''])} disabled={isDemo}>Weitere Option hinzufügen</Button>
+                                </Box>
+                            )}
 
-                        <Box sx={{ display: 'flex', mt: 1, gap: 2 }}>
-                            <FormControl fullWidth size="small" disabled={isDemo}>
-                                <InputLabel>Kategorie zuordnen *</InputLabel>
-                                <Select value={selectedCategory} label="Kategorie zuordnen *" onChange={(e) => setSelectedCategory(e.target.value)} sx={{ bgcolor: 'background.paper' }}>
-                                    {categories.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
-                                </Select>
-                            </FormControl>
-                        </Box>
+                            <Box sx={{ display: 'flex', mt: 1, gap: 2 }}>
+                                <FormControl fullWidth size="small" disabled={isDemo}>
+                                    <InputLabel>Kategorie zuordnen *</InputLabel>
+                                    <Select value={selectedCategory} label="Kategorie zuordnen *" onChange={(e) => setSelectedCategory(e.target.value)} sx={{ bgcolor: 'background.paper' }}>
+                                        {categories.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+                                    </Select>
+                                </FormControl>
+                            </Box>
 
-                        {selectedImage && (
-                            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1, bgcolor: alpha(theme.palette.info.main, 0.1), p: 1.5, borderRadius: 2, border: `1px solid ${theme.palette.info.light}` }}>
-                                <ImageIcon fontSize="small" color="info" />
-                                <Typography variant="body2" fontWeight="medium" noWrap sx={{ maxWidth: 200, flexGrow: 1 }}>{selectedImage.name}</Typography>
-                                <IconButton size="small" onClick={() => {setSelectedImage(null); if(fileInputRef.current) fileInputRef.current.value='';}}>
-                                    <DeleteIcon fontSize="small" color="error" />
-                                </IconButton>
-                            </Box>
-                        )}
-                        
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1, pt: 2, borderTop: `1px solid ${theme.palette.divider}` }}>
-                            <Box sx={{ display: 'flex', gap: 1 }}>
-                                <Tooltip title="Bild/Video anhängen">
-                                    <IconButton onClick={() => fileInputRef.current?.click()} size="small" sx={{ bgcolor: 'action.hover', color: 'text.secondary' }} disabled={isDemo}>
-                                        <ImageIcon />
+                            {selectedImage && (
+                                <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1, bgcolor: alpha(theme.palette.info.main, 0.1), p: 1.5, borderRadius: 2, border: `1px solid ${theme.palette.info.light}` }}>
+                                    <ImageIcon fontSize="small" color="info" />
+                                    <Typography variant="body2" fontWeight="medium" noWrap sx={{ maxWidth: 200, flexGrow: 1 }}>{selectedImage.name}</Typography>
+                                    <IconButton size="small" onClick={() => {setSelectedImage(null); if(fileInputRef.current) fileInputRef.current.value='';}}>
+                                        <DeleteIcon fontSize="small" color="error" />
                                     </IconButton>
-                                </Tooltip>
-                                <Tooltip title="Umfrage erstellen">
-                                    <IconButton 
-                                        onClick={() => setIsPollMode(!isPollMode)} 
-                                        size="small" 
-                                        sx={{ bgcolor: isPollMode ? 'primary.main' : 'action.hover', color: isPollMode ? 'white' : 'text.secondary', '&:hover': { bgcolor: isPollMode ? 'primary.dark' : undefined } }}
-                                        disabled={isDemo}
-                                    >
-                                        <PollIcon />
-                                    </IconButton>
-                                </Tooltip>
-                            </Box>
-                            <input type="file" hidden ref={fileInputRef} accept="image/*,video/mp4,video/webm,video/quicktime" onChange={(e) => e.target.files && setSelectedImage(e.target.files[0])} />
+                                </Box>
+                            )}
                             
-                            <Button 
-                                variant="contained" 
-                                onClick={handleCreatePost} 
-                                disabled={createLoading || isDemo} 
-                                endIcon={createLoading ? <CircularProgress size={20} color="inherit" /> : <SendIcon />}
-                                sx={{ borderRadius: 8, px: 3, fontWeight: 'bold' }}
-                            >
-                                Veröffentlichen
-                            </Button>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1, pt: 2, borderTop: `1px solid ${theme.palette.divider}` }}>
+                                <Box sx={{ display: 'flex', gap: 1 }}>
+                                    <Tooltip title="Bild/Video anhängen">
+                                        <IconButton onClick={() => fileInputRef.current?.click()} size="small" sx={{ bgcolor: 'action.hover', color: 'text.secondary' }} disabled={isDemo}>
+                                            <ImageIcon />
+                                        </IconButton>
+                                    </Tooltip>
+                                    <Tooltip title="Umfrage erstellen">
+                                        <IconButton 
+                                            onClick={() => setIsPollMode(!isPollMode)} 
+                                            size="small" 
+                                            sx={{ bgcolor: isPollMode ? 'primary.main' : 'action.hover', color: isPollMode ? 'white' : 'text.secondary', '&:hover': { bgcolor: isPollMode ? 'primary.dark' : undefined } }}
+                                            disabled={isDemo}
+                                        >
+                                            <PollIcon />
+                                        </IconButton>
+                                    </Tooltip>
+                                </Box>
+                                <input type="file" hidden ref={fileInputRef} accept="image/*,video/mp4,video/webm,video/quicktime" onChange={(e) => e.target.files && setSelectedImage(e.target.files[0])} />
+                                
+                                <Button 
+                                    variant="contained" 
+                                    onClick={handleCreatePost} 
+                                    disabled={createLoading || isDemo} 
+                                    endIcon={createLoading ? <CircularProgress size={20} color="inherit" /> : <SendIcon />}
+                                    sx={{ borderRadius: 8, px: 3, fontWeight: 'bold' }}
+                                >
+                                    Veröffentlichen
+                                </Button>
+                            </Box>
                         </Box>
-                    </Box>
                     </Box>
                 </Paper>
 
@@ -942,7 +821,7 @@ const CommunityPage: React.FC = () => {
                             <React.Fragment key={member.id}>
                                 <ListItem alignItems="center" sx={{ px: 1, py: 2, borderRadius: 2, '&:hover': { bgcolor: 'action.hover' } }}>
                                 <ListItemAvatar sx={{ minWidth: 64 }}>
-                                    <UserAvatarWithStatus user={member} size={isMobile ? 48 : 56} onClick={(e) => handleProfileClick(e, member)} />
+                                    <UserAvatarWithStatus user={member as any} size={isMobile ? 48 : 56} onClick={(e) => handleProfileClick(e, member)} />
                                 </ListItemAvatar>
                                     <ListItemText
                                         primary={
@@ -982,7 +861,7 @@ const CommunityPage: React.FC = () => {
                         Suchen Sie nach bestimmten Kompetenzen, Branchen oder Stichwörtern, um den passenden Ansprechpartner in der Community zu finden.
                     </Typography>
                     
-<form onSubmit={handleExpertSearchSubmit}>
+                    <form onSubmit={handleExpertSearchSubmit}>
                         <Box sx={{ 
                             display: 'flex', 
                             gap: 1, 
@@ -1075,7 +954,7 @@ const CommunityPage: React.FC = () => {
                             <React.Fragment key={expert.id}>
                                 <ListItem alignItems="flex-start" sx={{ px: 2, py: 3, borderRadius: 2, '&:hover': { bgcolor: alpha(theme.palette.action.hover, 0.5) } }}>
                                     <ListItemAvatar sx={{ minWidth: 70 }}>
-                                        <UserAvatarWithStatus user={expert} size={isMobile ? 50 : 60} onClick={(e) => handleProfileClick(e, expert)} />
+                                        <UserAvatarWithStatus user={expert as any} size={isMobile ? 50 : 60} onClick={(e) => handleProfileClick(e, expert)} />
                                     </ListItemAvatar>
                                     <ListItemText
                                         primary={
@@ -1092,7 +971,7 @@ const CommunityPage: React.FC = () => {
                                                     {expert.role} {expert.organization_name ? `bei ${expert.organization_name}` : ''}
                                                 </Typography>
                                                         {expert.tags && expert.tags.length > 0 && (
-                                                                    <Box component="span" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                                                            <Box component="span" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
                                                         {expert.tags.map(tag => (
                                                             <Chip key={tag} label={tag} size="small" sx={{ height: 22, fontSize: '0.7rem', bgcolor: alpha(theme.palette.primary.main, 0.05), border: `1px solid ${alpha(theme.palette.primary.main, 0.2)}` }} />
                                                         ))}
@@ -1193,7 +1072,7 @@ const CommunityPage: React.FC = () => {
                                     #{index + 1}
                                 </Typography>
                             </Box>
-                            <UserAvatarWithStatus user={lbUser} size={44} />
+                            <UserAvatarWithStatus user={lbUser as any} size={44} />
                             <Box sx={{ overflow: 'hidden', flexGrow: 1 }}>
                                 <Typography variant="body2" fontWeight="bold" noWrap>
                                     {lbUser.first_name || lbUser.last_name ? `${lbUser.first_name || ''} ${lbUser.last_name || ''}`.trim() : (lbUser.username || 'Unbekannt')}
@@ -1266,7 +1145,7 @@ const CommunityPage: React.FC = () => {
         }}
       >
         {selectedUser && (
-            <ProfileCard user={selectedUser} />
+            <ProfileCard user={selectedUser as UserProfileData} />
         )}
       </Popover>
 

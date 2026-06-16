@@ -54,6 +54,8 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import TimerIcon from '@mui/icons-material/Timer';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import QrCodeIcon from '@mui/icons-material/QrCode';
 
 interface Region {
   id: string;
@@ -331,9 +333,22 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
     regionId: 'ALL_GLOBAL'
   });
 
-  const userRole = user?.role;
+const userRole = user?.role;
   const canViewAdminInfo = !isPublic && (userRole === 'admin' || userRole === 'assistenz');
   const bpId = businessPartner?.id;
+
+  // NEU: State und Funktion für den Einladungslink
+  const [linkCopied, setLinkCopied] = useState(false);
+  
+  const handleCopyInviteLink = () => {
+    if (!bpId) return;
+    const voucherCode = bpId.slice(-8);
+    const link = `${window.location.origin}/register?partner=${voucherCode}`;
+    navigator.clipboard.writeText(link).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    });
+  };
 
   const fetchWidgetData = useCallback(async () => {
     if (!bpId || isPublic) return;
@@ -1057,10 +1072,48 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
                   </Box>
                 )}
 
-                {activeTab === 3 && canViewAdminInfo && (
+{activeTab === 3 && canViewAdminInfo && (
                   <Stack spacing={2}>
-                    <Paper elevation={0} sx={{ p: 2, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+                    {/* NEU: Einladungslink-Bereich */}
+                    <Paper elevation={0} sx={{ p: 2, borderRadius: 3, border: '1px solid', borderColor: 'primary.main', bgcolor: alpha(theme.palette.primary.main, 0.02) }}>
                       <Typography variant="overline" color="primary" fontWeight="bold">
+                        Einladungslink (Onboarding)
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.3 }}>
+                        Nutzen Sie diesen Link oder QR-Code, um neue Mitglieder in diesen Partner-Bereich einzuladen.
+                      </Typography>
+                      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          value={bpId ? `${window.location.origin}/register?partner=${bpId.slice(-8)}` : ''}
+                          InputProps={{ readOnly: true }}
+                          sx={{ bgcolor: 'background.paper', borderRadius: 1 }}
+                        />
+                        <Tooltip title={linkCopied ? "Kopiert!" : "Link kopieren"}>
+                          <IconButton 
+                            color={linkCopied ? "success" : "primary"} 
+                            onClick={handleCopyInviteLink} 
+                            sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, bgcolor: 'background.paper' }}
+                          >
+                            {linkCopied ? <CheckCircleOutlineIcon /> : <ContentCopyIcon fontSize="small" />}
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Als QR-Code öffnen">
+                          <IconButton 
+                            color="secondary" 
+                            onClick={() => window.open(`/invite/${bpId}`, '_blank')} 
+                            sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, bgcolor: 'background.paper' }}
+                          >
+                            <QrCodeIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Box>
+                    </Paper>
+                    {/* ENDE NEU */}
+
+                    <Paper elevation={0} sx={{ p: 2, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+                      <Typography variant="overline" color="text.secondary" fontWeight="bold">
                         Vertragsdaten & Lizenzen
                       </Typography>
 

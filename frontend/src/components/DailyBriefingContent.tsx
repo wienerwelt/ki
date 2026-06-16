@@ -1,8 +1,9 @@
+// frontend/src/components/DailyBriefingContent.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Typography, Link as MuiLink, FormControlLabel, Switch, Tooltip, 
-  CircularProgress, Button, Grid, Paper, Stack, Chip, IconButton, Fade, useTheme
+  CircularProgress, Button, Grid, Paper, Stack, Chip, IconButton, Fade, useTheme, Divider
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
@@ -14,6 +15,13 @@ import WhatshotIcon from '@mui/icons-material/Whatshot';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import ThumbUpOutlinedIcon from '@mui/icons-material/ThumbUpOutlined';
+import ThumbDownOutlinedIcon from '@mui/icons-material/ThumbDownOutlined';
+import SearchIcon from '@mui/icons-material/Search';
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
+import LinkedInIcon from '@mui/icons-material/LinkedIn';
+import FormatQuoteIcon from '@mui/icons-material/FormatQuote';
+
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 import { useSnackbar } from '../context/SnackbarContext';
@@ -35,6 +43,7 @@ interface SalesTrigger {
   analysis_summary: string;
   talking_point: string;
   account_name: string;
+  score?: string; // Für zukünftiges Backend-Scoring
 }
 
 interface CockpitData {
@@ -76,7 +85,7 @@ const TextWithSearchLinks: React.FC<{ text: string; namesToLink: string[] }> = (
                 textDecorationStyle: 'dotted', 
                 textUnderlineOffset: '3px',
                 color: 'primary.main',
-                bgcolor: 'primary.50', // Leichter Textmarker-Effekt
+                bgcolor: 'primary.50',
                 px: 0.5,
                 borderRadius: 0.5,
                 '&:hover': { color: 'primary.dark', bgcolor: 'primary.100' }
@@ -117,11 +126,9 @@ const DailyBriefingContent: React.FC = () => {
   // --- NEWSLETTER HIERARCHIE-LOGIK ---
   const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in);
   const isNewsletterAllowed = businessPartner?.allow_automated_newsletter !== false;
-  
-  // WICHTIG: Die Kombination aus beidem (BP schlägt User)
   const effectiveSubscription = isNewsletterAllowed && isSubscribed;
   
-  // DYNAMISCHER TRIGGER: Sales vs. Information (Fallback ist 'information')
+  // DYNAMISCHER TRIGGER: Sales vs. Information
   const dashboardFocus = businessPartner?.dashboard_focus || 'information';
 
   useEffect(() => setIsSubscribed(!!user?.newsletter_opt_in), [user?.newsletter_opt_in]);
@@ -174,11 +181,17 @@ const DailyBriefingContent: React.FC = () => {
   const isLocked = data?.hasVotedToday === false;
   const hasAnyData = topInsights.length > 0 || regulations.length > 0 || salesTriggers.length > 0;
 
-  // Lesezeit berechnen (Grob: 200 Wörter pro Minute)
   const readTime = useMemo(() => {
-    const textLength = JSON.stringify(topInsights).split(' ').length + JSON.stringify(regulations).split(' ').length;
-    return Math.max(1, Math.ceil(textLength / 200));
-  }, [topInsights, regulations]);
+    const allText = [
+        ...topInsights.map((i: any) => `${i.headline} ${i.analysis_summary} ${i.prognosis || ''} ${i.talking_point || ''}`),
+        ...regulations.map((i: any) => `${i.headline} ${i.analysis_summary} ${i.talking_point || ''}`),
+        ...salesTriggers.map((i: any) => `${i.headline} ${i.analysis_summary} ${i.talking_point}`)
+    ].join(' ');
+    
+    // Zählt alle zusammenhängenden Zeichenblöcke (Wörter)
+    const wordCount = allText.split(/\s+/).filter(word => word.length > 0).length;
+    return Math.max(1, Math.ceil(wordCount / 200));
+  }, [topInsights, regulations, salesTriggers]);
 
   if (loading) {
     return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', p: 4, minHeight: 300 }}><CircularProgress /></Box>;
@@ -195,16 +208,8 @@ const DailyBriefingContent: React.FC = () => {
       const urls: string[] = JSON.parse(jsonString);
       return urls.map((url, i) => (
         <Chip 
-          key={i} 
-          label={`Quelle ${i+1}`} 
-          size="small" 
-          icon={<OpenInNewIcon fontSize="small" />} 
-          component="a" 
-          href={url} 
-          target="_blank" 
-          clickable 
-          variant="outlined"
-          sx={{ mr: 1, mt: 1, fontSize: '0.7rem' }} 
+          key={i} label={`Quelle ${i+1}`} size="small" icon={<OpenInNewIcon fontSize="small" />} component="a" href={url} 
+          target="_blank" clickable variant="outlined" sx={{ mr: 1, mt: 1, fontSize: '0.7rem' }} 
         />
       ));
     } catch { return null; }
@@ -241,7 +246,7 @@ const DailyBriefingContent: React.FC = () => {
       <Stack spacing={3}>
         {regulations.map((reg: any, idx: number) => (
           <Box key={idx} sx={{ p: 2, bgcolor: alpha(theme.palette.secondary.main, 0.05), borderRadius: 3, border: '1px solid', borderColor: alpha(theme.palette.secondary.main, 0.1) }}>
-             <Chip label={reg.headline.includes('Förder') ? '💰 Förderung' : '⚖️ Compliance'} size="small" color="secondary" sx={{ mb: 1, fontWeight: 'bold', fontSize: '0.7rem' }} />
+             <Chip label={reg.headline.includes('Förder') ? '💰 Förderung (Opportunity)' : '⚖️ Compliance'} size="small" color="secondary" sx={{ mb: 1, fontWeight: 'bold', fontSize: '0.7rem' }} />
              <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>{reg.headline}</Typography>
              <Typography variant="body2" sx={{ mb: 1 }}><TextWithSearchLinks text={reg.analysis_summary} namesToLink={names} /></Typography>
              {reg.talking_point && <Typography variant="body2" sx={{ fontWeight: 600, color: 'secondary.dark' }}>Aktion: <TextWithSearchLinks text={reg.talking_point} namesToLink={names} /></Typography>}
@@ -258,7 +263,6 @@ const DailyBriefingContent: React.FC = () => {
         <MonetizationOnIcon color="success" /> Sales Intelligence
       </Typography>
       
-      {/* Das Milchglas-Overlay für den Lock-Screen */}
       {isLocked && (
           <Fade in={isLocked}>
             <Box sx={{ 
@@ -266,34 +270,97 @@ const DailyBriefingContent: React.FC = () => {
                 backdropFilter: 'blur(6px)', backgroundColor: 'rgba(255,255,255,0.6)',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', p: 3, textAlign: 'center'
             }}>
-                <Box sx={{ bgcolor: 'background.paper', p: 3, borderRadius: 4, boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
-                    <LockOutlinedIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Sales-Pitches gesperrt</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Nehmen Sie kurz am Markt-Barometer teil, um diese handlungsorientierten Leads freizuschalten.</Typography>
-                    <Button variant="contained" onClick={() => {/* Navigation zur Umfrage */}} sx={{ borderRadius: 8, px: 3 }}>Jetzt abstimmen</Button>
+                <Box sx={{ bgcolor: 'background.paper', p: 4, borderRadius: 4, boxShadow: '0 10px 40px rgba(0,0,0,0.15)' }}>
+                    <LockOutlinedIcon color="primary" sx={{ fontSize: 48, mb: 2 }} />
+                    <Typography variant="h5" sx={{ fontWeight: 900, mb: 1 }}>Leads & Pitches gesperrt</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3, maxWidth: 300, mx: 'auto' }}>Helfen Sie der Community mit einer kurzen Abstimmung, um diese handlungsorientierten Leads freizuschalten.</Typography>
+                    <Button 
+                        variant="contained" 
+                        size="large"
+                        // DUMMY UI-Aktion
+                        onClick={() => showSnackbar('Hier öffnet sich später das Abstimmungs-Modal!', 'info')} 
+                        sx={{ borderRadius: 8, px: 4, fontWeight: 'bold' }}
+                    >
+                        Jetzt abstimmen
+                    </Button>
                 </Box>
             </Box>
           </Fade>
       )}
 
-      <Stack spacing={3} sx={{ filter: isLocked ? 'blur(4px)' : 'none', transition: 'filter 0.3s' }}>
-        {salesTriggers.map((trigger: any, idx: number) => (
-          <Box key={idx} sx={{ p: 2.5, bgcolor: '#f8fafc', borderRadius: 3, border: '1px solid #e2e8f0' }}>
-             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
-                 <Chip icon={<WhatshotIcon sx={{ color: '#ef4444 !important' }}/>} label={`Zielkunde: ${trigger.account_name}`} sx={{ fontWeight: 800, bgcolor: '#fee2e2', color: '#991b1b', border: 'none' }} size="small" />
+      <Stack spacing={3} sx={{ filter: isLocked ? 'blur(5px)' : 'none', transition: 'filter 0.3s' }}>
+        {salesTriggers.map((trigger: any, idx: number) => {
+          // DUMMY UI: Fake-Scoring generieren
+          const isHot = idx % 2 === 0;
+          
+          return (
+          <Box key={idx} sx={{ p: 2.5, bgcolor: '#f8fafc', borderRadius: 3, border: '1px solid #e2e8f0', transition: 'all 0.2s', '&:hover': { borderColor: '#cbd5e1', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' } }}>
+             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5, flexWrap: 'wrap', gap: 1 }}>
+                 <Chip 
+                    icon={isHot ? <WhatshotIcon sx={{ color: '#ef4444 !important' }}/> : <LightbulbOutlinedIcon />} 
+                    label={`Zielkunde: ${trigger.account_name}`} 
+                    sx={{ fontWeight: 800, bgcolor: isHot ? '#fee2e2' : '#e0f2fe', color: isHot ? '#991b1b' : '#0369a1', border: 'none' }} 
+                    size="small" 
+                 />
+                 <Stack direction="row" spacing={1}>
+                    <Tooltip title="Auf LinkedIn suchen">
+                        <IconButton size="small" component="a" href={`https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(trigger.account_name)}`} target="_blank" sx={{ bgcolor: '#fff', border: '1px solid #e2e8f0', color: '#0a66c2', '&:hover': { bgcolor: '#f1f5f9' } }}>
+                            <LinkedInIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Im Web suchen">
+                        <IconButton size="small" component="a" href={`https://www.google.com/search?q=${encodeURIComponent(trigger.account_name)}`} target="_blank" sx={{ bgcolor: '#fff', border: '1px solid #e2e8f0', color: '#64748b', '&:hover': { bgcolor: '#f1f5f9' } }}>
+                            <SearchIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                 </Stack>
              </Box>
+
              <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>{trigger.headline}</Typography>
              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}><TextWithSearchLinks text={trigger.analysis_summary} namesToLink={names} /></Typography>
              
-             <Box sx={{ p: 1.5, bgcolor: '#fff', borderRadius: 2, border: '1px dashed #cbd5e1', display: 'flex', gap: 2, alignItems: 'flex-start' }}>
-                 <Box sx={{ flexGrow: 1 }}>
-                     <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary', display: 'block', mb: 0.5 }}>Pitch / Ansatz:</Typography>
-                     <Typography variant="body2" sx={{ fontStyle: 'italic', fontWeight: 600 }}>"{trigger.talking_point}"</Typography>
+             {/* PITCH / E-MAIL ENTWURF BEREICH */}
+             <Box sx={{ position: 'relative', mt: 3, pt: 3, px: 2.5, pb: 2.5, bgcolor: '#ffffff', borderRadius: 3, border: '1px solid #e2e8f0', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)' }}>
+                 {/* Sprechblasen-Pfeil (Visueller Effekt) */}
+                 <Box sx={{ position: 'absolute', top: -10, left: 24, width: 20, height: 20, bgcolor: '#ffffff', borderTop: '1px solid #e2e8f0', borderLeft: '1px solid #e2e8f0', transform: 'rotate(45deg)' }} />
+                 
+                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5, color: 'text.secondary' }}>
+                     <FormatQuoteIcon fontSize="small" color="disabled" />
+                     <Typography variant="caption" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>Gesprächsaufhänger / Pitch</Typography>
                  </Box>
-                 <CopyButton text={trigger.talking_point} />
+
+                 <Typography variant="body2" sx={{ fontStyle: 'italic', fontWeight: 500, color: '#334155', lineHeight: 1.6, mb: 2 }}>
+                    "{trigger.talking_point}"
+                 </Typography>
+
+                 <Divider sx={{ my: 1.5 }} />
+
+                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                     {/* DUMMY UI: KI Feedback */}
+                     <Stack direction="row" spacing={0.5} alignItems="center">
+                        <Typography variant="caption" color="text.disabled" sx={{ mr: 0.5 }}>Ansatz hilfreich?</Typography>
+                        <IconButton size="small" onClick={() => showSnackbar('Danke für das Feedback! Wir verbessern den Pitch.', 'success')} sx={{ color: 'text.secondary' }}><ThumbUpOutlinedIcon sx={{ fontSize: 16 }} /></IconButton>
+                        <IconButton size="small" onClick={() => showSnackbar('Danke für das Feedback! Wir passen die Prompts an.', 'info')} sx={{ color: 'text.secondary' }}><ThumbDownOutlinedIcon sx={{ fontSize: 16 }} /></IconButton>
+                     </Stack>
+                     
+                     {/* Action Buttons */}
+                     <Stack direction="row" spacing={1}>
+                        <CopyButton text={trigger.talking_point} />
+                        <Tooltip title="Als E-Mail öffnen">
+                            <IconButton 
+                                size="small" 
+                                component="a" 
+                                href={`mailto:?subject=${encodeURIComponent(`Bezugnehmend auf: ${trigger.headline}`)}&body=${encodeURIComponent(trigger.talking_point)}`}
+                                sx={{ bgcolor: 'primary.50', color: 'primary.main', '&:hover': { bgcolor: 'primary.100' } }}
+                            >
+                                <EmailOutlinedIcon fontSize="small" />
+                            </IconButton>
+                        </Tooltip>
+                     </Stack>
+                 </Box>
              </Box>
           </Box>
-        ))}
+        )})}
       </Stack>
     </Paper>
   );
@@ -316,38 +383,50 @@ const DailyBriefingContent: React.FC = () => {
             <Chip icon={<AccessTimeIcon />} label={`ca. ${readTime} Min. Lesezeit`} variant="outlined" sx={{ bgcolor: '#fff', fontWeight: 'bold' }} />
         </Box>
 
-        {/* BENTO GRID (Dynamisch nach Fokus) */}
+        {/* BENTO GRID (Dynamisch nach Fokus & Datenverfügbarkeit) */}
         <Grid container spacing={3}>
             {dashboardFocus === 'sales' ? (
                 // --- SALES MODUS (Hunter) ---
                 <>
-                    {salesTriggers.length > 0 && (
-                        <Grid item xs={12} md={6}>
-                            <SalesTriggersBlock />
+                    {salesTriggers.length > 0 ? (
+                        <>
+                            <Grid item xs={12} md={6}>
+                                <SalesTriggersBlock />
+                            </Grid>
+                            <Grid item xs={12} md={6}>
+                                <Stack spacing={3} sx={{ height: '100%' }}>
+                                    {topInsights.length > 0 && <TopInsightsBlock />}
+                                    {regulations.length > 0 && <RegulationsBlock />}
+                                </Stack>
+                            </Grid>
+                        </>
+                    ) : (
+                        // Fallback, wenn Sales-Fokus aktiv, aber heute keine Leads da sind -> Volle Breite
+                        <Grid item xs={12}>
+                            <Stack spacing={3} sx={{ height: '100%' }}>
+                                {topInsights.length > 0 && <TopInsightsBlock />}
+                                {regulations.length > 0 && <RegulationsBlock />}
+                            </Stack>
                         </Grid>
                     )}
-                    <Grid item xs={12} md={6}>
-                        <Stack spacing={3} sx={{ height: '100%' }}>
-                            {topInsights.length > 0 && <TopInsightsBlock />}
-                            {regulations.length > 0 && <RegulationsBlock />}
-                        </Stack>
-                    </Grid>
                 </>
             ) : (
                 // --- INFORMATION MODUS (Strategie) ---
                 <>
-                    <Grid item xs={12} md={8}>
+                    <Grid item xs={12} md={salesTriggers.length > 0 ? 8 : 12}>
                         <Stack spacing={3} sx={{ height: '100%' }}>
                             {topInsights.length > 0 && <TopInsightsBlock />}
                             {regulations.length > 0 && salesTriggers.length === 0 && <RegulationsBlock />}
                         </Stack>
                     </Grid>
-                    <Grid item xs={12} md={4}>
-                        <Stack spacing={3} sx={{ height: '100%' }}>
-                            {regulations.length > 0 && salesTriggers.length > 0 && <RegulationsBlock />}
-                            {salesTriggers.length > 0 && <SalesTriggersBlock />}
-                        </Stack>
-                    </Grid>
+                    {salesTriggers.length > 0 && (
+                        <Grid item xs={12} md={4}>
+                            <Stack spacing={3} sx={{ height: '100%' }}>
+                                {regulations.length > 0 && <RegulationsBlock />}
+                                <SalesTriggersBlock />
+                            </Stack>
+                        </Grid>
+                    )}
                 </>
             )}
         </Grid>

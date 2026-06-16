@@ -431,6 +431,78 @@ function renderFleetDailyBriefingEmail({ briefing, partner, nextEvent, pdfUrl })
   });
 }
 
+// backend/services/emailTemplates.js
+
+// ... (deine bestehenden Funktionen)
+
+function renderMonthlyPartnerReportEmail({ stats, partner, user }) {
+  const title = `Erfolgsbericht für ${escapeHtml(partner.name)}`;
+  const primaryColor = partner?.color_scheme?.primary_color || '#1e293b';
+
+  // Hilfsfunktion für den grünen/roten Trend-Pfeil
+  const renderTrend = (curr, prev) => {
+      const diff = curr - prev;
+      if (diff > 0) return `<span style="color: #16a34a; font-weight: bold; font-size: 13px;">▲ +${diff} zum Vormonat</span>`;
+      if (diff < 0) return `<span style="color: #dc2626; font-weight: bold; font-size: 13px;">▼ ${diff} zum Vormonat</span>`;
+      return `<span style="color: #64748b; font-size: 13px;">→ Unverändert</span>`;
+  };
+
+  let contentHtml = `
+    <p>Guten Tag ${escapeHtml(user.first_name || '')},</p>
+    <p>hier ist Ihr exklusiver Einblick, wie Ihre Nutzer das Dashboard im <strong>${escapeHtml(stats.monthName)}</strong> genutzt haben. So sichern Sie sich messbaren Mehrwert durch Information, Austausch und Effizienz.</p>
+    
+    <h3 style="color: ${primaryColor}; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-top: 24px;">Community & Engagement</h3>
+    <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse: collapse;">
+      <tr style="background-color: #f8fafc; border-bottom: 1px solid #e2e8f0;">
+        <td width="60%"><strong>Erfolgreiche Logins</strong><br><span style="font-size:12px; color:#64748b;">Aktivität der Benutzer</span></td>
+        <td align="right" width="40%"><span style="font-size: 18px; font-weight: bold;">${stats.logins.current}</span><br>${renderTrend(stats.logins.current, stats.logins.prev)}</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #e2e8f0;">
+        <td><strong>Community-Beiträge</strong><br><span style="font-size:12px; color:#64748b;">Neue Diskussionen & Fragen</span></td>
+        <td align="right"><span style="font-size: 18px; font-weight: bold;">${stats.community.current}</span><br>${renderTrend(stats.community.current, stats.community.prev)}</td>
+      </tr>
+    </table>
+
+    <h3 style="color: ${primaryColor}; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-top: 24px;">Wissenstransfer & Dokumente</h3>
+    <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse: collapse;">
+      <tr style="background-color: #f8fafc; border-bottom: 1px solid #e2e8f0;">
+        <td width="60%"><strong>Gelesene Artikel</strong><br><span style="font-size:12px; color:#64748b;">Konsumierte Fachartikel & News</span></td>
+        <td align="right" width="40%"><span style="font-size: 18px; font-weight: bold;">${stats.reads.current}</span><br>${renderTrend(stats.reads.current, stats.reads.prev)}</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #e2e8f0;">
+        <td><strong>Datei-Downloads</strong><br><span style="font-size:12px; color:#64748b;">Abgerufene Vorlagen & Verträge</span></td>
+        <td align="right"><span style="font-size: 18px; font-weight: bold;">${stats.downloads.current}</span><br>${renderTrend(stats.downloads.current, stats.downloads.prev)}</td>
+      </tr>
+    </table>
+  `;
+
+  // Upselling- / Speicherplatz-Warnung ab 85%
+  if (stats.storage.percent >= 85) {
+      contentHtml += `
+      <div style="margin-top: 24px; padding: 16px; background-color: #fef2f2; border: 1px solid #f87171; border-radius: 8px;">
+        <h4 style="margin: 0 0 8px; color: #b91c1c;">⚠️ Hinweis zur Speicherplatz-Kapazität</h4>
+        <p style="margin: 0; font-size: 14px; color: #7f1d1d;">
+          Ihr Cloud-Speicher für Dokumente ist zu <strong>${stats.storage.percent}%</strong> belegt (${stats.storage.usedMb} MB von ${stats.storage.limitMb} MB). 
+          Bitte prüfen Sie, ob alte Dokumente entfernt werden können oder kontaktieren Sie uns für ein Upgrade Ihres Speicherpakets, damit Ihr Team weiterhin reibungslos Dokumente austauschen kann.
+        </p>
+      </div>`;
+  }
+
+  contentHtml += `
+    <p style="margin-top: 24px; font-size: 13px; color: #64748b;">
+      Möchten Sie tiefer in die Daten einsteigen? Verwalten Sie Ihre Plattform direkt im <a href="${getBaseUrl()}/admin" style="color:${primaryColor};">Admin-Bereich</a>.
+    </p>
+  `;
+
+  return renderLayout({
+    preheader: `Ihr Monatsreport für ${stats.monthName} ist da`,
+    title,
+    contentHtml,
+    partner
+  });
+}
+
+
 module.exports = {
   renderLayout,
   renderShareContentEmail,
@@ -440,4 +512,5 @@ module.exports = {
   renderNewOpportunitiesEmail,
   renderBriefingEmail,
   renderFleetDailyBriefingEmail,
+  renderMonthlyPartnerReportEmail,
 };

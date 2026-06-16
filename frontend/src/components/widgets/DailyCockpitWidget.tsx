@@ -1,9 +1,10 @@
+// frontend/src/components/widgets/DailyCockpitWidget.tsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Typography, Accordion, AccordionSummary, AccordionDetails, Divider,
   Link as MuiLink, FormControlLabel, Switch, Tooltip, Stack, Grid,
-  Card, CardContent, Skeleton, Fade, useTheme, Chip, Button
+  Card, CardContent, Skeleton, useTheme, Chip, Button
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -215,10 +216,8 @@ const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = ({
     }
   };
 
-  // Lock-Screen greift nicht im Public Modus (dafür ist Login zuständig)
-  const isLocked = !isPublic && data?.hasVotedToday === false;
 
-  const items = data?.items || [];
+const items = data?.items || [];
   const legacyBriefing = data?.briefing || {};
   
   let topInsights: Array<{ headline: string, analysis_summary: string, related_articles?: string }> = [];
@@ -234,6 +233,12 @@ const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = ({
           related_articles: JSON.stringify(i.sources || [])
       }));
   }
+
+  // HIERHIN VERSCHOBEN: Jetzt ist topInsights bekannt und befüllt!
+  const hasNoData = !loading && 
+    topInsights.length === 0 && 
+    !data?.market_briefing && 
+    (!data?.sales_triggers || data.sales_triggers.length === 0);
 
   return (
     <WidgetPaper
@@ -258,10 +263,22 @@ const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = ({
                 <Skeleton variant="text" width="60%" height={30} />
                 <Skeleton variant="text" height={20} />
             </Stack>
-        ) : (
-          <>
-            {/* --- TOP INSIGHTS --- */}
-            {topInsights.length > 0 && (
+) : (
+    <>
+      {/* --- HINWEIS BEI FEHLENDEN DATEN --- */}
+      {hasNoData && (
+        <Box sx={{ textAlign: 'center', p: 4, bgcolor: alpha(theme.palette.info.main, 0.05), borderRadius: 3, border: '1px dashed', borderColor: 'info.main', my: 2 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1, color: 'text.primary' }}>
+            Keine Daten verfügbar
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Für den heutigen Tag liegen aktuell keine neuen Cockpit-Insights oder Vertriebs-Trigger vor.
+          </Typography>
+        </Box>
+      )}
+
+      {/* --- TOP INSIGHTS --- */}
+      {topInsights.length > 0 && (
               <Box mb={isPublic ? 0 : 3}>
                 <Typography variant="overline" color="primary.main" sx={{ fontWeight: 800, mb: 2, display: 'flex', alignItems: 'center', gap: 1, letterSpacing: 1 }}>
                   <AutoAwesomeIcon fontSize="small" /> Heute in 60 Sekunden
@@ -317,29 +334,9 @@ const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = ({
               </Box>
             )}
 
-            {/* --- PRIVATE LOCK SCREEN (Bezahlschranke für Barometer) --- */}
-            {isLocked && (
-              <Fade in={isLocked}>
-                <Box sx={{ 
-                  position: 'absolute', top: topInsights.length > 0 ? '260px' : '100px', left: 0, right: 0, bottom: 0, 
-                  background: `linear-gradient(to bottom, transparent, ${theme.palette.background.paper} 15%, ${theme.palette.background.paper})`,
-                  zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', pt: 8, textAlign: 'center', px: 3,
-                  backdropFilter: 'blur(2px)'
-                }}>
-                  <Box sx={{ bgcolor: alpha(theme.palette.text.disabled, 0.1), p: 2, borderRadius: '50%', mb: 2 }}>
-                    <LockIcon color="disabled" sx={{ fontSize: 40 }} />
-                  </Box>
-                  <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Exklusive Daten gesperrt</Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 300, lineHeight: 1.6 }}>
-                    Bitte nehmen Sie am <b>Markt-Barometer</b> teil, um TCO-Treiber und Handlungsempfehlungen freizuschalten.
-                  </Typography>
-                </Box>
-              </Fade>
-            )}
-
-            {/* --- SALES TRIGGERS (Nur sichtbar im privaten Modus) --- */}
-            {!isPublic && data && data.sales_triggers && data.sales_triggers.length > 0 && (
-              <Box mt={4} sx={{ opacity: isLocked ? 0.3 : 1, filter: isLocked ? 'blur(3px)' : 'none', pointerEvents: isLocked ? 'none' : 'auto', transition: 'all 0.3s' }}>
+      {/* --- SALES TRIGGERS (Nun immer uneingeschränkt und klar lesbar) --- */}
+      {!isPublic && data && data.sales_triggers && data.sales_triggers.length > 0 && (
+        <Box mt={4}>
                 <Divider sx={{ mb: 3 }} />
                 <Typography variant="overline" color="secondary.main" sx={{ fontWeight: 800, letterSpacing: 1, mb: 1, display: 'block' }}>Sales Intelligence</Typography>
                 {data.sales_triggers.map((trigger: any) => (

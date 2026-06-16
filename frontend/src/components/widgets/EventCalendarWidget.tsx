@@ -471,11 +471,11 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
       {!error && (
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           
-          {/* OPTIMIERTE TOOLBAR: Alles in einer kompakten Zeile */}
+          {/* OPTIMIERTE TOOLBAR: Alles in einer kompakten Zeile auch auf Mobile */}
           <Box sx={{ px: { xs: 2, sm: 3 }, py: 1.5, borderBottom: '1px solid', borderColor: 'divider', bgcolor: theme.palette.mode === 'dark' ? 'transparent' : '#f8fafc' }}>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems="center">
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ width: '100%' }}>
                 
-                <FormControl size="small" sx={{ minWidth: 60, width: { xs: '100%', sm: 'auto' } }}>
+                <FormControl size="small" sx={{ minWidth: 60, width: 'auto', flexShrink: 0 }}>
                     <Select
                         value={selectedRegionCode}
                         onChange={(e: SelectChangeEvent) => setSelectedRegionCode(e.target.value)}
@@ -510,11 +510,12 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                 <TextField
                     fullWidth size="small" placeholder="Suchen…" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
                     InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" sx={{ color: 'text.disabled' }} /></InputAdornment>, sx: { bgcolor: 'background.paper', borderRadius: 2 } }}
+                    sx={{ flexGrow: 1 }}
                 />
 
                 {!isPublic && (
                     <Tooltip title="Termin vorschlagen">
-                        <IconButton onClick={() => setAddModalOpen(true)} size="small" sx={{ bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1, '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.1), borderColor: 'primary.main' } }}>
+                        <IconButton onClick={() => setAddModalOpen(true)} size="small" sx={{ flexShrink: 0, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1, '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.1), borderColor: 'primary.main' } }}>
                             <AddCircleOutlineIcon color="primary" fontSize="small" />
                         </IconButton>
                     </Tooltip>
@@ -629,7 +630,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                               <Box sx={{ mt: 0.5 }}>
                                 <MuiLink
                                   href={e.url || undefined} target="_blank" rel="noopener" variant="caption" onClick={(ev) => ev.stopPropagation()}
-                                  sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, color: 'text.secondary', '&:hover': { color: 'primary.main' } }}
+                                  sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, color: 'text.secondary', '&:hover': { color: 'primary.main' }, wordBreak: 'break-all' }}
                                 >
                                   {e.full_text || getDomainSafely(e.url)} <OpenInNewIcon sx={{ fontSize: 12 }} />
                                 </MuiLink>
@@ -648,7 +649,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                             <IconButton 
                                 size="small" 
                                 onClick={(ev) => { ev.stopPropagation(); handleVote(e.id, e.userVote === 1 ? -1 : 1); }}
-                                sx={{ color: e.userVote === 1 ? 'success.main' : 'text.disabled' }}
+                                sx={{ color: e.userVote === 1 ? 'success.main' : 'text.disabled', flexShrink: 0 }}
                             >
                                 <CheckCircleOutlineIcon />
                             </IconButton>
@@ -668,17 +669,17 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
         <DialogTitle sx={{ pr: 5, pb: 1, pt: 3 }}>
             <Typography variant="overline" sx={{ color: 'primary.main', fontWeight: 800, letterSpacing: 1 }}>Event Details</Typography>
             
-            {/* NEU: Titel-Bereich mit Logo und Region-Flagge */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mt: 0.5, pr: 2 }}>
                 {selectedEvent?.logo_url && (
                     <Box 
                         component="img" 
                         src={getImageUrl(selectedEvent.logo_url)} 
                         alt="Source Logo" 
-                        sx={{ height: 40, width: 40, objectFit: 'contain', borderRadius: 1, p: 0.5, border: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }} 
+                        sx={{ height: 40, width: 40, objectFit: 'contain', borderRadius: 1, p: 0.5, border: '1px solid', borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }} 
                     />
                 )}
-                <Typography variant="h5" sx={{ fontWeight: 800 }}>
+                {/* FIX: wordBreak: break-word hinzugefügt für lange Event-Titel */}
+                <Typography variant="h5" sx={{ fontWeight: 800, wordBreak: 'break-word', fontSize: { xs: '1.25rem', sm: '1.5rem' }, lineHeight: 1.3 }}>
                     {selectedEvent?.title} 
                     {selectedEvent?.region && (
                         <span style={{ marginLeft: '8px', fontSize: '1.2rem' }} title={`Region: ${selectedEvent.region}`}>
@@ -691,7 +692,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
             <IconButton onClick={() => setSelectedEvent(null)} sx={{ position: 'absolute', top: 16, right: 16, bgcolor: 'action.hover' }}><CloseIcon /></IconButton>
         </DialogTitle>
         
-        <DialogContent dividers sx={{ p: 3 }}>
+        <DialogContent dividers sx={{ p: { xs: 2, sm: 3 } }}>
           {selectedEvent && (
             <Stack spacing={3}>
               <Box sx={{ p: 2, bgcolor: alpha(theme.palette.primary.main, 0.05), borderRadius: 2, border: '1px solid', borderColor: alpha(theme.palette.primary.main, 0.1), display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -702,7 +703,6 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                         <Typography variant="body1" fontWeight="bold">
                             {new Date(selectedEvent.date).toLocaleDateString('de-DE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                         </Typography>
-                        {/* NEU: Countdown-Chip */}
                         <Chip 
                             size="small" 
                             label={getDaysLeft(selectedEvent.date)} 
@@ -717,7 +717,8 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
               {selectedEvent.summary && (
                   <Box>
                     <Typography variant="subtitle2" gutterBottom fontWeight="bold">Infos</Typography>
-                    <Typography sx={{ whiteSpace: 'pre-wrap', color: 'text.secondary', lineHeight: 1.6 }}>{selectedEvent.summary}</Typography>
+                    {/* FIX: wordBreak hinzugefügt, damit lange Event-Beschreibungen nicht aus dem Dialog laufen */}
+                    <Typography sx={{ whiteSpace: 'pre-wrap', color: 'text.secondary', lineHeight: 1.6, wordBreak: 'break-word' }}>{selectedEvent.summary}</Typography>
                   </Box>
               )}
 
@@ -770,7 +771,6 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                   </Box>
               )}
 
-              {/* NEU: Vertrauenswürdige Quelle & Link */}
               {selectedEvent.url && (
                   <Box sx={{ mt: 2 }}>
                       {selectedEvent.is_trusted_source && (
@@ -781,9 +781,8 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                                       Geprüfte Quelle
                                   </Typography>
                               </Box>
-                              <Typography variant="body2" color="text.secondary">
+                              <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
                                   Webseite: <MuiLink href={selectedEvent.url} target="_blank" rel="noopener noreferrer" color="inherit" underline="hover">
-                                      {/* Zeigt nur die saubere Domain an, z.B. "www.oeamtc.at" */}
                                       {(() => {
                                           try { return new URL(selectedEvent.url).hostname; } 
                                           catch { return selectedEvent.url; }
@@ -793,7 +792,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                           </Paper>
                       )}
 
-                      <Button fullWidth startIcon={<OpenInNewIcon />} href={selectedEvent.url} target="_blank" rel="noopener" variant="outlined" sx={{ borderRadius: 2 }}>
+                      <Button fullWidth startIcon={<OpenInNewIcon />} href={selectedEvent.url} target="_blank" rel="noopener" variant="outlined" sx={{ borderRadius: 2, whiteSpace: 'normal', textAlign: 'center', lineHeight: 1.2, py: 1 }}>
                         Anmeldung & Details (Extern)
                       </Button>
                   </Box>
@@ -806,23 +805,23 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
             pt: 2, 
             flexDirection: 'column', 
             gap: 2, 
-            // FIX: Heller Hintergrund im Light-Mode, transparenter dunkler Hintergrund im Dark-Mode
             bgcolor: theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.02)' : '#f8fafc' 
         }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+            {/* FIX: Erlaubt das Umbrechen der Buttons in die nächste Zeile bei Platzmangel */}
+            <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' }, width: '100%', gap: 1 }}>
                 <Typography variant="body2" fontWeight="bold">Deine Antwort:</Typography>
-                <Stack direction="row" spacing={1}>
+                <Stack direction="row" spacing={1} sx={{ width: { xs: '100%', sm: 'auto' } }}>
                 <Button 
                     onClick={() => handleVote(selectedEvent?.id || '', 1)} 
                     size="small" startIcon={<CheckIcon />} color="success"
                     variant={selectedEvent?.userVote === 1 ? "contained" : "outlined"}
-                    sx={{ borderRadius: 5, px: 2 }}
+                    sx={{ borderRadius: 5, px: 2, flex: { xs: 1, sm: 'none' } }}
                 >Dabei</Button>
                 <Button 
                     onClick={() => handleVote(selectedEvent?.id || '', 0)} 
                     size="small" startIcon={<HelpOutlineIcon />} color="warning"
                     variant={selectedEvent?.userVote === 0 ? "contained" : "outlined"}
-                    sx={{ borderRadius: 5, px: 2 }}
+                    sx={{ borderRadius: 5, px: 2, flex: { xs: 1, sm: 'none' } }}
                 >Vielleicht</Button>
             </Stack>
             </Box>

@@ -4,7 +4,7 @@ import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
     TextField, MenuItem, Switch, FormControlLabel, Chip, Tabs, Tab, TableSortLabel, InputAdornment, Tooltip, Snackbar, Grid,
-    Avatar, List, ListItem, ListItemText, Divider
+    Avatar, List, ListItem, ListItemText, Divider, Collapse
 } from '@mui/material';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
@@ -21,6 +21,7 @@ import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
 import DashboardCustomizeIcon from '@mui/icons-material/DashboardCustomize';
 import LoginIcon from '@mui/icons-material/Login';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
+import FilterListIcon from '@mui/icons-material/FilterList';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 
@@ -89,14 +90,12 @@ const AdminUserManagementPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user: loggedInUser, isLoading: isAuthLoading } = useAuth();
-
   const isAdmin = loggedInUser?.role === 'admin';
   const isAssistant = loggedInUser?.role === 'assistenz';
   const businessPartnerNameFromState = (location.state as any)?.businessPartnerName;
-
   const currentBpId = isAssistant ? loggedInUser?.business_partner_id : adminFilterBpId;
-
   const [users, setUsers] = useState<User[]>([]);
+  const [totalUsersCount, setTotalUsersCount] = useState<number>(0);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [businessPartnerOptions, setBusinessPartnerOptions] = useState<BusinessPartnerOption[]>([]);
@@ -104,16 +103,18 @@ const AdminUserManagementPage: React.FC = () => {
   const [membershipLevels, setMembershipLevels] = useState<MembershipLevels | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
   const [openDialog, setOpenDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
-
+  const [searchFirstName, setSearchFirstName] = useState('');
+  const [searchLastName, setSearchLastName] = useState('');
+  const [searchEmail, setSearchEmail] = useState('');
+  const [searchOrgName, setSearchOrgName] = useState('');
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
   const [statsModalOpen, setStatsModalOpen] = useState(false);
   const [selectedUserForStats, setSelectedUserForStats] = useState<User | null>(null);
   const [userStats, setUserStats] = useState<UserStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
-
   const [formUsername, setFormUsername] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formPassword, setFormPassword] = useState('');
@@ -127,14 +128,12 @@ const AdminUserManagementPage: React.FC = () => {
   const [formIsActive, setFormIsActive] = useState(true);
   const [formActiveUntil, setFormActiveUntil] = useState('');
   const [formProfileImageUrl, setFormProfileImageUrl] = useState('');
-
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedBpFilter, setSelectedBpFilter] = useState<string>('all'); 
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [order, setOrder] = useState<Order>('asc');
   const [orderBy, setOrderBy] = useState<keyof User>('last_name');
-
   const [openImportDialog, setOpenImportDialog] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
@@ -173,45 +172,48 @@ const AdminUserManagementPage: React.FC = () => {
     }
   };
 
-  const fetchUsers = useCallback(async (currentPage = 1, bpFilterOverride?: string, searchOverride?: string) => {
-    if (isAssistant && !loggedInUser?.business_partner_id) {
-        setUsers([]); setLoading(false); return;
+const fetchUsers = useCallback(async (currentPage = 1, bpFilterOverride?: string) => {
+  if (isAssistant && !loggedInUser?.business_partner_id) {
+      setUsers([]); setLoading(false); return;
+  }
+  if (currentPage === 1) setLoading(true);
+  try {
+    const filterToUse = bpFilterOverride !== undefined ? bpFilterOverride : selectedBpFilter;
+    
+    let userUrl = `/api/admin/users?page=${currentPage}&limit=50`;
+    
+    if (isAdmin && filterToUse !== 'all') {
+      userUrl += `&business_partner_id=${filterToUse}`;
+    } else if (isAdmin && adminFilterBpId) {
+      userUrl += `&business_partner_id=${adminFilterBpId}`;
+    } else if (isAssistant && loggedInUser?.business_partner_id) {
+      userUrl += `&business_partner_id=${loggedInUser.business_partner_id}`;
     }
-    if (currentPage === 1) setLoading(true);
-    try {
-      const filterToUse = bpFilterOverride !== undefined ? bpFilterOverride : selectedBpFilter;
-      const searchToUse = searchOverride !== undefined ? searchOverride : debouncedSearch;
-      
-      let userUrl = `/api/admin/users?page=${currentPage}&limit=50`;
-      
-      if (isAdmin && filterToUse !== 'all') {
-        userUrl += `&business_partner_id=${filterToUse}`;
-      } else if (isAdmin && adminFilterBpId) {
-        userUrl += `&business_partner_id=${adminFilterBpId}`;
-      } else if (isAssistant && loggedInUser?.business_partner_id) {
-        userUrl += `&business_partner_id=${loggedInUser.business_partner_id}`;
-      }
 
-      if (searchToUse) {
-        userUrl += `&search=${encodeURIComponent(searchToUse)}`;
-      }
-      
-      const userRes = await apiClient.get(userUrl);
-      const newUsers = asArray<User>(userRes.data);
-      
-      if (currentPage === 1) {
-          setUsers(newUsers);
-      } else {
-          setUsers(prev => [...prev, ...newUsers]);
-      }
-      setHasMore(newUsers.length === 50);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || 'Fehler beim Laden der Benutzer.');
-      if (currentPage === 1) setUsers([]);
-    } finally {
-        setLoading(false);
+    // Die feingranularen Suchparameter an die URL anhängen
+    if (searchFirstName) userUrl += `&first_name=${encodeURIComponent(searchFirstName)}`;
+    if (searchLastName) userUrl += `&last_name=${encodeURIComponent(searchLastName)}`;
+    if (searchEmail) userUrl += `&email=${encodeURIComponent(searchEmail)}`;
+    if (searchOrgName) userUrl += `&organization_name=${encodeURIComponent(searchOrgName)}`;
+    
+    const userRes = await apiClient.get(userUrl);
+    const responseData = userRes.data;
+    const newUsers = asArray<User>(responseData.users || responseData);
+    
+    setTotalUsersCount(responseData.total_count || newUsers.length);
+
+    if (currentPage === 1) {
+        setUsers(newUsers);
+    } else {
+        setUsers(prev => [...prev, ...newUsers]);
     }
-  }, [isAdmin, isAssistant, adminFilterBpId, loggedInUser?.business_partner_id, selectedBpFilter, debouncedSearch]);
+    setHasMore(newUsers.length === 50);
+  } catch (err: any) {
+    setError(err?.response?.data?.message || 'Fehler beim Laden.');
+  } finally {
+      setLoading(false);
+  }
+}, [isAdmin, isAssistant, adminFilterBpId, loggedInUser?.business_partner_id, selectedBpFilter, searchFirstName, searchLastName, searchEmail, searchOrgName]);
 
   useEffect(() => {
     const fetchDropdownData = async () => {
@@ -234,20 +236,19 @@ const AdminUserManagementPage: React.FC = () => {
     }
   }, [isAdmin, loggedInUser, isAuthLoading]);
 
-  // Effekt triggert serverseitige Suche wenn der debounced Suchbegriff sich ändert
-  useEffect(() => {
-    if (!isAuthLoading) {
-        setPage(1);
-        fetchUsers(1, undefined, debouncedSearch);
-    }
-  }, [debouncedSearch]); 
+useEffect(() => {
+  if (!isAuthLoading) {
+      setPage(1);
+      fetchUsers(1); // Korrigiert
+  }
+}, [debouncedSearch]);
 
-  const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newBp = e.target.value;
-    setSelectedBpFilter(newBp);
-    setPage(1);
-    fetchUsers(1, newBp, debouncedSearch);
-  };
+const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const newBp = e.target.value;
+  setSelectedBpFilter(newBp);
+  setPage(1);
+  fetchUsers(1, newBp); // Korrigiert
+};
 
   useEffect(() => {
     const fetchLevels = async (bpId: string) => {
@@ -447,54 +448,122 @@ const AdminUserManagementPage: React.FC = () => {
   };
 
   return (
-      <Container maxWidth="xl" sx={{ mt: 4, mb: 4, pb: hasMore ? 8 : 0 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
-          <Box>
-            <Typography variant="h4" component="h1">Benutzerverwaltung</Typography>
-            {isAdmin && adminFilterBpId && (
-              <Chip label={`Admin-Filter: ${businessPartnerNameFromState || businessPartnerOptions.find(bp => bp.id === adminFilterBpId)?.name}`} onDelete={() => navigate('/admin/users')} sx={{ mt: 1 }} />
-            )}
-            {isAssistant && (
-              <Typography variant="subtitle1" color="text.secondary" sx={{ mt: 1 }}>Verwaltung für: <strong>{loggedInUser?.business_partner_name}</strong></Typography>
-            )}
-          </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-            {currentBpId && (
-                <Button variant="outlined" startIcon={<QrCodeIcon />} onClick={() => window.open(`/invite/${currentBpId}`, '_blank')} sx={{ borderColor: 'primary.main', color: 'primary.main', mr: 1 }}>
-                    Mitglieder einladen
-                </Button>
-            )}
+<Container maxWidth="xl" sx={{ mt: 4, mb: 4, pb: hasMore ? 8 : 0 }}>
+        
+        {/* Haupt-Header Container */}
+        <Box sx={{ mb: 2 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+            <Box>
+              <Typography variant="h4" component="h1">
+                  Benutzerverwaltung ({totalUsersCount})
+              </Typography>
+              {isAdmin && adminFilterBpId && (
+                  <Chip label={`Admin-Filter: ${businessPartnerNameFromState || businessPartnerOptions.find(bp => bp.id === adminFilterBpId)?.name}`} onDelete={() => navigate('/admin/users')} sx={{ mt: 1 }} />
+              )}
+              {isAssistant && (
+                  <Typography variant="subtitle1" color="text.secondary" sx={{ mt: 1 }}>Verwaltung für: <strong>{loggedInUser?.business_partner_name}</strong></Typography>
+              )}
+            </Box>
 
-            {isAdmin && !adminFilterBpId && (
-                <TextField
-                    select
-                    size="small"
-                    label="Partner Filter"
-                    value={selectedBpFilter}
-                    onChange={handleBpFilterChange}
-                    sx={{ minWidth: 180 }}
-                >
-                    <MenuItem value="all">Alle Partner</MenuItem>
-                      {businessPartnerOptions.map((bp) => (
-                          <MenuItem key={bp.id} value={bp.id}>{bp.name} ({bp.user_count})</MenuItem>
-                      ))}
-                </TextField>
-            )}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+              {currentBpId && (
+                  <Button variant="outlined" startIcon={<QrCodeIcon />} onClick={() => window.open(`/invite/${currentBpId}`, '_blank')} sx={{ borderColor: 'primary.main', color: 'primary.main', mr: 1 }}>
+                      Mitglieder einladen
+                  </Button>
+              )}
 
-            <TextField variant="outlined" size="small" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }} />
-            <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExport}>Export</Button>
-            <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={() => setOpenImportDialog(true)}>Import</Button>
-            <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenAddDialog}>Hinzufügen</Button>
+              {isAdmin && !adminFilterBpId && (
+                  <TextField
+                      select
+                      size="small"
+                      label="Partner Filter"
+                      value={selectedBpFilter}
+                      onChange={handleBpFilterChange}
+                      sx={{ minWidth: 180 }}
+                  >
+                      <MenuItem value="all">Alle Partner</MenuItem>
+                        {businessPartnerOptions.map((bp) => (
+                            <MenuItem key={bp.id} value={bp.id}>{bp.name} ({bp.user_count})</MenuItem>
+                        ))}
+                  </TextField>
+              )}
+
+              {/* NEU: Das Suchfeld hat jetzt einen Toggle-Button für die Feinsuche */}
+              <TextField 
+                  variant="outlined" 
+                  size="small" 
+                  placeholder="Schnellsuche..." 
+                  value={searchTerm} 
+                  onChange={(e) => setSearchTerm(e.target.value)} 
+                  InputProps={{ 
+                      startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>),
+                      endAdornment: (
+                          <InputAdornment position="end">
+                              <Tooltip title="Erweiterte Feinsuche umschalten">
+                                  <IconButton 
+                                      onClick={() => setShowAdvancedSearch(!showAdvancedSearch)} 
+                                      color={showAdvancedSearch ? 'primary' : 'default'}
+                                      size="small"
+                                  >
+                                      <FilterListIcon />
+                                  </IconButton>
+                              </Tooltip>
+                          </InputAdornment>
+                      )
+                  }} 
+              />
+              <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExport}>Export</Button>
+              <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={() => setOpenImportDialog(true)}>Import</Button>
+              <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenAddDialog}>Hinzufügen</Button>
+            </Box>
           </Box>
+
+          {/* NEU: Der ausklappbare Bereich für die Feinsuche */}
+          <Collapse in={showAdvancedSearch}>
+            <Paper sx={{ p: 2, mt: 2, bgcolor: 'background.default' }} variant="outlined">
+              <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
+                <FilterListIcon fontSize="small" /> Feinsuche / Filter
+              </Typography>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={3} md={2}>
+                  <TextField label="Vorname" size="small" fullWidth value={searchFirstName} onChange={(e) => setSearchFirstName(e.target.value)} />
+                </Grid>
+                <Grid item xs={12} sm={3} md={2}>
+                  <TextField label="Nachname" size="small" fullWidth value={searchLastName} onChange={(e) => setSearchLastName(e.target.value)} />
+                </Grid>
+                <Grid item xs={12} sm={3} md={3}>
+                  <TextField label="E-Mail-Adresse" size="small" fullWidth value={searchEmail} onChange={(e) => setSearchEmail(e.target.value)} />
+                </Grid>
+                <Grid item xs={12} sm={3} md={2}>
+                  <TextField label="Organisation" size="small" fullWidth value={searchOrgName} onChange={(e) => setSearchOrgName(e.target.value)} />
+                </Grid>
+                <Grid item xs={12} md={3} sx={{ display: 'flex', gap: 1 }}>
+                  <Button variant="contained" color="primary" fullWidth onClick={() => { setPage(1); fetchUsers(1); }} startIcon={<SearchIcon />}>
+                    Filtern
+                  </Button>
+                  <Button 
+                    variant="outlined" color="secondary"
+                    onClick={() => {
+                      setSearchFirstName(''); setSearchLastName(''); setSearchEmail(''); setSearchOrgName('');
+                      setPage(1); setTimeout(() => fetchUsers(1, selectedBpFilter), 50);
+                    }}
+                  >
+                    Reset
+                  </Button>
+                </Grid>
+              </Grid>
+            </Paper>
+          </Collapse>
         </Box>
 
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-          <Tabs value={statusFilter} onChange={(_e, v) => setStatusFilter(v)}>
-            <Tab label={`Alle (${users.length}${showPlus})`} value="all" />
-            <Tab label={`Aktiv (${activeCount}${showPlus})`} value="active" />
-            <Tab label={`Inaktiv (${inactiveCount}${showPlus})`} value="inactive" />
-          </Tabs>
-        </Box>
+<Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+  <Tabs value={statusFilter} onChange={(_e, v) => setStatusFilter(v)}>
+    {/* ÄNDERUNG: Zeigt nun die echte, serverseitige Gesamtanzahl ohne ein verwirrendes "+" an */}
+    <Tab label={`Alle (${totalUsersCount})`} value="all" />
+    <Tab label={`Aktiv (${activeCount}${showPlus})`} value="active" />
+    <Tab label={`Inaktiv (${inactiveCount}${showPlus})`} value="inactive" />
+  </Tabs>
+</Box>
 
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box>
