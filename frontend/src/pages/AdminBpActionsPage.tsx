@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
     TextField, Switch, FormControlLabel, Tooltip, Select, MenuItem, InputLabel, FormControl, Grid,
-    TableSortLabel, InputAdornment, styled, Autocomplete, SelectChangeEvent
+    TableSortLabel, InputAdornment, styled, Autocomplete, SelectChangeEvent, Divider
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -14,6 +14,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import ImageIcon from '@mui/icons-material/Image';
+import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 import { Region, WidgetTypeMeta } from '../types/dashboard.types';
@@ -43,15 +44,15 @@ interface BusinessPartner {
 type SortDirection = 'asc' | 'desc';
 
 const VisuallyHiddenInput = styled('input')({
-  clip: 'rect(0 0 0 0)',
-  clipPath: 'inset(50%)',
-  height: 1,
-  overflow: 'hidden',
-  position: 'absolute',
-  bottom: 0,
-  left: 0,
-  whiteSpace: 'nowrap',
-  width: 1,
+    clip: 'rect(0 0 0 0)',
+    clipPath: 'inset(50%)',
+    height: 1,
+    overflow: 'hidden',
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    whiteSpace: 'nowrap',
+    width: 1,
 });
 
 const AdminBpActionsPage: React.FC = () => {
@@ -82,36 +83,67 @@ const AdminBpActionsPage: React.FC = () => {
         return () => clearTimeout(handler);
     }, [searchTerm]);
 
+    // Hilfsfunktion zur Erkennung und Einbettung von YouTube-Videos
+    const renderMedia = (url: string, height: string | number = '100%', width: string | number = '100%') => {
+        if (!url) return <ImageIcon color="disabled" />;
+        const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+        const match = url.match(regExp);
+        const videoId = (match && match[2].length === 11) ? match[2] : null;
+
+        if (videoId) {
+            return (
+                <iframe
+                    width={width}
+                    height={height}
+                    src={`https://www.youtube.com/embed/${videoId}`}
+                    title="YouTube video player"
+                    frameBorder="0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                    style={{ borderRadius: '4px', display: 'block' }}
+                />
+            );
+        }
+        return <img src={url} alt="Medien Vorschau" style={{ width: width, height: height, objectFit: 'cover', borderRadius: '4px', display: 'block' }} />;
+    };
+
+    // Prüft, ob es sich bei der URL um ein YouTube-Video handelt (für Tabellen-Icons)
+    const isYouTubeUrl = (url: string) => {
+        if (!url) return false;
+        return url.includes('youtube.com') || url.includes('youtu.be');
+    };
+
+    // "Mediathek": Holt alle einzigartigen Bild-URLs aus bestehenden Aktionen zur Wiederverwendung
+    const existingImages = useMemo(() => {
+        const urls = actions.map(a => a.image_url).filter(Boolean);
+        return Array.from(new Set(urls));
+    }, [actions]);
+
     const fetchData = useCallback(async () => {
         if (!user) return;
         setLoading(true);
         try {
             const params: any = { 
-              search: debouncedSearchTerm, 
-              sortBy: sortConfig.key, 
-              sortOrder: sortConfig.direction 
+                search: debouncedSearchTerm, 
+                sortBy: sortConfig.key, 
+                sortOrder: sortConfig.direction 
             };
             
-            // KORREKTUR: Wenn der Benutzer ein Assistent ist, wird die business_partner_id
-            // als Filterkriterium an die API gesendet.
             if (isAssistant && user.business_partner_id) {
-              params.business_partner_id = user.business_partner_id;
+                params.business_partner_id = user.business_partner_id;
             }
 
             const actionsResponse = await apiClient.get('/api/admin/actions', { params });
-            
             setActions(actionsResponse.data);
 
-            if (user.role === 'admin') {
-                const [bpRes, regionsRes, widgetsRes] = await Promise.all([
-                    apiClient.get('/api/admin/business-partners'),
-                    apiClient.get('/api/data/regions'),
-                    apiClient.get('/api/widgets/types')
-                ]);
-                setAllBusinessPartners(bpRes.data);
-                setAllRegions(regionsRes.data);
-                setAllWidgetTypes(widgetsRes.data.filter((w: WidgetTypeMeta) => w.config?.category));
-            }
+            const [bpRes, regionsRes, widgetsRes] = await Promise.all([
+                apiClient.get('/api/admin/business-partners'),
+                apiClient.get('/api/data/regions'),
+                apiClient.get('/api/widgets/types')
+            ]);
+            setAllBusinessPartners(bpRes.data);
+            setAllRegions(regionsRes.data);
+            setAllWidgetTypes(widgetsRes.data.filter((w: WidgetTypeMeta) => w.config?.category));
             setError(null);
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Laden der Daten.');
@@ -159,6 +191,14 @@ const AdminBpActionsPage: React.FC = () => {
     };
 
     const handleSubmit = async () => {
+        setUploadError(null);
+
+        // Validierung: End-Datum darf nicht vor dem Start-Datum liegen
+        if (formState.start_date && formState.end_date && new Date(formState.end_date) < new Date(formState.start_date)) {
+            setUploadError('Das End-Datum darf nicht zeitlich vor dem Start-Datum liegen.');
+            return;
+        }
+
         const data = { ...formState, start_date: formState.start_date || null, end_date: formState.end_date || null };
         try {
             if (editingAction) {
@@ -168,7 +208,9 @@ const AdminBpActionsPage: React.FC = () => {
             }
             fetchData();
             handleCloseDialog();
-        } catch (err: any) { setError(err.response?.data?.message || 'Fehler beim Speichern.'); }
+        } catch (err: any) { 
+            setUploadError(err.response?.data?.message || 'Fehler beim Speichern.'); 
+        }
     };
 
     const handleDelete = async (id: string) => {
@@ -187,6 +229,8 @@ const AdminBpActionsPage: React.FC = () => {
             ...action,
             id: undefined,
             title: `Kopie von: ${action.title}`,
+            start_date: action.start_date ? new Date(action.start_date).toISOString().slice(0, 16) : '',
+            end_date: action.end_date ? new Date(action.end_date).toISOString().slice(0, 16) : ''
         });
         setOpenDialog(true);
     };
@@ -252,13 +296,23 @@ const AdminBpActionsPage: React.FC = () => {
                         <TableRow key={action.id}>
                             <TableCell><Tooltip title={action.is_active ? 'Aktiv' : 'Inaktiv'}>{action.is_active ? <CheckCircleIcon color="success" /> : <CancelIcon color="disabled" />}</Tooltip></TableCell>
                             <TableCell>
-                                {action.image_url ? (
-                                    <img src={action.image_url} alt="Vorschau" style={{ width: '80px', height: '50px', objectFit: 'cover', borderRadius: '4px', verticalAlign: 'middle' }} />
-                                ) : (
-                                    <Box sx={{ width: '80px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'grey.100', borderRadius: '4px' }}>
-                                        <ImageIcon color="disabled" />
-                                    </Box>
-                                )}
+                                <Box sx={{ width: '80px', height: '50px', position: 'relative', borderRadius: '4px', overflow: 'hidden', bgcolor: 'grey.100' }}>
+                                    {action.image_url ? (
+                                        <>
+                                            {isYouTubeUrl(action.image_url) ? (
+                                                <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'text.primary', color: 'white' }}>
+                                                    <PlayCircleOutlineIcon />
+                                                </Box>
+                                            ) : (
+                                                <img src={action.image_url} alt="Vorschau" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            )}
+                                        </>
+                                    ) : (
+                                        <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <ImageIcon color="disabled" />
+                                        </Box>
+                                    )}
+                                </Box>
                             </TableCell>
                             <TableCell>{action.title}</TableCell>
                             {user?.role === 'admin' && <TableCell>{action.business_partner_name}</TableCell>}
@@ -275,40 +329,50 @@ const AdminBpActionsPage: React.FC = () => {
 
             <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
                 <DialogTitle>{editingAction ? 'Aktion bearbeiten' : 'Neue Aktion erstellen'}</DialogTitle>
-                <DialogContent>
-                    <Grid container spacing={2} sx={{ mt: 1 }}>
+                <DialogContent dividers>
+                    <Grid container spacing={2}>
                         {user?.role === 'admin' && (
-                            <Grid item xs={12}><FormControl fullWidth><InputLabel>Business Partner</InputLabel><Select name="business_partner_id" value={formState.business_partner_id || ''} label="Business Partner" onChange={handleSelectChange}>{allBusinessPartners.map(bp => <MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>)}</Select></FormControl></Grid>
+                            <Grid item xs={12}><FormControl fullWidth size="small"><InputLabel>Business Partner</InputLabel><Select name="business_partner_id" value={formState.business_partner_id || ''} label="Business Partner" onChange={handleSelectChange}>{allBusinessPartners.map(bp => <MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>)}</Select></FormControl></Grid>
                         )}
-                        <Grid item xs={12}><TextField name="title" label="Titel der Aktion" fullWidth value={formState.title || ''} onChange={handleInputChange} /></Grid>
-                        <Grid item xs={12}><TextField name="content_text" label="Beschreibungstext" fullWidth multiline rows={3} value={formState.content_text || ''} onChange={handleInputChange} /></Grid>
-                        <Grid item xs={12}><TextField name="link_url" label="Link-URL" fullWidth value={formState.link_url || ''} onChange={handleInputChange} /></Grid>       
+                        <Grid item xs={12}><TextField size="small" name="title" label="Titel der Aktion" fullWidth value={formState.title || ''} onChange={handleInputChange} /></Grid>
+                        <Grid item xs={12}><TextField size="small" name="content_text" label="Beschreibungstext" fullWidth multiline rows={3} value={formState.content_text || ''} onChange={handleInputChange} /></Grid>
+                        <Grid item xs={12}><TextField size="small" name="link_url" label="Ziel-Link-URL (z.B. https://...)" fullWidth value={formState.link_url || ''} onChange={handleInputChange} /></Grid>       
+                        
+                        {/* Optimierter Medien-Auswahlbereich mit Autocomplete (Mediathek-Wiederverwendung) */}
                         <Grid item xs={12} md={8}>
-                            <TextField 
-                                name="image_url" 
-                                label="Bild URL" 
-                                fullWidth 
-                                value={formState.image_url || ''} 
-                                onChange={handleInputChange} 
-                                helperText="URL wird nach dem Upload automatisch eingetragen."
+                            <Autocomplete
+                                freeSolo
+                                size="small"
+                                options={existingImages}
+                                value={formState.image_url || ''}
+                                onChange={(_, newValue) => setFormState(prev => ({ ...prev, image_url: newValue || '' }))}
+                                onInputChange={(_, newInputValue) => setFormState(prev => ({ ...prev, image_url: newInputValue || '' }))}
+                                renderInput={(params) => (
+                                    <TextField 
+                                        {...params} 
+                                        name="image_url" 
+                                        label="Grafik- oder YouTube-Video-URL" 
+                                        fullWidth 
+                                        helperText="Füge einen Bild-Link, YouTube-Link ein oder wähle ein vorhandenes Bild aus der Liste."
+                                    />
+                                )}
                             />
                         </Grid>
                         <Grid item xs={12} md={4}>
-                            <Button component="label" fullWidth variant="outlined" startIcon={<UploadFileIcon />}>Grafik hochladen<VisuallyHiddenInput type="file" onChange={handleFileUpload} /></Button>
+                            <Button component="label" fullWidth variant="outlined" startIcon={<UploadFileIcon />} sx={{ height: '40px' }}>Grafik hochladen<VisuallyHiddenInput type="file" onChange={handleFileUpload} /></Button>
                         </Grid>
-                        {uploadError && <Grid item xs={12}><Alert severity="error">{uploadError}</Alert></Grid>}
                         
                         <Grid item xs={12} md={6}>
-                            <FormControl fullWidth>
+                            <FormControl fullWidth size="small">
                                 <InputLabel>Ziel-Widget (Kategorie)</InputLabel>
                                 <Select name="target_widget_category" value={formState.target_widget_category || ''} label="Ziel-Widget (Kategorie)" onChange={handleSelectChange}>
-                                    <MenuItem value=""><em>Keine Zuordnung</em></MenuItem>
+                                    <MenuItem value=""><em>Keine Zuordnung (Überall anzeigen)</em></MenuItem>
                                     {allWidgetTypes.map(wt => <MenuItem key={wt.type_key} value={wt.config.category}>{wt.name}</MenuItem>)}
                                 </Select>
                             </FormControl>
                         </Grid>
                         <Grid item xs={12} md={6}>
-                            <FormControl fullWidth>
+                            <FormControl fullWidth size="small">
                                 <InputLabel>Ziel-Region</InputLabel>
                                 <Select name="target_region" value={formState.target_region || 'all'} label="Ziel-Region" onChange={handleSelectChange}>
                                     <MenuItem value="all"><em>Alle Regionen</em></MenuItem>
@@ -317,23 +381,64 @@ const AdminBpActionsPage: React.FC = () => {
                             </FormControl>
                         </Grid>
 
-                        <Grid item xs={12}><FormControl fullWidth><InputLabel>Layout-Typ</InputLabel><Select name="layout_type" value={formState.layout_type || 'layout_1'} label="Layout-Typ" onChange={handleSelectChange}><MenuItem value="layout_1">Layout 1: Bild links</MenuItem><MenuItem value="layout_2">Layout 2: Bild oben</MenuItem></Select></FormControl></Grid>
+                        <Grid item xs={12}><FormControl fullWidth size="small"><InputLabel>Layout-Typ</InputLabel><Select name="layout_type" value={formState.layout_type || 'layout_1'} label="Layout-Typ" onChange={handleSelectChange}><MenuItem value="layout_1">Layout 1: Bild/Video links</MenuItem><MenuItem value="layout_2">Layout 2: Bild/Video oben</MenuItem></Select></FormControl></Grid>
                         
-                        <Grid item xs={6}><TextField name="start_date" label="Start-Datum" type="datetime-local" fullWidth value={formState.start_date || ''} onChange={handleInputChange} InputLabelProps={{ shrink: true }} /></Grid>
-                        <Grid item xs={6}><TextField name="end_date" label="End-Datum" type="datetime-local" fullWidth value={formState.end_date || ''} onChange={handleInputChange} InputLabelProps={{ shrink: true }} /></Grid>
+                        <Grid item xs={6}><TextField size="small" name="start_date" label="Start-Datum" type="datetime-local" fullWidth value={formState.start_date || ''} onChange={handleInputChange} InputLabelProps={{ shrink: true }} /></Grid>
+                        <Grid item xs={6}><TextField size="small" name="end_date" label="End-Datum" type="datetime-local" fullWidth value={formState.end_date || ''} onChange={handleInputChange} InputLabelProps={{ shrink: true }} /></Grid>
                         
-                        <Grid item xs={12}>
+                        <Grid item xs={12} sx={{ py: 0 }}>
                             <FormControlLabel control={<Switch checked={formState.is_active || false} onChange={handleInputChange} name="is_active" />} label="Diese Aktion ist aktiv" />
-                        </Grid>
-
-                        {user?.role === 'admin' && (
-                            <Grid item xs={12}>
+                            {user?.role === 'admin' && (
                                 <FormControlLabel 
                                     control={<Switch checked={formState.is_click_tracking_enabled || false} onChange={handleInputChange} name="is_click_tracking_enabled" />} 
-                                    label="Klick-Tracking für diese Aktion aktivieren (via PostHog)" 
+                                    label="Klick-Tracking aktivieren (via PostHog)" 
+                                    sx={{ ml: 3 }}
                                 />
-                            </Grid>
-                        )}
+                            )}
+                        </Grid>
+
+                        {uploadError && <Grid item xs={12}><Alert severity="error">{uploadError}</Alert></Grid>}
+
+                        {/* --- NEU: HOCHWERTIGE LIVE-VORSCHAU DIREKT IM DIALOG --- */}
+                        <Grid item xs={12}>
+                            <Divider sx={{ my: 1 }} />
+                            <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1, color: 'text.secondary' }}>Live-Vorschau der Kampagne:</Typography>
+                            <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default', borderRadius: 2 }}>
+                                <Box sx={{ 
+                                    display: 'flex', 
+                                    flexDirection: formState.layout_type === 'layout_2' ? 'column' : { xs: 'column', sm: 'row' }, 
+                                    gap: 2, 
+                                    alignItems: 'start' 
+                                }}>
+                                    <Box sx={{ 
+                                        width: formState.layout_type === 'layout_2' ? '100%' : { xs: '100%', sm: '200px' }, 
+                                        height: '130px', 
+                                        flexShrink: 0,
+                                        bgcolor: 'grey.200', 
+                                        borderRadius: '4px',
+                                        overflow: 'hidden',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                    }}>
+                                        {formState.image_url ? renderMedia(formState.image_url, '130px', '100%') : <ImageIcon color="disabled" />}
+                                    </Box>
+                                    <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                                        <Typography variant="subtitle1" fontWeight="bold" sx={{ wordBreak: 'break-word' }}>
+                                            {formState.title || 'Titel der Aktion'}
+                                        </Typography>
+                                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                            {formState.content_text || 'Hier wird Ihr Beschreibungstext stehen...'}
+                                        </Typography>
+                                        {formState.link_url && (
+                                            <Button size="small" variant="contained" sx={{ mt: 1.5, textTransform: 'none' }} disabled>
+                                                Mehr erfahren
+                                            </Button>
+                                        )}
+                                    </Box>
+                                </Box>
+                            </Paper>
+                        </Grid>
                     </Grid>
                 </DialogContent>
                 <DialogActions><Button onClick={handleCloseDialog}>Abbrechen</Button><Button onClick={handleSubmit} variant="contained">Speichern</Button></DialogActions>

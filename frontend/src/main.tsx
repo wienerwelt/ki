@@ -1,5 +1,4 @@
 // frontend/src/main.tsx
-
 window.addEventListener('vite:preloadError', (event) => {
   console.warn('Vite preload error detected. Reloading page to fetch new version...');
   event.preventDefault(); // Verhindert den Fehler-Log in der Konsole (optional)

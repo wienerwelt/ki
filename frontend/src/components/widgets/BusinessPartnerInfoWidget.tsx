@@ -67,6 +67,7 @@ interface Region {
 interface BusinessPartner {
   id: string;
   name: string;
+  slug?: string | null;
   dashboard_title: string | null;
   address: string | null;
   email: string | null;
@@ -342,8 +343,8 @@ const userRole = user?.role;
   
   const handleCopyInviteLink = () => {
     if (!bpId) return;
-    const voucherCode = bpId.slice(-8);
-    const link = `${window.location.origin}/register?partner=${voucherCode}`;
+    const accessCode = businessPartner?.slug || bpId.slice(-8);
+    const link = `${window.location.origin}/${accessCode}`;
     navigator.clipboard.writeText(link).then(() => {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
@@ -1086,7 +1087,7 @@ const userRole = user?.role;
                         <TextField
                           size="small"
                           fullWidth
-                          value={bpId ? `${window.location.origin}/register?partner=${bpId.slice(-8)}` : ''}
+                          value={bpId ? `${window.location.origin}/${businessPartner?.slug || bpId.slice(-8)}` : ''}
                           InputProps={{ readOnly: true }}
                           sx={{ bgcolor: 'background.paper', borderRadius: 1 }}
                         />

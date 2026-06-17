@@ -708,6 +708,8 @@ const AdminDirectoryPage: React.FC = () => {
                                                 <TextField 
                                                     {...params} 
                                                     label="Adresse über Google Maps suchen..." 
+                                                    // NEU: Platzhalter mit konkreten Beispielen für Adressen und Firmennamen
+                                                    placeholder="z.B. Stephansplatz 1, Wien oder Siemens Energy Berlin"
                                                     size="small" 
                                                     InputProps={{ 
                                                         ...params.InputProps, 
@@ -762,20 +764,24 @@ const AdminDirectoryPage: React.FC = () => {
                                         }} />
                                     </Grid>
                                     <Grid item xs={6} md={4}>
-                                        <TextField label="Lat" size="small" fullWidth type="number" inputProps={{ step: "any" }} value={loc.latitude || ''} 
-                                            sx={getLocationDirtySx(idx, 'latitude')}
-                                            onChange={e => {
-                                            const l = [...(currentProvider.locations || [])]; l[idx].latitude = parseFloat(e.target.value) || null;
-                                            setCurrentProvider({...currentProvider, locations: l});
-                                        }} />
+                                        <Tooltip title="Wird für die Kartendarstellung benötigt. Bei Google Maps per Rechtsklick kopierbar." placement="top">
+                                            <TextField label="Latitude (Breitengrad)" size="small" fullWidth type="number" inputProps={{ step: "any" }} value={loc.latitude || ''} 
+                                                sx={getLocationDirtySx(idx, 'latitude')}
+                                                onChange={e => {
+                                                const l = [...(currentProvider.locations || [])]; l[idx].latitude = parseFloat(e.target.value) || null;
+                                                setCurrentProvider({...currentProvider, locations: l});
+                                            }} />
+                                        </Tooltip>
                                     </Grid>
                                     <Grid item xs={6} md={4}>
-                                        <TextField label="Long" size="small" fullWidth type="number" inputProps={{ step: "any" }} value={loc.longitude || ''} 
-                                            sx={getLocationDirtySx(idx, 'longitude')}
-                                            onChange={e => {
-                                            const l = [...(currentProvider.locations || [])]; l[idx].longitude = parseFloat(e.target.value) || null;
-                                            setCurrentProvider({...currentProvider, locations: l});
-                                        }} />
+                                        <Tooltip title="Wird für die Kartendarstellung benötigt. Bei Google Maps per Rechtsklick kopierbar." placement="top">
+                                            <TextField label="Longitude (Längengrad)" size="small" fullWidth type="number" inputProps={{ step: "any" }} value={loc.longitude || ''} 
+                                                sx={getLocationDirtySx(idx, 'longitude')}
+                                                onChange={e => {
+                                                const l = [...(currentProvider.locations || [])]; l[idx].longitude = parseFloat(e.target.value) || null;
+                                                setCurrentProvider({...currentProvider, locations: l});
+                                            }} />
+                                        </Tooltip>
                                     </Grid>
 
                                     <Grid item xs={12} sx={{ display: 'flex', justifyContent: 'flex-end', mt: -1 }}>

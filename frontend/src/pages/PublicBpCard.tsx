@@ -1,3 +1,4 @@
+// frontend/src/pages/PublicBpCard.tsx
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
@@ -13,6 +14,7 @@ import apiClient from '../apiClient';
 interface PublicPartner {
     id: string;
     name: string;
+    slug?: string | null; // NEU: Optionales Slug-Feld
     logo_url: string | null;
     dashboard_title: string | null;
     primary_color: string | null;
@@ -30,7 +32,6 @@ const PublicBpCard: React.FC = () => {
     useEffect(() => {
         const fetchPartner = async () => {
             try {
-                // Wir nutzen die Public Route
                 const res = await apiClient.get(`/api/public/partner-card/${bpId}`);
                 setPartner(res.data);
             } catch (err) {
@@ -45,10 +46,15 @@ const PublicBpCard: React.FC = () => {
     if (loading) return <Box sx={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><CircularProgress /></Box>;
     if (error || !partner) return <Box sx={{ p: 4, textAlign: 'center' }}><Alert severity="error">{error || "Partner nicht gefunden"}</Alert></Box>;
 
-    const registerUrl = `${window.location.origin}/register?partner=${partner.voucher_code}`;
+    // NEU: Logik für den sauberen Link. Priorisiert den Slug, fällt auf den Voucher-Code zurück
+    const accessCode = partner.slug || partner.voucher_code;
+    
+    // NEU: Der Link ist jetzt sauber (z.B. mobiliti.at/vfa statt mobiliti.at/register?partner=12345678)
+    const registerUrl = `${window.location.origin}/${accessCode}`;
 
     const handleCopyCode = () => {
-        navigator.clipboard.writeText(partner.voucher_code);
+        // NEU: Wir kopieren direkt den ganzen Link in die Zwischenablage, das ist nutzerfreundlicher!
+        navigator.clipboard.writeText(registerUrl);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };
@@ -123,7 +129,7 @@ const PublicBpCard: React.FC = () => {
                                 Willkommen bei {partner.name}
                             </Typography>
                             <Typography variant="body1" color="text.secondary" paragraph>
-                                Scannen Sie den QR-Code oder nutzen Sie den Einladungscode, um Ihrem Team-Dashboard beizutreten.
+                                Scannen Sie den QR-Code oder nutzen Sie den Link, um Ihrem Team-Dashboard beizutreten.
                             </Typography>
 
                             {/* QR Code Section */}
@@ -138,7 +144,7 @@ const PublicBpCard: React.FC = () => {
                                 </Box>
                             </Box>
 
-                            {/* Voucher Code Display */}
+                            {/* Access Code Display */}
                             <Box sx={{ 
                                 bgcolor: 'grey.50', 
                                 p: 3, 
@@ -148,10 +154,11 @@ const PublicBpCard: React.FC = () => {
                                 position: 'relative'
                             }}>
                                 <Typography variant="overline" color="text.secondary" display="block">
-                                    Ihr Einladungscode
+                                    Ihr Zugangs-Code
                                 </Typography>
-                                <Typography variant="h3" fontWeight="900" sx={{ letterSpacing: 4, color: 'primary.main' }}>
-                                    {partner.voucher_code}
+                                {/* NEU: Letter-Spacing dynamisch, da Slugs besser enger zusammenstehen als die alten 8-stelligen Codes */}
+                                <Typography variant="h3" fontWeight="900" sx={{ letterSpacing: partner.slug ? 1 : 4, color: 'primary.main' }}>
+                                    {accessCode}
                                 </Typography>
                                 
                                 <Button 
@@ -160,7 +167,7 @@ const PublicBpCard: React.FC = () => {
                                     onClick={handleCopyCode}
                                     sx={{ mt: 1, '@media print': { display: 'none' } }}
                                 >
-                                    {copied ? 'Kopiert' : 'Code kopieren'}
+                                    {copied ? 'Link kopiert!' : 'Link kopieren'}
                                 </Button>
                             </Box>
 

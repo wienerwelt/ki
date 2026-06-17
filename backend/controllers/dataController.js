@@ -2566,7 +2566,8 @@ exports.getActiveActionsForWidget = async (req, res) => {
         const totalPages = Math.ceil(totalItems / limit);
 
         const dataQuery = `
-            SELECT id, layout_type, title, content_text, link_url, image_url, created_at
+            SELECT id, layout_type, title, content_text, link_url, image_url, created_at,
+                target_widget_category, target_region -- <-- DIESE BEIDEN HIER ERGÄNZEN!
             ${baseQuery}
             ORDER BY created_at DESC
             LIMIT $3 OFFSET $4

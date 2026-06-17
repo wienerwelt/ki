@@ -10,7 +10,7 @@ exports.getAllBusinessPartners = async (req, res) => {
     try {
         const result = await db.query(
             `SELECT
-                bp.id, bp.name, bp.dashboard_title, bp.address, bp.logo_url, bp.email,
+                bp.id, bp.name, bp.slug, bp.dashboard_title, bp.address, bp.logo_url, bp.email,
                 bp.subscription_start_date, bp.subscription_end_date, bp.color_scheme_id,
                 bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
@@ -60,7 +60,7 @@ exports.getBusinessPartnerById = async (req, res) => {
     try {
         const result = await db.query(
             `SELECT
-                bp.id, bp.name, bp.dashboard_title, bp.address, bp.logo_url, bp.email,
+                bp.id, bp.name, bp.slug, bp.dashboard_title, bp.address, bp.logo_url, bp.email,
                 bp.subscription_start_date, bp.subscription_end_date, bp.color_scheme_id,
                 bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
@@ -95,12 +95,12 @@ exports.getBusinessPartnerById = async (req, res) => {
 
 exports.createBusinessPartner = async (req, res) => {
     const {
-        name, address, logo_url, subscription_start_date, subscription_end_date,
+        name, slug, address, logo_url, subscription_start_date, subscription_end_date,
         color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
         default_region_id, email, briefing_frequency, allow_automated_newsletter,
         category_ids = [], dashboard_focus,
-        color_mode, custom_colors // NEU
+        color_mode, custom_colors 
     } = req.body;
 
     if (!name) return res.status(400).json({ message: 'Name is required.' });
@@ -111,7 +111,7 @@ exports.createBusinessPartner = async (req, res) => {
 
         let finalColorSchemeId = color_scheme_id;
 
-        // NEU: Custom Color Scheme anlegen, wenn Modus auf 'custom' steht
+        // Custom Color Scheme anlegen, wenn Modus auf 'custom' steht
         if (color_mode === 'custom' && custom_colors) {
             const customName = `Custom - BP ${Date.now()}`;
             
@@ -138,13 +138,13 @@ exports.createBusinessPartner = async (req, res) => {
 
         const bpResult = await client.query(
             `INSERT INTO business_partners (
-                name, address, logo_url, subscription_start_date, subscription_end_date,
+                name, slug, address, logo_url, subscription_start_date, subscription_end_date,
                 color_scheme_id, is_active, url_businesspartner, dashboard_title,
                 level_1_name, level_2_name, level_3_name, email, allow_automated_newsletter, briefing_frequency,
                 dashboard_focus
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
             [
-                name, address || null, logo_url || null, subscription_start_date || null,
+                name, slug || null, address || null, logo_url || null, subscription_start_date || null,
                 subscription_end_date || null, finalColorSchemeId || null, is_active,
                 url_businesspartner || null, dashboard_title || null, level_1_name || null,
                 level_2_name || null, level_3_name || null, email || null,
@@ -177,8 +177,12 @@ exports.createBusinessPartner = async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error creating business partner:', err.message);
+        
         if (err.constraint === 'business_partners_email_key') {
             return res.status(409).json({ message: 'Ein Business Partner mit dieser E-Mail-Adresse existiert bereits.' });
+        }
+        if (err.constraint === 'business_partners_slug_key') {
+            return res.status(409).json({ message: 'Dieses Kürzel (Slug) wird bereits verwendet. Bitte wählen Sie ein anderes.' });
         }
         res.status(500).send('Server error');
     } finally {
@@ -191,13 +195,13 @@ exports.updateBusinessPartner = async (req, res) => {
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
 
     const {
-        name, address, logo_url, subscription_start_date, subscription_end_date,
+        name, slug, address, logo_url, subscription_start_date, subscription_end_date,
         color_scheme_id, is_active, url_businesspartner, region_ids,
         dashboard_title, level_1_name, level_2_name, level_3_name,
         default_region_id, email, storage_tier, 
         allow_automated_newsletter, briefing_frequency, 
         category_ids, dashboard_focus,
-        color_mode, custom_colors // NEU
+        color_mode, custom_colors 
     } = req.body;
 
     // Storage Tier Logik
@@ -218,7 +222,7 @@ exports.updateBusinessPartner = async (req, res) => {
 
         let finalColorSchemeId = color_scheme_id;
 
-        // NEU: Custom Color Scheme Logik beim Update
+        // Custom Color Scheme Logik beim Update
         if (color_mode === 'custom' && custom_colors) {
             const customName = `Custom - BP ${Date.now()}`;
             
@@ -243,7 +247,6 @@ exports.updateBusinessPartner = async (req, res) => {
             finalColorSchemeId = result.rows[0].id;
         }
 
-        // UPDATE Query mit exakt 19 Parametern
         const updatedBpResult = await client.query(
             `UPDATE business_partners SET
                 name = $1, 
@@ -264,8 +267,9 @@ exports.updateBusinessPartner = async (req, res) => {
                 allow_automated_newsletter = $16,
                 briefing_frequency = $17, 
                 dashboard_focus = $18, 
+                slug = $19,
                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = $19 RETURNING *`,
+             WHERE id = $20 RETURNING *`,
             [
                 name, 
                 address || null, 
@@ -285,6 +289,7 @@ exports.updateBusinessPartner = async (req, res) => {
                 !!allow_automated_newsletter,
                 briefing_frequency || 'never', 
                 dashboard_focus || 'information',
+                slug || null,
                 id 
             ]
         );
@@ -326,6 +331,10 @@ exports.updateBusinessPartner = async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error updating business partner:', err.message);
+        
+        if (err.constraint === 'business_partners_slug_key') {
+            return res.status(409).json({ message: 'Dieses Kürzel (Slug) wird bereits verwendet. Bitte wählen Sie ein anderes.' });
+        }
         res.status(500).json({ message: 'Fehler beim Aktualisieren des Partners.', error: err.message });
     } finally {
         client.release();

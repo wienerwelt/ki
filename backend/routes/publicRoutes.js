@@ -26,5 +26,7 @@ router.get('/commodities', publicController.getPublicCommodities);
 router.get('/sentiment', publicController.getPublicSentiment);
 router.get('/daily-briefing', publicController.getPublicDailyBriefing);
 router.get('/directory', publicController.getPublicDirectory);
+router.get('/economic-statistics', publicController.getPublicEconomicStatistics);
+router.get('/economic-statistics/countries', publicController.getPublicEconomicStatCountries);
 
 module.exports = router;

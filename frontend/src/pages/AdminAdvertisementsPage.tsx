@@ -1,3 +1,4 @@
+// frontend/src/pages/AdminAdvertisementsPage.tsx
 import React, { useState, useEffect } from 'react';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,

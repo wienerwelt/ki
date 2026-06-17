@@ -1,3 +1,4 @@
+// frontend/src/pages/AdminBusinessPartnersPage.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -40,6 +41,7 @@ interface ColorScheme {
 interface BusinessPartner {
     id: string;
     name: string;
+    slug: string | null;
     dashboard_title: string | null;
     address: string | null;
     email: string | null;
@@ -133,6 +135,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
 
     // Form States
     const [formName, setFormName] = useState('');
+    const [formSlug, setFormSlug] = useState('');
     const [formDashboardTitle, setFormDashboardTitle] = useState('');
     const [formAddress, setFormAddress] = useState('');
     const [formEmail, setFormEmail] = useState('');
@@ -184,7 +187,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     useEffect(() => { fetchData(); }, []);
     
     const handleOpenAddDialog = () => {
-        setEditingBp(null); setFormName(''); setFormDashboardTitle(''); setFormAddress(''); setFormEmail(''); setFormLogoUrl('');
+        setEditingBp(null); setFormName(''); setFormSlug(''); setFormDashboardTitle(''); setFormAddress(''); setFormEmail(''); setFormLogoUrl('');
         setFormSubscriptionStartDate(''); setFormSubscriptionEndDate(''); setFormRegionIds([]); setFormDefaultRegionId(null);
         setFormIsActive(true); setFormUrlBusinessPartner(''); setFormLevel1Name(''); setFormLevel2Name(''); setFormLevel3Name('');
         setFormStorageTier('free'); setFormAllowNewsletter(false); setFormDashboardFocus('information'); setFormIndustryIds([]);
@@ -198,7 +201,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     };
 
     const handleOpenEditDialog = (bp: BusinessPartner) => {
-        setEditingBp(bp); setFormName(bp.name); setFormDashboardTitle(bp.dashboard_title || ''); setFormAddress(bp.address || '');
+        setEditingBp(bp); setFormName(bp.name); setFormSlug(bp.slug || ''); setFormDashboardTitle(bp.dashboard_title || ''); setFormAddress(bp.address || '');
         setFormEmail(bp.email || ''); setFormLogoUrl(bp.logo_url || ''); setFormSubscriptionStartDate(bp.subscription_start_date ? bp.subscription_start_date.split('T')[0] : '');
         setFormSubscriptionEndDate(bp.subscription_end_date ? bp.subscription_end_date.split('T')[0] : ''); setFormRegionIds(bp.regions.map(r => r.id));
         const defaultRegion = bp.regions.find(r => r.is_default); setFormDefaultRegionId(defaultRegion?.id || bp.regions[0]?.id || null);
@@ -254,7 +257,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const handleSubmit = async () => {
         const token = localStorage.getItem('jwt_token');
         const bpData = {
-            name: formName, dashboard_title: formDashboardTitle || null, address: formAddress || null, email: formEmail || null,
+            name: formName, slug: formSlug || null, dashboard_title: formDashboardTitle || null, address: formAddress || null, email: formEmail || null,
             logo_url: formLogoUrl || null, subscription_start_date: formSubscriptionStartDate, subscription_end_date: formSubscriptionEndDate,
             region_ids: formRegionIds, default_region_id: formDefaultRegionId, is_active: formIsActive, url_businesspartner: formUrlBusinessPartner || null,
             level_1_name: formLevel1Name || null, level_2_name: formLevel2Name || null, level_3_name: formLevel3Name || null,
@@ -402,9 +405,19 @@ const AdminBusinessPartnersPage: React.FC = () => {
                     <DialogTitle>{editingBp ? 'Business Partner bearbeiten' : 'Neuen Business Partner hinzufügen'}</DialogTitle>
                     <DialogContent>
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-                        <Grid container spacing={2} sx={{ mt: 1 }}>
+<Grid container spacing={2} sx={{ mt: 1 }}>
                             {/* Standard Felder */}
-                            <Grid item xs={12} sm={8}><TextField label="Name" fullWidth value={formName} onChange={(e) => setFormName(e.target.value)} required /></Grid>
+                            <Grid item xs={12} sm={5}><TextField label="Name" fullWidth value={formName} onChange={(e) => setFormName(e.target.value)} required /></Grid>
+                            {/* NEU: Das Slug-Feld */}
+                            <Grid item xs={12} sm={3}>
+                                <TextField 
+                                    label="Kürzel (Slug)" 
+                                    fullWidth 
+                                    value={formSlug} 
+                                    onChange={(e) => setFormSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))} 
+                                    helperText="z.B. vfa" 
+                                />
+                            </Grid>
                             <Grid item xs={12} sm={4}>
                                 <TextField select label="Speicher-Paket" fullWidth value={formStorageTier} onChange={(e) => setFormStorageTier(e.target.value as any)}>
                                     <MenuItem value="free">Free (0 MB)</MenuItem><MenuItem value="standard">Standard (100 MB)</MenuItem><MenuItem value="premium">Premium (1 GB)</MenuItem>

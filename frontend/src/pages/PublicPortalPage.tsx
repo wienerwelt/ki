@@ -1,6 +1,5 @@
-// frontend/src/pages/PublicPortalPage.tsx
 import React, { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
-import { useSearchParams, useLocation, useNavigate } from 'react-router-dom';
+import { useSearchParams, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
     Avatar,
     Badge,
@@ -13,11 +12,11 @@ import {
     Dialog,
     DialogContent,
     DialogTitle,
-    Divider, // NEU importiert
+    Divider,
     Grid,
     IconButton,
     InputBase,
-    Link, // NEU importiert
+    Link,
     MenuItem,
     Paper,
     Rating,
@@ -38,12 +37,12 @@ import LoginForm from '../components/LoginForm';
 
 // Icons
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import CloseIcon from '@mui/icons-material/Close';
 import EmailIcon from '@mui/icons-material/Email';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
@@ -85,9 +84,11 @@ const ImageWithFallback = ({ src, alt, fallbackColor, sx, ...props }: any) => {
 };
 
 const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false }) => {
+    const { partnerSlug } = useParams(); // Holt das "vfa" aus /vfa
     const [searchParams, setSearchParams] = useSearchParams();
-    const urlPartnerCode = searchParams.get('partner');
-    // "Stiller" Fallback auf den Demo-Partner, wenn die URL leer ist
+    
+    // Prüft zuerst den neuen Slug, als Fallback den alten ?partner= Parameter
+    const urlPartnerCode = partnerSlug || searchParams.get('partner');
     const partnerCode = urlPartnerCode || '5649c95a';
     
     const [publicContext, setPublicContext] = useState<any>(null);
@@ -156,14 +157,12 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     const dashboardTitle = partner?.dashboard_title || 'Ihr Branchen-Dashboard';
     const defaultRegion = publicContext?.defaultRegion || 'AT';
     const allowedWidgets = publicContext?.allowedWidgets || [];
-    const newsPreview = publicContext?.newsPreview || [];
     const tenantStats = publicContext?.stats || { total_directory_entries: 0, community_members: 0, community_activity: 0 };
     const loginRoute = `/login${urlPartnerCode ? `?partner=${encodeURIComponent(urlPartnerCode)}` : ''}`;
     
     // --- MANUELLE BILD-WEICHE ---
     const customHeroImages: Record<string, string> = {
         'fd7a5bfd': '/actions/fuhrparkverband-austria_publicfoto_fd7a5bfd.png',
-        // 'weitererCode': '/actions/anderes_bild.png',
     };
 
     const heroImageUrl = customHeroImages[partnerCode] 
@@ -220,11 +219,10 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         return counts;
     }, [publicProviders]);
 
-    // NEU: Zählt die Regionen analog zu den Kategorien
     const regionCounts = useMemo(() => {
         const counts: Record<string, number> = {};
         publicProviders.forEach((p) => {
-            const handledRegions = new Set<string>(); // Verhindert, dass ein Provider in der gleichen Stadt doppelt gezählt wird
+            const handledRegions = new Set<string>();
             (p.locations || []).forEach((loc: any) => {
                 const r = loc?.city || loc?.zip_code;
                 if (r && !handledRegions.has(r)) {
@@ -351,18 +349,11 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         { value: tenantStats.member_satisfaction ? `${tenantStats.member_satisfaction}%` : '—', label: 'Mitgliederzufriedenheit', helper: tenantStats.member_satisfaction ? '★★★★★' : 'nach Login', icon: BarChartIcon },
     ];
     const logoProviders = publicProviders.filter((p) => p.logo_url).slice(0, 8);
-    const insights = (newsPreview.length > 0 ? newsPreview : [
-        { id: 'insight-1', title: 'Förderprogramme: Neue Chancen für Mitgliedsunternehmen', published_date: new Date().toISOString(), type: 'Branchen-News' },
-        { id: 'insight-2', title: 'Logistikmarkt im Wandel: Trends und Prognosen', published_date: new Date().toISOString(), type: 'Markt-Analyse' },
-        { id: 'insight-3', title: 'Einladung: Mitgliederversammlung und Netzwerkabend', published_date: new Date().toISOString(), type: 'Verband' },
-    ]).slice(0, 3);
-
-    const getDateLabel = (dateValue: string) => {
-        try { return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(dateValue)); } 
-        catch { return ''; }
-    };
 
     const renderWidget = (widgetInfo: any, index: number) => {
+        // HIER NEU: Das EventCalendarWidget wird nicht mehr im unteren Vorschau-Cockpit gerendert!
+        if (widgetInfo.type_key === 'EventCalendar') return null;
+
         const props = { isPublic: true, widgetId: `pub-${widgetInfo.type_key}-${index}`, widgetTypeKey: widgetInfo.type_key, title: widgetInfo.name, isRemovable: false, onDelete: () => {} };
         let content: React.ReactNode;
         switch (widgetInfo.type_key) {
@@ -370,7 +361,6 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
             case 'CommodityPrices': content = <CommodityPricesWidget {...props} />; break;
             case 'sentiment_widget': content = <SentimentWidget {...props} />; break;
             case 'daily_cockpit': content = <DailyCockpitWidget {...props} />; break;
-            case 'EventCalendar': content = <EventCalendarWidget {...props} category="fleet_events, industry_events, businesspartner_events" defaultRegion={defaultRegion} />; break;
             case 'business-partner-actions': case 'BusinessPartnerAktionen': case 'BusinessPartnerActionsWidget': content = <BpActionsWidget {...props} />; break;
             case 'funding_widget': case 'Funding': case 'FundingWidget': content = <FundingWidget {...props} />; break;
             default: content = <Paper sx={{ p: 4, borderRadius: 3, bgcolor: 'rgba(255,255,255, 0.1)', border: '1px dashed rgba(255,255,255,0.3)' }}><Typography sx={{ color: '#fff' }} align="center">Widget "{widgetInfo.name}" ist noch nicht konfiguriert.</Typography></Paper>;
@@ -383,7 +373,8 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     let fullWidthWidgets: any[] = [];
     if (allowedWidgets && allowedWidgets.length > 0) {
         fullWidthWidgets = allowedWidgets.filter((w: any) => w.type_key === 'daily_cockpit');
-        const nonFullWidth = allowedWidgets.filter((w: any) => w.type_key !== 'daily_cockpit');
+        // KORREKTUR: Filtert den EventCalendar raus, da er jetzt oben fest eingebaut ist
+        const nonFullWidth = allowedWidgets.filter((w: any) => w.type_key !== 'daily_cockpit' && w.type_key !== 'EventCalendar');
         nonFullWidth.forEach((w: any, index: number) => {
             if (index % 2 === 0) mainColumnWidgets.push(w);
             else sideColumnWidgets.push(w);
@@ -396,10 +387,9 @@ const renderProviderPreviewCard = (provider: any) => {
         <Paper 
             key={provider.id} 
             elevation={0} 
-            // NEU: Die gesamte Karte ist nun klickbar (App-Feeling)
             onClick={() => { setSelectedTeaserProvider(provider); setTeaserTab(0); }}
             sx={{ 
-                p: { xs: 2, sm: 2.5 }, // Auf Mobile Platz sparen
+                p: { xs: 2, sm: 2.5 },
                 borderRadius: 3, 
                 border: `1px solid ${alpha(darkBlue, 0.1)}`, 
                 bgcolor: '#fff', 
@@ -419,7 +409,6 @@ const renderProviderPreviewCard = (provider: any) => {
                 <ImageWithFallback src={provider.logo_url ? getAssetUrl(provider.logo_url) : null} alt={provider.name} fallbackColor={primaryColor} loading="lazy" sx={{ maxHeight: 40, maxWidth: 130, objectFit: 'contain' }} />
             </Box>
             
-            {/* NEU: minWidth: 0 und flexShrink verhindern das Überlappen bei langen Namen */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.5, minWidth: 0 }}>
                 <Typography variant="subtitle1" fontWeight={900} color={darkBlue} noWrap sx={{ flexShrink: 1 }}>
                     {provider.name}
@@ -433,7 +422,6 @@ const renderProviderPreviewCard = (provider: any) => {
                 {provider.category || 'Netzwerkpartner'}
             </Typography>
             
-            {/* NEU: Auf Mobile zeigen wir 2 Zeilen Text, auf Desktop 3 Zeilen. */}
             <Typography 
                 variant="body2" 
                 sx={{ 
@@ -449,19 +437,16 @@ const renderProviderPreviewCard = (provider: any) => {
                 {provider.description || 'Führender Anbieter im Branchen-Netzwerk.'}
             </Typography>
 
-            {/* Fußzeile: Ort & CTA */}
             <Box sx={{ mt: 'auto', pt: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', minWidth: 0 }}>
                 {loc?.city ? (
                     <Stack direction="row" alignItems="center" spacing={0.5} sx={{ color: alpha(darkBlue, 0.58), minWidth: 0, pr: 1 }}>
                         <PlaceOutlinedIcon sx={{ fontSize: 16, flexShrink: 0 }} />
-                        {/* NEU: PLZ vor Ort */}
                         <Typography variant="caption" noWrap sx={{ fontWeight: 600 }}>
                             {loc.zip_code ? `${loc.zip_code} ` : ''}{loc.city}
                         </Typography>
                     </Stack>
                 ) : <Box />}
                 
-                {/* NEU: Moderner, dezenter CTA, da die ganze Karte klickbar ist */}
                 <Box sx={{ 
                     color: primaryColor, 
                     display: 'flex', 
@@ -495,21 +480,18 @@ const renderProviderPreviewCard = (provider: any) => {
                 <Container maxWidth="xl" sx={{ py: 1.2 }}>
                     <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
                         
-                        {/* Logo & Text - Flexibler durch min-width: 0 */}
                         <Stack direction="row" alignItems="center" spacing={1.5} sx={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                             <Box sx={{ flexShrink: 0 }}>
                                 <ImageWithFallback src={logoUrl} alt={partnerName} fallbackColor={primaryColor} loading="lazy" sx={{ width: { xs: 40, md: 52 }, height: { xs: 34, md: 42 }, objectFit: 'contain' }} />
                             </Box>
                             <Box sx={{ minWidth: 0 }}>
                                 <Typography variant="subtitle1" fontWeight={950} color={darkBlue} lineHeight={1.1} noWrap>{partnerName}</Typography>
-                                {/* Responsive Schriftgröße für den Claim: Auf Mobile kleiner */}
                                 <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.66), fontWeight: 700, display: 'block', fontSize: { xs: '0.65rem', md: '0.75rem' } }} noWrap>
                                     {partnerClaim}
                                 </Typography>
                             </Box>
                         </Stack>
 
-                        {/* Nav Items (nur Desktop) */}
                         <Stack direction="row" alignItems="center" spacing={2} sx={{ display: { xs: 'none', lg: 'flex' }, justifyContent: 'center' }}>
                             {navItems.map((item) => {
                                 const isExternal = item === 'Über uns' || item === 'Für Mitglieder';
@@ -536,7 +518,6 @@ const renderProviderPreviewCard = (provider: any) => {
                             })}
                         </Stack>
 
-                        {/* Login Button - Kompakter */}
                         <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0 }}>
                             <Button 
                                 onClick={handleLoginCta} 
@@ -550,7 +531,6 @@ const renderProviderPreviewCard = (provider: any) => {
                                     py: 0.8, 
                                     textTransform: 'none', 
                                     fontWeight: 900,
-                                    // Icon-Abstände fixen
                                     '& .MuiButton-startIcon': { marginRight: { xs: 0, sm: 1 }, marginLeft: -0.5 },
                                     '&:hover': { borderColor: primaryColor, bgcolor: alpha(primaryColor, 0.06) } 
                                 }}
@@ -563,7 +543,6 @@ const renderProviderPreviewCard = (provider: any) => {
                 </Container>
             </Box>
 
-            {/* --- TOGGLE BUTTON WENN HERO ZU IST --- */}
             <Collapse in={!isHeroOpen} timeout={800}>
                 <Box sx={{ 
                     width: '100%', 
@@ -593,25 +572,15 @@ const renderProviderPreviewCard = (provider: any) => {
             <Collapse 
                 in={isHeroOpen} 
                 unmountOnExit 
-                timeout={800} // Hier: 800ms für ein langsames, elegantes Gleiten
+                timeout={800}
                 style={{ transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)' }}
             >
                 <Box sx={{ position: 'relative', overflow: 'hidden', background: `linear-gradient(90deg, #ffffff 0%, #ffffff 46%, ${alpha(primaryColor, 0.08)} 100%)`, borderBottom: `1px solid ${alpha(darkBlue, 0.06)}` }}>
                     <IconButton 
                         onClick={() => setIsHeroOpen(false)} 
                         sx={{ 
-                            position: 'absolute', 
-                            top: 16, 
-                            right: 16, 
-                            zIndex: 10, 
-                            // Normalzustand: Icon-Farbe 40% Blau, Hintergrund 5% Blau
-                            color: alpha(darkBlue, 0.4), 
-                            bgcolor: alpha(darkBlue, 0.05), 
-                            // Hover: Icon-Farbe 100% Blau, Hintergrund 50% Blau
-                            '&:hover': { 
-                                color: darkBlue, 
-                                bgcolor: alpha(darkBlue, 0.5) 
-                            } 
+                            position: 'absolute', top: 16, right: 16, zIndex: 10, color: alpha(darkBlue, 0.4), bgcolor: alpha(darkBlue, 0.05), 
+                            '&:hover': { color: darkBlue, bgcolor: alpha(darkBlue, 0.5) } 
                         }}
                     >
                         <CloseIcon />
@@ -680,8 +649,6 @@ const renderProviderPreviewCard = (provider: any) => {
                         boxShadow: { xs: `0 18px 45px ${alpha(darkBlue, 0.12)}`, md: `0 24px 60px ${alpha(primaryColor, 0.2)}` }
                     }}
                 >
-                    
-                    {/* Titel für die Suche */}
                     <Typography variant="h5" fontWeight={950} sx={{ mb: 2.5, display: 'flex', alignItems: 'center', gap: 1, color: { xs: darkBlue, md: '#fff' } }}>
                         <SearchIcon sx={{ color: { xs: primaryColor, md: '#fff' } }} />
                         Netzwerk-Suche
@@ -735,7 +702,6 @@ const renderProviderPreviewCard = (provider: any) => {
                     <Grid item xs={12} lg={5.6}>
                         <Paper elevation={0} sx={{ p: { xs: 2.2, md: 3 }, borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.1)}`, boxShadow: `0 18px 40px ${alpha(darkBlue, 0.06)}`, height: '100%' }}>
                             <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 3 }}>
-                                {/* HIER NEU: Chip mit Gesamt-Anzahl neben der Überschrift */}
                                 <Stack direction="row" alignItems="center" spacing={1.5}>
                                     <Typography variant="h5" fontWeight={950} color={darkBlue}>Branchenverzeichnis</Typography>
                                     {tenantStats.total_directory_entries > 0 && (
@@ -786,28 +752,35 @@ const renderProviderPreviewCard = (provider: any) => {
                         </Paper>
                     </Grid>
 
-                    {/* INSIGHTS */}
+                    {/* HIER NEU: ECHTER EVENT-KALENDER STATT "INSIGHTS" DUMMY */}
                     <Grid item xs={12} lg={3.4}>
-                        <Paper elevation={0} sx={{ p: { xs: 2.2, md: 3 }, borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.1)}`, boxShadow: `0 18px 40px ${alpha(darkBlue, 0.06)}`, height: '100%' }}>
-                            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 3 }}>
-                                <Typography variant="h5" fontWeight={950} color={darkBlue}>Aktuelle Insights</Typography>
-                                <Button onClick={handleLoginCta} endIcon={<ChevronRightIcon />} sx={{ textTransform: 'none', fontWeight: 900, color: primaryColor }}>Alle anzeigen</Button>
-                            </Stack>
-                            <Stack spacing={2}>
-                                {insights.map((item: any, index: number) => (
-                                    <Stack direction="row" spacing={1.6} alignItems="center" key={item.id || item.title}>
-                                        <Box sx={{ width: 74, height: 74, borderRadius: 2.4, bgcolor: alpha(index === 0 ? primaryColor : secondaryColor, 0.1), display: 'grid', placeItems: 'center', flexShrink: 0 }}>
-                                            {index === 0 ? <AutoAwesomeIcon sx={{ color: primaryColor }} /> : index === 1 ? <BarChartIcon sx={{ color: secondaryColor }} /> : <GroupsOutlinedIcon sx={{ color: secondaryColor }} />}
-                                        </Box>
-                                        <Box sx={{ minWidth: 0 }}>
-                                            <Chip label={item.type || item.category || 'Branchen-News'} size="small" sx={{ height: 22, bgcolor: alpha(primaryColor, 0.09), color: primaryColor, fontWeight: 900, fontSize: 11, mb: 0.55 }} />
-                                            <Typography variant="body2" fontWeight={900} color={darkBlue} sx={{ lineHeight: 1.25 }}>{item.title}</Typography>
-                                            <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.58) }}>{getDateLabel(item.published_date || item.created_at || new Date().toISOString())}</Typography>
-                                        </Box>
-                                    </Stack>
-                                ))}
-                            </Stack>
-                        </Paper>
+                        <Box sx={{ 
+                            height: '100%', 
+                            // Wir fixieren die Höhe auf ca. 600px für ein schönes Layout
+                            maxHeight: 650, 
+                            '& .MuiPaper-root': { 
+                                borderRadius: 4, 
+                                border: `1px solid ${alpha(darkBlue, 0.1)}`, 
+                                boxShadow: `0 18px 40px ${alpha(darkBlue, 0.06)}`,
+                                // Entfernt den grauen Balken vom WidgetPaper
+                                '& > .MuiBox-root': { bgcolor: '#fff', color: darkBlue, borderBottom: 'none' },
+                                '& > .MuiBox-root > .MuiTypography-root': { color: darkBlue, fontWeight: 950, fontSize: '1.5rem' },
+                                '& > .MuiBox-root svg': { color: primaryColor }
+                            } 
+                        }}>
+                            <Suspense fallback={<CircularProgress />}>
+                                <EventCalendarWidget 
+                                    isPublic={true} 
+                                    widgetId="pub-cal" 
+                                    widgetTypeKey="EventCalendar" 
+                                    category="fleet_events, industry_events, businesspartner_events" 
+                                    defaultRegion={defaultRegion} 
+                                    title="Kalender" 
+                                    isRemovable={false} 
+                                    onDelete={() => {}}
+                                />
+                            </Suspense>
+                        </Box>
                     </Grid>
 
                     {/* STATS */}
@@ -870,7 +843,7 @@ const renderProviderPreviewCard = (provider: any) => {
                     </Stack>
                 </Stack>
 
-                {/* --- WIDGET PREVIEW --- */}
+                {/* --- WIDGET PREVIEW (Glass Cockpit unten) --- */}
                 <Box sx={{ mt: { xs: 6, md: 8 } }}>
                     <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'flex-end' }} spacing={2} sx={{ mb: 3 }}>
                         <Box>
@@ -922,9 +895,6 @@ const renderProviderPreviewCard = (provider: any) => {
                                                     <Typography variant="body1" sx={{ color: alpha('#fff', 0.8), lineHeight: 1.6 }}>Das Portal läuft als White-Label-Türöffner. Öffentliche Inhalte machen den Mehrwert sichtbar; sensible Details bleiben dem Mitgliederbereich vorbehalten.</Typography>
                                                 </Paper>
                                                 <EVStationWidget isPublic={true} widgetId="demo-ev" widgetTypeKey="EVStation" title="Netzwerkauslastung & Infrastruktur" onDelete={()=>{}} />
-                                                <Box sx={{ flexGrow: 1 }}>
-                                                    <EventCalendarWidget isPublic={true} widgetId="demo-cal" widgetTypeKey="EventCalendar" category="fleet_events, industry_events, businesspartner_events" defaultRegion={defaultRegion} title="Branchen-Kalender (Live)" isRemovable={false} onDelete={() => {}}/>
-                                                </Box>
                                             </Stack>
                                         </Grid>
                                         <Grid item xs={12} md={4} lg={4}>
@@ -940,75 +910,29 @@ const renderProviderPreviewCard = (provider: any) => {
                     </ThemeProvider>
                 </Box>
 
-                {/* --- FOOTER (NEU HINZUGEFÜGT) --- */}
+                {/* --- FOOTER --- */}
                 <Box sx={{ mt: 8, mb: 4 }}>
                     <Divider sx={{ my: 3 }} />
                     <Stack spacing={1} alignItems="center">
                         <Typography variant="body2" align="center" color="text.secondary">
-                            <Link
-                                href="https://www.mobiliti.at"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                underline="hover"
-                                sx={{ color: primaryColor }}
-                            >
+                            <Link href="https://www.mobiliti.at" target="_blank" rel="noopener noreferrer" underline="hover" sx={{ color: primaryColor }}>
                                 mobiliti.at
                             </Link>{' '}
                             Ihr smarter Überblick.
                         </Typography>
-
                         <Typography variant="caption" align="center" color="text.secondary">
-                            <Link
-                                href="https://www.mobiliti.at/impressum.html"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                underline="hover"
-                                sx={{ color: primaryColor }}
-                            >
-                                Impressum
-                            </Link>
+                            <Link href="https://www.mobiliti.at/impressum.html" target="_blank" rel="noopener noreferrer" underline="hover" sx={{ color: primaryColor }}>Impressum</Link>
                             {' · '}
-                            <Link
-                                component="button"
-                                type="button"
-                                underline="hover"
-                                onClick={() => {
-                                    // Öffnet den Login-Dialog, wo man die Dokumente lesen kann
-                                    // Oder du kopierst die Legal-Dialog-Logik komplett in die PublicPortalPage
-                                    setLoginDialogOpen(true); 
-                                }}
-                                sx={{ color: primaryColor, verticalAlign: 'baseline' }}
-                            >
-                                Datenschutz
-                            </Link>
+                            <Link component="button" type="button" underline="hover" onClick={() => setLoginDialogOpen(true)} sx={{ color: primaryColor, verticalAlign: 'baseline' }}>Datenschutz</Link>
                             {' · '}
-                            <Link
-                                component="button"
-                                type="button"
-                                underline="hover"
-                                onClick={() => setLoginDialogOpen(true)}
-                                sx={{ color: primaryColor, verticalAlign: 'baseline' }}
-                            >
-                                Nutzungsbedingungen
-                            </Link>
+                            <Link component="button" type="button" underline="hover" onClick={() => setLoginDialogOpen(true)} sx={{ color: primaryColor, verticalAlign: 'baseline' }}>Nutzungsbedingungen</Link>
                             {' · '}
-                            <Link
-                                component="button"
-                                type="button"
-                                underline="hover"
-                                onClick={() => setLoginDialogOpen(true)}
-                                sx={{ color: primaryColor, verticalAlign: 'baseline' }}
-                            >
-                                Disclaimer
-                            </Link>
+                            <Link component="button" type="button" underline="hover" onClick={() => setLoginDialogOpen(true)} sx={{ color: primaryColor, verticalAlign: 'baseline' }}>Disclaimer</Link>
                             {' · '}
-                            <Link href="/cookie-settings" underline="hover" sx={{ color: primaryColor }}>
-                                Cookie-Einstellungen
-                            </Link>
+                            <Link href="/cookie-settings" underline="hover" sx={{ color: primaryColor }}>Cookie-Einstellungen</Link>
                         </Typography>
                     </Stack>
                 </Box>
-
             </Container>
 
             {/* --- DIALOGE --- */}
@@ -1032,30 +956,25 @@ const renderProviderPreviewCard = (provider: any) => {
                 </DialogContent>
             </Dialog>
 
-<Dialog open={!!selectedTeaserProvider} onClose={() => setSelectedTeaserProvider(null)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.08)}`, m: { xs: 2, sm: 3 } } }}>
+            <Dialog open={!!selectedTeaserProvider} onClose={() => setSelectedTeaserProvider(null)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.08)}`, m: { xs: 2, sm: 3 } } }}>
                 {selectedTeaserProvider && (
                     <>
                         <DialogTitle sx={{ p: { xs: 2, sm: 3 }, pb: 0 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
                                 <Box sx={{ display: 'flex', gap: { xs: 1.5, sm: 2 }, alignItems: 'flex-start', minWidth: 0 }}>
-                                    {/* Avatar auf Mobile leicht verkleinert, flexShrink verhindert Stauchen */}
                                     <Avatar sx={{ width: { xs: 48, sm: 64 }, height: { xs: 48, sm: 64 }, bgcolor: 'transparent', flexShrink: 0 }}>
                                         <ImageWithFallback src={selectedTeaserProvider.logo_url ? getAssetUrl(selectedTeaserProvider.logo_url) : null} alt={selectedTeaserProvider.name} fallbackColor={primaryColor} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                                     </Avatar>
                                     <Box sx={{ minWidth: 0 }}>
-                                        {/* KORREKTUR: noWrap entfernt, damit lange Namen 2-zeilig werden dürfen. Schrift auf Mobile etwas kleiner. */}
                                         <Typography variant="h5" color={darkBlue} fontWeight={950} sx={{ fontSize: { xs: '1.3rem', sm: '1.5rem' }, lineHeight: 1.2, mb: 0.5 }}>
                                             {selectedTeaserProvider.name}
                                         </Typography>
-                                        
-                                        {/* KORREKTUR: flexWrap hinzugefügt, damit die Chips umbrechen anstatt abgeschnitten zu werden */}
                                         <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.5} alignItems="center" sx={{ mt: 0.5 }}>
                                             {selectedTeaserProvider.category && <Chip label={selectedTeaserProvider.category} size="small" sx={{ bgcolor: alpha(primaryColor, 0.08), color: primaryColor, fontWeight: 900, height: 24 }} />}
                                             {selectedTeaserProvider.is_recommended && <Chip icon={<VerifiedUserIcon fontSize="small" />} label="Offizieller Partner" size="small" sx={{ bgcolor: alpha(primaryColor, 0.14), color: primaryColor, fontWeight: 900, height: 24 }} />}
                                         </Stack>
                                     </Box>
                                 </Box>
-                                {/* Close-Button rückt auf Mobile etwas nach rechts oben, um Platz zu sparen */}
                                 <IconButton onClick={() => setSelectedTeaserProvider(null)} sx={{ flexShrink: 0, m: -1 }}><CloseIcon /></IconButton>
                             </Box>
                             
@@ -1081,7 +1000,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                                 rel="noopener noreferrer"
                                                 sx={{ 
                                                     display: 'flex', 
-                                                    alignItems: 'flex-start', // Icon oben ausrichten falls Text umbricht
+                                                    alignItems: 'flex-start',
                                                     gap: 1.5, 
                                                     mb: 1.5, 
                                                     color: primaryColor,
@@ -1090,7 +1009,6 @@ const renderProviderPreviewCard = (provider: any) => {
                                                 }}
                                             >
                                                 <LanguageIcon fontSize="small" sx={{ mt: 0.2, flexShrink: 0 }} /> 
-                                                {/* KORREKTUR: wordBreak erlaubt das Umbrechen langer URLs wie im Screenshot */}
                                                 <Typography variant="body2" sx={{ wordBreak: 'break-word', lineHeight: 1.3 }}>
                                                     {selectedTeaserProvider.website_url}
                                                 </Typography>

@@ -1,3 +1,4 @@
+// frontend/src/App.tsx
 /// <reference types="vite/client" />
 
 import React, { useEffect, useState } from 'react';
@@ -198,7 +199,7 @@ function App() {
       <CssBaseline />
       <Router>
         <Routes>
-          {/* ✅ Öffentliche Routen */}
+{/* ✅ Öffentliche Routen */}
           <Route path="/" element={<PublicPortalPage />} />
           <Route path="/login" element={<PublicPortalPage />} />
           <Route path="/register" element={<PublicPortalPage isRegister={true} />} />
@@ -212,6 +213,10 @@ function App() {
           <Route path="/newsletter/confirmed" element={<NewsletterConfirmed />} />
           <Route path="/p/:userId" element={<PublicProfileCard />} />
           <Route path="/invite/:bpId" element={<PublicBpCard />} />
+
+          {/* NEU: Dynamische Route für Partner-Slugs (z.B. /vfa) */}
+          {/* React Router v6 priorisiert automatisch exakte Matches wie /login vor dieser Route */}
+          <Route path="/:partnerSlug" element={<PublicPortalPage />} />
 
           {/* ✅ Geschützte Dashboard-Routen */}
           <Route element={<ProtectedRoutes />}>

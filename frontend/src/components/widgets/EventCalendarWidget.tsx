@@ -1,3 +1,4 @@
+// frontend/src/components/widgets/EventCalendarWidget.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Box, Typography, TextField, Tooltip, IconButton, Stack, InputAdornment, Button,
@@ -5,6 +6,7 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Avatar, AvatarGroup, Badge, Chip, useTheme, Paper, alpha
 } from '@mui/material';
+
 import SearchIcon from '@mui/icons-material/Search';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
@@ -13,11 +15,11 @@ import CelebrationIcon from '@mui/icons-material/Celebration';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import CheckIcon from '@mui/icons-material/Check';
-import TimerIcon from '@mui/icons-material/Timer';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
-import EmojiObjectsIcon from '@mui/icons-material/EmojiObjects';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import EmojiObjectsIcon from '@mui/icons-material/EmojiObjects';
+import CampaignIcon from '@mui/icons-material/Campaign';
 
 import { useNavigate } from 'react-router-dom';
 import { useSnackbar } from '../../context/SnackbarContext';
@@ -39,7 +41,8 @@ export interface EventCalendarWidgetProps extends Partial<BaseWidgetProps> {
     isPublic?: boolean;
     partnerName?: string;
     category?: string;
-    defaultRegion?: string; 
+    defaultRegion?: string;
+    primaryColor?: string; // NEU: Für nahtlose Farb-Übergabe aus dem Public Portal
 }
 
 interface Region { id?: string; name: string; code: string; }
@@ -65,13 +68,14 @@ interface EventData {
   full_text: string | null; 
   is_trusted_source: boolean; 
   is_read: boolean; 
-  type?: 'event' | 'holiday';
+  type?: 'event' | 'holiday' | 'action'; 
   suggestedBy: Participant | null; 
   category?: string;
   logo_url?: string | null;
+  isPartnerAction?: boolean; 
 }
 
-// --- HELPER: Tage bis zum Event berechnen ---
+// --- HELPER ---
 const getDaysLeft = (dateString: string) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -86,14 +90,12 @@ const getDaysLeft = (dateString: string) => {
     return `vor ${Math.abs(diffDays)} Tagen`;
 };
 
-// --- HELPER: Region zu Flagge ---
 const getFlagEmoji = (region?: string) => {
     if (!region) return '';
     const map: Record<string, string> = { 'AT': '🇦🇹', 'DE': '🇩🇪', 'CH': '🇨🇭', 'EU': '🇪🇺', 'INT': '🌍' };
     return map[region.toUpperCase()] || region; 
 };
 
-// --- HELPER: Bild URL Generierung ---
 const getImageUrl = (url?: string | null) => {
     if (!url) return '';
     if (url.startsWith('http')) return url;
@@ -101,28 +103,16 @@ const getImageUrl = (url?: string | null) => {
     return `${baseUrl}${url.startsWith('/') ? url : `/${url}`}`.replace(/^\/public\//, '/');
 };
 
-// --- HELPER: Status Logik ---
 const getUserStatus = (lastLoginDate?: string) => {
     if (!lastLoginDate) return 'offline';
     const loginTime = new Date(lastLoginDate).getTime();
     const now = new Date().getTime();
     const diffMinutes = (now - loginTime) / (1000 * 60);
-    
     if (diffMinutes < 15) return 'online';
     if (diffMinutes < 60 * 24) return 'active_today';
     return 'offline';
 };
 
-// --- HELPER: Dringlichkeits-Farben ---
-const getUrgencyColor = (daysLeft: number, theme: any) => {
-    if (daysLeft < 0) return theme.palette.text.disabled; 
-    if (daysLeft === 0) return theme.palette.primary.main; 
-    if (daysLeft < 2) return theme.palette.success.main; 
-    if (daysLeft < 5) return theme.palette.warning.main; 
-    return theme.palette.text.secondary; 
-};
-
-// --- HELPER: Avatar Komponente ---
 const MemberAvatar: React.FC<{ member: Participant, size?: number, showStatus?: boolean }> = ({ member, size = 24, showStatus = true }) => {
     const status = getUserStatus(member.last_login_at);
     const invisible = !showStatus || status === 'offline';
@@ -160,7 +150,6 @@ const MemberAvatar: React.FC<{ member: Participant, size?: number, showStatus?: 
     );
 };
 
-// Optimiertes Flaggen-Dropdown
 const Flag: React.FC<{ code?: string; alt?: string; size?: number; showLabel?: boolean }> = ({ code, alt, size = 20, showLabel = false }) => {
   if (!code) return null;
   const c = code.toUpperCase();
@@ -197,7 +186,6 @@ const getDomainSafely = (url: string | null | undefined): string | null => {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url.split('/')[0] ?? null; }
 };
 
-// --- Darstellung der Avatare im Listen-Element ---
 const ParticipantsPreview: React.FC<{ yes: Participant[]; maybe: Participant[] }> = ({ yes, maybe }) => {
     if (yes.length === 0 && maybe.length === 0) return null;
 
@@ -223,12 +211,15 @@ const ParticipantsPreview: React.FC<{ yes: Participant[]; maybe: Participant[] }
 };
 
 const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
-  onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey, isPublic = false, partnerName, defaultRegion = 'all'
+  onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey, isPublic = false, partnerName, defaultRegion = 'all', primaryColor
 }) => {
   const navigate = useNavigate();
   const theme = useTheme();
   const { showSnackbar } = useSnackbar(); 
   const { user, businessPartner } = useAuth();
+
+  // Globale Custom Primary Color (Fallback auf Standard MUI Primary)
+  const customPrimary = primaryColor || theme.palette.primary.main;
 
   const [allEvents, setAllEvents] = useState<EventData[]>([]);
   const [availableRegions, setAvailableRegions] = useState<Region[]>([]);
@@ -277,11 +268,14 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const [eventsRes, holidaysRes] = await Promise.all([
+      const [eventsRes, holidaysRes, actionsRes] = await Promise.all([
         apiClient.get(isPublic ? '/api/public/enhanced-calendar-events' : '/api/data/enhanced-calendar-events', { 
             params: { category: queryCategories, limit: 50 } 
         }), 
         apiClient.get(isPublic ? '/api/public/holidays' : '/api/data/holidays'),
+        apiClient.get(isPublic ? '/api/public/actions' : '/api/data/actions', {
+            params: { page: 1, limit: 10 }
+        }).catch(() => ({ data: [] })) 
       ]);
 
       const events: EventData[] = (eventsRes.data?.events || []).map((e: any) => ({
@@ -304,6 +298,22 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
           is_trusted_source: true, is_read: true, type: 'holiday', suggestedBy: null, logo_url: null
         }));
 
+      const rawActions = Array.isArray(actionsRes.data?.data) ? actionsRes.data.data : (Array.isArray(actionsRes.data) ? actionsRes.data : []);
+      const relevantActions = rawActions.filter((a: any) => a.target_widget_category === 'industry_events' || a.target_widget_category === 'events');
+      
+      const bpActionsAsEvents: EventData[] = relevantActions.map((a: any) => {
+          let actionDate = a.start_date ? new Date(a.start_date) : new Date();
+          if (actionDate < today) { actionDate = new Date(); }
+          return {
+              id: `action-${a.id}`, title: a.title, date: actionDate.toISOString(),
+              region: a.target_region === 'all' ? null : (a.target_region || null),
+              summary: a.content_text, url: a.link_url, participants: [], maybeParticipants: [],
+              userVote: null, full_text: null, is_trusted_source: true, is_read: true,
+              type: 'action', suggestedBy: null, logo_url: a.image_url || businessPartner?.logo_url || null,
+              isPartnerAction: true
+          };
+      });
+
       const eventRegions: Region[] = Array.isArray(eventsRes.data?.availableRegions) ? eventsRes.data.availableRegions : [];
       const holidayRegionNames = Array.from(new Set(holidays.map(h => h.region).filter(Boolean) as string[]));
       const holidayRegionObjects = allPossibleRegions.filter(r => holidayRegionNames.includes(r.code)); 
@@ -312,7 +322,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
       const uniqueRegions = Array.from(new Map(combined.map(r => [r.code, r])).values()).sort((a, b) => a.name.localeCompare(b.name));
 
       setAvailableRegions(uniqueRegions);
-      setAllEvents([...events, ...holidays]);
+      setAllEvents([...events, ...holidays, ...bpActionsAsEvents]);
     } catch (err: any) {
       setAllEvents([]);
       setAvailableRegions([]);
@@ -320,7 +330,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [category, allPossibleRegions, isPublic, user?.business_partner_category]);
+  }, [category, allPossibleRegions, isPublic, user?.business_partner_category, businessPartner?.logo_url]);
 
   useEffect(() => { fetchAllRegions(); }, [fetchAllRegions]);
   useEffect(() => { fetchEventsAndHolidays(); }, [fetchEventsAndHolidays]);
@@ -336,15 +346,13 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     
     const filtered = allEvents.filter(e => {
       let matchesRegion = false;
-      if (selectedRegionCode === 'all') {
-          matchesRegion = true;
-      } else if (e.region) {
+      if (selectedRegionCode === 'all') { matchesRegion = true; } 
+      else if (e.region) {
           const eRegLower = e.region.toLowerCase();
           const matchesRegionByCode = eRegLower === selectedRegionCode.toLowerCase();
           const matchesRegionByName = activeRegionObj ? eRegLower === activeRegionObj.name.toLowerCase() : false;
           matchesRegion = matchesRegionByCode || matchesRegionByName;
       }
-
       const matchesSearch = !searchTerm || (e.title ?? '').toLowerCase().includes(searchTerm.toLowerCase()) || (e.summary ?? '').toLowerCase().includes(searchTerm.toLowerCase());
       return matchesRegion && matchesSearch;
     });
@@ -354,13 +362,18 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     return filtered.reduce<Record<string, EventData[]>>((acc, e) => {
       const key = new Date(e.date).toISOString().slice(0, 10);
       (acc[key] ||= []).push(e);
+      acc[key].sort((a, b) => {
+          if (a.type === 'action' && b.type !== 'action') return -1;
+          if (b.type === 'action' && a.type !== 'action') return 1;
+          return 0;
+      });
       return acc;
     }, {});
   }, [allEvents, availableRegions, searchTerm, selectedRegionCode]);
 
   const markEventAsReadInternally = (eventId: string) => {
     setAllEvents(prev => prev.map(e => (e.id === eventId ? { ...e, is_read: true } : e)));
-    if (isPublic) return; 
+    if (isPublic || eventId.startsWith('action-')) return; 
     (async () => {
       try { await apiClient.post(`/api/data/scraped-content/${eventId}/mark-as-read`, {}); } catch (err) {}
     })();
@@ -452,10 +465,13 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
 
   return (
     <WidgetPaper
-      title={
+title={
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }} data-widget-type={widgetTypeKey || 'event-calendar'}>
-          {icon || <CalendarMonthIcon color="primary" />}
-          <Typography variant="h6" sx={{ fontWeight: 800 }}>{title}</Typography>
+          {icon || <CalendarMonthIcon sx={{ color: customPrimary }} />}
+          {/* NEU: Bei isPublic wird die Schrift schwarz/dunkelblau, h5 und sehr fett (950) */}
+          <Typography variant={isPublic ? "h5" : "h6"} sx={{ fontWeight: isPublic ? 950 : 800, color: isPublic ? '#061B33' : 'inherit' }}>
+            {title}
+          </Typography>
         </Box>
       }
       widgetTitle={title}
@@ -471,7 +487,6 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
       {!error && (
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           
-          {/* OPTIMIERTE TOOLBAR: Alles in einer kompakten Zeile auch auf Mobile */}
           <Box sx={{ px: { xs: 2, sm: 3 }, py: 1.5, borderBottom: '1px solid', borderColor: 'divider', bgcolor: theme.palette.mode === 'dark' ? 'transparent' : '#f8fafc' }}>
             <Stack direction="row" spacing={1} alignItems="center" sx={{ width: '100%' }}>
                 
@@ -485,20 +500,14 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                             bgcolor: 'background.paper', 
                             borderRadius: 2, 
                             '& .MuiSelect-select': { 
-                                py: 1, 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                justifyContent: 'center',
-                                pr: '0 !important' 
+                                py: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', pr: '0 !important' 
                             } 
                         }}
                         renderValue={(value) => (
                             <Flag code={value === 'all' ? 'EU' : (value as string)} size={20} showLabel={false} />
                         )}
                     >
-                        <MenuItem value="all">
-                            <Flag code="EU" alt="Alle Regionen" showLabel={true} />
-                        </MenuItem>
+                        <MenuItem value="all"><Flag code="EU" alt="Alle Regionen" showLabel={true} /></MenuItem>
                         {availableRegions.map((region) => (
                             <MenuItem key={region.code} value={region.code}>
                                 <Flag code={region.code} alt={region.name} showLabel={true} />
@@ -509,27 +518,28 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
 
                 <TextField
                     fullWidth size="small" placeholder="Suchen…" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                    InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" sx={{ color: 'text.disabled' }} /></InputAdornment>, sx: { bgcolor: 'background.paper', borderRadius: 2 } }}
+                    InputProps={{ 
+                        startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" sx={{ color: customPrimary }} /></InputAdornment>, 
+                        sx: { bgcolor: 'background.paper', borderRadius: 2 } 
+                    }}
                     sx={{ flexGrow: 1 }}
                 />
 
                 {!isPublic && (
                     <Tooltip title="Termin vorschlagen">
-                        <IconButton onClick={() => setAddModalOpen(true)} size="small" sx={{ flexShrink: 0, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1, '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.1), borderColor: 'primary.main' } }}>
-                            <AddCircleOutlineIcon color="primary" fontSize="small" />
+                        <IconButton onClick={() => setAddModalOpen(true)} size="small" sx={{ flexShrink: 0, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1, '&:hover': { bgcolor: alpha(customPrimary, 0.1), borderColor: customPrimary } }}>
+                            <AddCircleOutlineIcon sx={{ color: customPrimary }} fontSize="small" />
                         </IconButton>
                     </Tooltip>
                 )}
             </Stack>
           </Box>
 
-          {/* LISTEN-ANSICHT */}
           {Object.keys(filteredAndGrouped).length === 0 ? (
             <Box sx={{ textAlign: 'center', py: 6, px: 2, m: 2, border: '1px dashed', borderColor: 'divider', borderRadius: 3, opacity: 0.8 }}>
               <CalendarMonthIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1 }} />
               <Typography variant="body1" color="text.secondary" gutterBottom sx={{ fontWeight: 600 }}>Keine anstehenden Termine</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Kennen Sie ein Event, das hier fehlt?</Typography>
-              <Button variant="outlined" color="primary" size="small" startIcon={<AddCircleOutlineIcon />} onClick={() => {
+              <Button variant="outlined" size="small" startIcon={<AddCircleOutlineIcon />} sx={{ color: customPrimary, borderColor: customPrimary }} onClick={() => {
                   if(isPublic) return showSnackbar('Bitte loggen Sie sich ein.', 'info');
                   setAddModalOpen(true);
               }}>Termin vorschlagen</Button>
@@ -551,52 +561,89 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                       const d = new Date(e.date);
                       const diffDays = daysUntil(e.date);
                       const isHoliday = e.type === 'holiday';
-                      
-                      const urgencyColor = getUrgencyColor(diffDays, theme);
-                      const hasUrgencyGlow = diffDays >= 0 && diffDays < 5;
+                      const isAction = e.type === 'action';
 
                       const isPartnerEvent = e.category === 'businesspartner_events';
-                      const badgeText = businessPartner?.name 
-                        ? `${businessPartner.name} Event` 
-                        : (partnerName ? `${partnerName} Event` : 'Exklusives Event');
+                      const partnerTitle = businessPartner?.name || partnerName || 'Partner';
+                      
+                      let badgeText = '';
+                      if (isAction) badgeText = `Aktion von ${partnerTitle}`;
+                      else if (isPartnerEvent) badgeText = `${partnerTitle} Event`;
 
-                      return (
+                      const paperStyle = isAction ? {
+                          border: '2px solid',
+                          borderColor: customPrimary,
+                          bgcolor: alpha(customPrimary, 0.05),
+                          boxShadow: theme.shadows[1],
+                      } : isHoliday ? {
+                          border: '1px solid',
+                          borderColor: 'divider',
+                          bgcolor: alpha(theme.palette.secondary.main, 0.03),
+                      } : {
+                          border: '1px solid',
+                          borderColor: 'divider',
+                          bgcolor: 'background.paper',
+                      };
+
+return (
                         <Paper
                           key={e.id} elevation={0}
                           sx={{
-                            display: 'flex', alignItems: 'center', gap: 1.5, p: 1.5, mb: 1.5, cursor: isHoliday ? 'default' : 'pointer', borderRadius: 3,
-                            border: '1px solid', borderColor: hasUrgencyGlow ? urgencyColor : 'divider',
-                            bgcolor: isHoliday ? alpha(theme.palette.secondary.main, 0.03) : 'background.paper',
+                            display: 'flex', alignItems: 'center', gap: 1.5, p: 1.5, mb: 1.5, 
+                            cursor: isHoliday ? 'default' : 'pointer', borderRadius: 3,
                             transition: 'all 0.2s ease', opacity: e.is_read ? 0.8 : 1,
-                            position: 'relative',
-                            '&:hover': { transform: !isHoliday ? 'translateY(-2px)' : 'none', boxShadow: !isHoliday ? theme.shadows[2] : 'none', borderColor: !isHoliday ? 'primary.main' : 'divider' },
+                            position: 'relative', overflow: 'hidden',
+                            ...paperStyle,
+                            '&:hover': { 
+                                transform: !isHoliday ? 'translateY(-2px)' : 'none', 
+                                boxShadow: !isHoliday ? theme.shadows[2] : 'none', 
+                                borderColor: !isHoliday ? customPrimary : 'divider' 
+                            },
                           }}
                           onClick={() => {
                             if (isHoliday) return;
+                            if (isAction && e.url) {
+                                window.open(e.url, '_blank');
+                                return;
+                            }
                             setSelectedEvent(e);
                             if (!e.is_read) markEventAsReadInternally(e.id);
                           }}
                         >
-                          <Box sx={{ textAlign: 'center', p: 0.5, border: '1px solid', borderColor: urgencyColor, bgcolor: alpha(urgencyColor, 0.05), borderRadius: 2, minWidth: 55 }}>
-                            <Typography variant="body2" component="div" sx={{ fontWeight: 800, lineHeight: 1.2, color: urgencyColor }}>
-                              {d.toLocaleDateString('de-DE', { day: '2-digit' })}
+                          {isAction && (
+                              <Box sx={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '4px', bgcolor: customPrimary }} />
+                          )}
+
+                          {/* KORREKTUR: Fixe Breite für Datumsbox, damit Text bündig bleibt */}
+                          <Box sx={{ 
+                              textAlign: 'center', p: 0.5, px: 1, 
+                              border: '1px solid', borderColor: isAction ? customPrimary : 'divider', 
+                              bgcolor: isAction ? alpha(customPrimary, 0.05) : 'background.paper', 
+                              borderRadius: 2, width: 56, minWidth: 56, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' 
+                          }}>
+                            {/* KORREKTUR: Schriftgröße für Datum leicht reduziert */}
+                            <Typography component="div" sx={{ fontWeight: 800, lineHeight: 1.1, fontSize: '1.2rem', color: isAction ? customPrimary : 'text.primary' }}>
+                              {isAction ? <CampaignIcon sx={{ fontSize: 20 }}/> : d.toLocaleDateString('de-DE', { day: '2-digit' })}
                             </Typography>
-                            <Typography variant="caption" component="div" sx={{ lineHeight: 1, color: urgencyColor, opacity: 0.8, fontWeight: 'bold' }}>
-                              {d.toLocaleDateString('de-DE', { month: 'short' }).toUpperCase()}
-                            </Typography>
+                            {!isAction && (
+                                <Typography variant="caption" component="div" sx={{ lineHeight: 1, color: 'text.secondary', fontWeight: 'bold', mt: 0.2, fontSize: '0.65rem' }}>
+                                {d.toLocaleDateString('de-DE', { month: 'short' }).toUpperCase()}
+                                </Typography>
+                            )}
                           </Box>
 
-                          <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                            {isPartnerEvent && (
+                          {/* KORREKTUR: ml: 1.5 (Margin-Left) hinzugefügt, um Abstand zur Datumsbox strikt zu halten */}
+                          <Box sx={{ flexGrow: 1, minWidth: 0, ml: 1.5 }}>
+                            {(isAction || isPartnerEvent) && (
                                 <Chip 
                                     label={badgeText} 
                                     size="small" 
-                                    color="primary" 
-                                    sx={{ height: 20, fontSize: '0.7rem', mb: 0.5, fontWeight: 'bold' }} 
+                                    variant={isAction ? "filled" : "outlined"}
+                                    sx={{ height: 20, fontSize: '0.7rem', mb: 0.5, fontWeight: 'bold', bgcolor: isAction ? customPrimary : 'transparent', color: isAction ? '#fff' : customPrimary, borderColor: customPrimary }} 
                                 />
                             )}
 
-                            {e.suggestedBy && !isPartnerEvent && (
+                            {e.suggestedBy && !isPartnerEvent && !isAction && (
                                 <Chip 
                                     icon={<EmojiObjectsIcon sx={{ fontSize: '12px !important' }}/>} 
                                     label="Community-Tipp" 
@@ -605,34 +652,33 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                                 />
                             )}
                             
-                            <Typography variant="body1" noWrap sx={{ fontWeight: e.is_read ? 500 : 700, mb: 0.5, display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.primary' }}>
-                              {isHoliday && <CelebrationIcon fontSize="small" color="secondary" />} 
+                            {/* KORREKTUR: noWrap hinzugefügt (kürzt mit ... ab) und fontSize angepasst */}
+                            <Typography noWrap sx={{ fontWeight: e.is_read && !isAction ? 500 : 800, mb: 0.2, display: 'flex', alignItems: 'center', gap: 0.75, color: 'text.primary', fontSize: '0.95rem' }}>
+                              {isHoliday && <CelebrationIcon fontSize="small" sx={{ color: customPrimary, flexShrink: 0 }} />} 
                               {e.title}
                             </Typography>
 
-                            <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
-                              {e.type !== 'holiday' && <ParticipantsPreview yes={e.participants} maybe={e.maybeParticipants} />}
+                            <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" sx={{ mb: (e.url || e.full_text) && !isHoliday && !isAction ? 0.5 : 0 }}>
+                              {e.type === 'event' && <ParticipantsPreview yes={e.participants} maybe={e.maybeParticipants} />}
                               
-                              <Typography variant="caption" sx={{ fontWeight: 600, color: hasUrgencyGlow ? urgencyColor : 'text.secondary', display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                {hasUrgencyGlow && <TimerIcon sx={{ fontSize: 12 }} />}
-                                {diffDays === 0 ? 'Heute' : diffDays === 1 ? 'Morgen' : `In ${diffDays} Tagen`}
+                              <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                {isAction ? e.summary?.substring(0,60) + '...' : (diffDays === 0 ? 'Heute' : diffDays === 1 ? 'Morgen' : `In ${diffDays} Tagen`)}
                               </Typography>
                               
-                              {e.region && (
+                              {e.region && !isAction && (
                                 <Tooltip title={e.region}>
                                   <Box component="span" sx={{ display: 'flex', alignItems: 'center' }}><Flag code={availableRegions.find((r) => r.name === e.region || r.code === e.region)?.code || 'EU'} size={16} /></Box>
                                 </Tooltip>
                               )}
-                              
                             </Stack>
 
-                            {e.type !== 'holiday' && (e.url || e.full_text) && (
-                              <Box sx={{ mt: 0.5 }}>
+                            {e.type !== 'holiday' && !isAction && (e.url || e.full_text) && (
+                              <Box>
                                 <MuiLink
                                   href={e.url || undefined} target="_blank" rel="noopener" variant="caption" onClick={(ev) => ev.stopPropagation()}
-                                  sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, color: 'text.secondary', '&:hover': { color: 'primary.main' }, wordBreak: 'break-all' }}
+                                  sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, color: 'text.secondary', textDecoration: 'underline', '&:hover': { color: customPrimary }, wordBreak: 'break-all' }}
                                 >
-                                  {e.full_text || getDomainSafely(e.url)} <OpenInNewIcon sx={{ fontSize: 12 }} />
+                                  {e.full_text || getDomainSafely(e.url)} <OpenInNewIcon sx={{ fontSize: 12, color: customPrimary }} />
                                 </MuiLink>
                                 {e.is_trusted_source && (
                                   <Tooltip title="Geprüfte Quelle">
@@ -645,14 +691,20 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                             )}
                           </Box>
                           
-                          {!isHoliday && (
+                          {/* KORREKTUR: Icons wieder rechts ausgerichtet und dynamisch nach customPrimary eingefärbt */}
+                          {e.type === 'event' && (
                             <IconButton 
                                 size="small" 
                                 onClick={(ev) => { ev.stopPropagation(); handleVote(e.id, e.userVote === 1 ? -1 : 1); }}
-                                sx={{ color: e.userVote === 1 ? 'success.main' : 'text.disabled', flexShrink: 0 }}
+                                sx={{ color: customPrimary, flexShrink: 0 }}
                             >
-                                <CheckCircleOutlineIcon />
+                                {e.userVote === 1 ? <CheckCircleIcon /> : <CheckCircleOutlineIcon />}
                             </IconButton>
+                          )}
+                          {isAction && e.url && (
+                             <IconButton size="small" sx={{ color: customPrimary, flexShrink: 0 }}>
+                                 <OpenInNewIcon />
+                             </IconButton> 
                           )}
                         </Paper>
                       );
@@ -665,9 +717,9 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
       )}
 
       {/* --- Detail-Dialog --- */}
-      <Dialog open={!!selectedEvent} onClose={() => setSelectedEvent(null)} fullWidth maxWidth="sm" PaperProps={{ sx: { borderRadius: 4 } }}>
+      <Dialog open={!!selectedEvent && selectedEvent.type !== 'action'} onClose={() => setSelectedEvent(null)} fullWidth maxWidth="sm" PaperProps={{ sx: { borderRadius: 4 } }}>
         <DialogTitle sx={{ pr: 5, pb: 1, pt: 3 }}>
-            <Typography variant="overline" sx={{ color: 'primary.main', fontWeight: 800, letterSpacing: 1 }}>Event Details</Typography>
+            <Typography variant="overline" sx={{ color: customPrimary, fontWeight: 800, letterSpacing: 1 }}>Event Details</Typography>
             
             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mt: 0.5, pr: 2 }}>
                 {selectedEvent?.logo_url && (
@@ -678,7 +730,6 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                         sx={{ height: 40, width: 40, objectFit: 'contain', borderRadius: 1, p: 0.5, border: '1px solid', borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }} 
                     />
                 )}
-                {/* FIX: wordBreak: break-word hinzugefügt für lange Event-Titel */}
                 <Typography variant="h5" sx={{ fontWeight: 800, wordBreak: 'break-word', fontSize: { xs: '1.25rem', sm: '1.5rem' }, lineHeight: 1.3 }}>
                     {selectedEvent?.title} 
                     {selectedEvent?.region && (
@@ -695,8 +746,8 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
         <DialogContent dividers sx={{ p: { xs: 2, sm: 3 } }}>
           {selectedEvent && (
             <Stack spacing={3}>
-              <Box sx={{ p: 2, bgcolor: alpha(theme.palette.primary.main, 0.05), borderRadius: 2, border: '1px solid', borderColor: alpha(theme.palette.primary.main, 0.1), display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <CalendarMonthIcon color="primary" />
+              <Box sx={{ p: 2, bgcolor: alpha(customPrimary, 0.05), borderRadius: 2, border: '1px solid', borderColor: alpha(customPrimary, 0.1), display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <CalendarMonthIcon sx={{ color: customPrimary }} />
                   <Box>
                     <Typography variant="subtitle2" color="text.secondary">Wann?</Typography>
                     <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
@@ -706,9 +757,13 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                         <Chip 
                             size="small" 
                             label={getDaysLeft(selectedEvent.date)} 
-                            color={getDaysLeft(selectedEvent.date).includes('vor') ? 'default' : 'primary'} 
                             variant={getDaysLeft(selectedEvent.date) === 'Heute' ? 'filled' : 'outlined'}
-                            sx={{ fontWeight: 'bold', height: 20 }}
+                            sx={{ 
+                                fontWeight: 'bold', height: 20,
+                                bgcolor: getDaysLeft(selectedEvent.date) === 'Heute' ? customPrimary : alpha(customPrimary, 0.1),
+                                color: getDaysLeft(selectedEvent.date) === 'Heute' ? '#fff' : customPrimary,
+                                borderColor: customPrimary
+                            }}
                         />
                     </Box>
                   </Box>
@@ -717,7 +772,6 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
               {selectedEvent.summary && (
                   <Box>
                     <Typography variant="subtitle2" gutterBottom fontWeight="bold">Infos</Typography>
-                    {/* FIX: wordBreak hinzugefügt, damit lange Event-Beschreibungen nicht aus dem Dialog laufen */}
                     <Typography sx={{ whiteSpace: 'pre-wrap', color: 'text.secondary', lineHeight: 1.6, wordBreak: 'break-word' }}>{selectedEvent.summary}</Typography>
                   </Box>
               )}
@@ -792,14 +846,14 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
                           </Paper>
                       )}
 
-                      <Button fullWidth startIcon={<OpenInNewIcon />} href={selectedEvent.url} target="_blank" rel="noopener" variant="outlined" sx={{ borderRadius: 2, whiteSpace: 'normal', textAlign: 'center', lineHeight: 1.2, py: 1 }}>
+                      <Button fullWidth startIcon={<OpenInNewIcon />} href={selectedEvent.url} target="_blank" rel="noopener" variant="outlined" sx={{ borderRadius: 2, whiteSpace: 'normal', textAlign: 'center', lineHeight: 1.2, py: 1, borderColor: customPrimary, color: customPrimary, '&:hover': { borderColor: customPrimary, bgcolor: alpha(customPrimary, 0.05) } }}>
                         Anmeldung & Details (Extern)
                       </Button>
                   </Box>
               )}
             </Stack>
           )}
-</DialogContent>
+        </DialogContent>
         <DialogActions sx={{ 
             p: 3, 
             pt: 2, 
@@ -807,15 +861,23 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
             gap: 2, 
             bgcolor: theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.02)' : '#f8fafc' 
         }}>
-            {/* FIX: Erlaubt das Umbrechen der Buttons in die nächste Zeile bei Platzmangel */}
             <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' }, width: '100%', gap: 1 }}>
                 <Typography variant="body2" fontWeight="bold">Deine Antwort:</Typography>
                 <Stack direction="row" spacing={1} sx={{ width: { xs: '100%', sm: 'auto' } }}>
                 <Button 
                     onClick={() => handleVote(selectedEvent?.id || '', 1)} 
-                    size="small" startIcon={<CheckIcon />} color="success"
+                    size="small" startIcon={<CheckIcon />} 
                     variant={selectedEvent?.userVote === 1 ? "contained" : "outlined"}
-                    sx={{ borderRadius: 5, px: 2, flex: { xs: 1, sm: 'none' } }}
+                    sx={{ 
+                        borderRadius: 5, px: 2, flex: { xs: 1, sm: 'none' },
+                        borderColor: customPrimary,
+                        color: selectedEvent?.userVote === 1 ? '#fff' : customPrimary,
+                        bgcolor: selectedEvent?.userVote === 1 ? customPrimary : 'transparent',
+                        '&:hover': {
+                            bgcolor: selectedEvent?.userVote === 1 ? customPrimary : alpha(customPrimary, 0.1),
+                            borderColor: customPrimary
+                        }
+                    }}
                 >Dabei</Button>
                 <Button 
                     onClick={() => handleVote(selectedEvent?.id || '', 0)} 
@@ -842,7 +904,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button onClick={() => setShareOpen(false)}>Abbrechen</Button>
-          <Button variant="contained" onClick={handleShareSubmit} sx={{ borderRadius: 2 }}>Senden</Button>
+          <Button variant="contained" onClick={handleShareSubmit} sx={{ borderRadius: 2, bgcolor: customPrimary, '&:hover': { filter: 'brightness(0.9)', bgcolor: customPrimary } }}>Senden</Button>
         </DialogActions>
       </Dialog>
 
@@ -868,7 +930,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
           <Button onClick={() => setAddModalOpen(false)}>Abbrechen</Button>
-          <Button variant="contained" onClick={handleAddEventSubmit} sx={{ borderRadius: 2 }}>Speichern</Button>
+          <Button variant="contained" onClick={handleAddEventSubmit} sx={{ borderRadius: 2, bgcolor: customPrimary, '&:hover': { filter: 'brightness(0.9)', bgcolor: customPrimary } }}>Speichern</Button>
         </DialogActions>
       </Dialog>
     </WidgetPaper>

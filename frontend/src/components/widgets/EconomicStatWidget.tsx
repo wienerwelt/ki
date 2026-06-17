@@ -1,3 +1,4 @@
+// frontend/src/components/widgets/EconomicStatWidget.tsx
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Box,
@@ -63,6 +64,7 @@ interface EconomicStatWidgetProps extends BaseWidgetProps {
   title: string;
   category: string;
   countryCode?: string;
+  isPublic?: boolean; // NEU: Damit das Widget weiß, ob es sich auf der Public Page befindet
 }
 
 // --- Constants & Helpers ---
@@ -165,8 +167,6 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 const imageToBase64 = async (url: string): Promise<string | null> => {
   try {
-    // KORREKTUR: Cache-Busting Parameter anhängen! 
-    // Zwingt den Browser, das Bild frisch von AWS (inklusive der neuen CORS-Header) zu laden.
     const fetchUrl = url.includes('?') ? `${url}&_cb=${Date.now()}` : `${url}?_cb=${Date.now()}`;
     
     const resp = await fetch(fetchUrl, { mode: 'cors' });
@@ -192,7 +192,8 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
   title,
   widgetTypeKey,
   category,
-  countryCode = 'DE'
+  countryCode = 'DE',
+  isPublic = false // NEU: Default auf false setzen
 }) => {
   const navigate = useNavigate();
   const { user, businessPartner } = useAuth();
@@ -217,7 +218,9 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
     const fetchCountries = async () => {
       if (!category) return;
       try {
-        const response = await apiClient.get('/api/data/economic-statistics/countries', {
+        // NEU: dynamische API-Route basierend auf isPublic
+        const endpoint = isPublic ? '/api/public/economic-statistics/countries' : '/api/data/economic-statistics/countries';
+        const response = await apiClient.get(endpoint, {
           params: { statisticType: category }
         });
         setAvailableCountries(response.data || []);
@@ -227,7 +230,7 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
       }
     };
     fetchCountries();
-  }, [category]);
+  }, [category, isPublic]);
 
   useEffect(() => {
     if (initialLoadDone || availableCountries.length === 0) return;
@@ -258,7 +261,9 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
       setError(null);
 
       try {
-        const response = await apiClient.get('/api/data/economic-statistics', {
+        // NEU: dynamische API-Route basierend auf isPublic
+        const endpoint = isPublic ? '/api/public/economic-statistics' : '/api/data/economic-statistics';
+        const response = await apiClient.get(endpoint, {
           params: {
             statisticType: category,
             countryCode: selectedCountry
@@ -286,7 +291,7 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
     if (initialLoadDone && category && selectedCountry) {
       fetchData();
     }
-  }, [category, selectedCountry, initialLoadDone]);
+  }, [category, selectedCountry, initialLoadDone, isPublic]);
 
   const latestTotal = useMemo(() => {
     if (!data || data.length === 0 || selectedSubtypes.length === 0) return 0;
@@ -308,7 +313,6 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
     setPdfError(null);
     setIsDownloading(true);
     try {
-      // NACHHER: 'l' steht für Landscape (Querformat), damit die Tabelle Platz hat
       const doc = new jsPDF('l', 'mm', 'a4');
       const margin = 14;
       const pageWidth = doc.internal.pageSize.getWidth();
@@ -334,12 +338,11 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
       if (businessPartner?.logo_url) {
         const logo = await imageToBase64(businessPartner.logo_url);
         if (logo) {
-          const logoW = 35; // Etwas größer im Querformat
+          const logoW = 35;
           doc.addImage(logo, 'PNG', pageWidth - logoW - margin, 10, logoW, 0);
         }
       }
 
-      // Screenshot vom Chart ziehen
       const canvas = await html2canvas(exportRef.current, {
         scale: 2,
         useCORS: true,
@@ -376,14 +379,12 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
         body: rows,
         theme: 'grid',
         styles: { fontSize: 8 },
-        // NACHHER: Färbt den Tabellenkopf in der Business Partner CI-Farbe!
         headStyles: { fontSize: 8, fillColor: brandColor, textColor: '#ffffff' },
         margin: { left: margin, right: margin }
       });
 
       const finalY = (doc as any).lastAutoTable?.finalY ?? y;
 
-      // NACHHER: Umbruch und Formatierung für lange URL & Quelle
       doc.setFontSize(9);
       let footerY = Math.min(finalY + 12, pageHeight - 20);
       
@@ -424,7 +425,6 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         
-        {/* NACHHER: Hier endet der Bereich, der in das PDF als Bild kopiert wird */}
         <Box
           ref={exportRef}
           sx={{
@@ -561,10 +561,7 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
             </Typography>
           )}
         </Box>
-        {/* NACHHER: Hier endet der Bereich für das Foto */}
 
-
-        {/* NACHHER: Der Button-Bereich ist jetzt sicher ausgeklammert und rutscht nicht ins PDF */}
         <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1 }}>
           {pdfError && <Alert severity="error" sx={{ py: 0.5, mr: 1 }}>{pdfError}</Alert>}
           <Button
@@ -628,6 +625,7 @@ const EconomicStatWidget: React.FC<EconomicStatWidgetProps> = ({
       isRemovable={isRemovable}
       widgetTypeKey={widgetTypeKey || ''}
       noPadding
+      isPublic={isPublic} // NEU: Damit auch das Wrapper-Paper weiß, dass es auf Public ist
     >
       {renderContent()}
     </WidgetPaper>

@@ -1,3 +1,4 @@
+// backend/controllers/adminDirectoryController.js
 const db = require('../config/db');
 const sharp = require('sharp');
 const path = require('path');
@@ -418,26 +419,44 @@ exports.getAddressDetails = async (req, res) => {
     }
 };
 
-// backend/controllers/adminDirectoryController.js (Am Ende einfügen)
-
 // @desc    Geocoding für manuell eingegebene Adressen
 exports.geocodeAddress = async (req, res) => {
     const { query } = req.query;
     if (!query) return res.status(400).json({ message: 'Suchbegriff fehlt.' });
 
     const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
+    const axios = require('axios');
 
     try {
-        const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${apiKey}`;
-        const axios = require('axios');
-        const response = await axios.get(url);
+        // VERSUCH 1: Google Maps Geocoding
+        const googleUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${apiKey}`;
+        const googleResponse = await axios.get(googleUrl);
 
-        if (response.data.status !== 'OK' || response.data.results.length === 0) {
-            return res.status(404).json({ message: 'Keine Koordinaten gefunden.' });
+        if (googleResponse.data.status === 'OK' && googleResponse.data.results.length > 0) {
+            const location = googleResponse.data.results[0].geometry.location;
+            return res.json({ lat: location.lat, lng: location.lng, source: 'google' });
         }
 
-        const location = response.data.results[0].geometry.location;
-        res.json({ lat: location.lat, lng: location.lng });
+        console.log(`[Geocoding] Google fand nichts für "${query}". Versuche Fallback über Nominatim (OSM)...`);
+
+        // VERSUCH 2: Fallback über Nominatim (OpenStreetMap)
+        const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
+        const osmResponse = await axios.get(osmUrl, {
+            headers: { 'User-Agent': 'MobilitiDashboard/1.0' } // Nominatim verlangt einen User-Agent
+        });
+
+        if (osmResponse.data && osmResponse.data.length > 0) {
+            const location = osmResponse.data[0];
+            return res.json({ 
+                lat: parseFloat(location.lat), 
+                lng: parseFloat(location.lon), 
+                source: 'osm' 
+            });
+        }
+
+        // Wenn beide versagen
+        return res.status(404).json({ message: 'Für diese Adresse konnten in keinem System Koordinaten gefunden werden.' });
+
     } catch (err) {
         console.error("Geocoding API Fehler:", err.message);
         res.status(500).json({ message: 'Server Fehler bei Geocoding.' });

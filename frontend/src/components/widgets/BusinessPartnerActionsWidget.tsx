@@ -1,3 +1,4 @@
+// frontend/src/components/widgets/BusinessPartnerActionsWidget.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Alert, Card, CardMedia, CardContent, Link as MuiLink, Skeleton, useTheme
@@ -31,13 +32,25 @@ interface Action {
   created_at: string;
 }
 
-// NEU: Interface um partnerId erweitert
 interface BpActionsWidgetProps extends BaseWidgetProps {
   icon?: React.ReactNode;
   title?: string;
   isPublic?: boolean; 
-  partnerId?: string; // Damit das Widget weiß, von wem es die Daten holen soll
+  partnerId?: string;
+  primaryColor?: string;
 }
+
+// --- Hilfsfunktionen für YouTube ---
+const isYouTubeUrl = (url: string | null) => {
+    if (!url) return false;
+    return url.includes('youtube.com') || url.includes('youtu.be');
+};
+
+const getYouTubeVideoId = (url: string) => {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
+};
 
 const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
   onDelete,
@@ -47,9 +60,11 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
   title,
   isPublic = false,
   partnerId,
+  primaryColor, // NEU
 }) => {
   const theme = useTheme();
   const [items, setItems] = useState<Action[]>([]);
+  const customPrimary = primaryColor || theme.palette.primary.main;
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,14 +72,12 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
     setIsLoading(true);
     setError(null);
     try {
-      // Wenn Public: Nutze die öffentliche Route mit der Partner-ID
-      // Wenn Intern: Nutze die geschützte Route (liest BP-ID aus dem JWT-Token)
       const endpoint = isPublic ? `/api/public/actions` : `/api/data/actions`;
       const params: any = { page: 1, limit: 10 };
       
       if (isPublic) {
           if (!partnerId) {
-              setItems([]); // Ohne Partner-ID keine Daten
+              setItems([]); 
               setIsLoading(false);
               return;
           }
@@ -97,16 +110,18 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
       }}
     >
       <ImageIcon sx={{ fontSize: 40, mb: 1 }} />
-      <Typography variant="caption">Keine Grafik</Typography>
+      <Typography variant="caption">Keine Medien</Typography>
     </Box>
   );
 
-  return (
+return (
     <WidgetPaper
       title={
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
           {icon}
-          <Typography variant="h6">{title || 'Aktionen'}</Typography>
+          <Typography variant={isPublic ? "h5" : "h6"} sx={{ fontWeight: isPublic ? 950 : 800, color: isPublic ? '#061B33' : 'inherit' }}>
+            {title || 'Aktionen'}
+          </Typography>
         </Box>
       }
       widgetTitle={title || 'Aktionen'}
@@ -120,7 +135,6 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
     >
       <Box sx={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}>
         
-        {/* Public Badge (optional, damit man weiß, dass es live ist) */}
         {isPublic && (
             <Box sx={{ bgcolor: theme.palette.mode === 'dark' ? 'rgba(16, 185, 129, 0.1)' : '#d1fae5', p: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
                 <PublicIcon sx={{ fontSize: 16, color: '#10b981' }} />
@@ -165,22 +179,36 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
               {items.map((action) => (
                 <SwiperSlide key={action.id} style={{ width: '80%', maxWidth: 320 }}>
                   <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: 'background.paper' }}>
+                    
+                    {/* MEDIEN-BEREICH: YouTube oder Bild */}
                     {action.image_url ? (
-                      <CardMedia
-                        component="img"
-                        height="140"
-                        image={action.image_url}
-                        alt={action.title}
-                        onError={(e: any) => {
-                          e.currentTarget.style.display = 'none';
-                          if (e.currentTarget.nextSibling) {
-                            (e.currentTarget.nextSibling as HTMLElement).style.display = 'flex';
-                          }
-                        }}
-                      />
+                        isYouTubeUrl(action.image_url) ? (
+                            <CardMedia
+                                component="iframe"
+                                height="140"
+                                src={`https://www.youtube.com/embed/${getYouTubeVideoId(action.image_url)}`}
+                                title={action.title}
+                                sx={{ border: 0 }}
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                allowFullScreen
+                            />
+                        ) : (
+                            <CardMedia
+                                component="img"
+                                height="140"
+                                image={action.image_url}
+                                alt={action.title}
+                                onError={(e: any) => {
+                                    e.currentTarget.style.display = 'none';
+                                    if (e.currentTarget.nextSibling) {
+                                        (e.currentTarget.nextSibling as HTMLElement).style.display = 'flex';
+                                    }
+                                }}
+                            />
+                        )
                     ) : null}
 
-                    {/* Platzhalter, wenn kein Bild da oder Bildfehler */}
+                    {/* Platzhalter, falls URL leer oder Bildfehler (wird via onError aktiviert) */}
                     <Box sx={{ display: action.image_url ? 'none' : 'flex', width: '100%' }}>
                       {renderPlaceholder()}
                     </Box>
@@ -198,14 +226,14 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
 
                     {action.link_url && (
                       <Box sx={{ p: 2, pt: 0 }}>
-                        {/* Im Public-Modus lassen wir den Link klickbar! */}
                         <MuiLink 
                             href={action.link_url} 
                             target="_blank" 
                             rel="noopener" 
                             variant="button"
+                            sx={{ color: customPrimary, fontWeight: 'bold' }}
                         >
-                          Zur Aktion
+                          Mehr
                         </MuiLink>
                       </Box>
                     )}

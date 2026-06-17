@@ -9,12 +9,17 @@ async function resolvePartnerIdByCode(code) {
     if (!code || typeof code !== 'string' || code.trim() === '') return null;
     
     const cleanCode = code.trim().toLowerCase();
-    if (!/^[a-z0-9]+$/i.test(cleanCode)) return null;
+    // Erweitert: Erlaubt jetzt auch Binde- und Unterstriche für Slugs (z.B. "stadt-wien")
+    if (!/^[a-z0-9-_]+$/i.test(cleanCode)) return null;
     
     try {
-        // HIER NEU: url_businesspartner hinzugefügt
+        // SUCHT JETZT NACH ID *ODER* SLUG
         const r = await db.query(
-            'SELECT id, name, logo_url, dashboard_title, color_scheme_id, url_businesspartner FROM business_partners WHERE LOWER(RIGHT(id::text, 8)) = $1 AND is_active = true LIMIT 1',
+            `SELECT id, name, logo_url, dashboard_title, color_scheme_id, url_businesspartner 
+             FROM business_partners 
+             WHERE (LOWER(RIGHT(id::text, 8)) = $1 OR LOWER(slug) = $1) 
+               AND is_active = true 
+             LIMIT 1`,
             [cleanCode]
         );
         return r.rows[0] || null;
@@ -264,6 +269,16 @@ exports.getGenericWidgetData = async (req, res) => {
 
 const dummyGuestUser = { id: null, role: 'guest', business_partner_id: null };
 
+exports.getPublicEconomicStatistics = async (req, res) => {
+    req.user = dummyGuestUser; // Simuliert einen Gast-Nutzer
+    return dataController.getEconomicStatistics(req, res);
+};
+
+exports.getPublicEconomicStatCountries = async (req, res) => {
+    req.user = dummyGuestUser; // Simuliert einen Gast-Nutzer
+    return dataController.getUniqueStatCountries(req, res);
+};
+
 exports.getPublicRegions = async (req, res) => {
     req.user = dummyGuestUser;
     return dataController.getAllRegions(req, res);
@@ -381,6 +396,7 @@ exports.getPublicPartnerCard = async (req, res) => {
             SELECT 
                 bp.id, 
                 bp.name, 
+                bp.slug,
                 bp.logo_url, 
                 bp.dashboard_title,
                 cs.primary_color, 
