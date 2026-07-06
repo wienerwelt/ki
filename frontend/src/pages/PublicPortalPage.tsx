@@ -1,3 +1,5 @@
+
+// frontend/src/pages/PublicPortalPage.tsx
 import React, { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useSearchParams, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -13,6 +15,8 @@ import {
     DialogContent,
     DialogTitle,
     Divider,
+    Drawer,
+    Fab,
     Grid,
     IconButton,
     InputBase,
@@ -30,6 +34,7 @@ import {
     useTheme, useMediaQuery
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
+import L from 'leaflet';
 
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
@@ -46,7 +51,9 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardDoubleArrowDownIcon from '@mui/icons-material/KeyboardDoubleArrowDown';
 import LanguageIcon from '@mui/icons-material/Language';
+import MenuIcon from '@mui/icons-material/Menu';
 import LockIcon from '@mui/icons-material/Lock';
 import PhoneIcon from '@mui/icons-material/Phone';
 import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
@@ -83,6 +90,44 @@ const ImageWithFallback = ({ src, alt, fallbackColor, sx, ...props }: any) => {
     return <Box component="img" src={src} alt={alt} sx={sx} onError={() => setHasError(true)} {...props} />;
 };
 
+
+const getEventCategoryToken = (item: any): string => {
+    if (!item) return '';
+    if (typeof item === 'object') {
+        return String(
+            item.name ||
+            item.category_name ||
+            item.category_key ||
+            item.key ||
+            item.type_key ||
+            item.category ||
+            ''
+        ).trim();
+    }
+    return String(item).trim();
+};
+
+const normalizeEventCategoryList = (value: any): string[] => {
+    if (!value) return [];
+
+    const rawItems = Array.isArray(value)
+        ? value
+        : String(value).split(',');
+
+    return rawItems
+        .map(getEventCategoryToken)
+        .filter(Boolean)
+        .map((item) => item.endsWith('_events') || item === 'events' ? item : `${item}_events`);
+};
+
+const getEventCalendarWidgetInfo = (widgets: any[]) => {
+    return (widgets || []).find((w: any) =>
+        w?.type_key === 'EventCalendar' ||
+        w?.component_key === 'EventCalendarWidget' ||
+        w?.component_key === 'EventCalendar'
+    );
+};
+
 const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false }) => {
     const { partnerSlug } = useParams(); // Holt das "vfa" aus /vfa
     const [searchParams, setSearchParams] = useSearchParams();
@@ -109,12 +154,14 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     const [selectedTeaserProvider, setSelectedTeaserProvider] = useState<any | null>(null);
     const [teaserTab, setTeaserTab] = useState(0);
     const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+    const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
     const mapContainerRef = useRef<HTMLDivElement | null>(null);
     const mapInstanceRef = useRef<any>(null);
 
     const theme = useTheme();
     const location = useLocation();
+    const isRegisterMode = isRegister || location.pathname.toLowerCase().includes('/register');
     const navigate = useNavigate();
     const { showSnackbar } = useSnackbar();
 
@@ -140,6 +187,12 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     }, [partnerCode]);
 
     useEffect(() => {
+        if (!isPageLoading && isRegisterMode) {
+            setLoginDialogOpen(true);
+        }
+    }, [isPageLoading, isRegisterMode]);
+
+    useEffect(() => {
         const timer = setTimeout(() => setIsHeroOpen(false), 3000);
         return () => clearTimeout(timer);
     }, []);
@@ -163,10 +216,14 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     // --- MANUELLE BILD-WEICHE ---
     const customHeroImages: Record<string, string> = {
         'fd7a5bfd': '/actions/fuhrparkverband-austria_publicfoto_fd7a5bfd.png',
+        'fva': '/actions/fuhrparkverband-austria_publicfoto_fd7a5bfd.png', 
     };
 
-    const heroImageUrl = customHeroImages[partnerCode] 
-        ? customHeroImages[partnerCode] 
+    // Normalisieren (Kleinbuchstaben), falls jemand ?partner=FVA eingibt
+    const safePartnerCode = partnerCode?.toLowerCase() || '';
+
+    const heroImageUrl = customHeroImages[safePartnerCode] 
+        ? customHeroImages[safePartnerCode] 
         : (partner?.hero_image_url ? getAssetUrl(partner.hero_image_url) : 'https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=1200&q=80');
 
     useEffect(() => {
@@ -268,10 +325,9 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         if (!loc?.latitude || !loc?.longitude) return;
 
         let isMounted = true;
-        const initMap = async () => {
-            if (!mapContainerRef.current) return;
-            const L = await import('leaflet');
-            if (!isMounted || !mapContainerRef.current) return;
+        const initMap = () => { // <--- NEU: async entfernt
+            if (!mapContainerRef.current || !isMounted) return; // <--- NEU: Einfacher Check
+            
             if (mapInstanceRef.current) {
                 mapInstanceRef.current.remove();
                 mapInstanceRef.current = null;
@@ -322,7 +378,28 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         document.getElementById('branchenverzeichnis')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
 
+    const handleScrollToPageEnd = () => {
+        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+    };
+
     const navItems = ['Für Mitglieder', 'Branchenverzeichnis', 'News & Insights', 'Community', 'Statistiken', 'Über uns'];
+
+    const handleNavItemClick = (item: string) => {
+        setMobileNavOpen(false);
+        const isExternal = item === 'Über uns' || item === 'Für Mitglieder';
+
+        if (item === 'Branchenverzeichnis') {
+            handleScrollToDirectory();
+            return;
+        }
+
+        if (isExternal && partnerWebsite) {
+            window.open(partnerWebsite.startsWith('http') ? partnerWebsite : `https://${partnerWebsite}`, '_blank', 'noopener,noreferrer');
+            return;
+        }
+
+        handleLoginCta();
+    };
     
     useEffect(() => {
         if (searchParams.get('verified') === '1') {
@@ -350,11 +427,54 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     ];
     const logoProviders = publicProviders.filter((p) => p.logo_url).slice(0, 8);
 
+    const eventCalendarWidgetInfo = useMemo(() => getEventCalendarWidgetInfo(allowedWidgets), [allowedWidgets]);
+
+    const eventCalendarCategory = useMemo(() => {
+        const widgetConfig = eventCalendarWidgetInfo?.config || {};
+        const configuredCategories = normalizeEventCategoryList(
+            widgetConfig.category || widgetConfig.categories || widgetConfig.eventCategories
+        );
+
+        const bpCategories = normalizeEventCategoryList(
+            partner?.industries ||
+            partner?.categories ||
+            partner?.business_partner_category ||
+            partner?.businessPartnerCategory ||
+            partner?.category_key ||
+            partner?.category ||
+            partner?.industry_category
+        );
+
+        const fallbackCategories = configuredCategories.length > 0
+            ? configuredCategories
+            : ['fleet_events', 'industry_events', 'businesspartner_events'];
+
+        const mergedCategories = bpCategories.length > 0
+            ? [...fallbackCategories, ...bpCategories]
+            : fallbackCategories;
+
+        if (!mergedCategories.includes('businesspartner_events')) {
+            mergedCategories.push('businesspartner_events');
+        }
+
+        return Array.from(new Set(mergedCategories)).join(',');
+    }, [
+        eventCalendarWidgetInfo,
+        partner?.industries,
+        partner?.categories,
+        partner?.business_partner_category,
+        partner?.businessPartnerCategory,
+        partner?.category_key,
+        partner?.category,
+        partner?.industry_category,
+    ]);
+
+
     const renderWidget = (widgetInfo: any, index: number) => {
         // HIER NEU: Das EventCalendarWidget wird nicht mehr im unteren Vorschau-Cockpit gerendert!
         if (widgetInfo.type_key === 'EventCalendar') return null;
 
-        const props = { isPublic: true, widgetId: `pub-${widgetInfo.type_key}-${index}`, widgetTypeKey: widgetInfo.type_key, title: widgetInfo.name, isRemovable: false, onDelete: () => {} };
+        const props = { isPublic: true, widgetId: `pub-${widgetInfo.type_key}-${index}`, widgetTypeKey: widgetInfo.type_key, title: widgetInfo.name, isRemovable: false, onDelete: () => {}, partnerId: partner?.id, primaryColor };
         let content: React.ReactNode;
         switch (widgetInfo.type_key) {
             case 'EVStation': content = <EVStationWidget {...props} />; break;
@@ -474,9 +594,21 @@ const renderProviderPreviewCard = (provider: any) => {
     }
 
     return (
-        <Box sx={{ minHeight: '100vh', bgcolor: softBg, color: darkBlue, overflowX: 'hidden' }}>
+        <Box sx={{ minHeight: '100vh', bgcolor: softBg, color: darkBlue, overflowX: 'clip' }}>
             {/* --- HEADER --- */}
-            <Box component="header" sx={{ position: 'sticky', top: 0, zIndex: 40, bgcolor: alpha('#ffffff', 0.96), backdropFilter: 'blur(16px)', borderBottom: `1px solid ${alpha(darkBlue, 0.09)}` }}>
+            <Box 
+                component="header" 
+                sx={{ 
+                    position: 'sticky', 
+                    top: 0, 
+                    zIndex: 1100, // Sehr wichtig, damit er immer ganz oben bleibt
+                    bgcolor: alpha('#ffffff', 0.98), 
+                    backdropFilter: 'blur(20px)', 
+                    borderBottom: `1px solid ${alpha(darkBlue, 0.08)}`,
+                    boxShadow: `0 4px 20px ${alpha(darkBlue, 0.05)}`, // Leichter Schatten für Trennung beim Scrollen
+                    transition: 'all 0.3s ease'
+                }}
+            >
                 <Container maxWidth="xl" sx={{ py: 1.2 }}>
                     <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
                         
@@ -494,18 +626,13 @@ const renderProviderPreviewCard = (provider: any) => {
 
                         <Stack direction="row" alignItems="center" spacing={2} sx={{ display: { xs: 'none', lg: 'flex' }, justifyContent: 'center' }}>
                             {navItems.map((item) => {
-                                const isExternal = item === 'Über uns' || item === 'Für Mitglieder';
                                 let badgeCount = null;
                                 if (item === 'Branchenverzeichnis' && tenantStats.total_directory_entries > 0) badgeCount = tenantStats.total_directory_entries;
                                 if (item === 'Für Mitglieder' && tenantStats.community_members > 0) badgeCount = tenantStats.community_members;
                                 if (item === 'Community' && tenantStats.community_activity > 0) badgeCount = tenantStats.community_activity;
 
                                 const buttonElement = (
-                                    <Button onClick={() => {
-                                        if (item === 'Branchenverzeichnis') handleScrollToDirectory();
-                                        else if (isExternal && partnerWebsite) window.open(partnerWebsite.startsWith('http') ? partnerWebsite : `https://${partnerWebsite}`, '_blank', 'noopener,noreferrer');
-                                        else handleLoginCta();
-                                    }} variant="text" sx={{ color: darkBlue, fontSize: 13, fontWeight: 800, textTransform: 'none', minWidth: 'auto', px: 1 }}>{item}</Button>
+                                    <Button onClick={() => handleNavItemClick(item)} variant="text" sx={{ color: darkBlue, fontSize: 13, fontWeight: 800, textTransform: 'none', minWidth: 'auto', px: 1 }}>{item}</Button>
                                 );
 
                                 return (
@@ -519,20 +646,39 @@ const renderProviderPreviewCard = (provider: any) => {
                         </Stack>
 
                         <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0 }}>
+                            <IconButton
+                                aria-label="Navigation öffnen"
+                                onClick={() => setMobileNavOpen(true)}
+                                sx={{
+                                    display: { xs: 'inline-flex', lg: 'none' },
+                                    width: 42,
+                                    height: 42,
+                                    borderRadius: '50%',
+                                    bgcolor: alpha(primaryColor, 0.1),
+                                    color: primaryColor,
+                                    border: `1px solid ${alpha(primaryColor, 0.16)}`,
+                                    '&:hover': { bgcolor: alpha(primaryColor, 0.16) }
+                                }}
+                            >
+                                <MenuIcon />
+                            </IconButton>
                             <Button 
                                 onClick={handleLoginCta} 
-                                variant="outlined" 
+                                variant="contained" 
                                 startIcon={<LockIcon />} 
                                 sx={{ 
-                                    borderColor: alpha(primaryColor, 0.55), 
-                                    color: primaryColor, 
-                                    borderRadius: 2, 
-                                    px: { xs: 1.5, md: 2.5 }, 
-                                    py: 0.8, 
+                                    bgcolor: primaryColor,
+                                    color: '#fff',
+                                    borderRadius: 999, 
+                                    px: { xs: 2, md: 3 }, 
+                                    py: { xs: 1, md: 1.15 },
+                                    minHeight: { xs: 42, md: 46 },
                                     textTransform: 'none', 
-                                    fontWeight: 900,
-                                    '& .MuiButton-startIcon': { marginRight: { xs: 0, sm: 1 }, marginLeft: -0.5 },
-                                    '&:hover': { borderColor: primaryColor, bgcolor: alpha(primaryColor, 0.06) } 
+                                    fontWeight: 950,
+                                    fontSize: { xs: 14, md: 15 },
+                                    boxShadow: `0 10px 24px ${alpha(primaryColor, 0.24)}`,
+                                    '& .MuiButton-startIcon': { display: { xs: 'none', sm: 'inherit' }, marginRight: { xs: 0, sm: 1 }, marginLeft: -0.5 },
+                                    '&:hover': { bgcolor: primaryColor, filter: 'brightness(0.94)' } 
                                 }}
                             >
                                 <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>Mitglieder-Login</Box>
@@ -542,6 +688,87 @@ const renderProviderPreviewCard = (provider: any) => {
                     </Stack>
                 </Container>
             </Box>
+
+            <Drawer
+                anchor="right"
+                open={mobileNavOpen}
+                onClose={() => setMobileNavOpen(false)}
+                PaperProps={{
+                    sx: {
+                        width: 'min(86vw, 360px)',
+                        p: 2.5,
+                        bgcolor: '#fff',
+                        borderTopLeftRadius: 24,
+                        borderBottomLeftRadius: 24,
+                        boxShadow: `-20px 0 60px ${alpha(darkBlue, 0.18)}`
+                    }
+                }}
+            >
+                <Stack spacing={2.5} sx={{ height: '100%' }}>
+                    <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
+                        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ minWidth: 0 }}>
+                            <ImageWithFallback src={logoUrl} alt={partnerName} fallbackColor={primaryColor} loading="lazy" sx={{ width: 46, height: 38, objectFit: 'contain' }} />
+                            <Box sx={{ minWidth: 0 }}>
+                                <Typography variant="subtitle1" fontWeight={950} color={darkBlue} noWrap>{partnerName}</Typography>
+                                <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.62), fontWeight: 700 }} noWrap>{dashboardTitle}</Typography>
+                            </Box>
+                        </Stack>
+                        <IconButton onClick={() => setMobileNavOpen(false)} sx={{ bgcolor: alpha(darkBlue, 0.05) }}>
+                            <CloseIcon />
+                        </IconButton>
+                    </Stack>
+
+                    <Paper elevation={0} sx={{ p: 2, borderRadius: 3, bgcolor: alpha(primaryColor, 0.07), border: `1px solid ${alpha(primaryColor, 0.12)}` }}>
+                        <Typography variant="body2" fontWeight={900} color={darkBlue}>{partnerClaim}</Typography>
+                        <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.66), display: 'block', mt: 0.4 }}>Schneller Zugriff auf Portalbereiche und Mitgliederfunktionen.</Typography>
+                    </Paper>
+
+                    <Stack spacing={1}>
+                        {navItems.map((item) => (
+                            <Button
+                                key={item}
+                                fullWidth
+                                onClick={() => handleNavItemClick(item)}
+                                endIcon={<ChevronRightIcon />}
+                                sx={{
+                                    justifyContent: 'space-between',
+                                    color: darkBlue,
+                                    borderRadius: 2.5,
+                                    px: 2,
+                                    py: 1.35,
+                                    textTransform: 'none',
+                                    fontWeight: 900,
+                                    bgcolor: alpha(darkBlue, 0.035),
+                                    '&:hover': { bgcolor: alpha(primaryColor, 0.1), color: primaryColor }
+                                }}
+                            >
+                                {item}
+                            </Button>
+                        ))}
+                    </Stack>
+
+                    <Box sx={{ mt: 'auto' }}>
+                        <Button
+                            fullWidth
+                            variant="contained"
+                            startIcon={<LockIcon />}
+                            onClick={() => { setMobileNavOpen(false); handleLoginCta(); }}
+                            sx={{
+                                bgcolor: primaryColor,
+                                color: '#fff',
+                                borderRadius: 3,
+                                py: 1.5,
+                                textTransform: 'none',
+                                fontWeight: 950,
+                                boxShadow: `0 14px 30px ${alpha(primaryColor, 0.28)}`,
+                                '&:hover': { bgcolor: primaryColor, filter: 'brightness(0.94)' }
+                            }}
+                        >
+                            Mitglieder-Login
+                        </Button>
+                    </Box>
+                </Stack>
+            </Drawer>
 
             <Collapse in={!isHeroOpen} timeout={800}>
                 <Box sx={{ 
@@ -773,11 +1000,12 @@ const renderProviderPreviewCard = (provider: any) => {
                                     isPublic={true} 
                                     widgetId="pub-cal" 
                                     widgetTypeKey="EventCalendar" 
-                                    category="fleet_events, industry_events, businesspartner_events" 
+                                    category={eventCalendarCategory} 
                                     defaultRegion={defaultRegion} 
                                     title="Kalender" 
                                     isRemovable={false} 
                                     onDelete={() => {}}
+                                    primaryColor={primaryColor}
                                 />
                             </Suspense>
                         </Box>
@@ -935,6 +1163,25 @@ const renderProviderPreviewCard = (provider: any) => {
                 </Box>
             </Container>
 
+            <Fab
+                aria-label="Zum Seitenende"
+                onClick={handleScrollToPageEnd}
+                sx={{
+                    display: { xs: 'flex', md: 'none' },
+                    position: 'fixed',
+                    right: 18,
+                    bottom: 18,
+                    zIndex: 1200,
+                    bgcolor: primaryColor,
+                    color: '#fff',
+                    boxShadow: `0 14px 32px ${alpha(primaryColor, 0.32)}`,
+                    '&:hover': { bgcolor: primaryColor, filter: 'brightness(0.94)' },
+                    '@media print': { display: 'none' }
+                }}
+            >
+                <KeyboardDoubleArrowDownIcon />
+            </Fab>
+
             {/* --- DIALOGE --- */}
             <Dialog open={loginDialogOpen} onClose={() => setLoginDialogOpen(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 4, overflow: 'hidden' } }}>
                 <DialogTitle sx={{ p: 0 }}>
@@ -943,7 +1190,7 @@ const renderProviderPreviewCard = (provider: any) => {
                             <Stack direction="row" alignItems="center" spacing={1.5}>
                                 <ImageWithFallback src={logoUrl} alt={partnerName} fallbackColor={primaryColor} loading="lazy" sx={{ width: 48, height: 40, objectFit: 'contain' }} />
                                 <Box>
-                                    <Typography variant="h5" fontWeight={950} color={darkBlue}>{isRegister ? 'Konto erstellen' : 'Mitglieder-Login'}</Typography>
+                                    <Typography variant="h5" fontWeight={950} color={darkBlue}>{isRegisterMode ? 'Konto erstellen' : 'Mitglieder-Login'}</Typography>
                                     <Typography variant="body2" sx={{ color: alpha(darkBlue, 0.65) }}>{partnerName} Mitgliederbereich</Typography>
                                 </Box>
                             </Stack>
@@ -952,7 +1199,7 @@ const renderProviderPreviewCard = (provider: any) => {
                     </Box>
                 </DialogTitle>
                 <DialogContent sx={{ p: { xs: 3, md: 4 } }}>
-                    <ThemeProvider theme={loginTheme}><LoginForm isRegister={isRegister} /></ThemeProvider>
+                    <ThemeProvider theme={loginTheme}><LoginForm isRegister={isRegisterMode} /></ThemeProvider>
                 </DialogContent>
             </Dialog>
 

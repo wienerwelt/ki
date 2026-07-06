@@ -1,3 +1,4 @@
+// frontend/src/pages/AdminEventsPage.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     Container, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,

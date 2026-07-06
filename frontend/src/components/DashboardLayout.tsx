@@ -1,3 +1,4 @@
+// frontend/src/components/DashboardLayout.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
@@ -7,8 +8,7 @@ import {
     Avatar, Badge, Collapse, Button
 } from '@mui/material';
 
-import { alpha } from '@mui/material/styles';
-// Icons
+import { alpha, keyframes } from '@mui/material/styles';
 import MenuIcon from '@mui/icons-material/Menu';
 import EmailIcon from '@mui/icons-material/Email';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -56,10 +56,17 @@ import { useSnackbar } from '../context/SnackbarContext';
 import ContributionHistoryModal from '../components/ContributionHistoryModal';
 import DailyBriefingContent from './DailyBriefingContent';
 import OnboardingFlow from '../components/OnboardingFlow';
+import { AiChatWidget } from './AiChatWidget';
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
 }
+
+const pulseAnimation = keyframes`
+  0% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0.7); }
+  70% { box-shadow: 0 0 0 8px rgba(211, 47, 47, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0); }
+`;
 
 const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const { 
@@ -84,18 +91,16 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [notifications, setNotifications] = useState<any[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
     const [desktopSearchExpanded, setDesktopSearchExpanded] = useState(false);
-    const [notifExpandedInMenu, setNotifExpandedInMenu] = useState(false); // NEU: Steuert das Inline-Ausklappen der Notifs
+    const [notifExpandedInMenu, setNotifExpandedInMenu] = useState(false); 
     
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
     const token = localStorage.getItem('jwt_token');
     
-    // --- NEWSLETTER STATUS ---
     const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in);
     const isNewsletterAllowed = businessPartner?.allow_automated_newsletter !== false;
     const effectiveSubscription = isNewsletterAllowed && isSubscribed;
 
-    // --- MENU BADGES ---
     const [menuBadges, setMenuBadges] = useState({
         community: 0,
         files: 0,
@@ -149,7 +154,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         }
     };
 
-    // --- NOTIFICATIONS ---
     const fetchNotifications = useCallback(async () => {
         if (!user) return;
         try {
@@ -168,7 +172,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         return () => clearInterval(interval);
     }, [fetchNotifications]);
 
-    // --- ADVERTISEMENT ---
     const fetchAd = useCallback(async () => {
         try {
             const { data } = await apiClient.get('/api/data/active-advertisement');
@@ -193,10 +196,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         }
     };
 
-    // --- MENU HANDLERS ---
     const handleMenu = (event: React.MouseEvent<HTMLElement>) => {
         setAnchorEl(event.currentTarget);
-        setNotifExpandedInMenu(false); // Beim Öffnen zuklappen
+        setNotifExpandedInMenu(false);
     };
     
     const handleClose = () => setAnchorEl(null);
@@ -242,10 +244,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
     const dashboardTitle = businessPartner?.dashboard_title || businessPartner?.name || 'KI-Dashboard';
     const showOnboarding = user && user.has_completed_onboarding === false && user.role !== 'demo';
+    const adBannerHeight = isAdVisible && ad ? 40 : 0;
 
     const drawerContent = (
-        <Box sx={{ width: 250 }} role="presentation" onClick={toggleDrawer(false)} onKeyDown={toggleDrawer(false)}>
+        <Box sx={{ width: 290 }} role="presentation" onClick={toggleDrawer(false)} onKeyDown={toggleDrawer(false)}>
             <Toolbar />
+            {adBannerHeight > 0 && <Box sx={{ height: adBannerHeight }} />}
             <Divider />
             <List>
                 <ListItem button component={RouterLink} to="/dashboard">
@@ -346,7 +350,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             
                             <ListItem button component={RouterLink} to="/admin/scraped-content">
                                 <ListItemIcon>
-                                    <Badge badgeContent={menuBadges.scraped} color="primary" max={999}>
+                                    <Badge 
+                                        badgeContent={menuBadges.scraped} 
+                                        color="error" 
+                                        max={999}
+                                        sx={{ '& .MuiBadge-badge': menuBadges.scraped > 0 ? { animation: `${pulseAnimation} 2s infinite` } : {} }}
+                                    >
                                         <DataObjectIcon />
                                     </Badge>
                                 </ListItemIcon>
@@ -357,7 +366,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             
                             <ListItem button component={RouterLink} to="/admin/ai-content">
                                 <ListItemIcon>
-                                    <Badge badgeContent={menuBadges.ai} color="primary" max={999}>
+                                    <Badge 
+                                        badgeContent={menuBadges.ai} 
+                                        color="error" 
+                                        max={999}
+                                        sx={{ '& .MuiBadge-badge': menuBadges.ai > 0 ? { animation: `${pulseAnimation} 2s infinite` } : {} }}
+                                    >
                                         <SmartToyIcon />
                                     </Badge>
                                 </ListItemIcon>
@@ -475,7 +489,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     
                     {user && (
                         <div>
-                            {/* NEU: Einziger Interaktionspunkt ist nun das Avatar-Icon mit dem Badge */}
                             <IconButton 
                                 size="large" 
                                 edge="end" 
@@ -485,14 +498,22 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 onClick={handleMenu} 
                                 color="inherit"
                             >
-                                <Badge badgeContent={unreadCount} color="error" max={99}>
-                                    <Avatar
-                                        src={user.profile_image_url || undefined}
-                                        alt={user.first_name || user.username}
-                                        sx={{ width: 32, height: 32, border: unreadCount > 0 ? `2px solid ${theme.palette.error.light}` : 'none' }}
-                                    >
-                                        {user.first_name ? user.first_name.charAt(0).toUpperCase() : user.username.charAt(0).toUpperCase()}
-                                    </Avatar>
+                                <Badge 
+                                    badgeContent={user.contribution_score || 0} 
+                                    color="warning" 
+                                    showZero
+                                    anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                                    sx={{ '& .MuiBadge-badge': { border: `2px solid ${theme.palette.primary.main}` } }}
+                                >
+                                    <Badge badgeContent={unreadCount} color="error" max={99} anchorOrigin={{ vertical: 'top', horizontal: 'right' }}>
+                                        <Avatar
+                                            src={user.profile_image_url || undefined}
+                                            alt={user.first_name || user.username}
+                                            sx={{ width: 32, height: 32, border: unreadCount > 0 ? `2px solid ${theme.palette.error.light}` : 'none' }}
+                                        >
+                                            {user.first_name ? user.first_name.charAt(0).toUpperCase() : user.username.charAt(0).toUpperCase()}
+                                        </Avatar>
+                                    </Badge>
                                 </Badge>
                             </IconButton>
 
@@ -506,7 +527,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 onClose={handleClose}
                                 PaperProps={{ sx: { width: 280, maxHeight: 500 } }}
                             >
-                                {/* NEU: Community-Punkte prominent ganz oben im Menü platziert */}
                                 <MenuItem onClick={() => { setHistoryModalOpen(true); handleClose(); }}>
                                     <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', gap: 1.5 }}>
                                         <StarsIcon sx={{ color: 'warning.main' }} fontSize="small" />
@@ -519,7 +539,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
                                 <Divider />
 
-                                {/* NEU: Ausklappbares Benachrichtigungszentrum direkt im Dropdown-Menü */}
                                 <MenuItem onClick={(e) => { e.stopPropagation(); setNotifExpandedInMenu(!notifExpandedInMenu); }}>
                                     <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
                                         <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 1, fontWeight: unreadCount > 0 ? 'bold' : 'normal' }}>
@@ -616,7 +635,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 open={drawerOpen}
                 onClose={toggleDrawer(false)}
                 ModalProps={{ keepMounted: true }}
-                sx={{ width: 250, flexShrink: 0, [`& .MuiDrawer-paper`]: { width: 250, boxSizing: 'border-box' } }}
+                sx={{ width: 290, flexShrink: 0, [`& .MuiDrawer-paper`]: { width: 290, boxSizing: 'border-box' } }}
             >
                 {drawerContent}
             </Drawer>
@@ -625,11 +644,22 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 component="main" 
                 sx={{ 
                     flexGrow: 1, 
+                    minWidth: 0,
                     p: { xs: 1, sm: 2, md: 3 }, 
-                    width: `calc(100% - 250px)` 
+                    width: '100%' 
                 }}
             >
                 <Toolbar />
+                {adBannerHeight > 0 && (
+                    <Box
+                        aria-hidden="true"
+                        sx={{
+                            height: adBannerHeight,
+                            transition: 'height 180ms ease',
+                            flexShrink: 0,
+                        }}
+                    />
+                )}
                 {children}
             </Box>
 
@@ -684,6 +714,23 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     }} 
                 />
             )}      
+<Box
+    sx={{
+        '& > *': {
+            '@media (max-width:600px)': {
+                bottom: '108px !important',
+                right: '18px !important',
+            },
+        },
+        '& .MuiFab-root, & .MuiButtonBase-root': {
+            '@media (max-width:600px)': {
+                bottom: '108px !important',
+            },
+        },
+    }}
+>
+    <AiChatWidget />
+</Box>
         </Box>
     );
 };

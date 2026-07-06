@@ -91,3 +91,5 @@ services:
 volumes:
   mobiliti_dashboard_pg17_data:
   mobiliti_dashboard_redis_data:
+  mobiliti_dashboard_public_directory_logos:
+  mobiliti_dashboard_public_logos:

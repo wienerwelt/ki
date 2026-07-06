@@ -337,14 +337,12 @@ const BusinessPartnerInfoWidget: React.FC<BusinessPartnerInfoWidgetProps> = ({
 const userRole = user?.role;
   const canViewAdminInfo = !isPublic && (userRole === 'admin' || userRole === 'assistenz');
   const bpId = businessPartner?.id;
-
-  // NEU: State und Funktion für den Einladungslink
   const [linkCopied, setLinkCopied] = useState(false);
   
   const handleCopyInviteLink = () => {
     if (!bpId) return;
-    const accessCode = businessPartner?.slug || bpId.slice(-8);
-    const link = `${window.location.origin}/${accessCode}`;
+    const accessCode = bpId.slice(-8);
+    const link = `${window.location.origin}/register?partner=${encodeURIComponent(accessCode)}`;
     navigator.clipboard.writeText(link).then(() => {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
@@ -463,7 +461,9 @@ const userRole = user?.role;
 
   const primaryColor = businessPartner?.primary_color || theme.palette.primary.main;
   const secondaryColor = businessPartner?.secondary_color || theme.palette.secondary.main;
-  const bpRegions: Region[] = Array.isArray(businessPartner?.regions) ? businessPartner.regions : [];
+  const bpRegions: Region[] = Array.isArray(businessPartner?.regions) 
+    ? businessPartner.regions 
+    : Array.isArray(user?.regions) ? user.regions : [];
   const defaultRegion = bpRegions.find((r) => r.is_default);
   const memberLevels = [
     businessPartner?.level_1_name,
@@ -487,18 +487,34 @@ const userRole = user?.role;
     setAddEventModalOpen(true);
   };
 
-  const handleAddBpEventSubmit = async () => {
-    if (!newBpEvent.title || !newBpEvent.event_date) {
+const handleAddBpEventSubmit = async () => {
+    // 1. Sicherheits-Check: Leerzeichen am Anfang und Ende strikt entfernen
+    const safeTitle = newBpEvent.title.trim();
+    const safeSummary = newBpEvent.summary.trim();
+
+    if (!safeTitle || !newBpEvent.event_date) {
       alert('Titel und Datum sind erforderlich.');
       return;
     }
 
+    // 2. URL Formatierung: Leerzeichen, abschließende Slashes entfernen und HTTPS erzwingen
+    let safeUrl = newBpEvent.original_url.trim();
+    if (safeUrl) {
+      // Entfernt alle Slashes am absoluten Ende des Strings
+      safeUrl = safeUrl.replace(/\/+$/, '');
+      
+      // Prüft ob "http://" oder "https://" fehlt und ergänzt es
+      if (!/^https?:\/\//i.test(safeUrl)) {
+        safeUrl = `https://${safeUrl}`;
+      }
+    }
+
     try {
       await apiClient.post('/api/admin/scraped-content/events', {
-        title: newBpEvent.title,
+        title: safeTitle, // Bereinigter Titel
         event_date: newBpEvent.event_date,
-        summary: newBpEvent.summary,
-        original_url: newBpEvent.original_url,
+        summary: safeSummary, // Bereinigte Kurzbeschreibung
+        original_url: safeUrl, // Korrekt formatierte URL
         category: 'businesspartner_events',
         businessPartnerId: bpId,
         region_id: newBpEvent.regionId === 'ALL_GLOBAL' ? null : newBpEvent.regionId
@@ -1087,7 +1103,7 @@ const userRole = user?.role;
                         <TextField
                           size="small"
                           fullWidth
-                          value={bpId ? `${window.location.origin}/${businessPartner?.slug || bpId.slice(-8)}` : ''}
+                          value={bpId ? `${window.location.origin}/register?partner=${encodeURIComponent(bpId.slice(-8))}` : ''}
                           InputProps={{ readOnly: true }}
                           sx={{ bgcolor: 'background.paper', borderRadius: 1 }}
                         />

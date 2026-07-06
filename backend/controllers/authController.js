@@ -168,7 +168,7 @@ exports.register = async (req, res) => {
   }
 
   const strength = zxcvbn(password);
-  if (strength.score < 3) {
+  if (strength.score < 2) {
     return res.status(400).json({
       message: 'Das Passwort ist zu schwach. Bitte wählen Sie ein stärkeres Passwort.',
       suggestions: strength.feedback?.suggestions || [],
@@ -715,7 +715,7 @@ exports.resetPassword = async (req, res) => {
   }
 
   const strength = zxcvbn(password);
-  if (strength.score < 3) {
+  if (strength.score < 2) {
     return res.status(400).json({
       message: 'Das neue Passwort ist zu schwach. Bitte wählen Sie ein stärkeres Passwort.',
       suggestions: strength.feedback?.suggestions || [],

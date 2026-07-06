@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Box, IconButton, Typography, LinearProgress } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useAuth } from '../context/AuthContext';
@@ -8,83 +8,101 @@ interface AdvertisementBannerProps {
     onClose: () => void;
 }
 
+const BANNER_DURATION_SECONDS = 60;
+
 const AdvertisementBanner: React.FC<AdvertisementBannerProps> = ({ content, onClose }) => {
     const { businessPartner } = useAuth();
-    const [remainingTime, setRemainingTime] = useState(60000); // Countdown in Millisekunden
-    const requestRef = useRef<number>();
-    const startTimeRef = useRef<number>();
+    const [secondsLeft, setSecondsLeft] = useState(BANNER_DURATION_SECONDS);
+
+    const primaryColor =
+        (businessPartner as any)?.color_scheme?.primary_color ||
+        (businessPartner as any)?.primary_color ||
+        'primary.main';
+
+    const secondaryColor =
+        (businessPartner as any)?.color_scheme?.secondary_color ||
+        (businessPartner as any)?.secondary_color ||
+        'secondary.main';
 
     useEffect(() => {
-        // Startzeitpunkt der Animation speichern
-        startTimeRef.current = performance.now();
+        setSecondsLeft(BANNER_DURATION_SECONDS);
 
-        const animate = (time: number) => {
-            if (!startTimeRef.current) return;
+        const intervalId = window.setInterval(() => {
+            setSecondsLeft((prev) => {
+                if (prev <= 1) {
+                    window.clearInterval(intervalId);
+                    onClose();
+                    return 0;
+                }
 
-            const elapsedTime = time - startTimeRef.current;
-            const newRemainingTime = 60000 - elapsedTime;
+                return prev - 1;
+            });
+        }, 1000);
 
-            if (newRemainingTime <= 0) {
-                setRemainingTime(0);
-                onClose();
-            } else {
-                setRemainingTime(newRemainingTime);
-                requestRef.current = requestAnimationFrame(animate);
-            }
-        };
+        return () => window.clearInterval(intervalId);
+    }, [content, onClose]);
 
-        requestRef.current = requestAnimationFrame(animate);
-
-        // Animation beim Unmounten der Komponente bereinigen
-        return () => {
-            if (requestRef.current) {
-                cancelAnimationFrame(requestRef.current);
-            }
-        };
-    }, [onClose]);
-
-    // Berechne den Fortschritt für den Ladebalken und die angezeigten Sekunden
-    const progress = (remainingTime / 60000) * 100;
-    const secondsLeft = Math.ceil(remainingTime / 1000);
+    const progress = useMemo(
+        () => Math.max(0, Math.min(100, (secondsLeft / BANNER_DURATION_SECONDS) * 100)),
+        [secondsLeft]
+    );
 
     return (
         <Box
             sx={{
-                height: '40px', // Höhe auf 40px reduziert
-                backgroundColor: (businessPartner as any)?.secondary_color || 'secondary.main',
+                height: 40,
+                minHeight: 40,
+                backgroundColor: secondaryColor,
                 py: 0.5,
-                px: 2,
+                px: { xs: 5.5, sm: 8 },
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 position: 'relative',
                 overflow: 'hidden',
+                borderBottom: '1px solid rgba(0,0,0,0.08)',
             }}
         >
-            <Typography 
-                variant="body2" 
+            <Typography
+                variant="body2"
                 component="div"
                 dangerouslySetInnerHTML={{ __html: content }}
                 sx={{
                     color: '#000000',
                     textAlign: 'center',
+                    fontWeight: 700,
+                    lineHeight: 1.25,
+                    maxWidth: '100%',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
                     '& a': {
                         color: '#000000',
-                        fontWeight: 'bold',
+                        fontWeight: 900,
                         textDecoration: 'underline',
                     },
                 }}
             />
-            <Box sx={{ position: 'absolute', top: '50%', right: 8, transform: 'translateY(-50%)', display: 'flex', alignItems: 'center' }}>
-                <Typography variant="caption" sx={{ color: '#000000', mr: 1 }}>
+
+            <Box
+                sx={{
+                    position: 'absolute',
+                    top: '50%',
+                    right: 8,
+                    transform: 'translateY(-50%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.5,
+                }}
+            >
+                <Typography variant="caption" sx={{ color: '#000000', fontWeight: 700, minWidth: 22, textAlign: 'right' }}>
                     {secondsLeft}s
                 </Typography>
                 <IconButton
                     size="small"
+                    aria-label="Werbung schließen"
                     onClick={onClose}
-                    sx={{
-                        color: '#000000',
-                    }}
+                    sx={{ color: '#000000' }}
                 >
                     <CloseIcon fontSize="small" />
                 </IconButton>
@@ -98,10 +116,11 @@ const AdvertisementBanner: React.FC<AdvertisementBannerProps> = ({ content, onCl
                     bottom: 0,
                     left: 0,
                     width: '100%',
-                    height: '2px',
+                    height: 2,
                     backgroundColor: 'rgba(255,255,255,0.3)',
                     '& .MuiLinearProgress-bar': {
-                        backgroundColor: (businessPartner as any)?.primary_color || 'primary.main',
+                        backgroundColor: primaryColor,
+                        transition: 'transform 1s linear',
                     },
                 }}
             />

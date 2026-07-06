@@ -1,5 +1,5 @@
 // frontend/src/components/widgets/EventCalendarWidget.tsx
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box, Typography, TextField, Tooltip, IconButton, Stack, InputAdornment, Button,
   MenuItem, FormControl, Select, SelectChangeEvent, Link as MuiLink,
@@ -20,6 +20,8 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import EmojiObjectsIcon from '@mui/icons-material/EmojiObjects';
 import CampaignIcon from '@mui/icons-material/Campaign';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 
 import { useNavigate } from 'react-router-dom';
 import { useSnackbar } from '../../context/SnackbarContext';
@@ -235,6 +237,49 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
   const [shareEmail, setShareEmail] = useState('');
   const [newEvent, setNewEvent] = useState({ title: '', event_date: '', region: '', summary: '', original_url: '' });
 
+  const eventListRef = useRef<HTMLDivElement | null>(null);
+  const [hasListOverflow, setHasListOverflow] = useState(false);
+  const [isListAtEnd, setIsListAtEnd] = useState(false);
+
+  const updateListScrollState = useCallback(() => {
+    const el = eventListRef.current;
+    if (!el) {
+      setHasListOverflow(false);
+      setIsListAtEnd(false);
+      return;
+    }
+
+    const hasOverflow = el.scrollHeight > el.clientHeight + 4;
+    const atEnd = !hasOverflow || el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
+
+    setHasListOverflow(hasOverflow);
+    setIsListAtEnd(atEnd);
+  }, []);
+
+  const handleListJump = useCallback(() => {
+    const el = eventListRef.current;
+    if (!el) return;
+
+    el.scrollTo({
+      top: isListAtEnd ? 0 : el.scrollHeight,
+      behavior: 'smooth',
+    });
+  }, [isListAtEnd]);
+
+  const handleOpenCommunityProfile = useCallback((member?: Participant | null) => {
+    if (isPublic || !member?.id) return;
+
+    setSelectedEvent(null);
+    navigate(`/community?profileUserId=${encodeURIComponent(member.id)}`, {
+      state: {
+        profileUserId: member.id,
+        openProfileUserId: member.id,
+        openProfile: true,
+        source: 'event-calendar-widget',
+      },
+    });
+  }, [isPublic, navigate]);
+
   const fetchAllRegions = useCallback(async () => {
     try {
       const endpoint = isPublic ? '/api/public/regions' : '/api/data/regions';
@@ -370,6 +415,26 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
       return acc;
     }, {});
   }, [allEvents, availableRegions, searchTerm, selectedRegionCode]);
+
+  useEffect(() => {
+    updateListScrollState();
+  }, [filteredAndGrouped, loading, error, updateListScrollState]);
+
+  useEffect(() => {
+    const el = eventListRef.current;
+    if (!el) return;
+
+    updateListScrollState();
+    el.addEventListener('scroll', updateListScrollState, { passive: true });
+
+    const resizeObserver = new ResizeObserver(updateListScrollState);
+    resizeObserver.observe(el);
+
+    return () => {
+      el.removeEventListener('scroll', updateListScrollState);
+      resizeObserver.disconnect();
+    };
+  }, [updateListScrollState]);
 
   const markEventAsReadInternally = (eventId: string) => {
     setAllEvents(prev => prev.map(e => (e.id === eventId ? { ...e, is_read: true } : e)));
@@ -545,12 +610,17 @@ title={
               }}>Termin vorschlagen</Button>
             </Box>
           ) : (
-            <Box sx={{ 
+            <Box
+              ref={eventListRef}
+              sx={{ 
                 flexGrow: 1, 
-                height: isPublic ? '400px' : 'auto', 
+                minHeight: 0,
+                height: isPublic ? '400px' : '100%', 
                 maxHeight: isPublic ? '400px' : 'none', 
-                overflowY: isPublic ? 'auto' : 'visible', 
+                overflowY: 'auto', 
+                position: 'relative',
                 p: 2, 
+                pb: hasListOverflow ? 7 : 2,
                 bgcolor: alpha(theme.palette.action.hover, 0.05),
                 '&::-webkit-scrollbar': { width: '6px' },
                 '&::-webkit-scrollbar-thumb': { backgroundColor: alpha(theme.palette.text.secondary, 0.2), borderRadius: '10px' }
@@ -711,6 +781,41 @@ return (
                     })}
                   </Box>
                 ))}
+
+                {hasListOverflow && (
+                  <Box
+                    sx={{
+                      position: 'sticky',
+                      bottom: 10,
+                      zIndex: 5,
+                      display: 'flex',
+                      justifyContent: 'center',
+                      pointerEvents: 'none',
+                      mt: 1,
+                    }}
+                  >
+                    <Button
+                      onClick={handleListJump}
+                      size="small"
+                      variant="contained"
+                      startIcon={isListAtEnd ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                      sx={{
+                        pointerEvents: 'auto',
+                        borderRadius: 999,
+                        px: 2,
+                        py: 0.75,
+                        textTransform: 'none',
+                        fontWeight: 900,
+                        bgcolor: customPrimary,
+                        color: '#fff',
+                        boxShadow: `0 10px 28px ${alpha(customPrimary, 0.35)}`,
+                        '&:hover': { bgcolor: customPrimary, filter: 'brightness(0.94)' },
+                      }}
+                    >
+                      {isListAtEnd ? 'oben' : 'unten'}
+                    </Button>
+                  </Box>
+                )}
             </Box>
           )}
         </Box>
@@ -784,7 +889,7 @@ return (
                       <Chip 
                           avatar={<Avatar src={selectedEvent.suggestedBy.profile_image_url || undefined} />} 
                           label={`${selectedEvent.suggestedBy.first_name} ${selectedEvent.suggestedBy.last_name}`} 
-                          onClick={() => { if (!isPublic && selectedEvent.suggestedBy) navigate(`/profile/${selectedEvent.suggestedBy.id}`); }}
+                          onClick={() => handleOpenCommunityProfile(selectedEvent.suggestedBy)}
                           variant="outlined" 
                           sx={{ cursor: isPublic ? 'default' : 'pointer', '&:hover': { bgcolor: isPublic ? 'transparent' : 'action.hover' } }} 
                       />
@@ -801,7 +906,7 @@ return (
                                   {selectedEvent.participants.map(p => (
                                       <Chip 
                                         key={p.id} avatar={<Avatar src={p.profile_image_url || undefined} />} label={p.first_name} 
-                                        onClick={() => { if(!isPublic) navigate(`/profile/${p.id}`); }}
+                                        onClick={() => handleOpenCommunityProfile(p)}
                                         variant="outlined" sx={{ cursor: isPublic ? 'default' : 'pointer', '&:hover': { bgcolor: isPublic ? 'transparent' : 'action.hover' } }} 
                                       />
                                   ))}
@@ -815,7 +920,7 @@ return (
                                   {selectedEvent.maybeParticipants.map(p => (
                                       <Chip 
                                         key={p.id} avatar={<Avatar src={p.profile_image_url || undefined} />} label={p.first_name} 
-                                        onClick={() => { if(!isPublic) navigate(`/profile/${p.id}`); }}
+                                        onClick={() => handleOpenCommunityProfile(p)}
                                         variant="outlined" sx={{ cursor: isPublic ? 'default' : 'pointer', opacity: 0.8, '&:hover': { opacity: 1, bgcolor: isPublic ? 'transparent' : 'action.hover' } }} 
                                       />
                                   ))}

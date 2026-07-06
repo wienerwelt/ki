@@ -1,3 +1,4 @@
+// frontend/src/components/ContributionHistoryModal.tsx
 import React, { useState, useEffect } from 'react';
 import {
     Box, Typography, CircularProgress, Alert, Dialog, DialogTitle, DialogContent,
@@ -58,6 +59,20 @@ const ContributionHistoryModal: React.FC<ContributionHistoryModalProps> = ({ ope
                 </Box>
             </DialogTitle>
             <DialogContent dividers>
+                
+                {/* Info-Box zur Erklärung der Punkte */}
+                <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
+                    <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
+                        Wie funktionieren Community-Punkte?
+                    </Typography>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Punkte sammeln:</strong> Sie erhalten Punkte durch aktive Teilnahme im Netzwerk, wie z. B. durch Abstimmungen bei Events, das Beantworten von Umfragen oder das Verfassen von Beiträgen in der Community.
+                    </Typography>
+                    <Typography variant="body2">
+                        <strong>Punkte einlösen:</strong> Ihre gesammelten Punkte werden automatisch verwendet, wenn Sie exklusive KI-Funktionen nutzen, beispielsweise um sich Newsletter-Texte oder E-Mail-Entwürfe von der KI formulieren zu lassen.
+                    </Typography>
+                </Alert>
+
                 {loading && <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box>}
                 {error && <Alert severity="error">{error}</Alert>}
                 {!loading && !error && (
@@ -70,7 +85,6 @@ const ContributionHistoryModal: React.FC<ContributionHistoryModalProps> = ({ ope
                                             ? <ArrowUpwardIcon color="success" /> 
                                             : <ArrowDownwardIcon color="error" />}
                                     </ListItemIcon>
-                                    {/* KORRIGIERT: Beschreibung wird bei Bedarf gekürzt */}
                                     <ListItemText
                                         primary={entry.description}
                                         secondary={format(new Date(entry.created_at), 'dd.MM.yyyy, HH:mm', { locale: de }) + ' Uhr'}
@@ -87,7 +101,7 @@ const ContributionHistoryModal: React.FC<ContributionHistoryModalProps> = ({ ope
                                         variant="body1" 
                                         fontWeight="bold"
                                         color={entry.points_change > 0 ? 'success.main' : 'error.main'}
-                                        sx={{ whiteSpace: 'nowrap' }} // Verhindert Umbruch der Punkteanzeige
+                                        sx={{ whiteSpace: 'nowrap' }} 
                                     >
                                         {entry.points_change > 0 ? `+${entry.points_change}` : entry.points_change} Pkt.
                                     </Typography>
@@ -95,10 +109,14 @@ const ContributionHistoryModal: React.FC<ContributionHistoryModalProps> = ({ ope
                                 {index < history.length - 1 && <Divider component="li" variant="inset" />}
                             </React.Fragment>
                         ))}
+                        {history.length === 0 && (
+                            <Typography variant="body2" color="text.secondary" textAlign="center" py={2}>
+                                Sie haben bisher noch keine Punkte gesammelt oder ausgegeben.
+                            </Typography>
+                        )}
                     </List>
                 )}
             </DialogContent>
-            {/* NEU: "Schließen"-Button hinzugefügt */}
             <DialogActions>
                 <Button onClick={onClose}>Schließen</Button>
             </DialogActions>

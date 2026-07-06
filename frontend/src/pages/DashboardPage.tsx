@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, Suspense, memo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   Container, Box, CircularProgress, Alert, Menu, MenuItem, Button, Snackbar,
-  useTheme, useMediaQuery, SpeedDial, SpeedDialIcon, SpeedDialAction, Dialog, DialogTitle,
+  useTheme, useMediaQuery, SpeedDial, SpeedDialIcon, SpeedDialAction, Dialog, DialogTitle, DialogContent,
   List, ListItem, ListItemButton, ListItemIcon, ListItemText, Typography,
   IconButton, Tooltip, Badge, Chip
 } from '@mui/material';
@@ -11,13 +11,12 @@ import { Link as RouterLink } from 'react-router-dom';
 import TuneIcon from '@mui/icons-material/Tune';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import SaveIcon from '@mui/icons-material/Save';
-import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CloseIcon from '@mui/icons-material/Close';
 import { WidthProvider, Responsive, Layout, Layouts } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
-import Joyride, { Step, CallBackProps, STATUS } from 'react-joyride';
 import type { DashboardSavedConfig, WidgetConfig, WidgetTypeMeta } from '../types/dashboard.types';
 import apiClient from '../apiClient';
 import { WIDGET_COMPONENTS } from '../components/widgetMapping';
@@ -38,17 +37,16 @@ interface LastDeletedState {
   layouts: Layouts;
 }
 
-// NEU: TypeScript Interface für den animierten Button
 interface AnimatedActionButtonProps {
-  id: string; // ID ist nun zwingend erforderlich
+  id: string;
   icon: React.ReactNode;
   text: string;
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void | Promise<void>;
   variant?: 'text' | 'outlined' | 'contained';
   color?: 'inherit' | 'primary' | 'secondary' | 'success' | 'error' | 'info' | 'warning';
   disabled?: boolean;
-  isExpanded: boolean; // Steuert, ob genau dieser Button offen ist
-  onExpand: () => void; // Meldet dem Parent, dass dieser Button geklickt wurde
+  isExpanded: boolean; 
+  onExpand: () => void; 
 }
 
 function asArray<T = any>(value: any): T[] {
@@ -71,7 +69,6 @@ function coerceConfig(raw: any): DashboardSavedConfig {
   };
 }
 
-// --- PERFORMANCE OPTIMIERUNG: Memoisiertes Widget ---
 const MemoizedWidgetContent = memo(({ 
     widget, availableWidgetTypes, businessPartner, onDelete 
 }: { 
@@ -107,7 +104,6 @@ const MemoizedWidgetContent = memo(({
     );
 });
 
-// HILFS-KOMPONENTE: Ausgelagert aus der Hauptseite, um Re-Mounts zu verhindern
 const AnimatedActionButton: React.FC<AnimatedActionButtonProps> = ({ 
     id, icon, text, onClick, variant = "outlined", color = "primary", disabled = false,
     isExpanded, onExpand
@@ -119,8 +115,8 @@ const AnimatedActionButton: React.FC<AnimatedActionButtonProps> = ({
                 variant={variant}
                 color={color}
                 onClick={(e) => {
-                    onExpand(); // Setzt diesen Button als "aktiv/offen"
-                    onClick(e); // Führt die eigentliche Aktion aus
+                    onExpand(); 
+                    onClick(e); 
                 }}
                 disabled={disabled}
                 sx={{
@@ -165,7 +161,6 @@ const DashboardPage: React.FC = () => {
     triggerDashboardRefresh 
   } = useAuth();
   
-  // State
   const [dashboardConfig, setDashboardConfig] = useState<DashboardSavedConfig>(emptyConfig());
   const [availableWidgetTypes, setAvailableWidgetTypes] = useState<WidgetTypeMeta[]>([]);
   const [loading, setLoading] = useState(true);
@@ -175,18 +170,52 @@ const DashboardPage: React.FC = () => {
   
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [snackbar, setSnackbar] = useState<SnackbarState>({ open: false, message: '', severity: 'success' });
-  const [runTour, setRunTour] = useState(false);
   const [lastDeleted, setLastDeleted] = useState<LastDeletedState | null>(null);
   const [openSpeedDial, setOpenSpeedDial] = useState(false);
   const [addWidgetDialogOpen, setAddWidgetDialogOpen] = useState(false);
+  const [isAiChatOpen, setIsAiChatOpen] = useState(false);
   
-  // NEU: Trackt, welcher Button gerade aktiv/ausgeklappt ist ('all' für den Start)
   const [activeButtonId, setActiveButtonId] = useState<string | 'all' | null>('all');
   
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  // --- SCHUTZ VOR UNGESPEICHERTEN ÄNDERUNGEN ---
+  useEffect(() => {
+      const handleAiChatState = (event: Event) => {
+          const customEvent = event as CustomEvent<{ open?: boolean }>;
+          const isOpen = Boolean(customEvent.detail?.open);
+          setIsAiChatOpen(isOpen);
+          if (isOpen) setOpenSpeedDial(false);
+      };
+
+      window.addEventListener('ai-chat-open-change', handleAiChatState);
+      setIsAiChatOpen(document.body.classList.contains('ai-chat-open'));
+
+      return () => window.removeEventListener('ai-chat-open-change', handleAiChatState);
+  }, []);
+
+  useEffect(() => {
+      const isWidgetMenuOpen = isMobile && (openSpeedDial || addWidgetDialogOpen);
+
+      document.body.classList.toggle('dashboard-widget-menu-open', isWidgetMenuOpen);
+      window.dispatchEvent(
+          new CustomEvent('dashboard-widget-menu-open-change', {
+              detail: { open: isWidgetMenuOpen },
+          })
+      );
+  }, [isMobile, openSpeedDial, addWidgetDialogOpen]);
+
+  useEffect(() => {
+      return () => {
+          document.body.classList.remove('dashboard-widget-menu-open');
+          window.dispatchEvent(
+              new CustomEvent('dashboard-widget-menu-open-change', {
+                  detail: { open: false },
+              })
+          );
+      };
+  }, []);
+
   useEffect(() => {
       const handleBeforeUnload = (e: BeforeUnloadEvent) => {
           if (hasUnsavedChanges) {
@@ -197,36 +226,6 @@ const DashboardPage: React.FC = () => {
       window.addEventListener('beforeunload', handleBeforeUnload);
       return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges]);
-
-  const tourSteps: Step[] = [
-    { target: '#add-widget-button', content: 'Hier können Sie neue Widgets zu Ihrem Dashboard hinzufügen oder bestehende entfernen.', placement: 'bottom-start', disableBeacon: true },
-    { target: '.widget-drag-handle', content: 'Widgets können Sie an diesem Anfasser verschieben und anpassen.', placement: 'bottom' },
-    { target: '#save-layout-button', content: 'Wenn Ihnen Ihr Layout gefällt, vergessen Sie nicht, es hier zu speichern!', placement: 'bottom-end' }
-  ];
-
-  // NEU: Nach 3 Sekunden schließen sich alle initial geöffneten Buttons
-  useEffect(() => {
-      const timer = setTimeout(() => {
-          setActiveButtonId((prev) => (prev === 'all' ? null : prev));
-      }, 3000);
-      return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    const tourHasBeenSeen = localStorage.getItem('dashboardTourSeen');
-    if (!tourHasBeenSeen && !isMobile) {
-      const t = setTimeout(() => setRunTour(true), 1200);
-      return () => clearTimeout(t);
-    }
-  }, [isMobile]);
-
-  const handleJoyrideCallback = (data: CallBackProps) => {
-    const { status } = data;
-    if ([STATUS.FINISHED, STATUS.SKIPPED].includes(status as any)) {
-      setRunTour(false);
-      localStorage.setItem('dashboardTourSeen', 'true');
-    }
-  };
 
   const handleRemoveTag = (tagToRemove: string) => async () => {
       if (user?.role === 'demo') return;
@@ -240,8 +239,6 @@ const DashboardPage: React.FC = () => {
           setSnackbar({ open: true, message: 'Fehler beim Entfernen des Themas.', severity: 'error' });
       }
   };
-
-  const startTourManually = () => setRunTour(true);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -391,20 +388,8 @@ const DashboardPage: React.FC = () => {
 
   return (
     <Container maxWidth={false} sx={{ mt: 0, px: { xs: 1, sm: 2 } }}>
-        <Joyride
-            steps={tourSteps}
-            run={runTour}
-            continuous
-            showProgress
-            showSkipButton
-            callback={handleJoyrideCallback}
-            styles={{ options: { zIndex: 1301, primaryColor: businessPartner?.color_scheme?.primary_color || '#1976d2' } }}
-        />
-
-        {/* Willkommens-Widget anzeigen, falls relevant */}
         {!!user && user.has_seen_welcome_widget === false && <WelcomeWidget />}
 
-        {/* --- KONSOLIDIERTE TOP-LEISTE: Filter & Animierte Buttons auf einer Linie --- */}
         <Box 
             sx={{ 
                 display: 'flex', 
@@ -419,7 +404,6 @@ const DashboardPage: React.FC = () => {
                 boxShadow: 1 
             }}
         >
-            {/* LINKE SEITE: Filter & Badge */}
             <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, flexGrow: 1 }}>
                 <Typography variant="subtitle2" color="text.secondary" sx={{ mr: 1, display: { xs: 'none', sm: 'block' } }}>
                     Meine Filter:
@@ -449,20 +433,8 @@ const DashboardPage: React.FC = () => {
                 </Tooltip>
             </Box>
 
-            {/* RECHTE SEITE: Animierte Desktop Buttons */}
             {!isMobile && (
                 <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexShrink: 0 }}>
-                    <AnimatedActionButton 
-                        id="tour-button"
-                        icon={<PlayCircleOutlineIcon />}
-                        text="Tour starten"
-                        onClick={startTourManually}
-                        variant="text"
-                        color="inherit"
-                        isExpanded={activeButtonId === 'all' || activeButtonId === 'tour-button'}
-                        onExpand={() => setActiveButtonId('tour-button')}
-                    />
-                    
                     <AnimatedActionButton 
                         id="add-widget-button"
                         icon={<AddCircleOutlineIcon />}
@@ -470,8 +442,8 @@ const DashboardPage: React.FC = () => {
                         onClick={handleOpenAddWidgetMenu}
                         variant="outlined"
                         color="primary"
-                        isExpanded={activeButtonId === 'all' || activeButtonId === 'add-widget-button'}
-                        onExpand={() => setActiveButtonId('add-widget-button')}
+                        isExpanded={Boolean(anchorEl)}
+                        onExpand={() => {}}
                     />
                     
                     <AnimatedActionButton 
@@ -489,7 +461,6 @@ const DashboardPage: React.FC = () => {
             )}
         </Box>
 
-        {/* --- DESKTOP DROPDOWN --- */}
         <Menu 
           anchorEl={anchorEl} 
           open={Boolean(anchorEl) && !isMobile} 
@@ -569,61 +540,89 @@ const DashboardPage: React.FC = () => {
                     Erstes Widget hinzufügen
                 </Button>
             </Box>
-        ) : (
-<ErrorBoundary>
-    <ResponsiveGridLayout
-        className="layout"
-        layouts={dashboardConfig.layouts}
-        onLayoutChange={onLayoutChange}
-        breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
-        cols={{ lg: 12, md: 10, sm: 6, xs: 1 }}
-        margin={{ lg: [15, 15], md: [10, 10], sm: [8, 8], xs: [8, 8] }}
-        rowHeight={30} 
-        isDroppable
-        isDraggable={!isMobile} 
-        isResizable={!isMobile} 
-        draggableHandle=".widget-drag-handle"
-        compactType="vertical"
-        style={isMobile ? { 
-            display: 'flex', 
-            flexDirection: 'column', 
-            gap: '16px' 
-        } : undefined}
-    >
-        {dashboardConfig.widgets.map((widget: WidgetConfig) => {
-            const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widget.type);
-            const widgetName = widgetTypeMeta?.name || widget.type || 'Unbekanntes Widget';
-
-            return (
-                <div 
-                    key={widget.id} 
-                    data-grid={dashboardConfig.layouts.lg?.find((l: Layout) => l.i === widget.id) || {x:0, y:Infinity, w:4, h:8}}
-                    style={isMobile ? { 
-                        position: 'relative', 
-                        width: '100%', 
-                        height: 'auto', 
-                        transform: 'none' 
-                    } : undefined}
+        ) : isMobile ? (
+            <ErrorBoundary>
+                <Box
+                    sx={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2,
+                        width: '100%',
+                        minWidth: 0,
+                        pb: 10,
+                        '& > .mobile-dashboard-widget': {
+                            width: '100%',
+                            minWidth: 0,
+                        },
+                        '& > .mobile-dashboard-widget > *': {
+                            width: '100%',
+                            maxWidth: '100%',
+                        },
+                    }}
                 >
-                    <ErrorBoundary name={widgetName}>
-                        <MemoizedWidgetContent 
-                            widget={widget} 
-                            availableWidgetTypes={availableWidgetTypes}
-                            businessPartner={businessPartner}
-                            onDelete={handleDeleteWidget}
-                        />
-                    </ErrorBoundary>
-                </div>
-            );
-        })}
-    </ResponsiveGridLayout>
-</ErrorBoundary>
+                    {dashboardConfig.widgets.map((widget: WidgetConfig) => {
+                        const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widget.type);
+                        const widgetName = widgetTypeMeta?.name || widget.type || 'Unbekanntes Widget';
+
+                        return (
+                            <Box key={widget.id} className="mobile-dashboard-widget">
+                                <ErrorBoundary name={widgetName}>
+                                    <MemoizedWidgetContent 
+                                        widget={widget} 
+                                        availableWidgetTypes={availableWidgetTypes}
+                                        businessPartner={businessPartner}
+                                        onDelete={handleDeleteWidget}
+                                    />
+                                </ErrorBoundary>
+                            </Box>
+                        );
+                    })}
+                </Box>
+            </ErrorBoundary>
+        ) : (
+            <ErrorBoundary>
+                <ResponsiveGridLayout
+                    className="layout"
+                    layouts={dashboardConfig.layouts}
+                    onLayoutChange={onLayoutChange}
+                    breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
+                    cols={{ lg: 12, md: 10, sm: 6, xs: 1 }}
+                    margin={{ lg: [15, 15], md: [10, 10], sm: [8, 8], xs: [8, 8] }}
+                    rowHeight={30}
+                    isDroppable
+                    isDraggable
+                    isResizable
+                    draggableHandle=".widget-drag-handle"
+                    compactType="vertical"
+                >
+                    {dashboardConfig.widgets.map((widget: WidgetConfig) => {
+                        const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widget.type);
+                        const widgetName = widgetTypeMeta?.name || widget.type || 'Unbekanntes Widget';
+
+                        return (
+                            <div 
+                                key={widget.id} 
+                                data-grid={dashboardConfig.layouts.lg?.find((l: Layout) => l.i === widget.id) || {x:0, y:Infinity, w:4, h:8}}
+                            >
+                                <ErrorBoundary name={widgetName}>
+                                    <MemoizedWidgetContent 
+                                        widget={widget} 
+                                        availableWidgetTypes={availableWidgetTypes}
+                                        businessPartner={businessPartner}
+                                        onDelete={handleDeleteWidget}
+                                    />
+                                </ErrorBoundary>
+                            </div>
+                        );
+                    })}
+                </ResponsiveGridLayout>
+            </ErrorBoundary>
         )}
 
-        {isMobile && (
+        {isMobile && !isAiChatOpen && (
             <SpeedDial
                 ariaLabel="Dashboard Aktionen"
-                sx={{ position: 'fixed', bottom: 16, right: 16 }}
+                sx={{ position: 'fixed', bottom: 16, right: 16, zIndex: 1400 }}
                 icon={<SpeedDialIcon />}
                 onClose={() => setOpenSpeedDial(false)}
                 onOpen={() => setOpenSpeedDial(true)}
@@ -635,11 +634,64 @@ const DashboardPage: React.FC = () => {
             </SpeedDial>
         )}
 
-        {/* --- MOBILE DIALOG --- */}
-        <Dialog open={addWidgetDialogOpen} onClose={handleAddWidgetDialogClose} fullWidth maxWidth="xs">
-            <DialogTitle>Widgets verwalten</DialogTitle>
-            <List sx={{ pt: 0 }}>
-                {asArray(availableWidgetTypes).map((widgetType) => {
+        <Dialog
+            open={addWidgetDialogOpen}
+            onClose={handleAddWidgetDialogClose}
+            fullWidth
+            maxWidth="xs"
+            fullScreen={false}
+            PaperProps={{
+                sx: {
+                    display: 'flex',
+                    flexDirection: 'column',
+                    borderRadius: { xs: 3, sm: 2 },
+                    overflow: 'hidden',
+                    m: { xs: 1.5, sm: 3 },
+                    width: { xs: 'calc(100% - 24px)', sm: '100%' },
+                    maxWidth: { xs: 'calc(100% - 24px)', sm: 444 },
+                    height: { xs: 'calc(100dvh - 24px)', sm: 'auto' },
+                    maxHeight: { xs: 'calc(100dvh - 24px)', sm: 'calc(100% - 64px)' },
+                }
+            }}
+        >
+            <DialogTitle
+                sx={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 2,
+                    flexShrink: 0,
+                    bgcolor: 'background.paper',
+                    borderBottom: 1,
+                    borderColor: 'divider',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 2,
+                    pr: 1.5,
+                    py: { xs: 1.5, sm: 2 },
+                }}
+            >
+                <Typography variant="h6" sx={{ fontWeight: 800 }}>Widgets verwalten</Typography>
+                <IconButton
+                    edge="end"
+                    onClick={handleAddWidgetDialogClose}
+                    aria-label="Widgets verwalten schließen"
+                >
+                    <CloseIcon />
+                </IconButton>
+            </DialogTitle>
+            <DialogContent
+                dividers
+                sx={{
+                    p: 0,
+                    flex: 1,
+                    minHeight: 0,
+                    overflowY: 'auto',
+                    overscrollBehavior: 'contain',
+                }}
+            >
+                <List sx={{ pt: 0, pb: { xs: 3, sm: 1 } }}>
+                    {asArray(availableWidgetTypes).map((widgetType) => {
                     const Icon = getIcon(widgetType.icon_name);
                     const existingWidgets = dashboardConfig.widgets.filter((w) => w.type === widgetType.type_key);
                     const isAlreadyAdded = existingWidgets.length > 0;
@@ -681,7 +733,8 @@ const DashboardPage: React.FC = () => {
                         </ListItem>
                     );
                 })}
-            </List>
+                </List>
+            </DialogContent>
         </Dialog>
 
         <Snackbar

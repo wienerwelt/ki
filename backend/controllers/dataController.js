@@ -2539,57 +2539,103 @@ exports.getActiveAdvertisement = async (req, res) => {
 };
 
 exports.getActiveActionsForWidget = async (req, res) => {
-    const { business_partner_id } = req.user;
+    const { business_partner_id } = req.user || {};
 
-    if (!business_partner_id) {
+    if (!business_partner_id || !isValidUUID(business_partner_id)) {
         return res.json({ data: [], totalPages: 0, counts: { new: 0 } });
     }
 
-    const { page = 1, limit = 10 } = req.query;
-    const offset = (page - 1) * limit;
-    const now = new Date();
+    const safePage = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const safeLimit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 24);
+    const offset = (safePage - 1) * safeLimit;
 
     try {
+        // Abgelaufene Aktionen serverseitig bereinigen, damit sie nicht mehr aktiv angezeigt werden.
+        await db.query(`
+            UPDATE business_partner_actions
+            SET is_active = false,
+                updated_at = NOW()
+            WHERE business_partner_id = $1
+              AND is_active = true
+              AND end_date IS NOT NULL
+              AND end_date < NOW()
+        `, [business_partner_id]);
+
         const baseQuery = `
             FROM business_partner_actions
             WHERE
-                business_partner_id = $1 AND
-                is_active = TRUE AND
-                (start_date IS NULL OR start_date <= $2) AND
-                (end_date IS NULL OR end_date >= $2)
+                business_partner_id = $1
+                AND is_active = TRUE
+                AND (start_date IS NULL OR start_date <= NOW())
+                AND (end_date IS NULL OR end_date >= NOW())
         `;
-        const queryParams = [business_partner_id, now];
+        const queryParams = [business_partner_id];
 
         const totalQuery = `SELECT COUNT(*) ${baseQuery}`;
         const totalResult = await db.query(totalQuery, queryParams);
-        const totalItems = parseInt(totalResult.rows[0].count, 10);
-        const totalPages = Math.ceil(totalItems / limit);
+        const totalItems = parseInt(totalResult.rows[0].count, 10) || 0;
+        const totalPages = Math.ceil(totalItems / safeLimit);
 
         const dataQuery = `
-            SELECT id, layout_type, title, content_text, link_url, image_url, created_at,
-                target_widget_category, target_region -- <-- DIESE BEIDEN HIER ERGÄNZEN!
+            SELECT
+                id,
+                business_partner_id,
+                layout_type,
+                title,
+                content_text,
+                link_url,
+                image_url,
+                created_at,
+                updated_at,
+                start_date,
+                end_date,
+                target_widget_category,
+                target_region,
+                is_click_tracking_enabled,
+                promotion_label,
+                promotion_type,
+                cta_label,
+                secondary_image_url,
+                secondary_link_url,
+                secondary_cta_label,
+                priority,
+                COALESCE(info, '{}'::jsonb) AS info
             ${baseQuery}
-            ORDER BY created_at DESC
-            LIMIT $3 OFFSET $4
+            ORDER BY priority DESC, start_date DESC NULLS LAST, created_at DESC
+            LIMIT $2 OFFSET $3
         `;
-        const dataQueryParams = [...queryParams, limit, offset];
-        const dataResult = await db.query(dataQuery, dataQueryParams);
+        const dataResult = await db.query(dataQuery, [...queryParams, safeLimit, offset]);
 
-        const newQuery = `SELECT COUNT(*) FROM business_partner_actions WHERE business_partner_id = $1 AND is_active = TRUE AND created_at >= NOW() - INTERVAL '3 days'`;
+        const newQuery = `
+            SELECT COUNT(*) 
+            FROM business_partner_actions
+            WHERE business_partner_id = $1
+              AND is_active = TRUE
+              AND created_at >= NOW() - INTERVAL '3 days'
+        `;
         const newResult = await db.query(newQuery, [business_partner_id]);
         const counts = { new: parseInt(newResult.rows[0].count, 10) || 0 };
 
-        res.json({ data: dataResult.rows, totalPages, counts });
+        return res.json({
+            data: dataResult.rows,
+            totalPages,
+            counts,
+            currentPage: safePage,
+            limit: safeLimit,
+        });
 
     } catch (err) {
         console.error('--- DATABASE ERROR in getActiveActionsForWidget ---');
         console.error('Timestamp:', new Date().toISOString());
         console.error('Error Message:', err.message);
+        console.error('Error Code:', err.code);
+        console.error('Error Detail:', err.detail);
         console.error('Full Error Object:', err);
         console.error('----------------------------------------------------');
-        res.status(500).send('Serverfehler beim Abrufen der Aktionen.');
+        return res.status(500).json({ message: 'Serverfehler beim Abrufen der Aktionen.' });
     }
-}
+};
+
 
 exports.getCalendarEvents = async (req, res) => {
     try {
@@ -3136,7 +3182,7 @@ if (req.user.role === 'demo') {
         const { aiResultString } = await generateAIContent({
             promptTemplate, 
             inputText, 
-            ai_provider: 'OpenAI GPT-4o', // oder was auch immer konfiguriert ist
+            ai_provider: 'OpenAI GPT-4o',
             jobId, 
             userId
         });
@@ -3301,60 +3347,54 @@ exports.getDailyBriefing = async (req, res) => {
 
 
 async function retrieveInternalDocuments(searchTerm) {
-    if (!searchTerm || searchTerm.trim().length < 3) {
-        return [];
-    }
+    if (!searchTerm || searchTerm.trim().length < 3) return [];
+    
+    // Wir suchen nach Schlagworten in Inhalten UND Experten-Tags
     const formattedTerm = searchTerm.trim().split(/\s+/).join(' & ');
 
     try {
         const query = `
-            SELECT id, title, summary, published_date, type, url, relevance
+            SELECT id, title, summary, type, url, relevance
             FROM (
-                SELECT
-                    id, title, summary, published_date, 'scraped' as type,
-                    original_url as url,
-                    ts_rank(to_tsvector('german', title || ' ' || summary), to_tsquery('german', $1)) as relevance
-                FROM scraped_content
-                WHERE to_tsvector('german', title || ' ' || summary) @@ to_tsquery('german', $1)
+                -- Bestehende Suche (Scraped/AI/News)
+                SELECT id, title, summary, 'scraped' as type, original_url as url, 
+                       ts_rank(to_tsvector('german', title || ' ' || summary), to_tsquery('german', $1)) as relevance
+                FROM scraped_content WHERE to_tsvector('german', title || ' ' || summary) @@ to_tsquery('german', $1)
                 
                 UNION ALL
-                
-                SELECT
-                    id, title, generated_output as summary, created_at as published_date, 'ai' as type,
-                    source_reference as url,
-                    ts_rank(to_tsvector('german', title || ' ' || generated_output), to_tsquery('german', $1)) as relevance
-                FROM ai_generated_content
-                WHERE to_tsvector('german', title || ' ' || generated_output) @@ to_tsquery('german', $1)
-
-                UNION ALL
-
-                SELECT
-                    id, article_title as title, summary, published_at as published_date,
-                    'tracked_account_news' as type,
-                    article_url as url,
-                    ts_rank(to_tsvector('german', article_title || ' ' || summary), to_tsquery('german', $1)) as relevance
-                FROM business_partner_tracked_articles
-                WHERE to_tsvector('german', article_title || ' ' || summary) @@ to_tsquery('german', $1)
-
+                SELECT 
+                    u.id::text, 
+                    'Experte: ' || u.first_name || ' ' || u.last_name as title,
+                    'Expertise in: ' || string_agg(ust.tag_name, ', ') || 
+                    '. Kontakt: ' || COALESCE(u.phone, 'Keine Nummer hinterlegt') || 
+                    ' (' || u.email || ')' as summary,
+                    'user' as type,
+                    '/community' as url,
+                    10.0 as relevance
+                FROM users u
+                JOIN user_saved_tags ust ON u.id = ust.user_id
+                WHERE ust.tag_name ILIKE $2
+                GROUP BY u.id
             ) as search_results
             ORDER BY relevance DESC
-            LIMIT 5; -- Wir nehmen die Top 5 relevantesten Dokumente
+            LIMIT 6;
         `;
-        const { rows } = await db.query(query, [formattedTerm]);
+        const { rows } = await db.query(query, [formattedTerm, `%${searchTerm}%`]);
         return rows;
     } catch (err) {
-        console.error('Fehler beim Abrufen interner Dokumente (RAG-Retrieval):', err.message);
+        console.error('Fehler bei der Experten-Suche:', err.message);
         return [];
     }
 }
 
-// Der neue Controller für die KI-Anfrage
-// AKTUALISIERTER Controller für die KI-Anfrage (mit korrigierter Transaktion)
+
 exports.handleAiQuestion = async (req, res) => {
-if (req.user.role === 'demo') {
+    if (req.user.role === 'demo') {
         return res.status(403).json({ message: 'KI-Anfragen sind im Demo-Modus deaktiviert.' });
     }    
-    const { question } = req.body;
+    
+    // NEU: sessionId wird aus dem Frontend erwartet
+    const { question, history, sessionId } = req.body;
     const { id: userId, business_partner_id: businessPartnerId } = req.user;
 
     if (!question) {
@@ -3365,25 +3405,39 @@ if (req.user.role === 'demo') {
     }
 
     let jobId;
+    let currentSessionId = sessionId;
     const client = await db.connect();
+    
     try {
-        // --- START Transaktion 1: Job-Erstellung & Gamification ---
         await client.query('BEGIN');
 
-        // Schritt 1: Job für Logging erstellen
+        // 1. Session-Management: Wenn keine Session-ID da ist, erstelle eine neue
+        if (!currentSessionId) {
+            const sessionRes = await client.query(
+                `INSERT INTO ai_chat_sessions (user_id) VALUES ($1) RETURNING id`,
+                [userId]
+            );
+            currentSessionId = sessionRes.rows[0].id;
+        }
+
+        // 2. Nutzer-Nachricht in der Datenbank speichern
+        await client.query(
+            `INSERT INTO ai_chat_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
+            [currentSessionId, question]
+        );
+
+        // 3. Job-Erstellung & Gamification
         const jobResult = await client.query(`INSERT INTO ai_jobs (status, is_automated) VALUES ('running', false) RETURNING id`);
         jobId = jobResult.rows[0].id;
         
         await logToDb(jobId, 'INFO', `Starte RAG-Anfrage für User ${userId}. Frage: "${question}"`);
 
-        // Schritt 2: Gamification (Punkteabzug)
         const pointsChange = -2;
         await client.query(
             'UPDATE users SET contribution_score = contribution_score + $1 WHERE id = $2',
             [pointsChange, userId]
         );
 
-        // Schritt 3: Punkteabzug protokollieren
         const description = `Punkte für KI-Anfrage erhalten: "${question.substring(0, 100)}..."`;
         await client.query(
             `INSERT INTO user_score_logs (reference_id, user_id, points_change, action_type, description) 
@@ -3391,15 +3445,13 @@ if (req.user.role === 'demo') {
             [jobId, userId, pointsChange, 'AI_QUERY', description]
         );
 
-        // --- COMMIT Transaktion 1 ---
-        // Der Job ist jetzt für alle anderen Verbindungen (wie aiExecutionService) sichtbar.
         await client.query('COMMIT');
-        // --- ENDE Transaktion 1 ---
 
-        // Schritt 4: Branchenspezifische Daten abrufen (außerhalb der Transaktion)
+        // 4. Partner-Daten abrufen (inkl. Homepage)
         const partnerRes = await client.query(
             `SELECT 
                 bp.dashboard_focus,
+                bp.url_businesspartner,
                 (
                     SELECT COALESCE(json_agg(c.name), '[]'::json)
                     FROM business_partner_categories bpc
@@ -3411,18 +3463,11 @@ if (req.user.role === 'demo') {
             [businessPartnerId]
         );
 
-        if (partnerRes.rows.length === 0) {
-            throw new Error('Business Partner nicht gefunden.');
-        }
-
+        if (partnerRes.rows.length === 0) throw new Error('Business Partner nicht gefunden.');
         const partner = partnerRes.rows[0];
-        const industryNames = partner.industries.length > 0 
-            ? partner.industries.join(', ') 
-            : 'allgemeine Mobilität und Fuhrparkmanagement';
-        
-        await logToDb(jobId, 'INFO', `Partner-Fokus: ${partner.dashboard_focus}. Branchen: ${industryNames}`);
+        const industryNames = partner.industries.length > 0 ? partner.industries.join(', ') : 'allgemeine Mobilität';
 
-        // Schritt 5: Interne Dokumente abrufen (Retrieval)
+        // 5. Dokumenten-Retrieval
         const documents = await retrieveInternalDocuments(question);
         let context = 'Keine relevanten internen Dokumente gefunden.';
         if (documents.length > 0) {
@@ -3430,12 +3475,9 @@ if (req.user.role === 'demo') {
                 `--- DOKUMENT (ID: ${doc.id}, Typ: ${doc.type}) ---\nTITEL: ${doc.title}\nINHALT: ${doc.summary || ''}\nQUELLE: ${doc.url || 'Intern'}\n---`
             ).join('\n\n');
         }
-        await logToDb(jobId, 'INFO', `${documents.length} interne Dokumente gefunden.`);
 
-        // Schritt 6: Dynamischen, branchenspezifischen Prompt erstellen (Augment)
         const promptTemplate = `
           Du bist ein hochqualifizierter KI-Assistent, spezialisiert auf die Branchen: ${industryNames}.
-          ${partner.dashboard_focus === 'sales' ? 'Deine Antworten sollten besonders auf Vertriebschancen (Sales Trigger) und Geschäftsmöglichkeiten achten.' : 'Deine Antworten sollten informativ, präzise und neutral sein.'}
           BEANTWORTE DIE FRAGE DES BENUTZERS: "${question}"
           BASIERE DEINE ANTWORT AUF DEINEM ALLGEMEINEN WISSEN UND DEN FOLGENDEN INTERNEN DOKUMENTEN.
           BEZIEHE DICH WO IMMER MÖGLICH AUF DIESE DOKUMENTE, ABER ERWÄHNE NICHT DIE "DOKUMENT-ID".
@@ -3445,24 +3487,28 @@ if (req.user.role === 'demo') {
           --- ENDE DES KONTEXTES ---
         `;
 
-        // Schritt 7: KI-Anfrage ausführen (Generate)
-        // Diese Funktion kann jetzt sicher in ai_logs/ai_usage_logs schreiben,
-        // da jobId committet ist.
+        // 6. KI-Anfrage senden
         const { aiResultString } = await generateAIContent({
             promptTemplate,
             inputText: context,
+            history: history,
             ai_provider: 'OpenAI GPT-4o',
             jobId: jobId,
-            userId: userId
+            userId: userId,
+            bpHomepage: partner.url_businesspartner // Homepage als Quelle!
         });
 
-        await logToDb(jobId, 'SUCCESS', 'RAG-Antwort erfolgreich generiert.');
+        // 7. KI-Antwort in der Datenbank speichern
+        await client.query(
+            `INSERT INTO ai_chat_messages (session_id, role, content) VALUES ($1, 'assistant', $2)`,
+            [currentSessionId, aiResultString]
+        );
         
-        // Schritt 8: Job-Status aktualisieren (in einer neuen, kleinen Transaktion)
         await client.query(`UPDATE ai_jobs SET status = 'completed' WHERE id = $1`, [jobId]);
 
-        // Schritt 9: Antwort an Frontend senden
+        // 8. Antwort inkl. Session-ID ans Frontend senden
         res.json({
+            sessionId: currentSessionId,
             answer: aiResultString,
             sources: documents.map(doc => ({
                 id: doc.id,
@@ -3473,25 +3519,18 @@ if (req.user.role === 'demo') {
         });
 
     } catch (err) {
-        // --- Rollback ist nur nötig, wenn der Fehler VOR dem Commit passiert ist ---
-        // (Ein Rollback einer bereits committeten Transaktion ist nicht möglich,
-        //  aber wir fangen den Fehler der KI-Ausführung ab)
         console.error('Fehler in handleAiQuestion:', err.message);
-        
         if (jobId) {
-            await logToDb(jobId, 'ERROR', `RAG-Job fehlgeschlagen: ${err.message}`);
-            // Setze den Job-Status auf 'failed'
             try {
                 await client.query(`UPDATE ai_jobs SET status = 'failed' WHERE id = $1`, [jobId]);
-            } catch (updateErr) {
-                console.error('Konnte Job-Status nach Fehler nicht auf FAILED setzen:', updateErr);
-            }
+            } catch (e) {}
         }
         res.status(500).json({ message: 'Fehler bei der Verarbeitung der KI-Anfrage.' });
     } finally {
         client.release();
     }
 };
+// ...
 
 
 exports.getNotificationCounts = async (req, res) => {
@@ -3503,32 +3542,46 @@ exports.getNotificationCounts = async (req, res) => {
 
     try {
         const userRes = await db.query('SELECT last_login_at FROM users WHERE id = $1', [userId]);
+        // Wenn du den Login-Verlauf als Fallback für die anderen Module nutzen willst:
         const lastLogin = userRes.rows[0]?.last_login_at || new Date(0);
 
-        // Wir feuern alle Zählungen gleichzeitig (parallel) ab für maximale Performance
         const [scrapedNew, aiNew, actionsNew, communityNew, filesNew, directoryNew, sourcesNew] = await Promise.all([
-            // 1. Scraped Content
-            db.query(`SELECT COUNT(id) as cnt FROM scraped_content WHERE created_at > $1`, [lastLogin]),
+            // 1. Scraped Content: Zählt die letzten 30 Tage, falls nicht explizit gelesen!
+            db.query(`
+                SELECT COUNT(sc.id) as cnt 
+                FROM scraped_content sc 
+                WHERE sc.created_at > NOW() - INTERVAL '30 days' 
+                  AND NOT EXISTS (
+                      SELECT 1 FROM user_read_scraped_content ursc 
+                      WHERE ursc.scraped_content_id = sc.id AND ursc.user_id = $1
+                  )`, [userId]),
             
-            // 2. AI Content
-            db.query(`SELECT COUNT(id) as cnt FROM ai_generated_content WHERE created_at > $1`, [lastLogin]),
+            // 2. AI Content: Zählt die letzten 30 Tage, falls nicht explizit gelesen!
+            db.query(`
+                SELECT COUNT(agc.id) as cnt 
+                FROM ai_generated_content agc 
+                WHERE agc.created_at > NOW() - INTERVAL '30 days' 
+                  AND NOT EXISTS (
+                      SELECT 1 FROM user_read_ai_content urac 
+                      WHERE urac.ai_content_id = agc.id AND urac.user_id = $1
+                  )`, [userId]),
 
-            // 3. Actions (Mandantenbezogen)
+            // 3. Actions (Bleiben auf lastLogin, da sie keine Lesebestätigung in der DB haben)
             isValidUUID(businessPartnerId)
                 ? db.query(`SELECT COUNT(id) as cnt FROM business_partner_actions WHERE business_partner_id = $1 AND created_at > $2`, [businessPartnerId, lastLogin])
                 : Promise.resolve({ rows: [{ cnt: 0 }] }),
 
-            // 4. NEU: Community Posts (Mandantenbezogen)
+            // 4. Community Posts
             isValidUUID(businessPartnerId)
                 ? db.query(`SELECT COUNT(id) as cnt FROM community_posts WHERE business_partner_id = $1 AND created_at > $2`, [businessPartnerId, lastLogin])
                 : Promise.resolve({ rows: [{ cnt: 0 }] }),
 
-            // 5. NEU: Dateien (Mandantenbezogen)
+            // 5. Dateien
             isValidUUID(businessPartnerId)
                 ? db.query(`SELECT COUNT(id) as cnt FROM business_partner_files WHERE business_partner_id = $1 AND created_at > $2`, [businessPartnerId, lastLogin])
                 : Promise.resolve({ rows: [{ cnt: 0 }] }),
 
-            // 6. NEU: Partner-Netzwerk (Mandantenbezogen über Verknüpfungstabelle)
+            // 6. Partner-Netzwerk
             isValidUUID(businessPartnerId)
                 ? db.query(`
                     SELECT COUNT(p.id) as cnt 
@@ -3538,7 +3591,7 @@ exports.getNotificationCounts = async (req, res) => {
                   `, [businessPartnerId, lastLogin])
                 : Promise.resolve({ rows: [{ cnt: 0 }] }),
 
-            // 7. NEU: Quellen (Global, da für alle genehmigt)
+            // 7. Quellen
             db.query(`SELECT COUNT(id) as cnt FROM sources WHERE status = 'approved' AND created_at > $1`, [lastLogin])
         ]);
 
@@ -3556,7 +3609,7 @@ exports.getNotificationCounts = async (req, res) => {
 
         res.json({ 
             totalCount: totalCount,
-            menuCounts: counts // Dieses Objekt nutzen wir im Frontend für die Menü-Badges!
+            menuCounts: counts 
         });
 
     } catch (err) {

@@ -22,6 +22,62 @@ function getTrendIndicator(current, previous) {
     return '<span style="color: #757575;">→ 0 (Gleich)</span>';
 }
 
+function normalizeEnvironmentValue(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return null;
+
+    if (['production', 'prod', 'live'].includes(normalized)) {
+        return 'production';
+    }
+
+    if (['development', 'dev', 'local', 'test'].includes(normalized)) {
+        return 'development';
+    }
+
+    return null;
+}
+
+function resolveRuntimeEnvironment(dashboardUrl = '') {
+    const candidates = [
+        { key: 'REPORT_ENV', value: process.env.REPORT_ENV },
+        { key: 'APP_ENV', value: process.env.APP_ENV },
+        { key: 'DEPLOY_ENV', value: process.env.DEPLOY_ENV },
+        { key: 'NODE_ENV', value: process.env.NODE_ENV }
+    ];
+
+    for (const candidate of candidates) {
+        const normalized = normalizeEnvironmentValue(candidate.value);
+        if (normalized) {
+            return {
+                name: normalized,
+                label: normalized === 'production' ? 'PRODUCTION' : 'DEVELOPMENT',
+                isProduction: normalized === 'production',
+                source: candidate.key,
+                rawValue: candidate.value
+            };
+        }
+    }
+
+    const url = String(dashboardUrl || '').toLowerCase();
+    if (url && !url.includes('localhost') && !url.includes('127.0.0.1')) {
+        return {
+            name: 'production',
+            label: 'PRODUCTION',
+            isProduction: true,
+            source: 'FRONTEND_URL',
+            rawValue: dashboardUrl
+        };
+    }
+
+    return {
+        name: 'development',
+        label: 'DEVELOPMENT',
+        isProduction: false,
+        source: 'fallback',
+        rawValue: 'missing-env'
+    };
+}
+
 async function getDailyStats() {
     const now = new Date();
     const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -97,8 +153,19 @@ async function getDailyStats() {
              WHERE status = 'completed' AND completed_at >= $2`,
             [since, vortagStart]
         ),
+
+        // 8) Neue Ideen & Vorschläge aus dem Feedback-Board
+        db.query(
+            `SELECT
+                COUNT(CASE WHEN created_at >= $1 THEN 1 END)::int AS current,
+                COUNT(CASE WHEN created_at >= $2 AND created_at < $1 THEN 1 END)::int AS previous
+             FROM feedback_items
+             WHERE type IN ('idea', 'suggestion')
+               AND created_at >= $2`,
+            [since, vortagStart]
+        ),
         
-        // 8) S3 Speicher Gesamt (Globaler Ist-Zustand, kein Delta)
+        // 9) S3 Speicher Gesamt (Globaler Ist-Zustand, kein Delta)
         db.query(
             `SELECT COUNT(*)::int AS count, COALESCE(SUM(file_size), 0) AS total_bytes FROM business_partner_files`
         )
@@ -118,26 +185,38 @@ async function getDailyStats() {
         tokensUsageLogs: results[4].rows[0],
         scrapedContents: results[5].rows[0],
         scrapingJobsCompleted: results[6].rows[0],
+        newIdeas: results[7].rows[0],
         s3: {
-            totalFiles: results[7].rows[0].count,
-            storageMb: (Number(results[7].rows[0].total_bytes || 0) / (1024 * 1024)).toFixed(2)
+            totalFiles: results[8].rows[0].count,
+            storageMb: (Number(results[8].rows[0].total_bytes || 0) / (1024 * 1024)).toFixed(2)
         }
     };
 }
 
-function formatReportAsHtml(stats, environment, dashboardUrl) {
+function formatReportAsHtml(stats, environmentInfo, dashboardUrl) {
     const start = new Date(stats.timeframe.start).toLocaleString('de-AT');
     const end = new Date(stats.timeframe.end).toLocaleString('de-AT');
-    const isProd = environment.toUpperCase() === 'PRODUCTION';
+    const environmentLabel = typeof environmentInfo === 'string'
+        ? environmentInfo.toUpperCase()
+        : environmentInfo.label;
+    const environmentSource = typeof environmentInfo === 'string'
+        ? 'NODE_ENV'
+        : environmentInfo.source;
+    const isProd = typeof environmentInfo === 'string'
+        ? environmentLabel === 'PRODUCTION'
+        : environmentInfo.isProduction;
 
     return `
         <div style="font-family: Arial, sans-serif; color: #333; max-width: 700px; margin: 0 auto;">
             <div style="padding: 15px; background-color: ${isProd ? '#fee2e2' : '#e0f2fe'}; border: 1px solid ${isProd ? '#fca5a5' : '#7dd3fc'}; borderRadius: 6px; margin-bottom: 20px;">
-                <Typography style="margin: 0; font-size: 16px; color: ${isProd ? '#991b1b' : '#0369a1'}; font-weight: bold;">
-                    📡 System-Umgebung: ${environment.toUpperCase()}
-                </Typography>
+                <p style="margin: 0; font-size: 16px; color: ${isProd ? '#991b1b' : '#0369a1'}; font-weight: bold;">
+                    📡 System-Umgebung: ${environmentLabel}
+                </p>
                 <p style="margin: 5px 0 0 0; font-size: 13px; color: #475569;">
                     URL: <a href="${dashboardUrl}" target="_blank" style="color: #1976d2; font-weight: bold;">${dashboardUrl}</a>
+                </p>
+                <p style="margin: 4px 0 0 0; font-size: 11px; color: #64748b;">
+                    Erkennung über: ${environmentSource}
                 </p>
             </div>
 
@@ -172,6 +251,12 @@ function formatReportAsHtml(stats, environment, dashboardUrl) {
                         <td style="padding:10px; border:1px solid #e2e8f0; text-align: right;"><strong>${stats.fileUploads.current}</strong></td>
                         <td style="padding:10px; border:1px solid #e2e8f0; text-align: right; color: #64748b;">${stats.fileUploads.previous}</td>
                         <td style="padding:10px; border:1px solid #e2e8f0; text-align: center;">${getTrendIndicator(stats.fileUploads.current, stats.fileUploads.previous)}</td>
+                    </tr>
+                    <tr style="background:#ecfeff;">
+                        <td style="padding:10px; border:1px solid #e2e8f0;">Neue Ideen & Vorschläge</td>
+                        <td style="padding:10px; border:1px solid #e2e8f0; text-align: right;"><strong>${stats.newIdeas.current}</strong></td>
+                        <td style="padding:10px; border:1px solid #e2e8f0; text-align: right; color: #64748b;">${stats.newIdeas.previous}</td>
+                        <td style="padding:10px; border:1px solid #e2e8f0; text-align: center;">${getTrendIndicator(stats.newIdeas.current, stats.newIdeas.previous)}</td>
                     </tr>
                     <tr style="background:#f8fafc;">
                         <td style="padding:10px; border:1px solid #e2e8f0;">Gescrapte Inhalte</td>
@@ -222,10 +307,11 @@ function formatReportAsHtml(stats, environment, dashboardUrl) {
 exports.generateAndSendDailyReport = async () => {
     try {
         const stats = await getDailyStats();
-        const environment = process.env.NODE_ENV || 'development';
         const dashboardUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const environmentInfo = resolveRuntimeEnvironment(dashboardUrl);
+        const environmentLabel = environmentInfo.label;
         
-        let htmlContent = formatReportAsHtml(stats, environment, dashboardUrl);
+        let htmlContent = formatReportAsHtml(stats, environmentInfo, dashboardUrl);
 
         htmlContent += `
             <p style="margin-top: 20px; text-align: center;">
@@ -237,12 +323,21 @@ exports.generateAndSendDailyReport = async () => {
 
         await sendEmail({
             to: process.env.EMAIL_ADMIN,
-            subject: `[${environment.toUpperCase()}] Admin Report – KPI-Vergleich & Deltas`,
+            subject: `[${environmentLabel}] Admin Report – KPI-Vergleich & Deltas`,
             html: htmlContent,
-            fromName: `Dashboard Admin (${environment.toUpperCase()})`
+            fromName: `Dashboard Admin (${environmentLabel})`
         });
 
-        console.log(`[Reporting] Admin Daily Report für [${environment}] erfolgreich versendet.`);
+        console.log('[Reporting] Admin Daily Report erfolgreich versendet.', {
+            environment: environmentLabel,
+            detectedBy: environmentInfo.source,
+            rawValue: environmentInfo.rawValue,
+            nodeEnv: process.env.NODE_ENV,
+            appEnv: process.env.APP_ENV,
+            deployEnv: process.env.DEPLOY_ENV,
+            reportEnv: process.env.REPORT_ENV,
+            frontendUrl: dashboardUrl
+        });
     } catch (error) {
         console.error('[Reporting] Fehler beim Senden des Admin Daily Reports:', error);
     }

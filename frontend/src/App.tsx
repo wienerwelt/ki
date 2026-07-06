@@ -1,77 +1,85 @@
 // frontend/src/App.tsx
 /// <reference types="vite/client" />
 
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider, createTheme, Theme } from '@mui/material/styles';
 import { CssBaseline, Box, CircularProgress } from '@mui/material';
 import { SnackbarProvider } from './context/SnackbarContext';
 
-// Layout
-import DashboardLayout from './components/DashboardLayout';
+// CookieBanner bleibt klein und global. Das DashboardLayout wird lazy geladen,
+// damit öffentliche Seiten nicht die komplette Dashboard-Shell mitladen.
 import CookieBanner from './components/CookieBanner';
 
-// Öffentliche Seiten
-import PublicPortalPage from './pages/PublicPortalPage';
-import ForgotPasswordPage from './pages/ForgotPasswordPage';
-import ResetPasswordPage from './pages/ResetPasswordPage';
-import VerifyEmailPage from './pages/VerifyEmailPage';
-import TermsPage from './pages/TermsPage';
-import PrivacyPage from './pages/PrivacyPage';
-import DisclaimerPage from './pages/DisclaimerPage';
-import CookieSettingsPage from './pages/CookieSettingsPage';
-import NewsletterConfirmed from './pages/NewsletterConfirmed';
-import FundingSearchPage from './pages/FundingSearchPage';
-import FundingDetailPage from './pages/FundingDetailPage';
-import PublicProfileCard from './pages/PublicProfileCard';
-import PublicBpCard from './pages/PublicBpCard';
+const DashboardLayout = lazy(() => import('./components/DashboardLayout'));
 
-// Geschützte Seiten
-import DashboardPage from './pages/DashboardPage';
-import ProfilePage from './pages/ProfilePage';
-import SearchResultsPage from './pages/SearchResultsPage';
-import AiAskPage from './pages/AiAskPage';
-import CommunityPage from './pages/CommunityPage';
-import TrustedSourcesPage from './pages/TrustedSourcesPage';
-import FeedbackCenterPage from './pages/FeedbackCenterPage';
-import FileManagementPage from './pages/FileManagementPage';
-import InternalDirectoryPage from './pages/InternalDirectoryPage';
+// Öffentliche Seiten – lazy, damit sie nicht alle im Hauptbundle landen.
+const PublicPortalPage = lazy(() => import('./pages/PublicPortalPage'));
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
+const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
+const TermsPage = lazy(() => import('./pages/TermsPage'));
+const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
+const DisclaimerPage = lazy(() => import('./pages/DisclaimerPage'));
+const CookieSettingsPage = lazy(() => import('./pages/CookieSettingsPage'));
+const NewsletterConfirmed = lazy(() => import('./pages/NewsletterConfirmed'));
+const FundingSearchPage = lazy(() => import('./pages/FundingSearchPage'));
+const FundingDetailPage = lazy(() => import('./pages/FundingDetailPage'));
+const PublicProfileCard = lazy(() => import('./pages/PublicProfileCard'));
+const PublicBpCard = lazy(() => import('./pages/PublicBpCard'));
 
-// Admin / Assistenz Seiten
-import AdminDashboardPage from './pages/AdminDashboardPage';
-import AdminBusinessPartnersPage from './pages/AdminBusinessPartnersPage';
-import AdminUserManagementPage from './pages/AdminUserManagementPage';
-import AdminWidgetTypesPage from './pages/AdminWidgetTypesPage';
-import AdminBpWidgetAccessPage from './pages/AdminBpWidgetAccessPage';
-import AdminScrapedContentPage from './pages/AdminScrapedContentPage';
-import AdminScrapingRulesPage from './pages/AdminScrapingRulesPage';
-import AdminAIPromptRulesPage from './pages/AdminAIPromptRulesPage';
-import AdminAIContentPage from './pages/AdminAIContentPage';
-import AdminCategoriesPage from './pages/AdminCategoriesPage';
-import AdminTagsPage from './pages/AdminTagsPage';
-import AdminMonitorPage from './pages/AdminMonitorPage';
-import AdminStatisticsPage from './pages/AdminStatisticsPage';
-import AdminAdvertisementsPage from './pages/AdminAdvertisementsPage';
-import AdminBpActionsPage from './pages/AdminBpActionsPage';
-import AdminCronjobsPage from './pages/AdminCronjobsPage';
-import AdminSourcesPage from './pages/AdminSourcesPage';
-import AdminEventsPage from './pages/AdminEventsPage';
-import AdminSurveysPage from './pages/AdminSurveysPage';
-import AdminFundingPage from './pages/AdminFundingPage';
-import AdminBpAccountsPage from './pages/AdminBpAccountsPage';
-import AdminBpCompetitorsPage from './pages/AdminBpCompetitorsPage';
-import AdminBpTrackedArticlesPage from './pages/AdminBpTrackedArticlesPage';
-import AdminCommunityPage from './pages/AdminCommunityPage';
-import AdminLegalMonitorPage from './pages/AdminLegalMonitorPage';
-import AdminEditorialBriefingPage from './pages/AdminEditorialBriefingPage';
-import AdminSocialMediaGenerator from './pages/AdminSocialMediaGenerator';
-import AdminDirectoryPage from './pages/AdminDirectoryPage';
+// Geschützte Seiten – route-level code splitting.
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const SearchResultsPage = lazy(() => import('./pages/SearchResultsPage'));
+const AiAskPage = lazy(() => import('./pages/AiAskPage'));
+const CommunityPage = lazy(() => import('./pages/CommunityPage'));
+const TrustedSourcesPage = lazy(() => import('./pages/TrustedSourcesPage'));
+const FeedbackCenterPage = lazy(() => import('./pages/FeedbackCenterPage'));
+const FileManagementPage = lazy(() => import('./pages/FileManagementPage'));
+const InternalDirectoryPage = lazy(() => import('./pages/InternalDirectoryPage'));
+
+// Admin / Assistenz Seiten – getrennte Chunks, werden erst bei Aufruf geladen.
+const AdminDashboardPage = lazy(() => import('./pages/AdminDashboardPage'));
+const AdminBusinessPartnersPage = lazy(() => import('./pages/AdminBusinessPartnersPage'));
+const AdminUserManagementPage = lazy(() => import('./pages/AdminUserManagementPage'));
+const AdminWidgetTypesPage = lazy(() => import('./pages/AdminWidgetTypesPage'));
+const AdminBpWidgetAccessPage = lazy(() => import('./pages/AdminBpWidgetAccessPage'));
+const AdminScrapedContentPage = lazy(() => import('./pages/AdminScrapedContentPage'));
+const AdminScrapingRulesPage = lazy(() => import('./pages/AdminScrapingRulesPage'));
+const AdminAIPromptRulesPage = lazy(() => import('./pages/AdminAIPromptRulesPage'));
+const AdminAIContentPage = lazy(() => import('./pages/AdminAIContentPage'));
+const AdminCategoriesPage = lazy(() => import('./pages/AdminCategoriesPage'));
+const AdminTagsPage = lazy(() => import('./pages/AdminTagsPage'));
+const AdminMonitorPage = lazy(() => import('./pages/AdminMonitorPage'));
+const AdminStatisticsPage = lazy(() => import('./pages/AdminStatisticsPage'));
+const AdminAdvertisementsPage = lazy(() => import('./pages/AdminAdvertisementsPage'));
+const AdminBpActionsPage = lazy(() => import('./pages/AdminBpActionsPage'));
+const AdminCronjobsPage = lazy(() => import('./pages/AdminCronjobsPage'));
+const AdminSourcesPage = lazy(() => import('./pages/AdminSourcesPage'));
+const AdminEventsPage = lazy(() => import('./pages/AdminEventsPage'));
+const AdminSurveysPage = lazy(() => import('./pages/AdminSurveysPage'));
+const AdminFundingPage = lazy(() => import('./pages/AdminFundingPage'));
+const AdminBpAccountsPage = lazy(() => import('./pages/AdminBpAccountsPage'));
+const AdminBpCompetitorsPage = lazy(() => import('./pages/AdminBpCompetitorsPage'));
+const AdminBpTrackedArticlesPage = lazy(() => import('./pages/AdminBpTrackedArticlesPage'));
+const AdminCommunityPage = lazy(() => import('./pages/AdminCommunityPage'));
+const AdminLegalMonitorPage = lazy(() => import('./pages/AdminLegalMonitorPage'));
+const AdminEditorialBriefingPage = lazy(() => import('./pages/AdminEditorialBriefingPage'));
+const AdminSocialMediaGenerator = lazy(() => import('./pages/AdminSocialMediaGenerator'));
+const AdminDirectoryPage = lazy(() => import('./pages/AdminDirectoryPage'));
+
+const PageLoader: React.FC = () => (
+  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '55vh' }}>
+    <CircularProgress />
+  </Box>
+);
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
   const { user, isLoading } = useAuth();
-  
+
   if (isLoading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -79,7 +87,7 @@ const ProtectedRoutes: React.FC = () => {
       </Box>
     );
   }
-  
+
   return user ? (
     <DashboardLayout>
       <Outlet />
@@ -108,61 +116,58 @@ function App() {
     if (!isLoading) {
       const scheme = businessPartner?.color_scheme;
 
-      // --- THEME ERSTELLEN ---
       const newTheme = createTheme({
         palette: {
           mode: themeMode,
-          primary: { 
+          primary: {
             main: scheme?.primary_color || '#2196f3',
-            contrastText: scheme?.primary_text_color || '#fff' 
+            contrastText: scheme?.primary_text_color || '#fff',
           },
-          secondary: { 
-            main: scheme?.secondary_color || '#ff9800' 
+          secondary: {
+            main: scheme?.secondary_color || '#ff9800',
           },
           text: {
-            primary: themeMode === 'light'
-              ? scheme?.text_color_light || '#333333'
-              : scheme?.text_color_dark || '#ffffff',
+            primary:
+              themeMode === 'light'
+                ? scheme?.text_color_light || '#333333'
+                : scheme?.text_color_dark || '#ffffff',
           },
           background: {
-            default: themeMode === 'light'
-              ? scheme?.background_color_light || '#f4f6f8'
-              : '#0a0a0a', 
-            paper: themeMode === 'light'
-              ? scheme?.paper_color_light || '#ffffff' 
-              : '#1e1e1e', 
+            default:
+              themeMode === 'light'
+                ? scheme?.background_color_light || '#f4f6f8'
+                : '#0a0a0a',
+            paper:
+              themeMode === 'light'
+                ? scheme?.paper_color_light || '#ffffff'
+                : '#1e1e1e',
           },
         },
         components: {
-            MuiPaper: {
-                styleOverrides: {
-                    root: {
-                        backgroundImage: 'none', 
-                    }
-                }
-            }
-        }
+          MuiPaper: {
+            styleOverrides: {
+              root: {
+                backgroundImage: 'none',
+              },
+            },
+          },
+        },
       });
       setCurrentTheme(newTheme);
 
-      // --- DYNAMISCHES BRANDING (Favicon, Title, Theme-Color) ---
       if (businessPartner) {
-        // 1. Titel im Browser-Tab
         document.title = businessPartner.dashboard_title || `${businessPartner.name} Dashboard`;
 
-        // 2. Mobile URL-Leisten-Farbe
         const metaThemeColor = document.querySelector('meta[name="theme-color"]');
         if (metaThemeColor && scheme?.primary_color) {
           metaThemeColor.setAttribute('content', scheme.primary_color);
         }
 
-        // 3. Favicon anpassen (Fallback: SVG generieren)
         const faviconLink = document.querySelector('link[rel="icon"]') as HTMLLinkElement;
         if (faviconLink) {
           if (businessPartner.favicon_url) {
             faviconLink.href = businessPartner.favicon_url;
           } else if (scheme?.primary_color) {
-            // Generiert ein rundes Icon in der Primärfarbe mit dem ersten Buchstaben des Namens
             const firstLetter = businessPartner.name ? businessPartner.name.charAt(0).toUpperCase() : 'W';
             const svgIcon = `
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
@@ -176,10 +181,9 @@ function App() {
           }
         }
       } else {
-        // Fallback für ausgeloggte Nutzer
-        document.title = "Mobiliti Intelligence";
+        document.title = 'Mobiliti Intelligence';
         const faviconLink = document.querySelector('link[rel="icon"]') as HTMLLinkElement;
-        if (faviconLink) faviconLink.href = "/favicon.svg"; 
+        if (faviconLink) faviconLink.href = '/favicon.svg';
       }
     }
   }, [businessPartner, isLoading, themeMode]);
@@ -198,85 +202,85 @@ function App() {
     <AnyThemeProvider theme={currentTheme}>
       <CssBaseline />
       <Router>
-        <Routes>
-{/* ✅ Öffentliche Routen */}
-          <Route path="/" element={<PublicPortalPage />} />
-          <Route path="/login" element={<PublicPortalPage />} />
-          <Route path="/register" element={<PublicPortalPage isRegister={true} />} />
-          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-          <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
-          <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
-          <Route path="/terms" element={<TermsPage />} />
-          <Route path="/privacy" element={<PrivacyPage />} />
-          <Route path="/disclaimer" element={<DisclaimerPage />} />
-          <Route path="/cookie-settings" element={<CookieSettingsPage />} />
-          <Route path="/newsletter/confirmed" element={<NewsletterConfirmed />} />
-          <Route path="/p/:userId" element={<PublicProfileCard />} />
-          <Route path="/invite/:bpId" element={<PublicBpCard />} />
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            {/* Öffentliche Routen */}
+            <Route path="/" element={<PublicPortalPage />} />
+            <Route path="/login" element={<PublicPortalPage />} />
+            <Route path="/register" element={<PublicPortalPage isRegister={true} />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
+            <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
+            <Route path="/terms" element={<TermsPage />} />
+            <Route path="/privacy" element={<PrivacyPage />} />
+            <Route path="/disclaimer" element={<DisclaimerPage />} />
+            <Route path="/cookie-settings" element={<CookieSettingsPage />} />
+            <Route path="/newsletter/confirmed" element={<NewsletterConfirmed />} />
+            <Route path="/p/:userId" element={<PublicProfileCard />} />
+            <Route path="/invite/:bpId" element={<PublicBpCard />} />
 
-          {/* NEU: Dynamische Route für Partner-Slugs (z.B. /vfa) */}
-          {/* React Router v6 priorisiert automatisch exakte Matches wie /login vor dieser Route */}
-          <Route path="/:partnerSlug" element={<PublicPortalPage />} />
+            {/* Dynamische Route für Partner-Slugs, z. B. /vfa */}
+            <Route path="/:partnerSlug" element={<PublicPortalPage />} />
 
-          {/* ✅ Geschützte Dashboard-Routen */}
-          <Route element={<ProtectedRoutes />}>
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/profile" element={<ProfilePage />} />
-            <Route path="/search" element={<SearchResultsPage />} />
-            <Route path="/ask" element={<AiAskPage />} />
-            <Route path="/trusted-sources" element={<TrustedSourcesPage />} />
-            <Route path="/feedback" element={<FeedbackCenterPage />} />
-            <Route path="/files" element={<FileManagementPage />} />
-            <Route path="/funding-search" element={<FundingSearchPage />} />
-            <Route path="/funding-detail/:id" element={<FundingDetailPage />} />
-            <Route path="/community" element={<CommunityPage />} />
-            <Route path="/directory" element={<InternalDirectoryPage />} />
+            {/* Geschützte Dashboard-Routen */}
+            <Route element={<ProtectedRoutes />}>
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/search" element={<SearchResultsPage />} />
+              <Route path="/ask" element={<AiAskPage />} />
+              <Route path="/trusted-sources" element={<TrustedSourcesPage />} />
+              <Route path="/feedback" element={<FeedbackCenterPage />} />
+              <Route path="/files" element={<FileManagementPage />} />
+              <Route path="/funding-search" element={<FundingSearchPage />} />
+              <Route path="/funding-detail/:id" element={<FundingDetailPage />} />
+              <Route path="/community" element={<CommunityPage />} />
+              <Route path="/directory" element={<InternalDirectoryPage />} />
 
-            {/* ✅ Assistenz & Admin Routen */}
-            <Route element={<BpStaffAllowedRoutes />}>
-              <Route path="/admin/users" element={<AdminUserManagementPage />} />
-              <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
-              <Route path="/admin/actions" element={<AdminBpActionsPage />} />
-              <Route path="/admin/surveys" element={<AdminSurveysPage />} />
-              <Route path="/admin/community" element={<AdminCommunityPage />} />
-              <Route path="/admin/legal-monitor" element={<AdminLegalMonitorPage />} />
-              <Route path="/admin/briefing-editorial" element={<AdminEditorialBriefingPage />} />
+              {/* Assistenz & Admin Routen */}
+              <Route element={<BpStaffAllowedRoutes />}>
+                <Route path="/admin/users" element={<AdminUserManagementPage />} />
+                <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
+                <Route path="/admin/actions" element={<AdminBpActionsPage />} />
+                <Route path="/admin/surveys" element={<AdminSurveysPage />} />
+                <Route path="/admin/community" element={<AdminCommunityPage />} />
+                <Route path="/admin/legal-monitor" element={<AdminLegalMonitorPage />} />
+                <Route path="/admin/briefing-editorial" element={<AdminEditorialBriefingPage />} />
+              </Route>
+
+              {/* Admin-Only Routen */}
+              <Route path="/admin" element={<AdminRoutes />}>
+                <Route index element={<AdminDashboardPage />} />
+                <Route path="business-partners" element={<AdminBusinessPartnersPage />} />
+                <Route path="business-partners/:bpId/accounts" element={<AdminBpAccountsPage />} />
+                <Route path="tracked-articles" element={<AdminBpTrackedArticlesPage />} />
+                <Route path="accounts/:accountId/competitors" element={<AdminBpCompetitorsPage />} />
+                <Route path="widget-types" element={<AdminWidgetTypesPage />} />
+                <Route path="bp-widget-access" element={<AdminBpWidgetAccessPage />} />
+                <Route path="bp-widget-access/:bpId" element={<AdminBpWidgetAccessPage />} />
+                <Route path="scraped-content" element={<AdminScrapedContentPage />} />
+                <Route path="scraping-rules" element={<AdminScrapingRulesPage />} />
+                <Route path="ai-prompt-rules" element={<AdminAIPromptRulesPage />} />
+                <Route path="ai-content" element={<AdminAIContentPage />} />
+                <Route path="categories" element={<AdminCategoriesPage />} />
+                <Route path="tags" element={<AdminTagsPage />} />
+                <Route path="monitor" element={<AdminMonitorPage />} />
+                <Route path="statistics" element={<AdminStatisticsPage />} />
+                <Route path="advertisements" element={<AdminAdvertisementsPage />} />
+                <Route path="cronjobs" element={<AdminCronjobsPage />} />
+                <Route path="sources" element={<AdminSourcesPage />} />
+                <Route path="events" element={<AdminEventsPage />} />
+                <Route path="funding" element={<AdminFundingPage />} />
+                <Route path="social-media" element={<AdminSocialMediaGenerator />} />
+                <Route path="directory" element={<AdminDirectoryPage />} />
+              </Route>
             </Route>
 
-            {/* ✅ Hardcore Admin-Only Routen */}
-            <Route path="/admin" element={<AdminRoutes />}>
-              <Route index element={<AdminDashboardPage />} />
-              <Route path="business-partners" element={<AdminBusinessPartnersPage />} />
-              <Route path="business-partners/:bpId/accounts" element={<AdminBpAccountsPage />} />
-              <Route path="tracked-articles" element={<AdminBpTrackedArticlesPage />} />
-              <Route path="accounts/:accountId/competitors" element={<AdminBpCompetitorsPage />} />
-              <Route path="widget-types" element={<AdminWidgetTypesPage />} />
-              <Route path="bp-widget-access" element={<AdminBpWidgetAccessPage />} />
-              <Route path="bp-widget-access/:bpId" element={<AdminBpWidgetAccessPage />} />
-              <Route path="scraped-content" element={<AdminScrapedContentPage />} />
-              <Route path="scraping-rules" element={<AdminScrapingRulesPage />} />
-              <Route path="ai-prompt-rules" element={<AdminAIPromptRulesPage />} />
-              <Route path="ai-content" element={<AdminAIContentPage />} />
-              <Route path="categories" element={<AdminCategoriesPage />} />
-              <Route path="tags" element={<AdminTagsPage />} />
-              <Route path="monitor" element={<AdminMonitorPage />} />
-              <Route path="statistics" element={<AdminStatisticsPage />} />
-              <Route path="advertisements" element={<AdminAdvertisementsPage />} />
-              <Route path="cronjobs" element={<AdminCronjobsPage />} />
-              <Route path="sources" element={<AdminSourcesPage />} />
-              <Route path="events" element={<AdminEventsPage />} />
-              <Route path="funding" element={<AdminFundingPage />} />
-              <Route path="social-media" element={<AdminSocialMediaGenerator />} />
-              <Route path="directory" element={<AdminDirectoryPage />} />
-            </Route>
-          </Route>
-
-          {/* Catch-All */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            {/* Catch-All */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
 
         <CookieBanner />
-        
       </Router>
     </AnyThemeProvider>
   );

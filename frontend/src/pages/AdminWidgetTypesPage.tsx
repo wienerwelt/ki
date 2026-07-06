@@ -7,6 +7,7 @@ import {
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import BusinessIcon from '@mui/icons-material/Business';
@@ -130,6 +131,22 @@ const handleOpenInstallDetails = async (wt: WidgetType, type: 'bp' | 'user') => 
     };
     
     const handleDelete = async (id: string) => { if (!window.confirm('Sind Sie sicher?')) return; try { const token = localStorage.getItem('jwt_token'); await apiClient.delete(`/api/admin/widget-types/${id}`, { headers: { 'x-auth-token': token } }); fetchInitialData(); } catch (err: any) { alert(err.response?.data?.message || 'Fehler beim Löschen.'); } };
+    const handleCopy = async (wt: WidgetType) => {
+        if (!window.confirm(`Widget-Typ "${wt.name}" kopieren? Zugriffsrechte und bestehende Installationen werden nicht mitkopiert.`)) return;
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const res = await apiClient.post(`/api/admin/widget-types/${wt.id}/copy`, {}, { headers: { 'x-auth-token': token } });
+            const copiedWidget: WidgetType = {
+                ...res.data,
+                business_partner_install_count: res.data.business_partner_install_count ?? 0,
+                user_install_count: res.data.user_install_count ?? 0,
+            };
+            await fetchInitialData();
+            handleOpenEditDialog(copiedWidget);
+        } catch (err: any) {
+            alert(err.response?.data?.message || 'Fehler beim Kopieren.');
+        }
+    };
     const handleSortRequest = (property: keyof WidgetType) => { const isAsc = orderBy === property && order === 'asc'; setOrder(isAsc ? 'desc' : 'asc'); setOrderBy(property); };
     
     const sortedAndFilteredTypes = useMemo(() => {
@@ -215,6 +232,7 @@ const handleOpenInstallDetails = async (wt: WidgetType, type: 'bp' | 'user') => 
                                     </TableCell>
                                     <TableCell>
                                         <Tooltip title="Bearbeiten"><IconButton size="small" color="primary" onClick={() => handleOpenEditDialog(wt)}><EditIcon /></IconButton></Tooltip>
+                                        <Tooltip title="Kopieren"><IconButton size="small" onClick={() => handleCopy(wt)}><ContentCopyIcon /></IconButton></Tooltip>
                                         <Tooltip title="Widget Test">
                                             <span>
                                                 <IconButton size="small" color="secondary" onClick={() => handleOpenTestModal(wt)} disabled={!wt.type_key || !WIDGET_COMPONENTS[wt.type_key]}>

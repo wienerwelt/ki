@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
+  Checkbox,
   Typography,
   Container,
   Paper,
@@ -213,6 +214,10 @@ const AdminStatisticsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [showPromptLines, setShowPromptLines] = useState<boolean>(true);
+  const [showCompletionLines, setShowCompletionLines] = useState<boolean>(true);
+  const [showLoginLines, setShowLoginLines] = useState<boolean>(true);
+
   const [timespan, setTimespan] = useState<Timespan>('week');
   const [modelFilter, setModelFilter] = useState<string>('');
   const [bpFilter, setBpFilter] = useState<string>('');
@@ -391,9 +396,28 @@ const AdminStatisticsPage: React.FC = () => {
 
         {/* Time Series Chart */}
         <Grid item xs={12}>
-          <Paper sx={{ p: 3, height: 450, borderRadius: 2 }}>
-            <Typography variant="h6" gutterBottom fontWeight="bold">Aktivität & Token-Verlauf</Typography>
-            <ResponsiveContainer>
+          <Paper sx={{ p: 3, height: 500, borderRadius: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
+              <Typography variant="h6" fontWeight="bold">Aktivität & Token-Verlauf</Typography>
+              
+              {/* Neue Filter-Auswahl */}
+              <Box sx={{ display: 'flex', gap: 2, bgcolor: 'background.default', p: 0.5, px: 2, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
+                <FormControlLabel
+                  control={<Checkbox checked={showPromptLines} onChange={(e) => setShowPromptLines(e.target.checked)} color="primary" size="small" />}
+                  label={<Typography variant="body2" fontWeight="bold">Prompt Tokens</Typography>}
+                />
+                <FormControlLabel
+                  control={<Checkbox checked={showCompletionLines} onChange={(e) => setShowCompletionLines(e.target.checked)} color="secondary" size="small" />}
+                  label={<Typography variant="body2" fontWeight="bold">Completion Tokens</Typography>}
+                />
+                <FormControlLabel
+                  control={<Checkbox checked={showLoginLines} onChange={(e) => setShowLoginLines(e.target.checked)} color="success" size="small" />}
+                  label={<Typography variant="body2" fontWeight="bold">Logins</Typography>}
+                />
+              </Box>
+            </Box>
+
+            <ResponsiveContainer width="100%" height="90%">
               <LineChart data={stats.timeSeries} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="period" tickFormatter={formatXAxis} tickMargin={10} minTickGap={30} />
@@ -406,9 +430,16 @@ const AdminStatisticsPage: React.FC = () => {
                 
                 <Tooltip formatter={(value: number) => new Intl.NumberFormat('de-AT').format(value)} labelFormatter={formatXAxis} />
                 <Legend verticalAlign="top" height={36} />
-                <Line yAxisId="left" type="monotone" dataKey="prompt_tokens" name="Prompt Tokens" stroke={theme.palette.primary.main} strokeWidth={2} dot={false} />
-                <Line yAxisId="left" type="monotone" dataKey="completion_tokens" name="Completion Tokens" stroke={theme.palette.secondary.main} strokeWidth={2} dot={false} />
-                <Line yAxisId="right" type="monotone" dataKey="login_count" name="Logins" stroke={theme.palette.success.main} strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                
+                {showPromptLines && (
+                  <Line yAxisId="left" type="monotone" dataKey="prompt_tokens" name="Prompt Tokens" stroke={theme.palette.primary.main} strokeWidth={2} dot={false} />
+                )}
+                {showCompletionLines && (
+                  <Line yAxisId="left" type="monotone" dataKey="completion_tokens" name="Completion Tokens" stroke={theme.palette.secondary.main} strokeWidth={2} dot={false} />
+                )}
+                {showLoginLines && (
+                  <Line yAxisId="right" type="monotone" dataKey="login_count" name="Logins" stroke={theme.palette.success.main} strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </Paper>

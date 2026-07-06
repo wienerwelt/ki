@@ -1,15 +1,18 @@
+// frontend/src/pages/AiAskPage.tsx
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Container, Typography, Box, CircularProgress, Alert, List, ListItem, ListItemText,
   Paper, Divider, Chip, Avatar
 } from '@mui/material';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import ReactMarkdown from 'react-markdown';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 import { useSnackbar } from '../context/SnackbarContext';
+
+// KI Konfiguration importieren
+import { AI_CONFIG } from '../components/aiConfig';
 
 interface AiSource {
   id: string;
@@ -30,7 +33,8 @@ const AiAskPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const { refreshUser } = useAuth();
+  // User für das Profilbild abgreifen
+  const { user, refreshUser } = useAuth();
   const { showSnackbar } = useSnackbar();
 
   useEffect(() => {
@@ -50,6 +54,8 @@ const AiAskPage: React.FC = () => {
           );
           
           setResponse(res.data);
+          
+          // Live Punkte-Update
           refreshUser(); 
           showSnackbar('KI-Anfrage: -2 Punkte', 'info'); 
 
@@ -81,10 +87,15 @@ const AiAskPage: React.FC = () => {
         
         {/* User Part */}
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
-          <Avatar sx={{ bgcolor: 'primary.main' }}><AccountCircleIcon /></Avatar>
+          <Avatar 
+            src={user?.profile_image_url || undefined} 
+            sx={{ bgcolor: 'primary.main' }}
+          >
+            {!user?.profile_image_url && <AccountCircleIcon />}
+          </Avatar>
           <Box>
             <Typography variant="h6" component="div" sx={{ fontWeight: 'bold' }}>
-              Sie
+              Ich
             </Typography>
             <Typography variant="body1" sx={{ mt: 1 }}>{question}</Typography>
           </Box>
@@ -95,11 +106,10 @@ const AiAskPage: React.FC = () => {
         {/* AI Part */}
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
           
-          {/* FIX: Animierter Avatar während des Ladens */}
           <Avatar 
+            src={AI_CONFIG.avatarUrl}
             sx={{ 
-              bgcolor: 'secondary.main',
-              // Pulsierende Animation bei Loading
+              bgcolor: 'transparent',
               animation: loading ? 'pulse 1.5s infinite ease-in-out' : 'none',
               '@keyframes pulse': {
                 '0%': { transform: 'scale(1)', opacity: 1 },
@@ -107,21 +117,18 @@ const AiAskPage: React.FC = () => {
                 '100%': { transform: 'scale(1)', opacity: 1 },
               }
             }}
-          >
-            <AutoAwesomeIcon />
-          </Avatar>
+          />
 
           <Box sx={{ width: '100%' }}>
             <Typography variant="h6" component="div" sx={{ fontWeight: 'bold' }}>
-              KI-Assistent
+              {AI_CONFIG.name} (KI-Assistent)
             </Typography>
             
-            {/* FIX: Deutlicherer Lade-Indikator */}
             {loading && (
               <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
                 <CircularProgress size={24} color="secondary" />
                 <Typography variant="body2" color="text.secondary">
-                    Analysiere Dokumente und generiere Antwort...
+                    Analysiere Daten und generiere Antwort...
                 </Typography>
               </Box>
             )}

@@ -11,6 +11,7 @@ router.get('/', adminWtController.getAllWidgetTypes);
 
 // NEU: Route für die Installationen (Muss über /:id stehen)
 router.get('/:id/installations', adminWtController.getWidgetInstallations);
+router.post('/:id/copy', adminWtController.copyWidgetType);
 
 router.get('/:id', adminWtController.getWidgetTypeById);
 router.post('/', adminWtController.createWidgetType);

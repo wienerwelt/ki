@@ -152,6 +152,93 @@ exports.updateWidgetType = async (req, res) => {
     }
 };
 
+
+// COPY a widget type
+// Kopiert bewusst nur den Widget-Typ selbst, nicht die bestehenden BP-Zugriffsrechte oder User-Installationen.
+exports.copyWidgetType = async (req, res) => {
+    const { id } = req.params;
+    if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid Widget Type ID format.' });
+
+    const truncateWithSuffix = (base, suffix, maxLength) => {
+        const safeBase = String(base || '').trim();
+        const safeSuffix = String(suffix || '');
+        const maxBaseLength = Math.max(1, maxLength - safeSuffix.length);
+        return `${safeBase.slice(0, maxBaseLength)}${safeSuffix}`.trim();
+    };
+
+    const createUniqueCopyIdentity = async (original) => {
+        const baseName = `Kopie von: ${original.name}`;
+        const baseTypeKey = `${original.type_key}_copy`;
+
+        for (let i = 1; i <= 100; i++) {
+            const nameSuffix = i === 1 ? '' : ` ${i}`;
+            const typeSuffix = i === 1 ? '' : `_${i}`;
+            const candidateName = truncateWithSuffix(baseName, nameSuffix, 100);
+            const candidateTypeKey = truncateWithSuffix(baseTypeKey, typeSuffix, 100);
+
+            const existsRes = await db.query(
+                `SELECT 1 FROM widget_types WHERE name = $1 OR type_key = $2 LIMIT 1`,
+                [candidateName, candidateTypeKey]
+            );
+
+            if (existsRes.rows.length === 0) {
+                return { name: candidateName, type_key: candidateTypeKey };
+            }
+        }
+
+        const error = new Error('Es konnte kein eindeutiger Name/Type-Key für die Kopie erzeugt werden.');
+        error.statusCode = 409;
+        throw error;
+    };
+
+    try {
+        const originalRes = await db.query('SELECT * FROM widget_types WHERE id = $1', [id]);
+        if (originalRes.rows.length === 0) {
+            return res.status(404).json({ message: 'Widget Type not found.' });
+        }
+
+        const original = originalRes.rows[0];
+        const identity = await createUniqueCopyIdentity(original);
+
+        const copiedWt = await db.query(
+            `INSERT INTO widget_types (
+                name, type_key, description, icon_name, is_removable, is_resizable, is_draggable,
+                default_width, default_height, default_min_width, default_min_height,
+                allowed_roles, config, component_key
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             RETURNING *`,
+            [
+                identity.name,
+                identity.type_key,
+                original.description,
+                original.icon_name,
+                original.is_removable,
+                original.is_resizable,
+                original.is_draggable,
+                original.default_width,
+                original.default_height,
+                original.default_min_width,
+                original.default_min_height,
+                original.allowed_roles || [],
+                original.config || null,
+                original.component_key || null
+            ]
+        );
+
+        res.status(201).json({
+            ...copiedWt.rows[0],
+            business_partner_install_count: 0,
+            user_install_count: 0
+        });
+    } catch (err) {
+        console.error('Error copying widget type:', err.message);
+        if (err.code === '23505') {
+            return res.status(409).json({ message: 'A Widget Type with this name or type_key already exists.' });
+        }
+        res.status(err.statusCode || 500).json({ message: err.statusCode ? err.message : 'Server error' });
+    }
+};
+
 // DELETE a widget type
 exports.deleteWidgetType = async (req, res) => {
     const { id } = req.params;

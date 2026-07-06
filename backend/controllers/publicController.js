@@ -15,10 +15,31 @@ async function resolvePartnerIdByCode(code) {
     try {
         // SUCHT JETZT NACH ID *ODER* SLUG
         const r = await db.query(
-            `SELECT id, name, logo_url, dashboard_title, color_scheme_id, url_businesspartner 
-             FROM business_partners 
-             WHERE (LOWER(RIGHT(id::text, 8)) = $1 OR LOWER(slug) = $1) 
-               AND is_active = true 
+            `SELECT
+                bp.id,
+                bp.name,
+                bp.logo_url,
+                bp.dashboard_title,
+                bp.color_scheme_id,
+                bp.url_businesspartner,
+                COALESCE((
+                    SELECT json_agg(
+                        jsonb_build_object(
+                            'id', c.id,
+                            'name', c.name,
+                            'name_lang', c.name_lang,
+                            'category_type', c.category_type
+                        )
+                        ORDER BY c.name ASC
+                    )
+                    FROM business_partner_categories bpc
+                    JOIN categories c ON bpc.category_id = c.id
+                    WHERE bpc.business_partner_id = bp.id
+                      AND c.category_type = 'industry'
+                ), '[]'::json) AS industries
+             FROM business_partners bp
+             WHERE (LOWER(RIGHT(bp.id::text, 8)) = $1 OR LOWER(bp.slug) = $1)
+               AND bp.is_active = true
              LIMIT 1`,
             [cleanCode]
         );
@@ -28,6 +49,93 @@ async function resolvePartnerIdByCode(code) {
         return null;
     }
 }
+
+
+const PUBLIC_ACTION_WIDGET_KEYS = [
+    'BusinessPartnerAktionen',
+    'BusinessPartnerActionsWidget',
+    'business-partner-actions',
+];
+
+const normalizePublicWidgetKey = (widgetKey) => {
+    if (PUBLIC_ACTION_WIDGET_KEYS.includes(widgetKey)) {
+        // In deiner widget_types Tabelle heißt der echte Key aktuell exakt so:
+        return 'BusinessPartnerAktionen';
+    }
+    return widgetKey;
+};
+
+const getWidgetAccessKeys = (widgetKey) => {
+    const normalizedWidgetKey = normalizePublicWidgetKey(widgetKey);
+    if (normalizedWidgetKey === 'BusinessPartnerAktionen') {
+        return PUBLIC_ACTION_WIDGET_KEYS;
+    }
+    return [normalizedWidgetKey];
+};
+
+const toPositiveInt = (value, fallback, max) => {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.min(parsed, max);
+};
+
+const hasPublicWidgetAccess = async (partnerId, widgetKey) => {
+    const accessKeys = getWidgetAccessKeys(widgetKey);
+
+    const accessCheck = await db.query(`
+        SELECT 1
+        FROM business_partner_widget_access bpwa
+        JOIN widget_types wt ON bpwa.widget_type_id = wt.id
+        WHERE bpwa.business_partner_id = $1
+          AND wt.type_key = ANY($2::text[])
+          AND bpwa.is_public = true
+        LIMIT 1
+    `, [partnerId, accessKeys]);
+
+    return accessCheck.rows.length > 0;
+};
+
+const loadPublicBusinessPartnerActions = async ({ partnerId, page = 1, limit = 10 }) => {
+    const safePage = toPositiveInt(page, 1, 1000);
+    const safeLimit = toPositiveInt(limit, 10, 24);
+    const offset = (safePage - 1) * safeLimit;
+
+    const result = await db.query(`
+        SELECT
+            a.id,
+            a.layout_type,
+            a.title,
+            a.content_text,
+            a.link_url,
+            a.image_url,
+            a.created_at,
+            a.start_date,
+            a.end_date,
+            a.promotion_label,
+            a.promotion_type,
+            a.cta_label,
+            a.secondary_image_url,
+            a.secondary_link_url,
+            a.secondary_cta_label,
+            a.priority,
+            COALESCE(a.info, '{}'::jsonb) AS info
+        FROM business_partner_actions a
+        INNER JOIN business_partners bp ON bp.id = a.business_partner_id
+        WHERE a.business_partner_id = $1
+          AND bp.is_active = true
+          AND a.is_active = true
+          AND (a.start_date IS NULL OR a.start_date <= NOW())
+          AND (a.end_date IS NULL OR a.end_date >= NOW())
+        ORDER BY a.priority DESC, a.start_date DESC NULLS LAST, a.created_at DESC
+        LIMIT $2 OFFSET $3
+    `, [partnerId, safeLimit, offset]);
+
+    return {
+        data: result.rows,
+        page: safePage,
+        limit: safeLimit
+    };
+};
 
 // ==============================================================================
 // 1. BRANDING & INITIAL-LADEN (Für die Landingpage)
@@ -167,6 +275,7 @@ exports.submitContactForm = async (req, res) => {
 exports.getGenericWidgetData = async (req, res) => {
     const { widgetKey } = req.params;
     const { partnerId } = req.query;
+    const normalizedWidgetKey = normalizePublicWidgetKey(widgetKey);
 
     // --- 1. GAST-MODUS / SYSTEM STANDBY (Keine Partner-ID) ---
     // Wenn die PublicPortalPage ohne Partner geladen wird, senden die Widgets "undefined".
@@ -202,16 +311,10 @@ exports.getGenericWidgetData = async (req, res) => {
 
     try {
         // --- DER TÜRSTEHER (Security Check) ---
-        const accessCheck = await db.query(`
-            SELECT 1 FROM business_partner_widget_access bpwa
-            JOIN widget_types wt ON bpwa.widget_type_id = wt.id
-            WHERE bpwa.business_partner_id = $1 
-              AND wt.type_key = $2 
-              AND bpwa.is_public = true
-        `, [partnerId, widgetKey]);
+        const hasAccess = await hasPublicWidgetAccess(partnerId, normalizedWidgetKey);
 
-        if (accessCheck.rows.length === 0) {
-            console.warn(`[Security] Blocked public access for widget ${widgetKey} (Partner: ${partnerId})`);
+        if (!hasAccess) {
+            console.warn(`[Security] Blocked public access for widget ${normalizedWidgetKey} (Partner: ${partnerId})`);
             return res.status(403).json({ message: "Zugriff verweigert. Widget nicht public." });
         }
 
@@ -223,17 +326,15 @@ exports.getGenericWidgetData = async (req, res) => {
         };
 
         // --- DER VERTEILER (Data Fetching) ---
-        switch (widgetKey) {
+        switch (normalizedWidgetKey) {
             
-            case 'business-partner-actions':
-            case 'BusinessPartnerActionsWidget':
-            case 'BusinessPartnerAktionen': { // WICHTIG: Geschweifte Klammern { } eingefügt, um Node.js Scope-Fehler zu vermeiden!
-                const actionsRes = await db.query(`
-                    SELECT id, layout_type, title, content_text, link_url, image_url, created_at 
-                    FROM business_partner_actions 
-                    WHERE business_partner_id = $1 ORDER BY created_at DESC LIMIT 10
-                `, [partnerId]);
-                return res.json({ data: actionsRes.rows });
+            case 'BusinessPartnerAktionen': {
+                const payload = await loadPublicBusinessPartnerActions({
+                    partnerId,
+                    page: req.query.page,
+                    limit: req.query.limit || 10
+                });
+                return res.json(payload);
             }
 
             case 'sentiment_widget':
@@ -312,16 +413,44 @@ exports.getPublicDailyBriefing = async (req, res) => {
 };
 
 exports.getPublicActions = async (req, res) => {
-    // Leitet den alten /actions Aufruf einfach an unseren neuen Hub weiter!
-    req.params.widgetKey = 'business-partner-actions';
-    return exports.getGenericWidgetData(req, res);
+    const { partnerId } = req.query;
+
+    // KORREKTUR: Wir prüfen explizit auf den String 'undefined' und 'null', da axios diese oft als String URL-codiert
+    if (!partnerId || partnerId === 'undefined' || partnerId === 'null' || partnerId.trim() === '') {
+        // Leeres Array zurückgeben, anstatt abzubrechen, um Frontend-Crashes zu vermeiden
+        return res.json({ data: [] });
+    }
+
+    if (!isValidUUID(partnerId)) {
+        return res.status(400).json({ message: 'Ungültige oder fehlende Partner-ID.' });
+    }
+
+    try {
+        const hasAccess = await hasPublicWidgetAccess(partnerId, 'BusinessPartnerAktionen');
+
+        if (!hasAccess) {
+            console.warn(`[Security] Blocked public access for BusinessPartnerAktionen/business-partner-actions (Partner: ${partnerId})`);
+            // Wir senden auch hier leere Daten, damit die UI nicht kaputt geht
+            return res.status(200).json({ data: [] });
+        }
+
+        const payload = await loadPublicBusinessPartnerActions({
+            partnerId,
+            page: req.query.page,
+            limit: req.query.limit || 10
+        });
+
+        return res.json(payload);
+    } catch (err) {
+        console.error('Fehler beim Laden öffentlicher Business-Partner-Aktionen:', err.message);
+        return res.status(500).json({ message: 'Aktionen konnten nicht geladen werden.' });
+    }
 };
 
 
 // ==============================================================================
 // 5. PUBLIC DIRECTORY (Für das Schaufenster / Landingpage)
 // ==============================================================================
-// backend/controllers/publicController.js (Auszug für getPublicDirectory)
 exports.getPublicDirectory = async (req, res) => {
     const { partnerId, search, category, region, page = 1, limit = 12 } = req.query;
     const offset = (page - 1) * limit;
@@ -346,7 +475,9 @@ exports.getPublicDirectory = async (req, res) => {
             ) r ON p.id = r.provider_id
             LEFT JOIN directory_provider_categories dpc ON p.id = dpc.provider_id AND dpc.is_primary = true
             LEFT JOIN categories c ON dpc.category_id = c.id
-            WHERE ms.business_partner_id = $1 AND ms.status = 'active'
+            WHERE ms.business_partner_id = $1 
+              AND ms.status = 'active' 
+              AND p.is_public = true
         `;
 
         const values = [partnerId];

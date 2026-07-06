@@ -1,3 +1,4 @@
+// frontend/src/components/LoginForm.tsx
 import React, { useState, Suspense, useEffect } from 'react';
 import { useNavigate, Link as RouterLink, useSearchParams } from 'react-router-dom';
 import { useAuth, UserPayload } from '../context/AuthContext';
@@ -79,8 +80,13 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogContent, setDialogContent] = useState<LegalDialogContent>(null);
+  
   const [resendOpen, setResendOpen] = useState(false);
   const [resendEmail, setResendEmail] = useState('');
+
+  // NEU: States für Passwort vergessen Dialog
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
 
   useEffect(() => {
     if (partnerCode && typeof setPartnerByCode === 'function') {
@@ -136,13 +142,15 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
   const passwordStrength = isRegister && password ? zxcvbn(password) : null;
   const strengthLabels = ['Sehr schwach', 'Schwach', 'Mittel', 'Gut', 'Sehr stark'];
 
+  // NEU: Button wird erst aktiv, wenn Passwort mindestens Stufe 2 hat
   const canSubmitRegister =
     acceptTerms &&
     acknowledgePrivacy &&
     acknowledgeDisclaimer &&
     !!username.trim() &&
     !!email.trim() &&
-    !!password;
+    !!password &&
+    (passwordStrength?.score ?? 0) >= 2;
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -195,12 +203,12 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
 
       const { res, data } = await apiClient.post(`/api/auth/${endpoint}`, body);
 
-if (!res.ok) {
-  throw {
-    status: res.status,
-    data,
-  };
-}
+      if (!res.ok) {
+        throw {
+          status: res.status,
+          data,
+        };
+      }
 
       if (isRegister) {
         showSnackbar(data?.message || 'Registrierung erfolgreich! Bitte E-Mail bestätigen.', 'success');
@@ -213,22 +221,22 @@ if (!res.ok) {
         showSnackbar('Erfolgreich angemeldet.', 'success');
         navigate('/dashboard');
       }
-} catch (err: any) {
-  const status = err.status;
-  const msg =
-    err.data?.message ||
-    err.data?.error ||
-    err.message ||
-    'Ein Fehler ist aufgetreten.';
+    } catch (err: any) {
+      const status = err.status;
+      const msg =
+        err.data?.message ||
+        err.data?.error ||
+        err.message ||
+        'Ein Fehler ist aufgetreten.';
 
-  const suggestions = err.data?.suggestions;
+      const suggestions = err.data?.suggestions;
 
-  if (status === 409 && Array.isArray(suggestions) && suggestions.length) {
-    showSnackbar(`${msg} Vorschläge: ${suggestions.join(', ')}`, 'warning');
-  } else {
-    showSnackbar(msg, 'error');
-  }
-} finally {
+      if (status === 409 && Array.isArray(suggestions) && suggestions.length) {
+        showSnackbar(`${msg} Vorschläge: ${suggestions.join(', ')}`, 'warning');
+      } else {
+        showSnackbar(msg, 'error');
+      }
+    } finally {
       setLoading(false);
     }
   };
@@ -245,6 +253,24 @@ if (!res.ok) {
       setResendOpen(false);
     } catch (e: any) {
       showSnackbar(e.response?.data?.message || 'Versand fehlgeschlagen.', 'error');
+    }
+  };
+
+  // NEU: Handler für Passwort vergessen
+  const handleForgotPassword = async () => {
+    const mail = forgotEmail.trim();
+    if (!emailRegex.test(mail)) {
+      return showSnackbar('Bitte eine gültige E-Mail-Adresse eingeben.', 'error');
+    }
+    setLoading(true);
+    try {
+      await apiClient.post('/api/auth/forgot-password', { email: mail.toLowerCase() });
+      showSnackbar('Wenn ein Konto existiert, wurde eine E-Mail gesendet.', 'success');
+      setForgotOpen(false);
+    } catch (e: any) {
+      showSnackbar(e.response?.data?.message || 'Versand fehlgeschlagen.', 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -304,38 +330,38 @@ if (!res.ok) {
           </>
         )}
 
-{!isRegister && (
-  <TextField
-    margin="normal"
-    required
-    fullWidth
-    id="identifier"
-    label="Benutzername oder E-Mail"
-    name="identifier"
-    autoComplete="username"
-    autoFocus
-    value={username || email}
-    onChange={(e) => setUsername(e.target.value)}
-    disabled={loading}
-    InputProps={{
-      endAdornment: (username || email) ? (
-        <InputAdornment position="end">
-          <IconButton
-            aria-label="Eingabe löschen"
-            onClick={() => {
-              setUsername('');
-              setEmail('');
-            }}
-            edge="end"
+        {!isRegister && (
+          <TextField
+            margin="normal"
+            required
+            fullWidth
+            id="identifier"
+            label="Benutzername oder E-Mail"
+            name="identifier"
+            autoComplete="username"
+            autoFocus
+            value={username || email}
+            onChange={(e) => setUsername(e.target.value)}
             disabled={loading}
-          >
-            <CloseIcon />
-          </IconButton>
-        </InputAdornment>
-      ) : null,
-    }}
-  />
-)}
+            InputProps={{
+              endAdornment: (username || email) ? (
+                <InputAdornment position="end">
+                  <IconButton
+                    aria-label="Eingabe löschen"
+                    onClick={() => {
+                      setUsername('');
+                      setEmail('');
+                    }}
+                    edge="end"
+                    disabled={loading}
+                  >
+                    <CloseIcon />
+                  </IconButton>
+                </InputAdornment>
+              ) : null,
+            }}
+          />
+        )}
 
         <TextField
           margin="normal"
@@ -370,7 +396,7 @@ if (!res.ok) {
             <LinearProgress
               variant="determinate"
               value={(passwordStrength?.score ?? 0) * 25}
-              color={(passwordStrength?.score ?? 0) < 3 ? 'error' : 'success'}
+              color={(passwordStrength?.score ?? 0) < 2 ? 'error' : ((passwordStrength?.score ?? 0) === 2 ? 'warning' : 'success')}
               sx={{ height: 6, borderRadius: 3 }}
             />
             <Typography variant="caption" sx={{ mt: 0.5, display: 'block', textAlign: 'right' }}>
@@ -389,10 +415,9 @@ if (!res.ok) {
           </Button>
         )}
 
-{isRegister && (
+        {isRegister && (
           <Box sx={{ mt: 1, mb: 2 }}>
             {partnerCode ? (
-              // Wenn der User über einen speziellen Einladungs-Link kommt: Lock & Trust!
               <Alert 
                 severity="success" 
                 sx={{ 
@@ -404,7 +429,6 @@ if (!res.ok) {
                 Einladung für <strong>{businessPartner?.name || 'Ihren Verband'}</strong> ist aktiv.
               </Alert>
             ) : (
-              // Wenn der User organisch (ohne Link) auf der Registrierungsseite landet:
               <>
                 <Button
                   size="small"
@@ -429,8 +453,7 @@ if (!res.ok) {
           </Box>
         )}
 
-
-{isRegister && (
+        {isRegister && (
           <Stack spacing={1.5} sx={{ mt: 2, mb: 3 }}>
             <FormControlLabel
               sx={{ alignItems: 'flex-start', ml: 0 }}
@@ -525,7 +548,86 @@ if (!res.ok) {
           </Stack>
         )}
 
-{/* === SSO BUTTONS === */}
+        <Button
+          type="submit"
+          fullWidth
+          variant="contained"
+          size="large"
+          sx={{
+            mt: 3,
+            mb: 2,
+            py: 1.5,
+            fontWeight: 'bold',
+            fontSize: '1rem',
+            backgroundColor: customPrimaryColor,
+            color: customTextColor,
+            '&:hover': {
+              backgroundColor: customPrimaryColor,
+              filter: 'brightness(0.9)',
+            },
+          }}
+          disabled={loading || (isRegister && !canSubmitRegister)}
+        >
+          {loading ? <CircularProgress size={24} color="inherit" /> : isRegister ? 'Registrieren' : 'Anmelden'}
+        </Button> 
+
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          {!isRegister && (
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Link
+                component="button"
+                type="button"
+                variant="body2"
+                onClick={() => {
+                  setForgotEmail('');
+                  setForgotOpen(true);
+                }}
+                sx={{ cursor: 'pointer', color: customPrimaryColor }}
+              >
+                Passwort vergessen?
+              </Link>
+
+              <Link
+                component="button"
+                type="button"
+                variant="body2"
+                onClick={() => {
+                  setResendEmail('');
+                  setResendOpen(true);
+                }}
+                sx={{ cursor: 'pointer', color: customPrimaryColor }}
+              >
+                Bestätigung erneut senden
+              </Link>
+            </Box>
+          )}
+
+          <Button
+            fullWidth
+            variant="outlined"
+            size="large"
+            onClick={handleSwitchAuthMode}
+            sx={{
+              mt: 2,
+              textTransform: 'none',
+              color: customPrimaryColor,
+              borderColor: customPrimaryColor,
+              '&:hover': {
+                borderColor: customPrimaryColor,
+                backgroundColor: `${customPrimaryColor}10`,
+              },
+            }}
+          >
+            {isRegister ? 'Bereits ein Konto? Anmelden' : 'Noch kein Konto? Registrieren'}
+          </Button>
+        </Box>               
+
+        <Divider sx={{ my: 2, '&::before, &::after': { borderColor: '#e0e0e0' } }}>
+          <Typography variant="body2" color="text.secondary" sx={{ px: 1 }}>
+            ODER
+          </Typography>
+        </Divider>         
+
         <Box sx={{ mt: 3, mb: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
           <Button
             fullWidth
@@ -533,7 +635,6 @@ if (!res.ok) {
             size="large"
             onClick={() => {
               const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-              // PartnerCode anhängen, damit er als "state" mitgeschickt wird
               window.location.href = `${baseUrl}/api/auth/google${partnerCode ? `?partner=${partnerCode}` : ''}`;
             }}
             sx={{
@@ -576,86 +677,6 @@ if (!res.ok) {
           >
             <img src="https://www.svgrepo.com/show/448234/linkedin.svg" alt="LinkedIn" style={{ width: 24, height: 24 }} />
             Mit LinkedIn {isRegister ? 'registrieren' : 'anmelden'}
-          </Button>
-        </Box>
-
-        <Divider sx={{ my: 2, '&::before, &::after': { borderColor: '#e0e0e0' } }}>
-          <Typography variant="body2" color="text.secondary" sx={{ px: 1 }}>
-            ODER TRADITIONELL
-          </Typography>
-        </Divider>     
-
-        {/* --- BUTTON --- */}
-        <Button
-          type="submit"
-          fullWidth
-          variant="contained"
-          size="large"
-          sx={{
-            mt: 3,
-            mb: 2,
-            py: 1.5,
-            fontWeight: 'bold',
-            fontSize: '1rem',
-            backgroundColor: customPrimaryColor,
-            color: customTextColor,
-            '&:hover': {
-              backgroundColor: customPrimaryColor,
-              filter: 'brightness(0.9)',
-            },
-          }}
-          disabled={loading || (isRegister && !canSubmitRegister)}
-        >
-          {loading ? <CircularProgress size={24} color="inherit" /> : isRegister ? 'Registrieren' : 'Anmelden'}
-        </Button>
-
-        
-
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-          {!isRegister && (
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Link
-                component={RouterLink}
-                to="/forgot-password"
-                variant="body2"
-                underline="hover"
-                sx={{ color: customPrimaryColor }}
-              >
-                Passwort vergessen?
-              </Link>
-
-              <Link
-                component="button"
-                type="button"
-                variant="body2"
-                onClick={() => {
-                  setResendEmail('');
-                  setResendOpen(true);
-                }}
-                sx={{ cursor: 'pointer', color: customPrimaryColor }}
-              >
-                Bestätigung erneut senden
-              </Link>
-            </Box>
-          )}
-
-          <Button
-            fullWidth
-            variant="outlined"
-            size="large"
-            onClick={handleSwitchAuthMode}
-            sx={{
-              mt: 2,
-              textTransform: 'none',
-              color: customPrimaryColor,
-              borderColor: customPrimaryColor,
-              '&:hover': {
-                borderColor: customPrimaryColor,
-                backgroundColor: `${customPrimaryColor}10`,
-              },
-            }}
-          >
-            {isRegister ? 'Bereits ein Konto? Anmelden' : 'Noch kein Konto? Registrieren'}
           </Button>
         </Box>
 
@@ -773,6 +794,40 @@ if (!res.ok) {
                 backgroundColor: customPrimaryColor,
                 filter: 'brightness(0.9)',
               },
+            }}
+          >
+            Senden
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* NEUER DIALOG: Passwort vergessen */}
+      <Dialog open={forgotOpen} onClose={() => setForgotOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Passwort zurücksetzen</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            Geben Sie Ihre E-Mail-Adresse ein, um einen Link zum Zurücksetzen zu erhalten.
+          </Typography>
+          <TextField
+            autoFocus
+            fullWidth
+            margin="dense"
+            label="E-Mail"
+            type="email"
+            value={forgotEmail}
+            onChange={(e) => setForgotEmail(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setForgotOpen(false)}>Abbrechen</Button>
+          <Button
+            variant="contained"
+            onClick={handleForgotPassword}
+            disabled={loading}
+            sx={{
+              backgroundColor: customPrimaryColor,
+              color: customTextColor,
+              '&:hover': { backgroundColor: customPrimaryColor, filter: 'brightness(0.9)' },
             }}
           >
             Senden

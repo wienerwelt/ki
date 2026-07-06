@@ -9,21 +9,51 @@ services:
     command: npm start
     ports:
       - "127.0.0.1:5001:5000"
+    environment:
+      NODE_ENV: production
+      APP_ENV: production
+      DEPLOY_ENV: production
+      REPORT_ENV: production
     volumes:
       - /var/www/vhosts/mobiliti.at/httpdocs/dashboard/backend/public/directory_logos:/app/public/directory_logos
       - /var/www/vhosts/mobiliti.at/httpdocs/dashboard/backend/public/logos:/app/public/logos
 
   worker-ai:
     command: npm run start:ai
+    environment:
+      NODE_ENV: production
+      APP_ENV: production
+      DEPLOY_ENV: production
+      REPORT_ENV: production
 
   worker-scrape:
     command: npm run start:scrape
+    environment:
+      NODE_ENV: production
+      APP_ENV: production
+      DEPLOY_ENV: production
+      REPORT_ENV: production
 
   worker-mail:
     command: npm run start:mail
+    environment:
+      NODE_ENV: production
+      APP_ENV: production
+      DEPLOY_ENV: production
+      REPORT_ENV: production
 
   worker-data:
     command: npm run start:data
+    environment:
+      NODE_ENV: production
+      APP_ENV: production
+      DEPLOY_ENV: production
+      REPORT_ENV: production
 
   worker-funding:
     command: npm run start:funding
+    environment:
+      NODE_ENV: production
+      APP_ENV: production
+      DEPLOY_ENV: production
+      REPORT_ENV: production

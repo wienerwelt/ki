@@ -1,3 +1,4 @@
+// frontend/vite.frontend.ts
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -10,8 +11,22 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'robots.txt', 'apple-touch-icon.png'],
       workbox: {
+        cleanupOutdatedCaches: true,
         navigateFallbackDenylist: [/^\/api/],
-        maximumFileSizeToCacheInBytes: 10000000,
+        maximumFileSizeToCacheInBytes: 2 * 1024 * 1024,
+        runtimeCaching: [
+          {
+            urlPattern: /\/assets\/.*\.(?:js|css)$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'assets-runtime-v2',
+              expiration: {
+                maxEntries: 120,
+                maxAgeSeconds: 60 * 60 * 24 * 30,
+              },
+            },
+          },
+        ],
       },
       manifest: {
         name: 'Fleet KI-Dashboard',
@@ -55,32 +70,11 @@ export default defineConfig({
     },
   },
   build: {
-    chunkSizeWarningLimit: 1000,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return;
-
-          if (
-            id.includes('/react/') ||
-            id.includes('react-dom') ||
-            id.includes('react-router') ||
-            id.includes('scheduler')
-          ) {
-            return 'react-vendor';
-          }
-
-          if (id.includes('@mui') || id.includes('@emotion')) {
-            return 'mui';
-          }
-
-          if (id.includes('leaflet')) {
-            return 'leaflet';
-          }
-
-          return 'vendor';
-        },
-      },
-    },
+    target: 'es2020',
+    cssCodeSplit: true,
+    // Wichtig: kein aggressives manualChunks mehr.
+    // React, D3 und CommonJS-Unterpakete bleiben dadurch in Rollups natürlicher Dependency-Reihenfolge.
+    // Das beseitigt die Runtime-Fehler wie "createContext" / "Children" aus gemischten Vendor-Chunks.
+    chunkSizeWarningLimit: 1500,
   },
 });

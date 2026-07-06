@@ -36,14 +36,19 @@ const formatUrl = (url: string) => {
 };
 
 const formatPhoneNumber = (phone: string) => {
-    let cleaned = phone.replace(/[^\d+]/g, ''); 
-    if (cleaned.startsWith('00')) cleaned = '+' + cleaned.substring(2);
-    if (!cleaned.startsWith('+')) {
-        if (cleaned.startsWith('0')) {
-            if (/^06(64|60|76|50|99)/.test(cleaned)) cleaned = '+43' + cleaned.substring(1);
-            else cleaned = '+49' + cleaned.substring(1);
-        }
+    let cleaned = (phone || '').trim();
+
+    // Entfernt optionale nationale Vorwahl-Klammern, z. B. +43 (0) 1 ... -> +43 1 ...
+    cleaned = cleaned.replace(/\(0\)/g, '');
+
+    // Entfernt alle Zeichen außer Ziffern und Plus. Weitere Plus-Zeichen werden entfernt.
+    cleaned = cleaned.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '');
+
+    // Wandelt eine führende 00 in ein + um, z. B. 0049 -> +49
+    if (cleaned.startsWith('00')) {
+        cleaned = '+' + cleaned.substring(2);
     }
+
     return cleaned;
 };
 
@@ -83,6 +88,9 @@ interface ProviderMandantSetting {
     business_partner_id: string;
     status: 'active' | 'blacklisted';
     is_recommended: boolean;
+    business_partner_name?: string | null;
+    primary_color?: string | null;
+    secondary_color?: string | null;
 }
 
 interface DirectoryProvider {
@@ -327,18 +335,110 @@ const AdminDirectoryPage: React.FC = () => {
 
     const isLogoDirty = !!logoFile || deleteLogo;
 
+    const getBusinessPartnerName = (ms: any) => {
+        const matchedBp = businessPartners.find(bp => bp.id === ms.business_partner_id);
+        return matchedBp?.name || ms.business_partner_name || '';
+    };
+
+    const getBusinessPartnerColor = (ms: any, matchedBp?: any) => {
+        return (
+            ms?.primary_color ||
+            ms?.primaryColor ||
+            matchedBp?.primary_color ||
+            matchedBp?.primaryColor ||
+            matchedBp?.theme?.primary_color ||
+            matchedBp?.color_scheme?.primary_color ||
+            theme.palette.primary.main
+        );
+    };
+
+    const getReadableTextColor = (backgroundColor: string) => {
+        try {
+            return theme.palette.getContrastText(backgroundColor);
+        } catch {
+            return '#fff';
+        }
+    };
+
+    const getCategoryNamesForProvider = (provider: any) => {
+        return (provider.categories || [])
+            .map((catItem: any) => {
+                const matchedCat = categories.find(c => c.id === catItem.category_id);
+                return matchedCat?.name_lang || matchedCat?.name || '';
+            })
+            .filter(Boolean)
+            .join(', ');
+    };
+
+    const getMandantNamesForProvider = (provider: any) => {
+        return (provider.mandant_settings || [])
+            .map((ms: any) => getBusinessPartnerName(ms))
+            .filter(Boolean)
+            .join(', ');
+    };
+
+    const getSortValue = (provider: any, key: string) => {
+        switch (key) {
+            case 'name':
+                return (provider.name || '').toLowerCase();
+            case 'categories':
+                return getCategoryNamesForProvider(provider).toLowerCase();
+            case 'mandants':
+                return getMandantNamesForProvider(provider).toLowerCase();
+            case 'subscription_tier': {
+                const tierOrder: Record<string, number> = { free: 1, basic: 2, premium: 3 };
+                return tierOrder[provider.subscription_tier || 'free'] || 0;
+            }
+            case 'is_public':
+                return provider.is_public ? 1 : 0;
+            case 'created_at':
+            case 'updated_at':
+                return provider[key] ? new Date(provider[key]).getTime() : 0;
+            default:
+                return (provider[key] || '').toString().toLowerCase();
+        }
+    };
+
+    const renderSortableHeader = (key: string, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+        <TableCell align={align} sortDirection={orderBy === key ? order : false}>
+            <TableSortLabel
+                active={orderBy === key}
+                direction={orderBy === key ? order : 'asc'}
+                onClick={() => handleSort(key)}
+            >
+                {label}
+            </TableSortLabel>
+        </TableCell>
+    );
+
     const filteredAndSortedProviders = useMemo(() => {
         let result = [...providers];
-        if (searchTerm) result = result.filter(p => (p.name || '').toLowerCase().includes(searchTerm.toLowerCase()));
-        if (bpFilter !== 'all') result = result.filter(p => p.mandant_settings?.some((m: any) => m.business_partner_id === bpFilter));
+
+        if (searchTerm) {
+            const lower = searchTerm.toLowerCase();
+            result = result.filter(p =>
+                (p.name || '').toLowerCase().includes(lower) ||
+                getCategoryNamesForProvider(p).toLowerCase().includes(lower) ||
+                getMandantNamesForProvider(p).toLowerCase().includes(lower) ||
+                (p.subscription_tier || '').toLowerCase().includes(lower)
+            );
+        }
+
+        if (bpFilter !== 'all') {
+            result = result.filter(p => p.mandant_settings?.some((m: any) => m.business_partner_id === bpFilter));
+        }
+
         result.sort((a, b) => {
-            let valA = a[orderBy] || ''; let valB = b[orderBy] || '';
+            const valA = getSortValue(a, orderBy);
+            const valB = getSortValue(b, orderBy);
+
             if (valA < valB) return order === 'asc' ? -1 : 1;
             if (valA > valB) return order === 'asc' ? 1 : -1;
             return 0;
         });
+
         return result;
-    }, [providers, searchTerm, bpFilter, order, orderBy]);
+    }, [providers, searchTerm, bpFilter, order, orderBy, categories, businessPartners]);
 
     return (
         <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
@@ -387,13 +487,11 @@ const AdminDirectoryPage: React.FC = () => {
                     <Table>
                         <TableHead>
                             <TableRow>
-                                <TableCell onClick={() => handleSort('name')} sx={{ cursor: 'pointer' }}>
-                                    <TableSortLabel active={orderBy === 'name'} direction={order}>Name</TableSortLabel>
-                                </TableCell>
-                                <TableCell>Kategorien</TableCell>
-                                <TableCell>Mandanten</TableCell>
-                                <TableCell>Abo</TableCell>
-                                <TableCell>Status</TableCell>
+                                {renderSortableHeader('name', 'Name')}
+                                {renderSortableHeader('categories', 'Kategorien')}
+                                {renderSortableHeader('mandants', 'Mandanten')}
+                                {renderSortableHeader('subscription_tier', 'Abo')}
+                                {renderSortableHeader('is_public', 'Status')}
                                 <TableCell align="right">Aktionen</TableCell>
                             </TableRow>
                         </TableHead>
@@ -433,16 +531,35 @@ const AdminDirectoryPage: React.FC = () => {
                                         <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                                             {(p.mandant_settings || []).map((ms: any, i: number) => {
                                                 const matchedBp = businessPartners.find(bp => bp.id === ms.business_partner_id);
-                                                if (!matchedBp) return null;
                                                 const isBlocked = ms.status === 'blacklisted';
+                                                const bpName = matchedBp?.name || ms.business_partner_name || 'Mandant';
+                                                const bpColor = getBusinessPartnerColor(ms, matchedBp);
+                                                const contrastText = getReadableTextColor(bpColor);
+
                                                 return (
-                                                    <Tooltip key={i} title={isBlocked ? "Gesperrt" : (ms.is_recommended ? "Empfohlen" : "Aktiv")}>
+                                                    <Tooltip key={i} title={isBlocked ? `${bpName}: Gesperrt` : (ms.is_recommended ? `${bpName}: Empfohlen` : `${bpName}: Aktiv`)}>
                                                         <Chip
-                                                            label={matchedBp.name}
+                                                            label={bpName}
                                                             size="small"
-                                                            color={isBlocked ? "error" : (ms.is_recommended ? "success" : "default")}
                                                             variant={ms.is_recommended ? "filled" : "outlined"}
-                                                            sx={{ fontSize: '0.7rem' }}
+                                                            sx={{
+                                                                fontSize: '0.7rem',
+                                                                fontWeight: 700,
+                                                                maxWidth: 180,
+                                                                borderColor: isBlocked ? theme.palette.error.main : bpColor,
+                                                                bgcolor: isBlocked
+                                                                    ? alpha(theme.palette.error.main, 0.08)
+                                                                    : (ms.is_recommended ? bpColor : alpha(bpColor, 0.08)),
+                                                                color: isBlocked
+                                                                    ? theme.palette.error.main
+                                                                    : (ms.is_recommended ? contrastText : bpColor),
+                                                                '& .MuiChip-label': {
+                                                                    display: 'block',
+                                                                    overflow: 'hidden',
+                                                                    textOverflow: 'ellipsis',
+                                                                    whiteSpace: 'nowrap'
+                                                                }
+                                                            }}
                                                         />
                                                     </Tooltip>
                                                 );

@@ -135,6 +135,26 @@ export async function apiRequest<T = any>(path: string, init: LooseInit = {}): P
     const endTime = performance.now();
     const duration = Math.round(endTime - startTime);
     
+    // ==========================================
+    // 🚨 401 UNAUTHORIZED INTERCEPTOR (NEU)
+    // ==========================================
+    if (res.status === 401) {
+      console.warn(`🔒 [API 401] [${reqId}] Token abgelaufen oder ungültig. Führe Logout durch.`);
+      if (typeof window !== 'undefined') {
+        // Token löschen
+        window.localStorage.removeItem('jwt_token');
+        window.localStorage.removeItem('token');
+        
+        // Nur weiterleiten, wenn wir nicht sowieso auf /login oder / sind
+        if (window.location.pathname !== '/login' && window.location.pathname !== '/') {
+          window.location.href = '/login';
+        }
+      }
+      // Wir werfen hier einen Fehler, damit die aufrufende Komponente abbricht
+      throw new Error('Unauthorized');
+    }
+    // ==========================================
+
     if (res.ok) {
         console.log(`✅ [API SUCCESS] [${reqId}] ${res.status} ${url} (${duration}ms)`);
     } else {

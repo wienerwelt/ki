@@ -6,6 +6,48 @@ const fs = require('fs');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
+const normalizeOptionalText = (value) => {
+    if (value === undefined || value === null) return null;
+    const trimmed = String(value).trim();
+    return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeEmail = (email) => {
+    const normalized = normalizeOptionalText(email);
+    return normalized ? normalized.toLowerCase().replace(/\/+$/, '') : null;
+};
+
+const normalizeUrl = (url) => {
+    const normalized = normalizeOptionalText(url);
+    if (!normalized) return null;
+    return /^https?:\/\//i.test(normalized) ? normalized : `https://${normalized}`;
+};
+
+const normalizePhoneNumber = (phone) => {
+    let cleaned = normalizeOptionalText(phone);
+    if (!cleaned) return null;
+
+    // +43 (0) 1 ... soll als +431... gespeichert werden, nicht als +4301...
+    cleaned = cleaned.replace(/\(0\)/g, '');
+    cleaned = cleaned.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '');
+
+    if (cleaned.startsWith('00')) {
+        cleaned = `+${cleaned.substring(2)}`;
+    }
+
+    return cleaned || null;
+};
+
+const safeParseJsonArray = (value) => {
+    if (!value) return [];
+    try {
+        const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+};
+
 // Hilfsfunktion: Domain/Namen für den Dateinamen säubern
 const extractName = (nameStr) => {
     try {
@@ -76,8 +118,11 @@ exports.getAllProvidersAdmin = async (req, res) => {
                 COALESCE(
                     json_agg(DISTINCT jsonb_build_object(
                         'business_partner_id', dpm.business_partner_id,
+                        'business_partner_name', bp.name,
                         'status', dpm.status,
-                        'is_recommended', dpm.is_recommended
+                        'is_recommended', dpm.is_recommended,
+                        'primary_color', cs.primary_color,
+                        'secondary_color', cs.secondary_color
                     )) FILTER (WHERE dpm.business_partner_id IS NOT NULL), '[]'
                 ) as mandant_settings,
                 -- Kategorien aggregieren (NEU HINZUGEFÜGT)
@@ -89,6 +134,8 @@ exports.getAllProvidersAdmin = async (req, res) => {
                 ) as categories
             FROM directory_providers dp
             LEFT JOIN directory_provider_mandant_settings dpm ON dp.id = dpm.provider_id
+            LEFT JOIN business_partners bp ON bp.id = dpm.business_partner_id
+            LEFT JOIN color_schemes cs ON cs.id = bp.color_scheme_id
             LEFT JOIN directory_provider_categories dpc ON dp.id = dpc.provider_id
             GROUP BY dp.id
             ORDER BY dp.created_at DESC
@@ -122,7 +169,19 @@ exports.getProviderDetailsAdmin = async (req, res) => {
             db.query('SELECT * FROM directory_provider_locations WHERE provider_id = $1', [id]),
             db.query('SELECT category_id, is_primary FROM directory_provider_categories WHERE provider_id = $1', [id]),
             db.query('SELECT tag_id FROM directory_provider_tags WHERE provider_id = $1', [id]),
-            db.query('SELECT business_partner_id, status, is_recommended FROM directory_provider_mandant_settings WHERE provider_id = $1', [id])
+            db.query(`
+                SELECT
+                    dpm.business_partner_id,
+                    bp.name AS business_partner_name,
+                    dpm.status,
+                    dpm.is_recommended,
+                    cs.primary_color,
+                    cs.secondary_color
+                FROM directory_provider_mandant_settings dpm
+                LEFT JOIN business_partners bp ON bp.id = dpm.business_partner_id
+                LEFT JOIN color_schemes cs ON cs.id = bp.color_scheme_id
+                WHERE dpm.provider_id = $1
+            `, [id])
         ]);
 
         provider.locations = locationsRes.rows;
@@ -147,18 +206,28 @@ exports.createProviderAdmin = async (req, res) => {
         await client.query('BEGIN');
 
         const { name, description, website_url, contact_email, contact_phone, is_public, subscription_tier } = req.body;
+        const normalizedName = normalizeOptionalText(name);
+        const normalizedDescription = normalizeOptionalText(description);
+        const normalizedWebsiteUrl = normalizeUrl(website_url);
+        const normalizedEmail = normalizeEmail(contact_email);
+        const normalizedPhone = normalizePhoneNumber(contact_phone);
+
+        if (!normalizedName) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: 'Firmenname ist erforderlich.' });
+        }
         
-        const locations = req.body.locations ? JSON.parse(req.body.locations) : [];
-        const categories = req.body.categories ? JSON.parse(req.body.categories) : [];
-        const tags = req.body.tags ? JSON.parse(req.body.tags) : [];
-        const mandantSettings = req.body.mandant_settings ? JSON.parse(req.body.mandant_settings) : [];
+        const locations = safeParseJsonArray(req.body.locations);
+        const categories = safeParseJsonArray(req.body.categories);
+        const tags = safeParseJsonArray(req.body.tags);
+        const mandantSettings = safeParseJsonArray(req.body.mandant_settings);
 
         let logoUrl = null;
 if (req.file) {
     logoUrl = await processAndSaveProviderLogo(
         req.file.buffer,
         req.file.mimetype,
-        name || 'provider'
+        normalizedName || 'provider'
     );
 }
 
@@ -168,7 +237,7 @@ if (req.file) {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id
         `;
         const providerRes = await client.query(providerQuery, [
-            name, description || null, logoUrl, website_url || null, contact_email || null, contact_phone || null, 
+            normalizedName, normalizedDescription, logoUrl, normalizedWebsiteUrl, normalizedEmail, normalizedPhone, 
             is_public === 'true' || is_public === true, 
             subscription_tier || 'free'
         ]);
@@ -226,6 +295,16 @@ exports.updateProviderAdmin = async (req, res) => {
         await client.query('BEGIN');
 
         const { name, description, website_url, contact_email, contact_phone, is_public, subscription_tier, delete_logo } = req.body;
+        const normalizedName = normalizeOptionalText(name);
+        const normalizedDescription = normalizeOptionalText(description);
+        const normalizedWebsiteUrl = normalizeUrl(website_url);
+        const normalizedEmail = normalizeEmail(contact_email);
+        const normalizedPhone = normalizePhoneNumber(contact_phone);
+
+        if (!normalizedName) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: 'Firmenname ist erforderlich.' });
+        }
         
         // Wir merken uns das alte Logo VOR dem Update, um es später physisch zu löschen
         if (req.file || delete_logo === 'true') {
@@ -235,17 +314,17 @@ exports.updateProviderAdmin = async (req, res) => {
             }
         }
 
-        const locations = req.body.locations ? JSON.parse(req.body.locations) : [];
-        const categories = req.body.categories ? JSON.parse(req.body.categories) : [];
-        const tags = req.body.tags ? JSON.parse(req.body.tags) : [];
-        const mandantSettings = req.body.mandant_settings ? JSON.parse(req.body.mandant_settings) : [];
+        const locations = safeParseJsonArray(req.body.locations);
+        const categories = safeParseJsonArray(req.body.categories);
+        const tags = safeParseJsonArray(req.body.tags);
+        const mandantSettings = safeParseJsonArray(req.body.mandant_settings);
 
         let updateQuery = `
             UPDATE directory_providers 
             SET name = $1, description = $2, website_url = $3, contact_email = $4, contact_phone = $5, is_public = $6, subscription_tier = $7, updated_at = CURRENT_TIMESTAMP
         `;
         let values = [
-            name, description || null, website_url || null, contact_email || null, contact_phone || null, 
+            normalizedName, normalizedDescription, normalizedWebsiteUrl, normalizedEmail, normalizedPhone, 
             is_public === 'true' || is_public === true, subscription_tier || 'free'
         ];
         let paramIndex = 8;
@@ -255,7 +334,7 @@ if (req.file) {
     newLogoUrl = await processAndSaveProviderLogo(
         req.file.buffer,
         req.file.mimetype,
-        name || 'provider'
+        normalizedName || 'provider'
     );
 
     updateQuery += `, logo_url = $${paramIndex}`;

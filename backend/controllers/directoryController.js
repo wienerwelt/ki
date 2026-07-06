@@ -41,15 +41,17 @@ exports.getInternalDirectory = async (req, res) => {
                     WHERE l.provider_id = p.id
                 ), '[]'::json) as locations
             FROM directory_providers p
-            LEFT JOIN directory_provider_mandant_settings ms 
-                ON p.id = ms.provider_id AND ms.business_partner_id = $1
+            -- INNER JOIN erzwingt, dass ein Eintrag für diesen Mandanten existieren MUSS
+            INNER JOIN directory_provider_mandant_settings ms 
+                ON p.id = ms.provider_id 
             LEFT JOIN (
                 SELECT provider_id, AVG(rating) as avg_rating, COUNT(id) as rev_count 
                 FROM directory_provider_reviews 
                 GROUP BY provider_id
             ) r ON p.id = r.provider_id
-            WHERE (p.is_public = true OR ms.status = 'active')
-              AND COALESCE(ms.status, 'active') != 'blacklisted'
+            -- Nur aktive Zuweisungen für genau diesen Mandanten erlauben:
+            WHERE ms.business_partner_id = $1 
+              AND ms.status = 'active'
             ORDER BY ms.is_recommended DESC, p.name ASC
         `;
         
