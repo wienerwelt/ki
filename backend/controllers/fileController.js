@@ -1,62 +1,156 @@
 // backend/controllers/fileController.js
-const { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
-const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
-const s3Client = require("../config/s3Client.js");
+const crypto = require('crypto');
+const { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const s3Client = require('../config/s3Client.js');
 const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
 
+const isValidUUID = (uuid) =>
+  uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
+
+const normalizeRole = (role) => String(role || '').trim().toLowerCase();
+
+const PUBLIC_DOWNLOAD_ALLOWED_EXTENSIONS = new Set([
+  'pdf',
+  'docx',
+  'xlsx',
+  'pptx',
+  'doc',
+  'xls',
+  'ppt',
+  'odf',
+]);
+
+const PUBLIC_DOWNLOAD_BLOCKED_MIME_PARTS = [
+  'html',
+  'javascript',
+  'ecmascript',
+  'x-msdownload',
+  'x-sh',
+  'shellscript',
+  'php',
+];
+
+const getFileExtension = (filename = '') => {
+  const clean = String(filename || '').trim().toLowerCase();
+  const lastDot = clean.lastIndexOf('.');
+  if (lastDot === -1 || lastDot === clean.length - 1) return '';
+  return clean.slice(lastDot + 1);
+};
+
+const isAllowedPublicDownloadFile = (filename, fileType) => {
+  const ext = getFileExtension(filename);
+  if (!PUBLIC_DOWNLOAD_ALLOWED_EXTENSIONS.has(ext)) return false;
+
+  const mime = String(fileType || '').toLowerCase();
+  if (PUBLIC_DOWNLOAD_BLOCKED_MIME_PARTS.some((part) => mime.includes(part))) return false;
+
+  return true;
+};
+
+const parseTags = (tags) => {
+  if (typeof tags === 'string') {
+    return tags.split(',').map((tag) => tag.trim()).filter(Boolean);
+  }
+  return Array.isArray(tags) ? tags.map((tag) => String(tag).trim()).filter(Boolean) : [];
+};
+
+const generatePublicToken = () => crypto.randomBytes(32).toString('base64url');
+const hashPublicToken = (token) => crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
+
+const getRequestBaseUrl = (req) => {
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+  const host = req.get('x-forwarded-host') || req.get('host');
+  return `${proto}://${host}`.replace(/\/$/, '');
+};
+
+const buildPublicFileUrl = (req, fileId, token) =>
+  `${getRequestBaseUrl(req)}/api/public/files/${encodeURIComponent(fileId)}/${encodeURIComponent(token)}/download`;
+
+const encodeDownloadFilename = (filename) => {
+  const safeFallback = String(filename || 'download')
+    .replace(/[\r\n"]/g, '')
+    .replace(/[^a-zA-Z0-9._ -]/g, '_')
+    .slice(0, 180) || 'download';
+  const encoded = encodeURIComponent(String(filename || 'download'));
+  return `attachment; filename="${safeFallback}"; filename*=UTF-8''${encoded}`;
+};
+
+const getFileForAuthorizedEditor = async ({ fileId, role, businessPartnerId }) => {
+  if (!isValidUUID(fileId)) return null;
+
+  const normalizedRole = normalizeRole(role);
+  const params = [fileId];
+  let sql = `
+    SELECT id, filename, storage_path, file_type, file_size, business_partner_id,
+           public_link_enabled, public_token_preview, public_download_count
+    FROM public.business_partner_files
+    WHERE id = $1
+  `;
+
+  if (normalizedRole !== 'admin') {
+    if (!businessPartnerId) return null;
+    sql += ' AND business_partner_id = $2';
+    params.push(businessPartnerId);
+  }
+
+  const { rows } = await db.query(sql, params);
+  return rows[0] || null;
+};
+
 // === Upload ===
 exports.uploadFile = async (req, res) => {
-  const { id: userId, role, business_partner_id: userBusinessPartnerId } = req.user;
+  const { id: userId, role: rawRole, business_partner_id: userBusinessPartnerId } = req.user || {};
+  const role = normalizeRole(rawRole);
   const file = req.file;
   const { description, tags } = req.body;
 
-  // Rollen: demo darf nicht hochladen
   if (role === 'demo') {
-    return res.status(403).json({ message: "Demo-Benutzer dürfen keine Dateien hochladen." });
+    return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Dateien hochladen.' });
   }
 
   let targetBusinessPartnerId;
   if (role === 'admin') {
     targetBusinessPartnerId = req.body.businessPartnerId;
     if (!targetBusinessPartnerId) {
-      return res.status(400).json({ message: "Für den Admin-Upload muss ein Business Partner ausgewählt werden." });
+      return res.status(400).json({ message: 'Für den Admin-Upload muss ein Business Partner ausgewählt werden.' });
     }
   } else {
     targetBusinessPartnerId = userBusinessPartnerId;
   }
 
-  if (!file) return res.status(400).json({ message: "Keine Datei hochgeladen." });
-  if (!targetBusinessPartnerId) return res.status(403).json({ message: "Der Zieldatenpartner konnte nicht bestimmt werden." });
+  if (!file) return res.status(400).json({ message: 'Keine Datei hochgeladen.' });
+  if (!targetBusinessPartnerId) return res.status(403).json({ message: 'Der Zieldatenpartner konnte nicht bestimmt werden.' });
 
   const client = await db.connect();
   try {
     await client.query('BEGIN');
 
-    // Quota prüfen
     const quotaQuery = 'SELECT storage_limit_bytes, storage_usage_bytes FROM business_partners WHERE id = $1 FOR UPDATE;';
     const quotaResult = await client.query(quotaQuery, [targetBusinessPartnerId]);
-    if (quotaResult.rows.length === 0) throw new Error("Business Partner nicht gefunden.");
+    if (quotaResult.rows.length === 0) throw new Error('Business Partner nicht gefunden.');
 
     const { storage_limit_bytes, storage_usage_bytes } = quotaResult.rows[0];
     if (parseInt(storage_limit_bytes, 10) === 0) {
-      return res.status(403).json({ message: "Ihr aktuelles Paket erlaubt keine Datei-Uploads." });
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Ihr aktuelles Paket erlaubt keine Datei-Uploads.' });
     }
     if (parseInt(storage_usage_bytes, 10) + file.size > parseInt(storage_limit_bytes, 10)) {
-      return res.status(413).json({ message: "Speicherlimit überschritten. Upload nicht möglich." });
+      await client.query('ROLLBACK');
+      return res.status(413).json({ message: 'Speicherlimit überschritten. Upload nicht möglich.' });
     }
 
     const fileExtension = file.originalname.includes('.') ? file.originalname.split('.').pop() : '';
     const uniqueFileName = fileExtension ? `${uuidv4()}.${fileExtension}` : uuidv4();
     const storagePath = `files/${targetBusinessPartnerId}/${uniqueFileName}`;
 
-    const params = {
+    await s3Client.send(new PutObjectCommand({
       Bucket: process.env.AWS_S3_BUCKET_NAME,
       Key: storagePath,
       Body: file.buffer,
-      ContentType: file.mimetype
-    };
-    await s3Client.send(new PutObjectCommand(params));
+      ContentType: file.mimetype,
+    }));
 
     const dbQuery = `
       INSERT INTO business_partner_files
@@ -64,9 +158,6 @@ exports.uploadFile = async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *;
     `;
-    const tagsArray = typeof tags === 'string'
-      ? tags.split(',').map(t => t.trim()).filter(Boolean)
-      : (Array.isArray(tags) ? tags : []);
     const dbValues = [
       file.originalname,
       storagePath,
@@ -75,7 +166,7 @@ exports.uploadFile = async (req, res) => {
       userId,
       targetBusinessPartnerId,
       description || null,
-      tagsArray
+      parseTags(tags),
     ];
     const result = await client.query(dbQuery, dbValues);
 
@@ -85,25 +176,21 @@ exports.uploadFile = async (req, res) => {
     );
 
     await client.query('COMMIT');
-    return res.status(201).json({ message: "Datei erfolgreich hochgeladen.", file: result.rows[0] });
+    return res.status(201).json({ message: 'Datei erfolgreich hochgeladen.', file: result.rows[0] });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error("Fehler beim Datei-Upload:", error);
-    return res.status(500).json({ message: "Fehler beim Server während des Uploads." });
+    console.error('Fehler beim Datei-Upload:', error);
+    return res.status(500).json({ message: 'Fehler beim Server während des Uploads.' });
   } finally {
     client.release();
   }
 };
 
 // === Liste ===
-/**
- * Admin: alle Dateien (optional Filter ?businessPartnerId=...); sonst Pagination über alle.
- * Andere Rollen: Dateien des eigenen Business Partners; ohne BP → leere Liste (kein 403).
- */
 exports.listFiles = async (req, res) => {
-  const { role, business_partner_id: userBpId } = req.user || {};
+  const { role: rawRole, business_partner_id: userBpId } = req.user || {};
+  const role = normalizeRole(rawRole);
   try {
-    // Pagination
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
     const offset = (page - 1) * limit;
@@ -111,15 +198,26 @@ exports.listFiles = async (req, res) => {
     let sql;
     const params = [];
 
+    const selectedColumns = `
+      bpf.id,
+      bpf.filename,
+      bpf.file_type,
+      bpf.file_size,
+      bpf.created_at,
+      bpf.description,
+      bpf.tags,
+      bpf.download_count,
+      COALESCE(bpf.public_link_enabled, false) AS public_link_enabled,
+      bpf.public_token_preview,
+      COALESCE(bpf.public_download_count, 0) AS public_download_count,
+      bpf.public_link_created_at
+    `;
+
     if (role === 'admin') {
-      // Admin kann optional nach Partner filtern
       const filterBpId = req.query.businessPartnerId ? String(req.query.businessPartnerId) : null;
       if (filterBpId) {
         sql = `
-          SELECT
-            bpf.id, bpf.filename, bpf.file_type, bpf.file_size, bpf.created_at,
-            bpf.description, bpf.tags, bpf.download_count,
-            bp.name AS business_partner_name
+          SELECT ${selectedColumns}, bp.name AS business_partner_name
           FROM business_partner_files bpf
           JOIN business_partners bp ON bp.id = bpf.business_partner_id
           WHERE bpf.business_partner_id = $1
@@ -129,10 +227,7 @@ exports.listFiles = async (req, res) => {
         params.push(filterBpId, limit, offset);
       } else {
         sql = `
-          SELECT
-            bpf.id, bpf.filename, bpf.file_type, bpf.file_size, bpf.created_at,
-            bpf.description, bpf.tags, bpf.download_count,
-            bp.name AS business_partner_name
+          SELECT ${selectedColumns}, bp.name AS business_partner_name
           FROM business_partner_files bpf
           JOIN business_partners bp ON bp.id = bpf.business_partner_id
           ORDER BY bpf.created_at DESC
@@ -141,17 +236,12 @@ exports.listFiles = async (req, res) => {
         params.push(limit, offset);
       }
     } else {
-      // Nicht-Admins (inkl. demo): nur eigene BP-Dateien
-      if (!userBpId) {
-        // Kein BP zugeordnet → leere Liste statt 403, damit UI nicht „kaputt“ wirkt
-        return res.json([]);
-      }
+      if (!userBpId) return res.json([]);
       sql = `
-        SELECT
-          id, filename, file_type, file_size, created_at, description, tags, download_count
-        FROM business_partner_files
-        WHERE business_partner_id = $1
-        ORDER BY created_at DESC
+        SELECT ${selectedColumns}
+        FROM business_partner_files bpf
+        WHERE bpf.business_partner_id = $1
+        ORDER BY bpf.created_at DESC
         LIMIT $2 OFFSET $3;
       `;
       params.push(userBpId, limit, offset);
@@ -160,55 +250,200 @@ exports.listFiles = async (req, res) => {
     const { rows } = await db.query(sql, params);
     return res.status(200).json(rows);
   } catch (error) {
-    console.error("Fehler beim Auflisten der Dateien:", error);
-    return res.status(500).json({ message: "Fehler beim Abrufen der Dateiliste." });
+    console.error('Fehler beim Auflisten der Dateien:', error);
+    return res.status(500).json({ message: 'Fehler beim Abrufen der Dateiliste.' });
   }
 };
 
-// === Download-URL ===
+// === Interne Download-URL ===
 exports.getDownloadUrl = async (req, res) => {
   const { id: fileId } = req.params;
-  const { role, business_partner_id: requestingUserBpId } = req.user || {};
+  const { role: rawRole, business_partner_id: requestingUserBpId } = req.user || {};
+  const role = normalizeRole(rawRole);
 
   try {
     let query;
     const queryParams = [fileId];
 
     if (role === 'admin') {
-      query = `SELECT storage_path FROM business_partner_files WHERE id = $1;`;
+      query = 'SELECT storage_path, filename, file_type FROM business_partner_files WHERE id = $1;';
     } else {
-      if (!requestingUserBpId) {
-        return res.status(403).json({ message: "Kein Zugriff." });
-      }
-      query = `SELECT storage_path FROM business_partner_files WHERE id = $1 AND business_partner_id = $2;`;
+      if (!requestingUserBpId) return res.status(403).json({ message: 'Kein Zugriff.' });
+      query = 'SELECT storage_path, filename, file_type FROM business_partner_files WHERE id = $1 AND business_partner_id = $2;';
       queryParams.push(requestingUserBpId);
     }
 
     const result = await db.query(query, queryParams);
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Datei nicht gefunden oder Zugriff verweigert." });
+      return res.status(404).json({ message: 'Datei nicht gefunden oder Zugriff verweigert.' });
     }
 
-    const storagePath = result.rows[0].storage_path;
+    const { storage_path: storagePath, filename, file_type: fileType } = result.rows[0];
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_S3_BUCKET_NAME,
       Key: storagePath,
+      ResponseContentDisposition: encodeDownloadFilename(filename),
+      ResponseContentType: fileType || undefined,
     });
     const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 60 });
     return res.status(200).json({ url: signedUrl });
   } catch (error) {
-    console.error("Fehler beim Erstellen der Download-URL:", error);
-    return res.status(500).json({ message: "Fehler beim Erstellen der Download-URL." });
+    console.error('Fehler beim Erstellen der Download-URL:', error);
+    return res.status(500).json({ message: 'Fehler beim Erstellen der Download-URL.' });
+  }
+};
+
+// === Geheimen öffentlichen Direktlink erzeugen/rotieren ===
+exports.createPublicLink = async (req, res) => {
+  const { id: fileId } = req.params;
+  const { id: userId, role: rawRole, business_partner_id: businessPartnerId } = req.user || {};
+  const role = normalizeRole(rawRole);
+
+  if (role !== 'admin' && role !== 'assistenz') {
+    return res.status(403).json({ message: 'Keine Berechtigung zum Erstellen öffentlicher Direktlinks.' });
+  }
+
+  try {
+    const file = await getFileForAuthorizedEditor({ fileId, role, businessPartnerId });
+    if (!file) return res.status(404).json({ message: 'Datei nicht gefunden oder Zugriff verweigert.' });
+
+    if (!isAllowedPublicDownloadFile(file.filename, file.file_type)) {
+      return res.status(400).json({
+        message: 'Für externe Direktlinks sind nur PDF, DOCX, XLSX, PPTX, DOC, XLS, PPT und ODF erlaubt.',
+      });
+    }
+
+    const token = generatePublicToken();
+    const tokenHash = hashPublicToken(token);
+    const tokenPreview = token.slice(0, 8);
+
+    const params = [tokenHash, tokenPreview, userId || null, file.id];
+    let sql = `
+      UPDATE public.business_partner_files
+      SET public_link_enabled = true,
+          public_token_hash = $1,
+          public_token_preview = $2,
+          public_link_created_at = NOW(),
+          public_link_created_by = $3,
+          updated_at = NOW()
+      WHERE id = $4
+    `;
+    if (role !== 'admin') {
+      sql += ' AND business_partner_id = $5';
+      params.push(businessPartnerId);
+    }
+    sql += ' RETURNING id, filename, public_token_preview, public_link_enabled, public_download_count, public_link_created_at;';
+
+    const { rows } = await db.query(sql, params);
+    if (rows.length === 0) return res.status(404).json({ message: 'Datei nicht gefunden oder Zugriff verweigert.' });
+
+    return res.status(200).json({
+      message: 'Geheimer Direktlink wurde erstellt. Der Link wird aus Sicherheitsgründen nur jetzt vollständig angezeigt.',
+      file: rows[0],
+      url: buildPublicFileUrl(req, file.id, token),
+    });
+  } catch (error) {
+    console.error('Fehler beim Erstellen des öffentlichen Direktlinks:', error);
+    return res.status(500).json({ message: 'Öffentlicher Direktlink konnte nicht erstellt werden.' });
+  }
+};
+
+// === Geheimen öffentlichen Direktlink deaktivieren ===
+exports.disablePublicLink = async (req, res) => {
+  const { id: fileId } = req.params;
+  const { role: rawRole, business_partner_id: businessPartnerId } = req.user || {};
+  const role = normalizeRole(rawRole);
+
+  if (role !== 'admin' && role !== 'assistenz') {
+    return res.status(403).json({ message: 'Keine Berechtigung zum Deaktivieren öffentlicher Direktlinks.' });
+  }
+
+  try {
+    const params = [fileId];
+    let sql = `
+      UPDATE public.business_partner_files
+      SET public_link_enabled = false,
+          public_token_hash = NULL,
+          public_token_preview = NULL,
+          public_link_created_at = NULL,
+          public_link_created_by = NULL,
+          updated_at = NOW()
+      WHERE id = $1
+    `;
+    if (role !== 'admin') {
+      if (!businessPartnerId) return res.status(403).json({ message: 'Kein Zugriff.' });
+      sql += ' AND business_partner_id = $2';
+      params.push(businessPartnerId);
+    }
+    sql += ' RETURNING id, filename, public_link_enabled, public_token_preview, public_download_count, public_link_created_at;';
+
+    const { rows } = await db.query(sql, params);
+    if (rows.length === 0) return res.status(404).json({ message: 'Datei nicht gefunden oder Zugriff verweigert.' });
+
+    return res.status(200).json({ message: 'Öffentlicher Direktlink wurde deaktiviert.', file: rows[0] });
+  } catch (error) {
+    console.error('Fehler beim Deaktivieren des öffentlichen Direktlinks:', error);
+    return res.status(500).json({ message: 'Öffentlicher Direktlink konnte nicht deaktiviert werden.' });
+  }
+};
+
+// === Öffentlicher Download über geheimen Token ===
+exports.getPublicDownloadUrl = async (req, res) => {
+  const { id: fileId, token } = req.params;
+
+  if (!isValidUUID(fileId) || !token || String(token).length < 32 || String(token).length > 256) {
+    return res.status(404).type('text/plain').send('Datei nicht gefunden.');
+  }
+
+  try {
+    const tokenHash = hashPublicToken(token);
+    const { rows } = await db.query(
+      `SELECT id, filename, storage_path, file_type
+       FROM public.business_partner_files
+       WHERE id = $1
+         AND public_link_enabled = true
+         AND public_token_hash = $2
+       LIMIT 1`,
+      [fileId, tokenHash]
+    );
+
+    const file = rows[0];
+    if (!file || !isAllowedPublicDownloadFile(file.filename, file.file_type)) {
+      return res.status(404).type('text/plain').send('Datei nicht gefunden.');
+    }
+
+    await db.query(
+      `UPDATE public.business_partner_files
+       SET public_download_count = COALESCE(public_download_count, 0) + 1,
+           download_count = COALESCE(download_count, 0) + 1
+       WHERE id = $1`,
+      [file.id]
+    );
+
+    const command = new GetObjectCommand({
+      Bucket: process.env.AWS_S3_BUCKET_NAME,
+      Key: file.storage_path,
+      ResponseContentDisposition: encodeDownloadFilename(file.filename),
+      ResponseContentType: file.file_type || undefined,
+    });
+
+    const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 60 });
+    res.set('Cache-Control', 'no-store');
+    return res.redirect(302, signedUrl);
+  } catch (error) {
+    console.error('Fehler beim öffentlichen Datei-Download:', error);
+    return res.status(500).type('text/plain').send('Datei konnte nicht geladen werden.');
   }
 };
 
 // === Löschen ===
 exports.deleteFile = async (req, res) => {
   const { id: fileId } = req.params;
-  const { role, business_partner_id: businessPartnerId } = req.user || {};
+  const { role: rawRole, business_partner_id: businessPartnerId } = req.user || {};
+  const role = normalizeRole(rawRole);
 
   if (role !== 'admin' && role !== 'assistenz') {
-    return res.status(403).json({ message: "Keine Berechtigung zum Löschen von Dateien." });
+    return res.status(403).json({ message: 'Keine Berechtigung zum Löschen von Dateien.' });
   }
 
   const client = await db.connect();
@@ -219,44 +454,44 @@ exports.deleteFile = async (req, res) => {
     const queryParams = [fileId];
 
     if (role === 'admin') {
-      query = `SELECT storage_path, file_size, business_partner_id FROM business_partner_files WHERE id = $1;`;
+      query = 'SELECT storage_path, file_size, business_partner_id FROM business_partner_files WHERE id = $1;';
     } else {
-      query = `SELECT storage_path, file_size, business_partner_id FROM business_partner_files WHERE id = $1 AND business_partner_id = $2;`;
+      query = 'SELECT storage_path, file_size, business_partner_id FROM business_partner_files WHERE id = $1 AND business_partner_id = $2;';
       queryParams.push(businessPartnerId);
     }
 
     const result = await client.query(query, queryParams);
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Datei nicht gefunden oder Zugriff verweigert." });
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Datei nicht gefunden oder Zugriff verweigert.' });
     }
 
     const { storage_path, file_size, business_partner_id: fileBpId } = result.rows[0];
 
-    const command = new DeleteObjectCommand({ Bucket: process.env.AWS_S3_BUCKET_NAME, Key: storage_path });
-    await s3Client.send(command);
+    await s3Client.send(new DeleteObjectCommand({ Bucket: process.env.AWS_S3_BUCKET_NAME, Key: storage_path }));
 
-    await client.query(`DELETE FROM business_partner_files WHERE id = $1`, [fileId]);
+    await client.query('DELETE FROM business_partner_files WHERE id = $1', [fileId]);
     await client.query(
-      'UPDATE business_partners SET storage_usage_bytes = storage_usage_bytes - $1 WHERE id = $2;',
+      'UPDATE business_partners SET storage_usage_bytes = GREATEST(COALESCE(storage_usage_bytes, 0) - $1, 0) WHERE id = $2;',
       [file_size, fileBpId]
     );
 
     await client.query('COMMIT');
-    return res.status(200).json({ message: "Datei erfolgreich gelöscht." });
+    return res.status(200).json({ message: 'Datei erfolgreich gelöscht.' });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error("Fehler beim Löschen der Datei:", error);
-    return res.status(500).json({ message: "Fehler beim Löschen der Datei." });
+    console.error('Fehler beim Löschen der Datei:', error);
+    return res.status(500).json({ message: 'Fehler beim Löschen der Datei.' });
   } finally {
     client.release();
   }
 };
 
-// === Download zählen (optional) ===
 // === Download zählen & im Activity Log speichern ===
 exports.trackDownload = async (req, res) => {
   const { id: fileId } = req.params;
-  const { id: userId, username, role, business_partner_id: requestingUserBpId } = req.user || {};
+  const { id: userId, username, role: rawRole, business_partner_id: requestingUserBpId } = req.user || {};
+  const role = normalizeRole(rawRole);
   const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip;
 
   try {
@@ -264,83 +499,71 @@ exports.trackDownload = async (req, res) => {
     const queryParams = [fileId];
 
     if (role !== 'admin') {
-      if (!requestingUserBpId) {
-        return res.status(403).json({ message: "Kein Zugriff." });
-      }
-      query = `UPDATE business_partner_files SET download_count = download_count + 1 WHERE id = $1 AND business_partner_id = $2 RETURNING filename;`;
+      if (!requestingUserBpId) return res.status(403).json({ message: 'Kein Zugriff.' });
+      query = 'UPDATE business_partner_files SET download_count = download_count + 1 WHERE id = $1 AND business_partner_id = $2 RETURNING filename;';
       queryParams.push(requestingUserBpId);
     } else {
-      query = `UPDATE business_partner_files SET download_count = download_count + 1 WHERE id = $1 RETURNING filename;`;
+      query = 'UPDATE business_partner_files SET download_count = download_count + 1 WHERE id = $1 RETURNING filename;';
     }
 
     const result = await db.query(query, queryParams);
     if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Datei nicht gefunden oder Zugriff verweigert." });
+      return res.status(404).json({ message: 'Datei nicht gefunden oder Zugriff verweigert.' });
     }
 
     const fileName = result.rows[0].filename;
 
-    // HIER NEU: Den Download zusätzlich mit Zeitstempel im Activity Log festhalten
     if (userId) {
-        await db.query(`
-            INSERT INTO activity_log 
-            (user_id, username, action_type, target_id, target_type, status, ip_address, details)
-            VALUES ($1, $2, 'FILE_DOWNLOAD', $3, 'file', 'success', $4, $5)
-        `, [
-            userId, 
-            username || 'Unbekannt', 
-            fileId, 
-            ipAddress || null, 
-            JSON.stringify({ filename: fileName })
-        ]);
+      await db.query(
+        `INSERT INTO activity_log
+          (user_id, username, action_type, target_id, target_type, status, ip_address, details)
+         VALUES ($1, $2, 'FILE_DOWNLOAD', $3, 'file', 'success', $4, $5)`,
+        [userId, username || 'Unbekannt', fileId, ipAddress || null, JSON.stringify({ filename: fileName })]
+      );
     }
 
-    return res.status(200).json({ message: "Download erfasst." });
+    return res.status(200).json({ message: 'Download erfasst.' });
   } catch (error) {
-    console.error("Fehler beim Erfassen des Downloads:", error);
-    return res.status(500).json({ message: "Fehler beim Server während der Download-Erfassung." });
+    console.error('Fehler beim Erfassen des Downloads:', error);
+    return res.status(500).json({ message: 'Fehler beim Server während der Download-Erfassung.' });
   }
 };
 
-// === Bearbeiten (NEU) ===
+// === Bearbeiten ===
 exports.updateFile = async (req, res) => {
   const { id: fileId } = req.params;
-  const { role, business_partner_id: businessPartnerId } = req.user || {};
+  const { role: rawRole, business_partner_id: businessPartnerId } = req.user || {};
+  const role = normalizeRole(rawRole);
   const { filename, description, tags } = req.body;
 
-  // Nur Admins und Assistenten dürfen bearbeiten
   if (role !== 'admin' && role !== 'assistenz') {
-    return res.status(403).json({ message: "Keine Berechtigung zum Bearbeiten von Dateien." });
+    return res.status(403).json({ message: 'Keine Berechtigung zum Bearbeiten von Dateien.' });
   }
 
   if (!filename || filename.trim() === '') {
-    return res.status(400).json({ message: "Der Dateiname darf nicht leer sein." });
+    return res.status(400).json({ message: 'Der Dateiname darf nicht leer sein.' });
   }
 
   try {
-    let query;
-    const tagsArray = typeof tags === 'string'
-      ? tags.split(',').map(t => t.trim()).filter(Boolean)
-      : (Array.isArray(tags) ? tags : []);
-      
+    const tagsArray = parseTags(tags);
     const queryParams = [filename.trim(), description || null, tagsArray, fileId];
 
+    let query;
     if (role === 'admin') {
-      query = `UPDATE business_partner_files SET filename = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *;`;
+      query = 'UPDATE business_partner_files SET filename = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *;';
     } else {
-      query = `UPDATE business_partner_files SET filename = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 AND business_partner_id = $5 RETURNING *;`;
+      query = 'UPDATE business_partner_files SET filename = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 AND business_partner_id = $5 RETURNING *;';
       queryParams.push(businessPartnerId);
     }
 
     const result = await db.query(query, queryParams);
-    
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Datei nicht gefunden oder Zugriff verweigert." });
+      return res.status(404).json({ message: 'Datei nicht gefunden oder Zugriff verweigert.' });
     }
 
-    return res.status(200).json({ message: "Datei erfolgreich aktualisiert.", file: result.rows[0] });
+    return res.status(200).json({ message: 'Datei erfolgreich aktualisiert.', file: result.rows[0] });
   } catch (error) {
-    console.error("Fehler beim Aktualisieren der Datei:", error);
-    return res.status(500).json({ message: "Fehler beim Aktualisieren der Datei." });
+    console.error('Fehler beim Aktualisieren der Datei:', error);
+    return res.status(500).json({ message: 'Fehler beim Aktualisieren der Datei.' });
   }
 };

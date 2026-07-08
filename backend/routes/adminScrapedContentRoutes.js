@@ -12,6 +12,13 @@ router.post('/events', adminScController.createManualEvent);
 router.put('/events/:id', adminScController.updateScrapedEvent);
 router.get('/regions', adminScController.getAllRegions);
 
+// Externe Event-Feeds für Drittanbieter
+router.get('/event-feeds', adminScController.getEventFeedTokens);
+router.post('/event-feeds', adminScController.createEventFeedToken);
+router.put('/event-feeds/:id', adminScController.updateEventFeedToken);
+router.delete('/event-feeds/:id', adminScController.deleteEventFeedToken);
+router.post('/event-feeds/:id/regenerate', adminScController.regenerateEventFeedToken);
+
 // ---> NEUE ROUTE FÜR DEN S3 DOWNLOAD <---
 router.get('/statistics/:id/download', adminScController.downloadStatisticArchive);
 

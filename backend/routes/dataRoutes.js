@@ -48,6 +48,7 @@ router.get('/events', authMiddleware, dataController.getEvents);
 router.get('/economic-statistics', dataController.getEconomicStatistics);
 router.get('/economic-statistics/countries', dataController.getUniqueStatCountries);
 router.post('/generate-draft-from-content', dataController.generateDraftFromContent);
+router.patch('/account-intelligence/articles/:articleId/status', dataController.updateAccountIntelligenceStatus);
 router.get('/account-intelligence', dataController.getAccountIntelligence);
 router.get('/notifications/count', dataController.getNotificationCounts);
 router.get('/monitor-entries', dataController.getMonitorEntries);

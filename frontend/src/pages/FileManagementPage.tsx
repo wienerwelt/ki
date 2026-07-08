@@ -1,3 +1,4 @@
+// frontend/src/pages/FileManagementPage.tsx
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box, Typography, Button, CircularProgress, Alert,
@@ -5,7 +6,8 @@ import {
   IconButton, Tooltip, TextField, InputAdornment, LinearProgress, TableSortLabel, Chip,
   Dialog, DialogActions, DialogContent, DialogTitle, Stack,
   Select, MenuItem, FormControl, InputLabel, DialogContentText,
-  useTheme, useMediaQuery, Card, CardContent, CardActions, Divider
+  useTheme, useMediaQuery, Card, CardContent, CardActions, Divider,
+  Switch, FormControlLabel
 } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../apiClient';
@@ -24,6 +26,8 @@ import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import ImageIcon from '@mui/icons-material/Image';
 import DescriptionIcon from '@mui/icons-material/Description';
 import AssessmentIcon from '@mui/icons-material/Assessment';
+import LinkIcon from '@mui/icons-material/Link';
+import LinkOffIcon from '@mui/icons-material/LinkOff';
 
 interface PartnerFile {
   id: string;
@@ -34,6 +38,10 @@ interface PartnerFile {
   business_partner_name?: string;
   description?: string | null;
   tags?: string[] | null;
+  public_link_enabled?: boolean;
+  public_token_preview?: string | null;
+  public_download_count?: number;
+  public_link_created_at?: string | null;
 }
 interface BusinessPartner {
   id: string;
@@ -51,6 +59,27 @@ const formatFileSize = (bytes: number | null | undefined, decimals = 2) => {
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+};
+
+const PUBLIC_DIRECT_LINK_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'odf']);
+
+const getFileExtension = (filename: string | null | undefined) => {
+  const clean = String(filename || '').trim().toLowerCase();
+  const idx = clean.lastIndexOf('.');
+  return idx >= 0 ? clean.slice(idx + 1) : '';
+};
+
+const canFilenameHavePublicDirectLink = (filename: string | null | undefined) => PUBLIC_DIRECT_LINK_EXTENSIONS.has(getFileExtension(filename));
+const canHavePublicDirectLink = (file: Pick<PartnerFile, 'filename'>) => canFilenameHavePublicDirectLink(file.filename);
+
+const copyToClipboardWithFallback = async (value: string) => {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    window.prompt('Geheimer Direktlink – bitte kopieren:', value);
+    return false;
+  }
 };
 
 const getFileIcon = (fileType: string) => {
@@ -93,6 +122,7 @@ const FileManagementPage: React.FC = () => {
   const [fileToUpload, setFileToUpload] = useState<File | null>(null);
   const [fileDescription, setFileDescription] = useState('');
   const [fileTags, setFileTags] = useState('');
+  const [createPublicLinkAfterUpload, setCreatePublicLinkAfterUpload] = useState(false);
 
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>(''); 
@@ -104,6 +134,7 @@ const FileManagementPage: React.FC = () => {
   const [shareText, setShareText] = useState('');
   const [shareCategory, setShareCategory] = useState('');
   const [sharing, setSharing] = useState(false);
+  const [publicLinkBusyFileId, setPublicLinkBusyFileId] = useState<string | null>(null);
   const [categories, setCategories] = useState<Category[]>([]); 
 
   // --- NEU: Edit State ---
@@ -169,11 +200,17 @@ const FileManagementPage: React.FC = () => {
     setFileToUpload(null);
     setFileDescription('');
     setFileTags('');
+    setCreatePublicLinkAfterUpload(false);
     setSelectedPartnerId('');
   };
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) setFileToUpload(file);
+    if (file) {
+      setFileToUpload(file);
+      if (!canFilenameHavePublicDirectLink(file.name)) {
+        setCreatePublicLinkAfterUpload(false);
+      }
+    }
   };
   const handleFileUpload = async () => {
     if (!fileToUpload) return;
@@ -184,8 +221,9 @@ const FileManagementPage: React.FC = () => {
     setUploading(true);
     setError(null);
 
+    const selectedFile = fileToUpload;
     const formData = new FormData();
-    formData.append('file', fileToUpload);
+    formData.append('file', selectedFile);
     formData.append('description', fileDescription);
     formData.append('tags', fileTags);
     if (isAdmin) {
@@ -193,11 +231,38 @@ const FileManagementPage: React.FC = () => {
     }
 
     try {
-      await apiClient.post('/api/files/upload', formData);
+      const uploadResponse = await apiClient.post('/api/files/upload', formData);
+      const uploadedFile = uploadResponse.data?.file;
+      let publicLinkCreated = false;
+
+      if (createPublicLinkAfterUpload && uploadedFile?.id) {
+        const uploadedPartnerFile: PartnerFile = {
+          ...uploadedFile,
+          id: uploadedFile.id,
+          filename: uploadedFile.filename || selectedFile.name,
+          file_type: uploadedFile.file_type || selectedFile.type || '',
+          file_size: uploadedFile.file_size || selectedFile.size,
+          created_at: uploadedFile.created_at || new Date().toISOString(),
+          public_link_enabled: false,
+        };
+
+        const createdUrl = await handleCreatePublicLink(uploadedPartnerFile, {
+          skipConfirm: true,
+          refresh: false,
+          quiet: true,
+        });
+        publicLinkCreated = !!createdUrl;
+      }
+
       handleCloseUploadDialog();
       await fetchFiles();
       await fetchBusinessPartnerData();
-      showSnackbar('Datei erfolgreich hochgeladen.', 'success');
+      showSnackbar(
+        publicLinkCreated
+          ? 'Datei hochgeladen, geheimer Direktlink erstellt und kopiert.'
+          : 'Datei erfolgreich hochgeladen.',
+        'success'
+      );
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Fehler beim Hochladen der Datei.');
     } finally {
@@ -257,6 +322,83 @@ const FileManagementPage: React.FC = () => {
       window.open(url, '_blank');
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Fehler beim Herunterladen der Datei.');
+    }
+  };
+
+  const handleCreatePublicLink = async (
+    file: PartnerFile,
+    options: { skipConfirm?: boolean; refresh?: boolean; quiet?: boolean } = {}
+  ): Promise<string | null> => {
+    if (!canHavePublicDirectLink(file)) {
+      if (!options.quiet) {
+        showSnackbar('Externe Direktlinks sind nur für PDF, DOCX, XLSX, PPTX, DOC, XLS, PPT und ODF erlaubt.', 'warning');
+      }
+      return null;
+    }
+
+    const confirmText = file.public_link_enabled
+      ? 'Einen neuen geheimen Direktlink erstellen? Der bisherige Link wird dadurch sofort ungültig.'
+      : 'Einen geheimen externen Direktlink für diese Datei erstellen? Jeder mit diesem Link kann die Datei ohne Login herunterladen.';
+
+    if (!options.skipConfirm && !window.confirm(confirmText)) return null;
+
+    setPublicLinkBusyFileId(file.id);
+    try {
+      const response = await apiClient.post(`/api/files/${file.id}/public-link`);
+      const { url, file: updatedFile } = response.data || {};
+      if (!url) throw new Error('Direktlink fehlt.');
+
+      const copied = await copyToClipboardWithFallback(url);
+      const mergedFile = {
+        ...file,
+        ...(updatedFile || {}),
+        public_link_enabled: true,
+      };
+
+      setFiles(prev => prev.map(item => item.id === file.id ? { ...item, ...mergedFile } : item));
+      setFileToEdit(prev => prev?.id === file.id ? { ...prev, ...mergedFile } : prev);
+
+      if (options.refresh !== false) {
+        await fetchFiles();
+      }
+
+      if (!options.quiet) {
+        showSnackbar(copied ? 'Geheimer Direktlink wurde erstellt und kopiert.' : 'Geheimer Direktlink wurde erstellt.', 'success');
+      }
+
+      return url;
+    } catch (err: any) {
+      showSnackbar(err?.response?.data?.message || 'Direktlink konnte nicht erstellt werden.', 'error');
+      return null;
+    } finally {
+      setPublicLinkBusyFileId(null);
+    }
+  };
+
+  const handleDisablePublicLink = async (file: PartnerFile) => {
+    if (!window.confirm('Öffentlichen Direktlink deaktivieren? Der bisherige Link funktioniert danach nicht mehr.')) return;
+
+    setPublicLinkBusyFileId(file.id);
+    try {
+      const response = await apiClient.delete(`/api/files/${file.id}/public-link`);
+      const updatedFile = response.data?.file;
+      const mergedFile = {
+        ...file,
+        ...(updatedFile || {}),
+        public_link_enabled: false,
+        public_token_preview: null,
+        public_link_created_at: null,
+      };
+
+      setFiles(prev => prev.map(item => item.id === file.id ? { ...item, ...mergedFile } : item));
+      setFileToEdit(prev => prev?.id === file.id ? { ...prev, ...mergedFile } : prev);
+
+      await fetchFiles();
+      showSnackbar('Öffentlicher Direktlink wurde deaktiviert.', 'success');
+    } catch (err: any) {
+      showSnackbar(err?.response?.data?.message || 'Direktlink konnte nicht deaktiviert werden.', 'error');
+    } finally {
+      setPublicLinkBusyFileId(null);
     }
   };
 
@@ -435,6 +577,27 @@ const FileManagementPage: React.FC = () => {
               {fileToUpload ? fileToUpload.name : <Box sx={{textAlign:'center'}}><UploadFileIcon sx={{fontSize: 40, color: 'text.secondary'}} /><br/>Datei auswählen</Box>}
               <input type="file" hidden onChange={handleFileSelect} />
             </Button>
+
+            {fileToUpload && isUploader && (
+              <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={createPublicLinkAfterUpload}
+                      onChange={(e) => setCreatePublicLinkAfterUpload(e.target.checked)}
+                      disabled={!canFilenameHavePublicDirectLink(fileToUpload.name)}
+                    />
+                  }
+                  label="Nach Upload geheimen externen Direktlink erstellen und kopieren"
+                />
+                <Typography variant="caption" color="text.secondary" display="block">
+                  {canFilenameHavePublicDirectLink(fileToUpload.name)
+                    ? 'Der Link ist nicht öffentlich gelistet. Jeder mit dem geheimen Link kann die Datei ohne Login herunterladen.'
+                    : 'Externe Direktlinks sind nur für PDF, DOCX, XLSX, PPTX, DOC, XLS, PPT und ODF erlaubt.'}
+                </Typography>
+              </Paper>
+            )}
+
             <TextField label="Beschreibung" fullWidth variant="outlined" value={fileDescription} onChange={(e) => setFileDescription(e.target.value)} />
             <TextField label="Tags (Komma getrennt)" fullWidth variant="outlined" value={fileTags} onChange={(e) => setFileTags(e.target.value)} />
           </Stack>
@@ -455,6 +618,54 @@ const FileManagementPage: React.FC = () => {
                   <TextField label="Dateiname" fullWidth variant="outlined" value={editFilename} onChange={(e) => setEditFilename(e.target.value)} required />
                   <TextField label="Beschreibung" fullWidth variant="outlined" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} />
                   <TextField label="Tags (Komma getrennt)" fullWidth variant="outlined" value={editTags} onChange={(e) => setEditTags(e.target.value)} />
+
+                  {fileToEdit && (
+                    <Paper variant="outlined" sx={{ p: 2 }}>
+                      <Stack spacing={1.5}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
+                          <Typography variant="subtitle2">Externer geheimer Direktlink</Typography>
+                          <Chip
+                            label={fileToEdit.public_link_enabled ? `Aktiv${fileToEdit.public_download_count ? ` · ${fileToEdit.public_download_count} DL` : ''}` : 'Inaktiv'}
+                            color={fileToEdit.public_link_enabled ? 'success' : 'default'}
+                            size="small"
+                            variant="outlined"
+                          />
+                        </Box>
+
+                        {canHavePublicDirectLink(fileToEdit) ? (
+                          <Typography variant="caption" color="text.secondary">
+                            Der Link ist nicht öffentlich gelistet. Beim Erstellen wird ein neuer geheimer Link erzeugt und der alte Link sofort ungültig.
+                          </Typography>
+                        ) : (
+                          <Alert severity="warning">
+                            Für diese Datei sind externe Direktlinks nicht erlaubt. Erlaubt sind nur PDF, DOCX, XLSX, PPTX, DOC, XLS, PPT und ODF.
+                          </Alert>
+                        )}
+
+                        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                          <Button
+                            variant={fileToEdit.public_link_enabled ? 'outlined' : 'contained'}
+                            startIcon={<LinkIcon />}
+                            onClick={() => handleCreatePublicLink(fileToEdit)}
+                            disabled={publicLinkBusyFileId === fileToEdit.id || !canHavePublicDirectLink(fileToEdit)}
+                          >
+                            {fileToEdit.public_link_enabled ? 'Neuen Link erzeugen & kopieren' : 'Externen Link erzeugen & kopieren'}
+                          </Button>
+                          {fileToEdit.public_link_enabled && (
+                            <Button
+                              variant="outlined"
+                              color="warning"
+                              startIcon={<LinkOffIcon />}
+                              onClick={() => handleDisablePublicLink(fileToEdit)}
+                              disabled={publicLinkBusyFileId === fileToEdit.id}
+                            >
+                              Deaktivieren
+                            </Button>
+                          )}
+                        </Stack>
+                      </Stack>
+                    </Paper>
+                  )}
               </Stack>
           </DialogContent>
           <DialogActions>
@@ -529,7 +740,12 @@ const FileManagementPage: React.FC = () => {
                         <TableCell component="th" scope="row">
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                 {getFileIcon(file.file_type)}
-                                {file.filename}
+                                <Box sx={{ minWidth: 0 }}>
+                                    <Typography variant="body2" noWrap>{file.filename}</Typography>
+                                    {file.public_link_enabled && (
+                                        <Chip label={`Extern aktiv${file.public_download_count ? ` · ${file.public_download_count} DL` : ''}`} size="small" color="success" variant="outlined" sx={{ mt: 0.5, height: 20 }} />
+                                    )}
+                                </Box>
                             </Box>
                         </TableCell>
                         {isAdmin && (
@@ -564,6 +780,24 @@ const FileManagementPage: React.FC = () => {
                                     <IconButton color="primary" onClick={() => handleOpenShare(file)} size="small">
                                         <ShareIcon fontSize="small" />
                                     </IconButton>
+                                </Tooltip>
+                            )}
+                            {isUploader && (
+                                <Tooltip title={canHavePublicDirectLink(file) ? (file.public_link_enabled ? 'Neuen geheimen Direktlink erstellen und kopieren' : 'Geheimen externen Direktlink erstellen') : 'Externe Direktlinks nur für PDF, DOCX, XLSX, PPTX, DOC, XLS, PPT, ODF'}>
+                                    <span>
+                                        <IconButton color={file.public_link_enabled ? 'success' : 'primary'} onClick={() => handleCreatePublicLink(file)} size="small" disabled={publicLinkBusyFileId === file.id || !canHavePublicDirectLink(file)}>
+                                            <LinkIcon fontSize="small" />
+                                        </IconButton>
+                                    </span>
+                                </Tooltip>
+                            )}
+                            {isUploader && file.public_link_enabled && (
+                                <Tooltip title="Geheimen Direktlink deaktivieren">
+                                    <span>
+                                        <IconButton color="warning" onClick={() => handleDisablePublicLink(file)} size="small" disabled={publicLinkBusyFileId === file.id}>
+                                            <LinkOffIcon fontSize="small" />
+                                        </IconButton>
+                                    </span>
                                 </Tooltip>
                             )}
                             <Tooltip title="Download">
@@ -615,6 +849,9 @@ const FileManagementPage: React.FC = () => {
                                         {file.tags.map(tag => <Chip key={tag} label={tag} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />)}
                                     </Box>
                                 )}
+                                {file.public_link_enabled && (
+                                    <Chip label={`Extern aktiv${file.public_download_count ? ` · ${file.public_download_count} DL` : ''}`} size="small" color="success" variant="outlined" sx={{ mt: 1 }} />
+                                )}
                             </CardContent>
                             <Divider />
                             <CardActions sx={{ justifyContent: 'flex-end' }}>
@@ -626,6 +863,16 @@ const FileManagementPage: React.FC = () => {
                                 {isUploader && (
                                     <IconButton onClick={() => handleOpenShare(file)} size="small" color="primary">
                                         <ShareIcon />
+                                    </IconButton>
+                                )}
+                                {isUploader && (
+                                    <IconButton onClick={() => handleCreatePublicLink(file)} size="small" color={file.public_link_enabled ? 'success' : 'primary'} disabled={publicLinkBusyFileId === file.id || !canHavePublicDirectLink(file)}>
+                                        <LinkIcon />
+                                    </IconButton>
+                                )}
+                                {isUploader && file.public_link_enabled && (
+                                    <IconButton onClick={() => handleDisablePublicLink(file)} size="small" color="warning" disabled={publicLinkBusyFileId === file.id}>
+                                        <LinkOffIcon />
                                     </IconButton>
                                 )}
                                 <IconButton onClick={() => handleFileDownload(file.id)} size="small">

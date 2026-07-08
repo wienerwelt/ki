@@ -1,7 +1,8 @@
+// frontend/src/components/GlobalSearchBar.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Autocomplete, TextField, InputAdornment, IconButton, Tooltip, 
+    Autocomplete, TextField, InputAdornment, IconButton, Tooltip,
     Box, Typography, Chip, CircularProgress
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
@@ -25,18 +26,24 @@ interface SearchResult {
     summary: string | null;
     type: 'scraped' | 'ai' | 'tracked_account_news' | 'file' | 'community_post';
     url: string | null;
-    published_date: string;
+    published_date: string | null;
+    category?: string | null;
+    source_identifier?: string | null;
+    owner_business_partner_id?: string | null;
+    owner_business_partner_name?: string | null;
+    visibility_scope?: 'global' | 'own_mandant' | 'other_mandant' | string | null;
+    admin_notice?: string | null;
 }
 
 const GlobalSearchBar: React.FC = () => {
     const navigate = useNavigate();
     const theme = useTheme();
-    
+
     const [open, setOpen] = useState(false);
     const [options, setOptions] = useState<SearchResult[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [loading, setLoading] = useState(false);
-    
+
     const debounceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
@@ -61,8 +68,8 @@ const GlobalSearchBar: React.FC = () => {
                     setOptions([]);
                 }
             } catch (err) {
-                console.error("Search error:", err);
-                setOptions([]); 
+                console.error('Search error:', err);
+                setOptions([]);
             } finally {
                 setLoading(false);
             }
@@ -108,34 +115,64 @@ const GlobalSearchBar: React.FC = () => {
                 window.open(value.url, '_blank', 'noopener,noreferrer');
             }
         }
+
         setOpen(false);
     };
 
     const getIcon = (type: string) => {
         switch (type) {
-            case 'file': return <FolderIcon sx={{ color: 'info.main' }} />;
-            case 'community_post': return <ForumIcon sx={{ color: 'warning.main' }} />;
-            case 'ai': return <SmartToyIcon sx={{ color: 'secondary.main' }} />;
-            case 'tracked_account_news': return <BusinessIcon sx={{ color: 'primary.main' }} />;
-            default: return <ArticleIcon sx={{ color: 'text.secondary' }} />;
+            case 'file':
+                return <FolderIcon sx={{ color: 'info.main' }} />;
+            case 'community_post':
+                return <ForumIcon sx={{ color: 'warning.main' }} />;
+            case 'ai':
+                return <SmartToyIcon sx={{ color: 'secondary.main' }} />;
+            case 'tracked_account_news':
+                return <BusinessIcon sx={{ color: 'primary.main' }} />;
+            default:
+                return <ArticleIcon sx={{ color: 'text.secondary' }} />;
         }
     };
 
     const getTypeLabel = (type: string) => {
         switch (type) {
-            case 'file': return 'Datei';
-            case 'community_post': return 'Community';
-            case 'ai': return 'KI';
-            case 'tracked_account_news': return 'News';
-            default: return 'Web';
+            case 'file':
+                return 'Datei';
+            case 'community_post':
+                return 'Community';
+            case 'ai':
+                return 'KI';
+            case 'tracked_account_news':
+                return 'Account-News';
+            default:
+                return 'Web';
         }
+    };
+
+    const formatDate = (dateValue: string | null | undefined) => {
+        if (!dateValue) return null;
+        const date = new Date(dateValue);
+        if (Number.isNaN(date.getTime())) return null;
+        return date.toLocaleDateString();
+    };
+
+    const getVisibilityLabel = (option: SearchResult) => {
+        if (option.admin_notice) return option.admin_notice;
+
+        if (option.visibility_scope === 'own_mandant') return 'Eigener Mandant';
+        if (option.visibility_scope === 'other_mandant' && option.owner_business_partner_name) {
+            return `Mandant: ${option.owner_business_partner_name}`;
+        }
+        if (option.visibility_scope === 'global') return 'Global';
+
+        return null;
     };
 
     return (
         <Autocomplete
             id="global-search-bar"
             freeSolo
-            disableClearable // WICHTIG: Verhindert, dass MUI ein zweites, schwebendes X-Icon hinzufügt!
+            disableClearable
             open={open}
             onOpen={() => { if (inputValue.trim().length >= 3) setOpen(true); }}
             onClose={() => setOpen(false)}
@@ -146,9 +183,8 @@ const GlobalSearchBar: React.FC = () => {
             getOptionLabel={(option) => typeof option === 'string' ? option : option.title}
             loading={loading}
             filterOptions={(x) => x}
-            noOptionsText={inputValue.trim().length < 3 ? "Tippen Sie mind. 3 Zeichen..." : "Keine Treffer gefunden"}
-            sx={{ width: '100%' }} // Nimmt nun exakt die Breite ein, die das Layout vorgibt
-            
+            noOptionsText={inputValue.trim().length < 3 ? 'Tippen Sie mind. 3 Zeichen...' : 'Keine Treffer gefunden'}
+            sx={{ width: '100%' }}
             renderInput={(params) => (
                 <TextField
                     {...params}
@@ -165,7 +201,6 @@ const GlobalSearchBar: React.FC = () => {
                             display: 'flex',
                             alignItems: 'center',
                             gap: 1,
-                            // Das Styling liegt nun direkt auf dem Input-Feld, was den Wrapper überflüssig macht
                             backgroundColor: alpha(theme.palette.common.white, 0.15),
                             borderRadius: 1,
                             '&:hover': {
@@ -178,9 +213,8 @@ const GlobalSearchBar: React.FC = () => {
                             </InputAdornment>
                         ),
                         endAdornment: (
-                            <InputAdornment position="end" sx={{ ml: 0 }}> 
+                            <InputAdornment position="end" sx={{ ml: 0 }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'nowrap', gap: 0.5 }}>
-                                    
                                     {inputValue.length > 0 && (
                                         <Tooltip title="Suche leeren">
                                             <IconButton
@@ -193,9 +227,9 @@ const GlobalSearchBar: React.FC = () => {
                                             </IconButton>
                                         </Tooltip>
                                     )}
-                                    
+
                                     {loading ? <CircularProgress color="inherit" size={16} sx={{ mx: 0.5 }} /> : null}
-                                    
+
                                     <Tooltip title="KI-Frage stellen (Ctrl+Enter)">
                                         <span>
                                             <IconButton
@@ -203,7 +237,7 @@ const GlobalSearchBar: React.FC = () => {
                                                 onClick={handleAiSearch}
                                                 disabled={!inputValue.trim()}
                                                 size="small"
-                                                sx={{ 
+                                                sx={{
                                                     p: 0.5,
                                                     bgcolor: inputValue.trim() ? alpha(theme.palette.common.white, 0.15) : 'transparent',
                                                     '&:hover': {
@@ -215,17 +249,18 @@ const GlobalSearchBar: React.FC = () => {
                                             </IconButton>
                                         </span>
                                     </Tooltip>
-
                                 </Box>
                             </InputAdornment>
                         )
                     }}
                 />
             )}
-            
             renderOption={(props, option) => {
                 if (typeof option === 'string') return null;
+
                 const { key, ...otherProps } = props;
+                const dateLabel = formatDate(option.published_date);
+                const visibilityLabel = getVisibilityLabel(option);
 
                 return (
                     <li key={key} {...otherProps}>
@@ -233,22 +268,38 @@ const GlobalSearchBar: React.FC = () => {
                             <Box sx={{ mr: 2, display: 'flex' }}>
                                 {getIcon(option.type)}
                             </Box>
+
                             <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
                                 <Typography variant="body2" noWrap fontWeight="medium">
                                     {option.title}
                                 </Typography>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <Chip 
-                                        label={getTypeLabel(option.type)} 
-                                        size="small" 
-                                        variant="outlined" 
-                                        sx={{ height: 16, fontSize: '0.6rem' }} 
+
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                    <Chip
+                                        label={getTypeLabel(option.type)}
+                                        size="small"
+                                        variant="outlined"
+                                        sx={{ height: 16, fontSize: '0.6rem' }}
                                     />
-                                    <Typography variant="caption" color="text.secondary" noWrap>
-                                        {new Date(option.published_date).toLocaleDateString()}
-                                    </Typography>
+
+                                    {visibilityLabel && (
+                                        <Chip
+                                            label={visibilityLabel}
+                                            size="small"
+                                            color={option.admin_notice ? 'warning' : 'default'}
+                                            variant={option.admin_notice ? 'filled' : 'outlined'}
+                                            sx={{ height: 16, fontSize: '0.6rem' }}
+                                        />
+                                    )}
+
+                                    {dateLabel && (
+                                        <Typography variant="caption" color="text.secondary" noWrap>
+                                            {dateLabel}
+                                        </Typography>
+                                    )}
                                 </Box>
                             </Box>
+
                             {!option.url?.startsWith('/') && (
                                 <OpenInNewIcon fontSize="small" sx={{ color: 'text.disabled', ml: 1 }} />
                             )}

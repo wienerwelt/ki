@@ -71,27 +71,47 @@ const AdminSocialMediaGenerator = lazy(() => import('./pages/AdminSocialMediaGen
 const AdminDirectoryPage = lazy(() => import('./pages/AdminDirectoryPage'));
 
 const PageLoader: React.FC = () => (
-  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '55vh' }}>
+  <Box
+    sx={{
+      width: '100%',
+      minHeight: { xs: 96, sm: 140 },
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      bgcolor: 'transparent',
+      pointerEvents: 'none',
+    }}
+  >
+    <CircularProgress size={28} />
+  </Box>
+);
+
+const InitialLoader: React.FC = () => (
+  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
     <CircularProgress />
   </Box>
 );
+
+const LazyRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <Suspense fallback={<PageLoader />}>{children}</Suspense>
+);
+
+const lazyRoute = (element: React.ReactElement) => <LazyRoute>{element}</LazyRoute>;
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
   const { user, isLoading } = useAuth();
 
   if (isLoading) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <CircularProgress />
-      </Box>
-    );
+    return <InitialLoader />;
   }
 
   return user ? (
-    <DashboardLayout>
-      <Outlet />
-    </DashboardLayout>
+    <Suspense fallback={<PageLoader />}>
+      <DashboardLayout>
+        <Outlet />
+      </DashboardLayout>
+    </Suspense>
   ) : (
     <Navigate to="/login" replace />
   );
@@ -189,11 +209,7 @@ function App() {
   }, [businessPartner, isLoading, themeMode]);
 
   if (!currentTheme) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <CircularProgress />
-      </Box>
-    );
+    return <InitialLoader />;
   }
 
   const AnyThemeProvider = ThemeProvider as any;
@@ -202,83 +218,81 @@ function App() {
     <AnyThemeProvider theme={currentTheme}>
       <CssBaseline />
       <Router>
-        <Suspense fallback={<PageLoader />}>
-          <Routes>
-            {/* Öffentliche Routen */}
-            <Route path="/" element={<PublicPortalPage />} />
-            <Route path="/login" element={<PublicPortalPage />} />
-            <Route path="/register" element={<PublicPortalPage isRegister={true} />} />
-            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-            <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
-            <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
-            <Route path="/terms" element={<TermsPage />} />
-            <Route path="/privacy" element={<PrivacyPage />} />
-            <Route path="/disclaimer" element={<DisclaimerPage />} />
-            <Route path="/cookie-settings" element={<CookieSettingsPage />} />
-            <Route path="/newsletter/confirmed" element={<NewsletterConfirmed />} />
-            <Route path="/p/:userId" element={<PublicProfileCard />} />
-            <Route path="/invite/:bpId" element={<PublicBpCard />} />
+        <Routes>
+          {/* Öffentliche Routen */}
+          <Route path="/" element={lazyRoute(<PublicPortalPage />)} />
+          <Route path="/login" element={lazyRoute(<PublicPortalPage />)} />
+          <Route path="/register" element={lazyRoute(<PublicPortalPage isRegister={true} />)} />
+          <Route path="/forgot-password" element={lazyRoute(<ForgotPasswordPage />)} />
+          <Route path="/reset-password/:token" element={lazyRoute(<ResetPasswordPage />)} />
+          <Route path="/verify-email/:token" element={lazyRoute(<VerifyEmailPage />)} />
+          <Route path="/terms" element={lazyRoute(<TermsPage />)} />
+          <Route path="/privacy" element={lazyRoute(<PrivacyPage />)} />
+          <Route path="/disclaimer" element={lazyRoute(<DisclaimerPage />)} />
+          <Route path="/cookie-settings" element={lazyRoute(<CookieSettingsPage />)} />
+          <Route path="/newsletter/confirmed" element={lazyRoute(<NewsletterConfirmed />)} />
+          <Route path="/p/:userId" element={lazyRoute(<PublicProfileCard />)} />
+          <Route path="/invite/:bpId" element={lazyRoute(<PublicBpCard />)} />
 
-            {/* Dynamische Route für Partner-Slugs, z. B. /vfa */}
-            <Route path="/:partnerSlug" element={<PublicPortalPage />} />
+          {/* Dynamische Route für Partner-Slugs, z. B. /vfa */}
+          <Route path="/:partnerSlug" element={lazyRoute(<PublicPortalPage />)} />
 
-            {/* Geschützte Dashboard-Routen */}
-            <Route element={<ProtectedRoutes />}>
-              <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/profile" element={<ProfilePage />} />
-              <Route path="/search" element={<SearchResultsPage />} />
-              <Route path="/ask" element={<AiAskPage />} />
-              <Route path="/trusted-sources" element={<TrustedSourcesPage />} />
-              <Route path="/feedback" element={<FeedbackCenterPage />} />
-              <Route path="/files" element={<FileManagementPage />} />
-              <Route path="/funding-search" element={<FundingSearchPage />} />
-              <Route path="/funding-detail/:id" element={<FundingDetailPage />} />
-              <Route path="/community" element={<CommunityPage />} />
-              <Route path="/directory" element={<InternalDirectoryPage />} />
+          {/* Geschützte Dashboard-Routen */}
+          <Route element={<ProtectedRoutes />}>
+            <Route path="/dashboard" element={lazyRoute(<DashboardPage />)} />
+            <Route path="/profile" element={lazyRoute(<ProfilePage />)} />
+            <Route path="/search" element={lazyRoute(<SearchResultsPage />)} />
+            <Route path="/ask" element={lazyRoute(<AiAskPage />)} />
+            <Route path="/trusted-sources" element={lazyRoute(<TrustedSourcesPage />)} />
+            <Route path="/feedback" element={lazyRoute(<FeedbackCenterPage />)} />
+            <Route path="/files" element={lazyRoute(<FileManagementPage />)} />
+            <Route path="/funding-search" element={lazyRoute(<FundingSearchPage />)} />
+            <Route path="/funding-detail/:id" element={lazyRoute(<FundingDetailPage />)} />
+            <Route path="/community" element={lazyRoute(<CommunityPage />)} />
+            <Route path="/directory" element={lazyRoute(<InternalDirectoryPage />)} />
 
-              {/* Assistenz & Admin Routen */}
-              <Route element={<BpStaffAllowedRoutes />}>
-                <Route path="/admin/users" element={<AdminUserManagementPage />} />
-                <Route path="/admin/users/:businessPartnerId" element={<AdminUserManagementPage />} />
-                <Route path="/admin/actions" element={<AdminBpActionsPage />} />
-                <Route path="/admin/surveys" element={<AdminSurveysPage />} />
-                <Route path="/admin/community" element={<AdminCommunityPage />} />
-                <Route path="/admin/legal-monitor" element={<AdminLegalMonitorPage />} />
-                <Route path="/admin/briefing-editorial" element={<AdminEditorialBriefingPage />} />
-              </Route>
-
-              {/* Admin-Only Routen */}
-              <Route path="/admin" element={<AdminRoutes />}>
-                <Route index element={<AdminDashboardPage />} />
-                <Route path="business-partners" element={<AdminBusinessPartnersPage />} />
-                <Route path="business-partners/:bpId/accounts" element={<AdminBpAccountsPage />} />
-                <Route path="tracked-articles" element={<AdminBpTrackedArticlesPage />} />
-                <Route path="accounts/:accountId/competitors" element={<AdminBpCompetitorsPage />} />
-                <Route path="widget-types" element={<AdminWidgetTypesPage />} />
-                <Route path="bp-widget-access" element={<AdminBpWidgetAccessPage />} />
-                <Route path="bp-widget-access/:bpId" element={<AdminBpWidgetAccessPage />} />
-                <Route path="scraped-content" element={<AdminScrapedContentPage />} />
-                <Route path="scraping-rules" element={<AdminScrapingRulesPage />} />
-                <Route path="ai-prompt-rules" element={<AdminAIPromptRulesPage />} />
-                <Route path="ai-content" element={<AdminAIContentPage />} />
-                <Route path="categories" element={<AdminCategoriesPage />} />
-                <Route path="tags" element={<AdminTagsPage />} />
-                <Route path="monitor" element={<AdminMonitorPage />} />
-                <Route path="statistics" element={<AdminStatisticsPage />} />
-                <Route path="advertisements" element={<AdminAdvertisementsPage />} />
-                <Route path="cronjobs" element={<AdminCronjobsPage />} />
-                <Route path="sources" element={<AdminSourcesPage />} />
-                <Route path="events" element={<AdminEventsPage />} />
-                <Route path="funding" element={<AdminFundingPage />} />
-                <Route path="social-media" element={<AdminSocialMediaGenerator />} />
-                <Route path="directory" element={<AdminDirectoryPage />} />
-              </Route>
+            {/* Assistenz & Admin Routen */}
+            <Route element={<BpStaffAllowedRoutes />}>
+              <Route path="/admin/users" element={lazyRoute(<AdminUserManagementPage />)} />
+              <Route path="/admin/users/:businessPartnerId" element={lazyRoute(<AdminUserManagementPage />)} />
+              <Route path="/admin/actions" element={lazyRoute(<AdminBpActionsPage />)} />
+              <Route path="/admin/surveys" element={lazyRoute(<AdminSurveysPage />)} />
+              <Route path="/admin/community" element={lazyRoute(<AdminCommunityPage />)} />
+              <Route path="/admin/legal-monitor" element={lazyRoute(<AdminLegalMonitorPage />)} />
+              <Route path="/admin/briefing-editorial" element={lazyRoute(<AdminEditorialBriefingPage />)} />
             </Route>
 
-            {/* Catch-All */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Suspense>
+            {/* Admin-Only Routen */}
+            <Route path="/admin" element={<AdminRoutes />}>
+              <Route index element={lazyRoute(<AdminDashboardPage />)} />
+              <Route path="business-partners" element={lazyRoute(<AdminBusinessPartnersPage />)} />
+              <Route path="business-partners/:bpId/accounts" element={lazyRoute(<AdminBpAccountsPage />)} />
+              <Route path="tracked-articles" element={lazyRoute(<AdminBpTrackedArticlesPage />)} />
+              <Route path="accounts/:accountId/competitors" element={lazyRoute(<AdminBpCompetitorsPage />)} />
+              <Route path="widget-types" element={lazyRoute(<AdminWidgetTypesPage />)} />
+              <Route path="bp-widget-access" element={lazyRoute(<AdminBpWidgetAccessPage />)} />
+              <Route path="bp-widget-access/:bpId" element={lazyRoute(<AdminBpWidgetAccessPage />)} />
+              <Route path="scraped-content" element={lazyRoute(<AdminScrapedContentPage />)} />
+              <Route path="scraping-rules" element={lazyRoute(<AdminScrapingRulesPage />)} />
+              <Route path="ai-prompt-rules" element={lazyRoute(<AdminAIPromptRulesPage />)} />
+              <Route path="ai-content" element={lazyRoute(<AdminAIContentPage />)} />
+              <Route path="categories" element={lazyRoute(<AdminCategoriesPage />)} />
+              <Route path="tags" element={lazyRoute(<AdminTagsPage />)} />
+              <Route path="monitor" element={lazyRoute(<AdminMonitorPage />)} />
+              <Route path="statistics" element={lazyRoute(<AdminStatisticsPage />)} />
+              <Route path="advertisements" element={lazyRoute(<AdminAdvertisementsPage />)} />
+              <Route path="cronjobs" element={lazyRoute(<AdminCronjobsPage />)} />
+              <Route path="sources" element={lazyRoute(<AdminSourcesPage />)} />
+              <Route path="events" element={lazyRoute(<AdminEventsPage />)} />
+              <Route path="funding" element={lazyRoute(<AdminFundingPage />)} />
+              <Route path="social-media" element={lazyRoute(<AdminSocialMediaGenerator />)} />
+              <Route path="directory" element={lazyRoute(<AdminDirectoryPage />)} />
+            </Route>
+          </Route>
+
+          {/* Catch-All */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
 
         <CookieBanner />
       </Router>

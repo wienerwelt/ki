@@ -1,5 +1,6 @@
 // backend/controllers/adminScrapedContentController.js
 const db = require('../config/db');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { GetObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
@@ -502,3 +503,215 @@ exports.downloadStatisticArchive = async (req, res) => {
         res.status(500).json({ message: 'Interner Serverfehler beim Bereitstellen der Datei.' });
     }
 };
+
+// ==============================================================================
+// EXTERNE EVENT-FEEDS (Admin-Verwaltung)
+// ==============================================================================
+const EVENT_FEED_DEFAULT_CATEGORIES = ['businesspartner_events', 'fleet_events'];
+const EVENT_FEED_DEFAULT_REGIONS = ['AT', 'CH', 'DE'];
+
+const generatePlainFeedToken = () => `mf_${crypto.randomBytes(32).toString('base64url')}`;
+const hashFeedToken = (token) => crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
+const previewFeedToken = (token) => `${token.slice(0, 7)}...${token.slice(-6)}`;
+
+const normalizeStringArray = (value, fallback) => {
+    if (Array.isArray(value)) {
+        const clean = value.map(v => String(v).trim()).filter(Boolean);
+        return clean.length > 0 ? clean : fallback;
+    }
+    if (typeof value === 'string') {
+        const clean = value.split(',').map(v => v.trim()).filter(Boolean);
+        return clean.length > 0 ? clean : fallback;
+    }
+    return fallback;
+};
+
+const normalizeRegions = (value) => normalizeStringArray(value, EVENT_FEED_DEFAULT_REGIONS)
+    .map(v => v.toUpperCase())
+    .filter(v => /^[A-Z]{2,3}$/.test(v));
+
+const normalizeCategories = (value) => normalizeStringArray(value, EVENT_FEED_DEFAULT_CATEGORIES)
+    .map(v => v.toLowerCase())
+    .filter(v => /^[a-z0-9_-]+$/.test(v));
+
+const buildFeedUrls = (req, plainToken) => {
+    if (!plainToken) return {};
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    const host = req.get('x-forwarded-host') || req.get('host');
+    const baseUrl = `${proto}://${host}`.replace(/\/$/, '');
+    return {
+        rss_url: `${baseUrl}/api/public/v1/event-feed/${plainToken}.rss`,
+        json_url: `${baseUrl}/api/public/v1/event-feed/${plainToken}.json`,
+    };
+};
+
+const mapFeedRow = (row) => ({
+    id: row.id,
+    name: row.name,
+    feed_title: row.feed_title,
+    token_preview: row.token_preview,
+    categories: row.categories || EVENT_FEED_DEFAULT_CATEGORIES,
+    regions: row.regions || EVENT_FEED_DEFAULT_REGIONS,
+    include_global_events: row.include_global_events !== false,
+    is_active: row.is_active,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    last_used_at: row.last_used_at,
+    access_count: Number(row.access_count || 0),
+    revoked_at: row.revoked_at,
+});
+
+exports.getEventFeedTokens = async (req, res) => {
+    try {
+        const { rows } = await db.query(
+            `SELECT
+                id,
+                name,
+                feed_title,
+                token_preview,
+                categories,
+                regions,
+                include_global_events,
+                is_active,
+                created_at,
+                updated_at,
+                last_used_at,
+                access_count,
+                revoked_at
+             FROM public.event_feed_tokens
+             ORDER BY created_at DESC`
+        );
+        return res.json(rows.map(mapFeedRow));
+    } catch (err) {
+        console.error('Fehler beim Laden der Event-Feed-Tokens:', err.message);
+        return res.status(500).json({ message: 'Event-Feeds konnten nicht geladen werden.' });
+    }
+};
+
+exports.createEventFeedToken = async (req, res) => {
+    const plainToken = generatePlainFeedToken();
+    const tokenHash = hashFeedToken(plainToken);
+    const tokenPreview = previewFeedToken(plainToken);
+
+    const name = String(req.body?.name || 'Fuhrpark Event Feed').trim();
+    const feedTitle = String(req.body?.feed_title || name).trim();
+    const categories = normalizeCategories(req.body?.categories);
+    const regions = normalizeRegions(req.body?.regions);
+    const includeGlobalEvents = req.body?.include_global_events !== false;
+    const isActive = req.body?.is_active !== false;
+
+    try {
+        const { rows } = await db.query(
+            `INSERT INTO public.event_feed_tokens
+                (name, feed_title, token_hash, token_preview, categories, regions, include_global_events, is_active, created_by)
+             VALUES ($1, $2, $3, $4, $5::text[], $6::text[], $7, $8, $9)
+             RETURNING id, name, feed_title, token_preview, categories, regions, include_global_events, is_active,
+                       created_at, updated_at, last_used_at, access_count, revoked_at`,
+            [name, feedTitle, tokenHash, tokenPreview, categories, regions, includeGlobalEvents, isActive, req.user?.id || null]
+        );
+
+        return res.status(201).json({
+            ...mapFeedRow(rows[0]),
+            plain_token: plainToken,
+            ...buildFeedUrls(req, plainToken),
+        });
+    } catch (err) {
+        console.error('Fehler beim Erstellen des Event-Feed-Tokens:', err.message);
+        return res.status(500).json({ message: 'Event-Feed konnte nicht erstellt werden.' });
+    }
+};
+
+exports.updateEventFeedToken = async (req, res) => {
+    const { id } = req.params;
+    if (!isValidUUID(id)) return res.status(400).json({ message: 'Ungültige Feed-ID.' });
+
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ message: 'Name ist erforderlich.' });
+
+    const feedTitle = String(req.body?.feed_title || name).trim();
+    const categories = normalizeCategories(req.body?.categories);
+    const regions = normalizeRegions(req.body?.regions);
+    const includeGlobalEvents = req.body?.include_global_events !== false;
+    const isActive = req.body?.is_active === true;
+    const revokedAt = isActive ? null : new Date().toISOString();
+
+    try {
+        const { rows } = await db.query(
+            `UPDATE public.event_feed_tokens
+             SET name = $1,
+                 feed_title = $2,
+                 categories = $3::text[],
+                 regions = $4::text[],
+                 include_global_events = $5,
+                 is_active = $6,
+                 revoked_at = $7,
+                 updated_at = NOW()
+             WHERE id = $8
+             RETURNING id, name, feed_title, token_preview, categories, regions, include_global_events, is_active,
+                       created_at, updated_at, last_used_at, access_count, revoked_at`,
+            [name, feedTitle, categories, regions, includeGlobalEvents, isActive, revokedAt, id]
+        );
+
+        if (rows.length === 0) return res.status(404).json({ message: 'Event-Feed nicht gefunden.' });
+        return res.json(mapFeedRow(rows[0]));
+    } catch (err) {
+        console.error('Fehler beim Aktualisieren des Event-Feed-Tokens:', err.message);
+        return res.status(500).json({ message: 'Event-Feed konnte nicht aktualisiert werden.' });
+    }
+};
+
+exports.regenerateEventFeedToken = async (req, res) => {
+    const { id } = req.params;
+    if (!isValidUUID(id)) return res.status(400).json({ message: 'Ungültige Feed-ID.' });
+
+    const plainToken = generatePlainFeedToken();
+    const tokenHash = hashFeedToken(plainToken);
+    const tokenPreview = previewFeedToken(plainToken);
+
+    try {
+        const { rows } = await db.query(
+            `UPDATE public.event_feed_tokens
+             SET token_hash = $1,
+                 token_preview = $2,
+                 is_active = true,
+                 revoked_at = NULL,
+                 updated_at = NOW()
+             WHERE id = $3
+             RETURNING id, name, feed_title, token_preview, categories, regions, include_global_events, is_active,
+                       created_at, updated_at, last_used_at, access_count, revoked_at`,
+            [tokenHash, tokenPreview, id]
+        );
+
+        if (rows.length === 0) return res.status(404).json({ message: 'Event-Feed nicht gefunden.' });
+
+        return res.json({
+            ...mapFeedRow(rows[0]),
+            plain_token: plainToken,
+            ...buildFeedUrls(req, plainToken),
+        });
+    } catch (err) {
+        console.error('Fehler beim Regenerieren des Event-Feed-Tokens:', err.message);
+        return res.status(500).json({ message: 'Event-Feed-Link konnte nicht neu generiert werden.' });
+    }
+};
+
+exports.deleteEventFeedToken = async (req, res) => {
+    const { id } = req.params;
+    if (!isValidUUID(id)) return res.status(400).json({ message: 'Ungültige Feed-ID.' });
+
+    try {
+        const { rowCount } = await db.query(
+            `DELETE FROM public.event_feed_tokens
+             WHERE id = $1`,
+            [id]
+        );
+
+        if (rowCount === 0) return res.status(404).json({ message: 'Event-Feed nicht gefunden.' });
+
+        return res.json({ message: 'Event-Feed wurde gelöscht.' });
+    } catch (err) {
+        console.error('Fehler beim Löschen des Event-Feed-Tokens:', err.message);
+        return res.status(500).json({ message: 'Event-Feed konnte nicht gelöscht werden.' });
+    }
+};
+

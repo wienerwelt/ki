@@ -45,6 +45,7 @@ export interface EventCalendarWidgetProps extends Partial<BaseWidgetProps> {
     category?: string;
     defaultRegion?: string;
     primaryColor?: string; // NEU: Für nahtlose Farb-Übergabe aus dem Public Portal
+    partnerId?: string;
 }
 
 interface Region { id?: string; name: string; code: string; }
@@ -213,7 +214,7 @@ const ParticipantsPreview: React.FC<{ yes: Participant[]; maybe: Participant[] }
 };
 
 const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
-  onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey, isPublic = false, partnerName, defaultRegion = 'all', primaryColor
+  onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey, isPublic = false, partnerName, defaultRegion = 'all', primaryColor, partnerId
 }) => {
   const navigate = useNavigate();
   const theme = useTheme();
@@ -313,9 +314,14 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     setLoading(true);
     setError(null);
     try {
+      const eventParams: Record<string, any> = { category: queryCategories, limit: 50 };
+      if (isPublic && partnerId) {
+        eventParams.partnerId = partnerId;
+      }
+
       const [eventsRes, holidaysRes, actionsRes] = await Promise.all([
         apiClient.get(isPublic ? '/api/public/enhanced-calendar-events' : '/api/data/enhanced-calendar-events', { 
-            params: { category: queryCategories, limit: 50 } 
+            params: eventParams 
         }), 
         apiClient.get(isPublic ? '/api/public/holidays' : '/api/data/holidays'),
         apiClient.get(isPublic ? '/api/public/actions' : '/api/data/actions', {
@@ -375,7 +381,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [category, allPossibleRegions, isPublic, user?.business_partner_category, businessPartner?.logo_url]);
+  }, [category, allPossibleRegions, isPublic, partnerId, user?.business_partner_category, businessPartner?.logo_url]);
 
   useEffect(() => { fetchAllRegions(); }, [fetchAllRegions]);
   useEffect(() => { fetchEventsAndHolidays(); }, [fetchEventsAndHolidays]);
@@ -555,23 +561,42 @@ title={
           <Box sx={{ px: { xs: 2, sm: 3 }, py: 1.5, borderBottom: '1px solid', borderColor: 'divider', bgcolor: theme.palette.mode === 'dark' ? 'transparent' : '#f8fafc' }}>
             <Stack direction="row" spacing={1} alignItems="center" sx={{ width: '100%' }}>
                 
-                <FormControl size="small" sx={{ minWidth: 60, width: 'auto', flexShrink: 0 }}>
-                    <Select
-                        value={selectedRegionCode}
-                        onChange={(e: SelectChangeEvent) => setSelectedRegionCode(e.target.value)}
-                        displayEmpty
-                        IconComponent={() => null}
-                        sx={{ 
-                            bgcolor: 'background.paper', 
-                            borderRadius: 2, 
-                            '& .MuiSelect-select': { 
-                                py: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', pr: '0 !important' 
-                            } 
-                        }}
-                        renderValue={(value) => (
-                            <Flag code={value === 'all' ? 'EU' : (value as string)} size={20} showLabel={false} />
-                        )}
-                    >
+<FormControl size="small" sx={{ width: 52, minWidth: 52, flexShrink: 0 }}>
+    <Select
+        value={selectedRegionCode}
+        onChange={(e: SelectChangeEvent) => setSelectedRegionCode(e.target.value)}
+        displayEmpty
+        IconComponent={() => null}
+        sx={{ 
+            bgcolor: 'background.paper', 
+            borderRadius: 2,
+            width: 52,
+            height: 40,
+            '& .MuiSelect-select': { 
+                p: '0 !important',
+                minHeight: '40px !important',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+            },
+            '& .MuiOutlinedInput-notchedOutline': {
+                borderColor: 'divider',
+            },
+        }}
+        renderValue={(value) => (
+            <Box
+                sx={{
+                    width: '100%',
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                }}
+            >
+                <Flag code={value === 'all' ? 'EU' : (value as string)} size={20} showLabel={false} />
+            </Box>
+        )}
+    >
                         <MenuItem value="all"><Flag code="EU" alt="Alle Regionen" showLabel={true} /></MenuItem>
                         {availableRegions.map((region) => (
                             <MenuItem key={region.code} value={region.code}>
@@ -647,8 +672,10 @@ title={
                           boxShadow: theme.shadows[1],
                       } : isHoliday ? {
                           border: '1px solid',
-                          borderColor: 'divider',
-                          bgcolor: alpha(theme.palette.secondary.main, 0.03),
+                          borderColor: alpha(customPrimary, 0.14),
+                          bgcolor: isPublic
+                              ? alpha(customPrimary, 0.055)
+                              : alpha(theme.palette.secondary.main, 0.04),
                       } : {
                           border: '1px solid',
                           borderColor: 'divider',
@@ -661,7 +688,7 @@ return (
                           sx={{
                             display: 'flex', alignItems: 'center', gap: 1.5, p: 1.5, mb: 1.5, 
                             cursor: isHoliday ? 'default' : 'pointer', borderRadius: 3,
-                            transition: 'all 0.2s ease', opacity: e.is_read ? 0.8 : 1,
+                            transition: 'all 0.2s ease', opacity: e.is_read && !isHoliday && !isAction ? 0.8 : 1,
                             position: 'relative', overflow: 'hidden',
                             ...paperStyle,
                             '&:hover': { 
@@ -794,26 +821,25 @@ return (
                       mt: 1,
                     }}
                   >
-                    <Button
-                      onClick={handleListJump}
-                      size="small"
-                      variant="contained"
-                      startIcon={isListAtEnd ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
-                      sx={{
-                        pointerEvents: 'auto',
-                        borderRadius: 999,
-                        px: 2,
-                        py: 0.75,
-                        textTransform: 'none',
-                        fontWeight: 900,
-                        bgcolor: customPrimary,
-                        color: '#fff',
-                        boxShadow: `0 10px 28px ${alpha(customPrimary, 0.35)}`,
-                        '&:hover': { bgcolor: customPrimary, filter: 'brightness(0.94)' },
-                      }}
-                    >
-                      {isListAtEnd ? 'oben' : 'unten'}
-                    </Button>
+<IconButton
+  onClick={handleListJump}
+  size="small"
+  sx={{
+    pointerEvents: 'auto',
+    width: 42,
+    height: 42,
+    borderRadius: '50%',
+    bgcolor: alpha(customPrimary, 0.72),
+    color: '#fff',
+    boxShadow: `0 10px 28px ${alpha(customPrimary, 0.28)}`,
+    backdropFilter: 'blur(6px)',
+    '&:hover': {
+      bgcolor: alpha(customPrimary, 0.9),
+    },
+  }}
+>
+  {isListAtEnd ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+</IconButton>
                   </Box>
                 )}
             </Box>

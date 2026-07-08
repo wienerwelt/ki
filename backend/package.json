@@ -15,6 +15,7 @@
     "start:ai": "node workers/aiWorker.js",
     "start:scrape": "node workers/scrapeWorker.js",
     "start:mail": "node workers/emailWorker.js",
+    "start:data": "node workers/dataUpdateWorker.js",
     "start:funding": "node workers/fundingWorker.js",
     "deploy": "npm --prefix ../frontend ci && npm --prefix ../frontend run build:dashboard",
     "whereami": "node -e \"console.log('cwd=',process.cwd());console.log(require('fs').readdirSync('.'))\""

@@ -1,5 +1,6 @@
 // backend/controllers/publicController.js
 const db = require('../config/db');
+const crypto = require('crypto');
 const dataController = require('./dataController');
 
 // --- HILFSFUNKTIONEN ---
@@ -386,7 +387,13 @@ exports.getPublicRegions = async (req, res) => {
 };
 
 exports.getPublicEvents = async (req, res) => {
-    req.user = dummyGuestUser;
+    const partnerId = isValidUUID(req.query.partnerId) ? req.query.partnerId : null;
+
+    req.user = {
+        ...dummyGuestUser,
+        business_partner_id: partnerId
+    };
+
     // Kalender-Events für Public (Frontend schickt aktuell limit=50)
     return dataController.getEnhancedCalendarEvents(req, res);
 };
@@ -449,63 +456,466 @@ exports.getPublicActions = async (req, res) => {
 
 
 // ==============================================================================
+// PUBLIC EVENT FEED (RSS + JSON) - read-only token based
+// ==============================================================================
+const hashFeedToken = (token) => crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
+
+const xmlEscape = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
+const normalizeFeedArray = (value, fallback = []) => {
+    if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
+    if (typeof value === 'string') {
+        return value
+            .replace(/[{}]/g, '')
+            .split(',')
+            .map(v => v.trim().replace(/^"|"$/g, ''))
+            .filter(Boolean);
+    }
+    return fallback;
+};
+
+const getRequestBaseUrl = (req) => {
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    const host = req.get('x-forwarded-host') || req.get('host');
+    return `${proto}://${host}`.replace(/\/$/, '');
+};
+
+const absoluteUrl = (req, url) => {
+    if (!url) return '';
+    const clean = String(url).trim();
+    if (!clean) return '';
+    if (/^https?:\/\//i.test(clean)) return clean;
+    const base = getRequestBaseUrl(req);
+    return `${base}${clean.startsWith('/') ? clean : `/${clean}`}`;
+};
+
+const getEventDateOnly = (value) => {
+    if (!value) return null;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
+};
+
+const loadFeedByPlainToken = async (token) => {
+    if (!token || typeof token !== 'string' || token.length < 24 || token.length > 256) return null;
+
+    const tokenHash = hashFeedToken(token);
+    const { rows } = await db.query(
+        `SELECT
+            id,
+            name,
+            feed_title,
+            token_preview,
+            categories,
+            regions,
+            include_global_events,
+            is_active
+         FROM public.event_feed_tokens
+         WHERE token_hash = $1
+           AND is_active = true
+           AND revoked_at IS NULL
+         LIMIT 1`,
+        [tokenHash]
+    );
+
+    return rows[0] || null;
+};
+
+const touchFeedAccess = async (feedId, req) => {
+    try {
+        await db.query(
+            `UPDATE public.event_feed_tokens
+             SET last_used_at = NOW(),
+                 last_used_ip = $2,
+                 access_count = COALESCE(access_count, 0) + 1
+             WHERE id = $1`,
+            [feedId, req.ip || req.get('x-forwarded-for') || null]
+        );
+    } catch (err) {
+        console.warn('[EventFeed] Zugriff konnte nicht protokolliert werden:', err.message);
+    }
+};
+
+const loadPublicFeedEvents = async (feed) => {
+    const categories = normalizeFeedArray(feed.categories, ['businesspartner_events', 'fleet_events']);
+    const regions = normalizeFeedArray(feed.regions, ['AT', 'CH', 'DE']).map(r => r.toUpperCase());
+    const includeGlobalEvents = feed.include_global_events !== false;
+    const limit = 100;
+
+    const { rows } = await db.query(
+        `SELECT
+            sc.id,
+            sc.title,
+            sc.summary,
+            sc.original_url,
+            sc.event_date,
+            sc.published_date,
+            sc.updated_at,
+            sc.created_at,
+            sc.region,
+            sc.category,
+            sc.thumbnail_url,
+            COALESCE(c.name, sc.category) AS category_name,
+            r.code AS region_code,
+            COALESCE(r.name, sc.region) AS region_name
+         FROM public.scraped_content sc
+         LEFT JOIN public.categories c ON sc.category_id = c.id
+         LEFT JOIN public.regions r
+           ON LOWER(r.code) = LOWER(sc.region)
+           OR LOWER(r.name) = LOWER(sc.region)
+         WHERE sc.event_date IS NOT NULL
+           AND sc.event_date::date >= CURRENT_DATE
+           AND COALESCE(NULLIF(sc.category, ''), c.name) = ANY($1::text[])
+           AND (
+                COALESCE(r.code, UPPER(sc.region)) = ANY($2::text[])
+                OR ($3::boolean = true AND (sc.region IS NULL OR TRIM(sc.region) = ''))
+           )
+         ORDER BY sc.event_date ASC, sc.created_at DESC
+         LIMIT $4`,
+        [categories, regions, includeGlobalEvents, limit]
+    );
+
+    return rows;
+};
+
+const buildRssFeed = (req, feed, events) => {
+    const baseUrl = getRequestBaseUrl(req);
+    const title = feed.feed_title || feed.name || 'Mobiliti Event Feed';
+    const now = new Date().toUTCString();
+
+    const items = events.map((event) => {
+        const link = absoluteUrl(req, event.original_url) || baseUrl;
+        const imageUrl = absoluteUrl(req, event.thumbnail_url);
+        const eventDate = getEventDateOnly(event.event_date);
+        const pubDate = new Date(event.updated_at || event.created_at || event.published_date || event.event_date || Date.now()).toUTCString();
+        const region = event.region_code || event.region_name || event.region || '';
+        const category = event.category_name || event.category || '';
+        const descriptionParts = [
+            eventDate ? `Datum: ${eventDate}` : '',
+            region ? `Region: ${region}` : '',
+            category ? `Kategorie: ${category}` : '',
+            event.summary || ''
+        ].filter(Boolean);
+
+        return `
+    <item>
+      <title>${xmlEscape(event.title)}</title>
+      <link>${xmlEscape(link)}</link>
+      <guid isPermaLink="false">mobiliti-event-${xmlEscape(event.id)}</guid>
+      <pubDate>${xmlEscape(pubDate)}</pubDate>
+      <category>${xmlEscape(category)}</category>
+      <description>${xmlEscape(descriptionParts.join('\n\n'))}</description>
+      <mobiliti:eventDate>${xmlEscape(eventDate || '')}</mobiliti:eventDate>
+      <mobiliti:region>${xmlEscape(region)}</mobiliti:region>${imageUrl ? `
+      <enclosure url="${xmlEscape(imageUrl)}" type="image/jpeg" />` : ''}
+    </item>`;
+    }).join('');
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:mobiliti="https://mobiliti.at/rss/event-feed">
+  <channel>
+    <title>${xmlEscape(title)}</title>
+    <link>${xmlEscape(baseUrl)}</link>
+    <description>${xmlEscape('Zukünftige freigegebene Mobiliti Event-Termine.')}</description>
+    <language>de-AT</language>
+    <lastBuildDate>${xmlEscape(now)}</lastBuildDate>
+    <ttl>15</ttl>${items}
+  </channel>
+</rss>`;
+};
+
+exports.getPublicEventFeedRss = async (req, res) => {
+    try {
+        const feed = await loadFeedByPlainToken(req.params.token);
+        if (!feed) {
+            return res.status(404).type('text/plain').send('Feed nicht gefunden oder deaktiviert.');
+        }
+
+        const events = await loadPublicFeedEvents(feed);
+        await touchFeedAccess(feed.id, req);
+
+        res.set('Content-Type', 'application/rss+xml; charset=utf-8');
+        res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=900');
+        return res.status(200).send(buildRssFeed(req, feed, events));
+    } catch (err) {
+        console.error('[EventFeed RSS] Fehler:', err.message);
+        return res.status(500).type('text/plain').send('Feed konnte nicht geladen werden.');
+    }
+};
+
+exports.getPublicEventFeedJson = async (req, res) => {
+    try {
+        const feed = await loadFeedByPlainToken(req.params.token);
+        if (!feed) {
+            return res.status(404).json({ message: 'Feed nicht gefunden oder deaktiviert.' });
+        }
+
+        const events = await loadPublicFeedEvents(feed);
+        await touchFeedAccess(feed.id, req);
+
+        res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=900');
+        return res.json({
+            feed: {
+                name: feed.name,
+                title: feed.feed_title || feed.name,
+                categories: normalizeFeedArray(feed.categories),
+                regions: normalizeFeedArray(feed.regions),
+            },
+            generated_at: new Date().toISOString(),
+            events: events.map(event => ({
+                id: event.id,
+                title: event.title,
+                date: getEventDateOnly(event.event_date),
+                region: event.region_code || event.region_name || event.region || null,
+                category: event.category_name || event.category || null,
+                summary: event.summary || null,
+                url: event.original_url || null,
+                image_url: event.thumbnail_url || null,
+                updated_at: event.updated_at || event.created_at || null,
+            }))
+        });
+    } catch (err) {
+        console.error('[EventFeed JSON] Fehler:', err.message);
+        return res.status(500).json({ message: 'Feed konnte nicht geladen werden.' });
+    }
+};
+
+
+// ==============================================================================
 // 5. PUBLIC DIRECTORY (Für das Schaufenster / Landingpage)
 // ==============================================================================
 exports.getPublicDirectory = async (req, res) => {
     const { partnerId, search, category, region, page = 1, limit = 12 } = req.query;
-    const offset = (page - 1) * limit;
 
-    try {
-        let baseQuery = `
-            SELECT 
-                p.id, p.name, p.logo_url, p.description, p.website_url, p.contact_email, p.contact_phone,
-                c.name AS category,
-                ROUND(COALESCE(r.avg_rating, 0), 1) as average_rating,
-                COALESCE(r.rev_count, 0) as review_count,
-                COALESCE(ms.is_recommended, false) as is_recommended,
-                COALESCE((
-                    SELECT json_agg(json_build_object('address', l.address, 'zip_code', l.zip_code, 'city', l.city)) 
-                    FROM directory_provider_locations l WHERE l.provider_id = p.id
-                ), '[]'::json) as locations
-            FROM directory_providers p
-            INNER JOIN directory_provider_mandant_settings ms ON p.id = ms.provider_id 
-            LEFT JOIN (
-                SELECT provider_id, AVG(rating) as avg_rating, COUNT(id) as rev_count 
-                FROM directory_provider_reviews GROUP BY provider_id
-            ) r ON p.id = r.provider_id
-            LEFT JOIN directory_provider_categories dpc ON p.id = dpc.provider_id AND dpc.is_primary = true
-            LEFT JOIN categories c ON dpc.category_id = c.id
-            WHERE ms.business_partner_id = $1 
-              AND ms.status = 'active' 
+    if (!isValidUUID(partnerId)) {
+        return res.status(400).json({ message: 'Ungültige oder fehlende Partner-ID.' });
+    }
+
+    const safePage = toPositiveInt(page, 1, 1000);
+    const safeLimit = toPositiveInt(limit, 12, 24);
+    const offset = (safePage - 1) * safeLimit;
+
+    const buildWhereClause = () => {
+        const values = [partnerId];
+        let paramIndex = 2;
+        let whereSql = `
+            WHERE ms.business_partner_id = $1
+              AND ms.status = 'active'
               AND p.is_public = true
         `;
 
-        const values = [partnerId];
-        let paramIndex = 2;
-
-        // Dynamische Filter
-        if (search) {
-            baseQuery += ` AND (p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`;
-            values.push(`%${search}%`);
+        const searchTerm = String(search || '').trim();
+        if (searchTerm) {
+            whereSql += `
+              AND (
+                p.name ILIKE $${paramIndex}
+                OR COALESCE(p.description, '') ILIKE $${paramIndex}
+                OR EXISTS (
+                    SELECT 1
+                    FROM directory_provider_categories dpc_search
+                    JOIN categories c_search ON c_search.id = dpc_search.category_id
+                    WHERE dpc_search.provider_id = p.id
+                      AND (
+                        c_search.name ILIKE $${paramIndex}
+                        OR COALESCE(c_search.name_lang, '') ILIKE $${paramIndex}
+                      )
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM directory_provider_locations l_search
+                    WHERE l_search.provider_id = p.id
+                      AND (
+                        COALESCE(l_search.city, '') ILIKE $${paramIndex}
+                        OR COALESCE(l_search.zip_code, '') ILIKE $${paramIndex}
+                        OR COALESCE(l_search.country, '') ILIKE $${paramIndex}
+                        OR COALESCE(l_search.address, '') ILIKE $${paramIndex}
+                      )
+                )
+              )
+            `;
+            values.push(`%${searchTerm}%`);
             paramIndex++;
         }
 
-        if (category && category !== 'all') {
-            baseQuery += ` AND c.name = $${paramIndex}`;
-            values.push(category);
+        const categoryValue = String(category || '').trim();
+        if (categoryValue && categoryValue !== 'all') {
+            whereSql += `
+              AND EXISTS (
+                SELECT 1
+                FROM directory_provider_categories dpc_filter
+                JOIN categories c_filter ON c_filter.id = dpc_filter.category_id
+                WHERE dpc_filter.provider_id = p.id
+                  AND (
+                    c_filter.id::text = $${paramIndex}
+                    OR c_filter.name = $${paramIndex}
+                    OR COALESCE(c_filter.name_lang, '') = $${paramIndex}
+                  )
+              )
+            `;
+            values.push(categoryValue);
             paramIndex++;
         }
 
-        // Hinweis: Region-Filter erfordert einen JOIN oder Subselect auf die Locations. 
-        // Für Performance idealerweise über PostGIS oder einfache ILIKE auf die City.
+        const regionValue = String(region || '').trim();
+        if (regionValue && regionValue !== 'all') {
+            whereSql += `
+              AND EXISTS (
+                SELECT 1
+                FROM directory_provider_locations l_filter
+                WHERE l_filter.provider_id = p.id
+                  AND COALESCE(
+                        NULLIF(TRIM(l_filter.city), ''),
+                        NULLIF(TRIM(l_filter.zip_code), ''),
+                        NULLIF(TRIM(l_filter.country), '')
+                      ) = $${paramIndex}
+              )
+            `;
+            values.push(regionValue);
+            paramIndex++;
+        }
 
-        baseQuery += ` ORDER BY ms.is_recommended DESC, p.name ASC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-        values.push(limit, offset);
+        return { whereSql, values, paramIndex };
+    };
 
-        const result = await db.query(baseQuery, values);
-        
-        // Optional: Count-Query für Pagination mitsenden
-        res.json({ data: result.rows, page: Number(page), limit: Number(limit) });
+    try {
+        const { whereSql, values, paramIndex } = buildWhereClause();
+
+        const dataQuery = `
+            SELECT
+                p.id,
+                p.name,
+                p.logo_url,
+                p.description,
+                p.website_url,
+                p.contact_email,
+                p.contact_phone,
+                primary_category.name AS category,
+                COALESCE(all_categories.categories, '[]'::json) AS categories,
+                ROUND(COALESCE(r.avg_rating, 0), 1) AS average_rating,
+                COALESCE(r.rev_count, 0) AS review_count,
+                COALESCE(ms.is_recommended, false) AS is_recommended,
+                COALESCE(locations.locations, '[]'::json) AS locations
+            FROM directory_providers p
+            INNER JOIN directory_provider_mandant_settings ms ON p.id = ms.provider_id
+            LEFT JOIN (
+                SELECT provider_id, AVG(rating) AS avg_rating, COUNT(id) AS rev_count
+                FROM directory_provider_reviews
+                GROUP BY provider_id
+            ) r ON p.id = r.provider_id
+            LEFT JOIN LATERAL (
+                SELECT c.name
+                FROM directory_provider_categories dpc
+                JOIN categories c ON dpc.category_id = c.id
+                WHERE dpc.provider_id = p.id
+                ORDER BY dpc.is_primary DESC, c.name ASC
+                LIMIT 1
+            ) primary_category ON true
+            LEFT JOIN LATERAL (
+                SELECT json_agg(
+                    json_build_object(
+                        'id', c.id,
+                        'name', c.name,
+                        'name_lang', c.name_lang,
+                        'is_primary', dpc.is_primary
+                    )
+                    ORDER BY dpc.is_primary DESC, c.name ASC
+                ) AS categories
+                FROM directory_provider_categories dpc
+                JOIN categories c ON dpc.category_id = c.id
+                WHERE dpc.provider_id = p.id
+            ) all_categories ON true
+            LEFT JOIN LATERAL (
+                SELECT json_agg(
+                    json_build_object(
+                        'address', l.address,
+                        'zip_code', l.zip_code,
+                        'city', l.city,
+                        'country', l.country,
+                        'latitude', l.latitude,
+                        'longitude', l.longitude,
+                        'is_headquarter', l.is_headquarter
+                    )
+                    ORDER BY l.is_headquarter DESC, l.city ASC, l.address ASC
+                ) AS locations
+                FROM directory_provider_locations l
+                WHERE l.provider_id = p.id
+            ) locations ON true
+            ${whereSql}
+            ORDER BY ms.is_recommended DESC, p.name ASC
+            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        `;
+
+        const countQuery = `
+            SELECT COUNT(DISTINCT p.id)::int AS total
+            FROM directory_providers p
+            INNER JOIN directory_provider_mandant_settings ms ON p.id = ms.provider_id
+            ${whereSql}
+        `;
+
+        const categoryOptionsQuery = `
+            SELECT
+                c.id::text AS id,
+                c.name,
+                c.name_lang,
+                COUNT(DISTINCT p.id)::int AS count
+            FROM directory_providers p
+            INNER JOIN directory_provider_mandant_settings ms ON p.id = ms.provider_id
+            INNER JOIN directory_provider_categories dpc ON dpc.provider_id = p.id
+            INNER JOIN categories c ON c.id = dpc.category_id
+            WHERE ms.business_partner_id = $1
+              AND ms.status = 'active'
+              AND p.is_public = true
+            GROUP BY c.id, c.name, c.name_lang
+            ORDER BY c.name ASC
+        `;
+
+        const regionOptionsQuery = `
+            SELECT region_value AS value, region_value AS label, COUNT(DISTINCT provider_id)::int AS count
+            FROM (
+                SELECT
+                    p.id AS provider_id,
+                    COALESCE(
+                        NULLIF(TRIM(l.city), ''),
+                        NULLIF(TRIM(l.zip_code), ''),
+                        NULLIF(TRIM(l.country), '')
+                    ) AS region_value
+                FROM directory_providers p
+                INNER JOIN directory_provider_mandant_settings ms ON p.id = ms.provider_id
+                INNER JOIN directory_provider_locations l ON l.provider_id = p.id
+                WHERE ms.business_partner_id = $1
+                  AND ms.status = 'active'
+                  AND p.is_public = true
+            ) region_source
+            WHERE region_value IS NOT NULL
+            GROUP BY region_value
+            ORDER BY region_value ASC
+        `;
+
+        const [result, countResult, categoryOptionsResult, regionOptionsResult] = await Promise.all([
+            db.query(dataQuery, [...values, safeLimit, offset]),
+            db.query(countQuery, values),
+            db.query(categoryOptionsQuery, [partnerId]),
+            db.query(regionOptionsQuery, [partnerId]),
+        ]);
+
+        const total = countResult.rows[0]?.total || 0;
+
+        return res.json({
+            data: result.rows,
+            page: safePage,
+            limit: safeLimit,
+            total,
+            hasMore: offset + result.rows.length < total,
+            filters: {
+                categories: categoryOptionsResult.rows,
+                regions: regionOptionsResult.rows,
+            },
+        });
     } catch (err) {
         console.error('Fehler beim Laden des Public Directory:', err.message);
         res.status(500).json({ message: "Fehler beim Laden des Netzwerks." });

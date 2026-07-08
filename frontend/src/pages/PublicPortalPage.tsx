@@ -107,6 +107,28 @@ const getEventCategoryToken = (item: any): string => {
     return String(item).trim();
 };
 
+const normalizeEventCategoryKey = (value: string): string => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+
+    const withoutSuffix = raw.toLowerCase().endsWith('_events')
+        ? raw.slice(0, -7)
+        : raw;
+
+    const normalized = withoutSuffix
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/&/g, 'and')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+    if (!normalized) return '';
+    if (normalized === 'events') return 'events';
+
+    return `${normalized}_events`;
+};
+
 const normalizeEventCategoryList = (value: any): string[] => {
     if (!value) return [];
 
@@ -114,10 +136,12 @@ const normalizeEventCategoryList = (value: any): string[] => {
         ? value
         : String(value).split(',');
 
-    return rawItems
+    const normalizedItems = rawItems
         .map(getEventCategoryToken)
-        .filter(Boolean)
-        .map((item) => item.endsWith('_events') || item === 'events' ? item : `${item}_events`);
+        .map(normalizeEventCategoryKey)
+        .filter(Boolean);
+
+    return Array.from(new Set(normalizedItems));
 };
 
 const getEventCalendarWidgetInfo = (widgets: any[]) => {
@@ -150,6 +174,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     const [debouncedSearch, setDebouncedSearch] = useState('');
     const [selectedCategory, setSelectedCategory] = useState('all');
     const [selectedRegion, setSelectedRegion] = useState('all');
+    const [directoryFilters, setDirectoryFilters] = useState<{ categories: any[]; regions: any[] }>({ categories: [], regions: [] });
 
     const [selectedTeaserProvider, setSelectedTeaserProvider] = useState<any | null>(null);
     const [teaserTab, setTeaserTab] = useState(0);
@@ -215,8 +240,14 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     
     // --- MANUELLE BILD-WEICHE ---
     const customHeroImages: Record<string, string> = {
-        'fd7a5bfd': '/actions/fuhrparkverband-austria_publicfoto_fd7a5bfd.png',
-        'fva': '/actions/fuhrparkverband-austria_publicfoto_fd7a5bfd.png', 
+        'fd7a5bfd': '/actions/fva-austria_publicfoto.jpg',
+        'fva':      '/actions/fva-austria_publicfoto.jpg', 
+        '0914fed1': '/actions/iw-austria_publicfoto.jpg',
+        'iw':       '/actions/iw-austria_publicfoto.jpg',
+        '6ac63556': '/actions/jawa-austria_publicfoto.jpg',
+        'jawa':     '/actions/jawa-austria_publicfoto.jpg',
+        'ab077f6a': '/actions/m-austria_publicfoto.jpg',
+        'm':        '/actions/m-austria_publicfoto.jpg', 
     };
 
     // Normalisieren (Kleinbuchstaben), falls jemand ?partner=FVA eingibt
@@ -255,8 +286,13 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
 
                 const res = await apiClient.get(`/api/public/directory?${params.toString()}`);
                 const newData = res.data.data || [];
-                
-                if (newData.length < 12) setHasMore(false);
+                const nextFilters = res.data.filters || {};
+
+                setDirectoryFilters({
+                    categories: Array.isArray(nextFilters.categories) ? nextFilters.categories : [],
+                    regions: Array.isArray(nextFilters.regions) ? nextFilters.regions : [],
+                });
+                setHasMore(typeof res.data.hasMore === 'boolean' ? res.data.hasMore : newData.length >= 12);
                 setPublicProviders(prev => page === 1 ? newData : [...prev, ...newData]);
             } catch (error) {
                 showSnackbar('Fehler beim Laden der Anbieter', 'error');
@@ -268,32 +304,55 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         fetchDirectory();
     }, [partner?.id, page, debouncedSearch, selectedCategory, selectedRegion, showSnackbar]);
 
-    const categoryCounts = useMemo(() => {
+    const categoryOptions = useMemo(() => {
+        if (directoryFilters.categories.length > 0) {
+            return directoryFilters.categories.map((item: any) => ({
+                value: String(item.id || item.name || ''),
+                label: String(item.name_lang || item.name || item.id || '').trim(),
+                count: Number(item.count || 0),
+            })).filter((item) => item.value && item.label);
+        }
+
         const counts: Record<string, number> = {};
         publicProviders.forEach((p) => {
-            if (p.category) counts[p.category] = (counts[p.category] || 0) + 1;
+            if (Array.isArray(p.categories) && p.categories.length > 0) {
+                p.categories.forEach((cat: any) => {
+                    const label = String(cat?.name_lang || cat?.name || cat || '').trim();
+                    if (label) counts[label] = (counts[label] || 0) + 1;
+                });
+            } else if (p.category) {
+                counts[p.category] = (counts[p.category] || 0) + 1;
+            }
         });
-        return counts;
-    }, [publicProviders]);
+        return Object.entries(counts)
+            .sort(([a], [b]) => a.localeCompare(b, 'de'))
+            .map(([label, count]) => ({ value: label, label, count }));
+    }, [directoryFilters.categories, publicProviders]);
 
-    const regionCounts = useMemo(() => {
+    const regionOptions = useMemo(() => {
+        if (directoryFilters.regions.length > 0) {
+            return directoryFilters.regions.map((item: any) => ({
+                value: String(item.value || item.label || '').trim(),
+                label: String(item.label || item.value || '').trim(),
+                count: Number(item.count || 0),
+            })).filter((item) => item.value && item.label);
+        }
+
         const counts: Record<string, number> = {};
         publicProviders.forEach((p) => {
             const handledRegions = new Set<string>();
             (p.locations || []).forEach((loc: any) => {
-                const r = loc?.city || loc?.zip_code;
+                const r = loc?.city || loc?.zip_code || loc?.country;
                 if (r && !handledRegions.has(r)) {
                     counts[r] = (counts[r] || 0) + 1;
                     handledRegions.add(r);
                 }
             });
         });
-        return counts;
-    }, [publicProviders]);
-
-    const regionOptions = useMemo(() => {
-        return Object.keys(regionCounts).sort((a, b) => a.localeCompare(b, 'de'));
-    }, [regionCounts]);
+        return Object.entries(counts)
+            .sort(([a], [b]) => a.localeCompare(b, 'de'))
+            .map(([label, count]) => ({ value: label, label, count }));
+    }, [directoryFilters.regions, publicProviders]);
 
     const loginTheme = useMemo(() => createTheme({
         ...theme,
@@ -430,11 +489,6 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     const eventCalendarWidgetInfo = useMemo(() => getEventCalendarWidgetInfo(allowedWidgets), [allowedWidgets]);
 
     const eventCalendarCategory = useMemo(() => {
-        const widgetConfig = eventCalendarWidgetInfo?.config || {};
-        const configuredCategories = normalizeEventCategoryList(
-            widgetConfig.category || widgetConfig.categories || widgetConfig.eventCategories
-        );
-
         const bpCategories = normalizeEventCategoryList(
             partner?.industries ||
             partner?.categories ||
@@ -445,21 +499,23 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
             partner?.industry_category
         );
 
-        const fallbackCategories = configuredCategories.length > 0
-            ? configuredCategories
-            : ['fleet_events', 'industry_events', 'businesspartner_events'];
-
-        const mergedCategories = bpCategories.length > 0
-            ? [...fallbackCategories, ...bpCategories]
-            : fallbackCategories;
-
-        if (!mergedCategories.includes('businesspartner_events')) {
-            mergedCategories.push('businesspartner_events');
+        if (partner?.id) {
+            const partnerCategories = bpCategories.length > 0 ? bpCategories : [];
+            partnerCategories.push('businesspartner_events');
+            return Array.from(new Set(partnerCategories)).join(',');
         }
 
-        return Array.from(new Set(mergedCategories)).join(',');
+        const widgetConfig = eventCalendarWidgetInfo?.config || {};
+        const configuredCategories = normalizeEventCategoryList(
+            widgetConfig.category || widgetConfig.categories || widgetConfig.eventCategories
+        );
+
+        return configuredCategories.length > 0
+            ? configuredCategories.join(',')
+            : 'events';
     }, [
         eventCalendarWidgetInfo,
+        partner?.id,
         partner?.industries,
         partner?.categories,
         partner?.business_partner_category,
@@ -501,6 +557,17 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         });
     }
 
+const getProviderCategoryLabel = (provider: any): string => {
+    const categories = Array.isArray(provider?.categories)
+        ? provider.categories
+            .map((cat: any) => String(cat?.name_lang || cat?.name || cat || '').trim())
+            .filter(Boolean)
+        : [];
+
+    if (categories.length > 0) return Array.from(new Set(categories)).join(' · ');
+    return provider?.category || 'Netzwerkpartner';
+};
+
 const renderProviderPreviewCard = (provider: any) => {
     const loc = provider.locations?.[0];
     return (
@@ -539,7 +606,7 @@ const renderProviderPreviewCard = (provider: any) => {
             </Box>
             
             <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.58), mb: 1, display: 'block' }}>
-                {provider.category || 'Netzwerkpartner'}
+                {getProviderCategoryLabel(provider)}
             </Typography>
             
             <Typography 
@@ -624,7 +691,7 @@ const renderProviderPreviewCard = (provider: any) => {
                             </Box>
                         </Stack>
 
-                        <Stack direction="row" alignItems="center" spacing={2} sx={{ display: { xs: 'none', lg: 'flex' }, justifyContent: 'center' }}>
+                        <Stack direction="row" alignItems="center" spacing={{ lg: 2.4, xl: 3 }} sx={{ display: { xs: 'none', lg: 'flex' }, justifyContent: 'center' }}>
                             {navItems.map((item) => {
                                 let badgeCount = null;
                                 if (item === 'Branchenverzeichnis' && tenantStats.total_directory_entries > 0) badgeCount = tenantStats.total_directory_entries;
@@ -632,7 +699,27 @@ const renderProviderPreviewCard = (provider: any) => {
                                 if (item === 'Community' && tenantStats.community_activity > 0) badgeCount = tenantStats.community_activity;
 
                                 const buttonElement = (
-                                    <Button onClick={() => handleNavItemClick(item)} variant="text" sx={{ color: darkBlue, fontSize: 13, fontWeight: 800, textTransform: 'none', minWidth: 'auto', px: 1 }}>{item}</Button>
+                                    <Button
+                                        onClick={() => handleNavItemClick(item)}
+                                        variant="text"
+                                        sx={{
+                                            color: darkBlue,
+                                            fontSize: { lg: 14.5, xl: 15.5 },
+                                            fontWeight: 900,
+                                            textTransform: 'none',
+                                            minWidth: 'auto',
+                                            px: { lg: 1.2, xl: 1.5 },
+                                            py: 1,
+                                            lineHeight: 1.2,
+                                            borderRadius: 999,
+                                            '&:hover': {
+                                                bgcolor: alpha(primaryColor, 0.08),
+                                                color: primaryColor,
+                                            },
+                                        }}
+                                    >
+                                        {item}
+                                    </Button>
                                 );
 
                                 return (
@@ -897,8 +984,8 @@ const renderProviderPreviewCard = (provider: any) => {
                             </Typography>
                             <Select fullWidth value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value as string)} IconComponent={KeyboardArrowDownIcon} sx={{ minHeight: 56, borderRadius: 2, bgcolor: '#fff', color: selectedCategory === 'all' ? alpha(darkBlue, 0.58) : darkBlue, fontWeight: 800, '& .MuiOutlinedInput-notchedOutline': { borderColor: alpha(darkBlue, 0.14) } }}>
                                 <MenuItem value="all">Branche auswählen</MenuItem>
-                                {Object.entries(categoryCounts).map(([cat, count]) => (
-                                    <MenuItem key={cat} value={cat}>{cat} ({count})</MenuItem>
+                                {categoryOptions.map((cat) => (
+                                    <MenuItem key={cat.value} value={cat.value}>{cat.label} ({cat.count})</MenuItem>
                                 ))}
                             </Select>
                         </Grid>
@@ -909,7 +996,7 @@ const renderProviderPreviewCard = (provider: any) => {
                             <Select fullWidth value={selectedRegion} onChange={(e) => setSelectedRegion(e.target.value as string)} IconComponent={KeyboardArrowDownIcon} sx={{ minHeight: 56, borderRadius: 2, bgcolor: '#fff', color: selectedRegion === 'all' ? alpha(darkBlue, 0.58) : darkBlue, fontWeight: 800, '& .MuiOutlinedInput-notchedOutline': { borderColor: alpha(darkBlue, 0.14) } }}>
                                 <MenuItem value="all">Region auswählen</MenuItem>
                                 {regionOptions.map((region) => (
-                                    <MenuItem key={region} value={region}>{region} ({regionCounts[region]})</MenuItem>
+                                    <MenuItem key={region.value} value={region.value}>{region.label} ({region.count})</MenuItem>
                                 ))}
                             </Select>
                         </Grid>
@@ -985,14 +1072,24 @@ const renderProviderPreviewCard = (provider: any) => {
                             height: '100%', 
                             // Wir fixieren die Höhe auf ca. 600px für ein schönes Layout
                             maxHeight: 650, 
-                            '& .MuiPaper-root': { 
+                            '& > .MuiPaper-root': { 
                                 borderRadius: 4, 
                                 border: `1px solid ${alpha(darkBlue, 0.1)}`, 
                                 boxShadow: `0 18px 40px ${alpha(darkBlue, 0.06)}`,
-                                // Entfernt den grauen Balken vom WidgetPaper
-                                '& > .MuiBox-root': { bgcolor: '#fff', color: darkBlue, borderBottom: 'none' },
-                                '& > .MuiBox-root > .MuiTypography-root': { color: darkBlue, fontWeight: 950, fontSize: '1.5rem' },
-                                '& > .MuiBox-root svg': { color: primaryColor }
+                            },
+                            // Nur den äußeren Widget-Header stylen, nicht die inneren Termin-/Feiertagskarten.
+                            '& > .MuiPaper-root > .MuiBox-root:first-of-type': {
+                                bgcolor: '#fff',
+                                color: darkBlue,
+                                borderBottom: 'none',
+                            },
+                            '& > .MuiPaper-root > .MuiBox-root:first-of-type .MuiTypography-root': {
+                                color: darkBlue,
+                                fontWeight: 950,
+                                fontSize: '1.5rem',
+                            },
+                            '& > .MuiPaper-root > .MuiBox-root:first-of-type svg': {
+                                color: primaryColor,
                             } 
                         }}>
                             <Suspense fallback={<CircularProgress />}>
@@ -1001,6 +1098,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                     widgetId="pub-cal" 
                                     widgetTypeKey="EventCalendar" 
                                     category={eventCalendarCategory} 
+                                    partnerId={partner?.id}
                                     defaultRegion={defaultRegion} 
                                     title="Kalender" 
                                     isRemovable={false} 

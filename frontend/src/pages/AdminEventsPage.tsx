@@ -4,7 +4,7 @@ import {
     Container, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
     IconButton, Tooltip, Dialog, DialogTitle, DialogContent, TextField, DialogActions, Button,
     Alert, CircularProgress, Box, InputAdornment, TableSortLabel, Link as MuiLink, Grid,
-    MenuItem, useTheme, alpha, Chip, Divider, Avatar
+    MenuItem, useTheme, alpha, Chip, Divider, Avatar, Stack, Checkbox, FormControlLabel, Switch
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -13,6 +13,9 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import AddIcon from '@mui/icons-material/Add';
 import EventIcon from '@mui/icons-material/Event'; 
 import ClearIcon from '@mui/icons-material/Clear'; 
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import RssFeedIcon from '@mui/icons-material/RssFeed';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 
@@ -33,6 +36,36 @@ interface ScrapedEvent {
 interface Region { name: string; code: string; }
 interface BusinessPartner { id: string; name: string; }
 interface Category { id: string; name: string; category_type?: string; }
+
+interface EventFeedToken {
+    id: string;
+    name: string;
+    feed_title: string;
+    token_preview: string;
+    categories: string[];
+    regions: string[];
+    include_global_events: boolean;
+    is_active: boolean;
+    created_at?: string;
+    updated_at?: string;
+    last_used_at?: string | null;
+    access_count?: number;
+    revoked_at?: string | null;
+    plain_token?: string;
+    rss_url?: string;
+    json_url?: string;
+}
+
+const FEED_CATEGORY_OPTIONS = [
+    { value: 'businesspartner_events', label: 'Business Partner Events' },
+    { value: 'fleet_events', label: 'Fuhrpark Events' },
+];
+
+const FEED_REGION_OPTIONS = [
+    { value: 'AT', label: 'Österreich' },
+    { value: 'CH', label: 'Schweiz' },
+    { value: 'DE', label: 'Deutschland' },
+];
 
 type Order = 'asc' | 'desc';
 
@@ -59,6 +92,13 @@ const AdminEventsPage: React.FC = () => {
     const [regions, setRegions] = useState<Region[]>([]);
     const [businessPartners, setBusinessPartners] = useState<BusinessPartner[]>([]); 
     const [categories, setCategories] = useState<Category[]>([]); 
+    const [eventFeeds, setEventFeeds] = useState<EventFeedToken[]>([]);
+    const [feedDialogOpen, setFeedDialogOpen] = useState(false);
+    const [editingFeed, setEditingFeed] = useState<Partial<EventFeedToken> | null>(null);
+    const [feedDialogError, setFeedDialogError] = useState<string | null>(null);
+    const [feedLinkResult, setFeedLinkResult] = useState<{ rss_url?: string; json_url?: string; plain_token?: string } | null>(null);
+    const [feedDeleteConfirmOpen, setFeedDeleteConfirmOpen] = useState(false);
+    const [feedToDelete, setFeedToDelete] = useState<EventFeedToken | null>(null);
     
     const [editingEvent, setEditingEvent] = useState<Partial<ScrapedEvent> | null>(null);
     const [loading, setLoading] = useState(true);
@@ -88,17 +128,19 @@ const AdminEventsPage: React.FC = () => {
             const token = localStorage.getItem('jwt_token');
             const headers = { headers: { 'x-auth-token': token } };
             
-            const [eventsRes, regionsRes, bpRes, catRes] = await Promise.all([
+            const [eventsRes, regionsRes, bpRes, catRes, feedsRes] = await Promise.all([
                 apiClient.get('/api/admin/scraped-content/events', headers),
                 apiClient.get('/api/admin/scraped-content/regions', headers),
                 apiClient.get('/api/admin/business-partners', headers),
-                apiClient.get('/api/admin/categories', headers) 
+                apiClient.get('/api/admin/categories', headers),
+                apiClient.get('/api/admin/scraped-content/event-feeds', headers)
             ]);
 
             setEvents(Array.isArray(eventsRes.data) ? eventsRes.data : []);
             setRegions(Array.isArray(regionsRes.data) ? regionsRes.data : []);
             setBusinessPartners(Array.isArray(bpRes.data) ? bpRes.data : []);
             setCategories(Array.isArray(catRes.data) ? catRes.data : []);
+            setEventFeeds(Array.isArray(feedsRes.data) ? feedsRes.data : []);
             
         } catch (err: any) {
             setError(err.response?.data?.message || err.message || 'Daten konnten nicht geladen werden.');
@@ -232,6 +274,110 @@ const AdminEventsPage: React.FC = () => {
         setEditingEvent(prev => prev ? { ...prev, [field]: value } : null);
     };
 
+
+    const handleOpenFeedDialog = (feed?: EventFeedToken) => {
+        setFeedDialogError(null);
+        setFeedLinkResult(null);
+        setEditingFeed(feed ? { ...feed } : {
+            name: 'Fuhrpark Event Feed',
+            feed_title: 'Fuhrpark Event Termine',
+            categories: ['businesspartner_events', 'fleet_events'],
+            regions: ['AT', 'CH', 'DE'],
+            include_global_events: true,
+            is_active: true,
+        });
+        setFeedDialogOpen(true);
+    };
+
+    const handleCloseFeedDialog = () => {
+        setFeedDialogOpen(false);
+        setEditingFeed(null);
+        setFeedDialogError(null);
+        setFeedLinkResult(null);
+    };
+
+    const handleFeedChange = (field: keyof EventFeedToken, value: any) => {
+        setEditingFeed(prev => prev ? { ...prev, [field]: value } : null);
+    };
+
+    const toggleArrayValue = (field: 'categories' | 'regions', value: string) => {
+        const current = Array.isArray(editingFeed?.[field]) ? editingFeed?.[field] as string[] : [];
+        const next = current.includes(value) ? current.filter(v => v !== value) : [...current, value];
+        handleFeedChange(field, next);
+    };
+
+    const handleSaveFeed = async () => {
+        if (!editingFeed) return;
+        setFeedDialogError(null);
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const payload = {
+                name: editingFeed.name || 'Fuhrpark Event Feed',
+                feed_title: editingFeed.feed_title || editingFeed.name || 'Fuhrpark Event Termine',
+                categories: editingFeed.categories || ['businesspartner_events', 'fleet_events'],
+                regions: editingFeed.regions || ['AT', 'CH', 'DE'],
+                include_global_events: editingFeed.include_global_events !== false,
+                is_active: editingFeed.is_active !== false,
+            };
+
+            const res = editingFeed.id
+                ? await apiClient.put(`/api/admin/scraped-content/event-feeds/${editingFeed.id}`, payload, { headers: { 'x-auth-token': token } })
+                : await apiClient.post('/api/admin/scraped-content/event-feeds', payload, { headers: { 'x-auth-token': token } });
+
+            if (res.data?.rss_url || res.data?.json_url || res.data?.plain_token) {
+                setFeedLinkResult({ rss_url: res.data.rss_url, json_url: res.data.json_url, plain_token: res.data.plain_token });
+            }
+
+            fetchData();
+            if (editingFeed.id) handleCloseFeedDialog();
+        } catch (err: any) {
+            setFeedDialogError(err.response?.data?.message || 'Feed konnte nicht gespeichert werden.');
+        }
+    };
+
+    const handleRegenerateFeed = async (feed: EventFeedToken) => {
+        if (!window.confirm('Den Feed-Link wirklich neu generieren? Der bisherige Link funktioniert danach nicht mehr.')) return;
+        try {
+            const token = localStorage.getItem('jwt_token');
+            const res = await apiClient.post(`/api/admin/scraped-content/event-feeds/${feed.id}/regenerate`, {}, { headers: { 'x-auth-token': token } });
+            setEditingFeed(res.data);
+            setFeedLinkResult({ rss_url: res.data.rss_url, json_url: res.data.json_url, plain_token: res.data.plain_token });
+            setFeedDialogOpen(true);
+            fetchData();
+        } catch (err: any) {
+            setError(err.response?.data?.message || 'Feed-Link konnte nicht neu generiert werden.');
+        }
+    };
+
+    const handleOpenFeedDeleteConfirm = (feed: EventFeedToken) => {
+        setFeedToDelete(feed);
+        setFeedDeleteConfirmOpen(true);
+    };
+
+    const handleCloseFeedDeleteConfirm = () => {
+        setFeedToDelete(null);
+        setFeedDeleteConfirmOpen(false);
+    };
+
+    const handleDeleteFeed = async () => {
+        if (!feedToDelete) return;
+
+        try {
+            const token = localStorage.getItem('jwt_token');
+            await apiClient.delete(`/api/admin/scraped-content/event-feeds/${feedToDelete.id}`, { headers: { 'x-auth-token': token } });
+            handleCloseFeedDeleteConfirm();
+            fetchData();
+        } catch (err: any) {
+            setError(err.response?.data?.message || 'Event-Feed konnte nicht gelöscht werden.');
+            handleCloseFeedDeleteConfirm();
+        }
+    };
+
+    const copyToClipboard = (value?: string) => {
+        if (!value) return;
+        navigator.clipboard.writeText(value);
+    };
+
     const eventCategories = useMemo(() => {
         return categories.filter(c => 
             c.name.toLowerCase().includes('event') || 
@@ -290,6 +436,79 @@ const AdminEventsPage: React.FC = () => {
                         </Grid>
                     </Grid>
                 </Paper>
+
+                <Paper sx={{ p: 2, mb: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }} elevation={0}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5, flexWrap: 'wrap', gap: 1 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <RssFeedIcon color="primary" />
+                            <Box>
+                                <Typography variant="h6" sx={{ fontWeight: 800 }}>Externe Event-Feeds</Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                    RSS/JSON-Feeds für Drittanbieter wie WordPress. Der vollständige Link ist nur direkt nach Erstellung oder Regeneration sichtbar.
+                                </Typography>
+                            </Box>
+                        </Box>
+                        <Button variant="outlined" startIcon={<AddIcon />} onClick={() => handleOpenFeedDialog()} sx={{ borderRadius: 2 }}>
+                            Neuer Feed
+                        </Button>
+                    </Box>
+
+                    {eventFeeds.length === 0 ? (
+                        <Alert severity="info" sx={{ borderRadius: 2 }}>Noch kein externer Feed angelegt.</Alert>
+                    ) : (
+                        <TableContainer>
+                            <Table size="small">
+                                <TableHead sx={{ bgcolor: 'action.hover' }}>
+                                    <TableRow>
+                                        <TableCell>Name</TableCell>
+                                        <TableCell>Token</TableCell>
+                                        <TableCell>Kategorien</TableCell>
+                                        <TableCell>Regionen</TableCell>
+                                        <TableCell>Status</TableCell>
+                                        <TableCell>Letzter Abruf</TableCell>
+                                        <TableCell align="right">Aktionen</TableCell>
+                                    </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                    {eventFeeds.map(feed => (
+                                        <TableRow key={feed.id} hover>
+                                            <TableCell>
+                                                <Typography variant="body2" sx={{ fontWeight: 700 }}>{feed.name}</Typography>
+                                                <Typography variant="caption" color="text.secondary">{feed.feed_title}</Typography>
+                                            </TableCell>
+                                            <TableCell><Chip label={feed.token_preview} size="small" variant="outlined" /></TableCell>
+                                            <TableCell>
+                                                <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                                                    {(feed.categories || []).map(c => <Chip key={c} label={c} size="small" />)}
+                                                </Stack>
+                                            </TableCell>
+                                            <TableCell>{(feed.regions || []).join(', ')}{feed.include_global_events ? ' + Global' : ''}</TableCell>
+                                            <TableCell>
+                                                <Chip label={feed.is_active ? 'Aktiv' : 'Deaktiviert'} color={feed.is_active ? 'success' : 'default'} size="small" />
+                                            </TableCell>
+                                            <TableCell>
+                                                <Typography variant="body2">{feed.last_used_at ? new Date(feed.last_used_at).toLocaleString('de-AT') : '-'}</Typography>
+                                                <Typography variant="caption" color="text.secondary">{feed.access_count || 0} Abrufe</Typography>
+                                            </TableCell>
+                                            <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                                                <Tooltip title="Bearbeiten">
+                                                    <IconButton color="primary" onClick={() => handleOpenFeedDialog(feed)} size="small"><EditIcon fontSize="small" /></IconButton>
+                                                </Tooltip>
+                                                <Tooltip title="Link neu generieren">
+                                                    <IconButton color="warning" onClick={() => handleRegenerateFeed(feed)} size="small"><RefreshIcon fontSize="small" /></IconButton>
+                                                </Tooltip>
+                                                <Tooltip title="Feed löschen">
+                                                    <IconButton color="error" onClick={() => handleOpenFeedDeleteConfirm(feed)} size="small"><DeleteIcon fontSize="small" /></IconButton>
+                                                </Tooltip>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </TableContainer>
+                    )}
+                </Paper>
+
 
                 {loading ? <Box display="flex" justifyContent="center" p={5}><CircularProgress /></Box> : error ? <Alert severity="error">{error}</Alert> :
                     <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
@@ -446,6 +665,106 @@ const AdminEventsPage: React.FC = () => {
                 <DialogActions sx={{ p: 3, bgcolor: 'action.hover' }}>
                     <Button onClick={handleCloseDialog} color="inherit">Abbrechen</Button>
                     <Button onClick={handleSave} variant="contained" sx={{ borderRadius: 2 }}>{isCreateMode ? 'Hinzufügen' : 'Speichern'}</Button>
+                </DialogActions>
+            </Dialog>
+
+
+
+            <Dialog open={feedDialogOpen} onClose={handleCloseFeedDialog} fullWidth maxWidth="sm" PaperProps={{ sx: { borderRadius: 3 } }}>
+                <DialogTitle sx={{ fontWeight: 800 }}>{editingFeed?.id ? 'Event-Feed bearbeiten' : 'Neuen Event-Feed erstellen'}</DialogTitle>
+                <DialogContent dividers>
+                    {feedDialogError && <Alert severity="error" sx={{ mb: 2 }}>{feedDialogError}</Alert>}
+                    {feedLinkResult && (
+                        <Alert severity="success" sx={{ mb: 2, borderRadius: 2 }}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>Feed-Link wurde erzeugt. Bitte jetzt kopieren.</Typography>
+                            <Stack spacing={1}>
+                                {feedLinkResult.rss_url && (
+                                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                        <TextField size="small" fullWidth label="RSS-Link für WordPress" value={feedLinkResult.rss_url} InputProps={{ readOnly: true }} />
+                                        <IconButton onClick={() => copyToClipboard(feedLinkResult.rss_url)}><ContentCopyIcon /></IconButton>
+                                    </Box>
+                                )}
+                                {feedLinkResult.json_url && (
+                                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                        <TextField size="small" fullWidth label="JSON-Link" value={feedLinkResult.json_url} InputProps={{ readOnly: true }} />
+                                        <IconButton onClick={() => copyToClipboard(feedLinkResult.json_url)}><ContentCopyIcon /></IconButton>
+                                    </Box>
+                                )}
+                            </Stack>
+                        </Alert>
+                    )}
+
+                    <Stack spacing={2.5} sx={{ mt: 1 }}>
+                        <TextField
+                            label="Interner Name"
+                            size="small"
+                            fullWidth
+                            value={editingFeed?.name || ''}
+                            onChange={(e) => handleFeedChange('name', e.target.value)}
+                        />
+                        <TextField
+                            label="RSS-Titel"
+                            size="small"
+                            fullWidth
+                            value={editingFeed?.feed_title || ''}
+                            onChange={(e) => handleFeedChange('feed_title', e.target.value)}
+                        />
+
+                        <Box>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>Kategorien</Typography>
+                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                {FEED_CATEGORY_OPTIONS.map(option => (
+                                    <FormControlLabel
+                                        key={option.value}
+                                        control={<Checkbox checked={(editingFeed?.categories || []).includes(option.value)} onChange={() => toggleArrayValue('categories', option.value)} />}
+                                        label={option.label}
+                                    />
+                                ))}
+                            </Stack>
+                        </Box>
+
+                        <Box>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>Regionen</Typography>
+                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                {FEED_REGION_OPTIONS.map(option => (
+                                    <FormControlLabel
+                                        key={option.value}
+                                        control={<Checkbox checked={(editingFeed?.regions || []).includes(option.value)} onChange={() => toggleArrayValue('regions', option.value)} />}
+                                        label={`${option.value} · ${option.label}`}
+                                    />
+                                ))}
+                            </Stack>
+                        </Box>
+
+                        <FormControlLabel
+                            control={<Checkbox checked={editingFeed?.include_global_events !== false} onChange={(_: React.ChangeEvent<HTMLInputElement>, checked: boolean) => handleFeedChange('include_global_events', checked)} />}
+                            label="Events ohne Region zusätzlich einschließen"
+                        />
+                        <FormControlLabel
+                            control={<Switch checked={editingFeed?.is_active !== false} onChange={(_: React.ChangeEvent<HTMLInputElement>, checked: boolean) => handleFeedChange('is_active', checked)} />}
+                            label={editingFeed?.is_active !== false ? 'Feed aktiv' : 'Feed deaktiviert'}
+                        />
+                    </Stack>
+                </DialogContent>
+                <DialogActions sx={{ p: 3, bgcolor: 'action.hover' }}>
+                    <Button onClick={handleCloseFeedDialog} color="inherit">Schließen</Button>
+                    <Button onClick={handleSaveFeed} variant="contained" sx={{ borderRadius: 2 }}>{editingFeed?.id ? 'Speichern' : 'Erstellen'}</Button>
+                </DialogActions>
+            </Dialog>
+
+            <Dialog open={feedDeleteConfirmOpen} onClose={handleCloseFeedDeleteConfirm} PaperProps={{ sx: { borderRadius: 3 } }}>
+                <DialogTitle>Event-Feed löschen?</DialogTitle>
+                <DialogContent dividers>
+                    <Typography sx={{ mb: 1 }}>
+                        Möchten Sie den externen Feed <b>"{feedToDelete?.name}"</b> wirklich löschen?
+                    </Typography>
+                    <Alert severity="warning" sx={{ borderRadius: 2 }}>
+                        Der bisherige RSS-/JSON-Link funktioniert danach sofort nicht mehr.
+                    </Alert>
+                </DialogContent>
+                <DialogActions sx={{ p: 2 }}>
+                    <Button onClick={handleCloseFeedDeleteConfirm} color="inherit">Abbrechen</Button>
+                    <Button onClick={handleDeleteFeed} variant="contained" color="error" sx={{ borderRadius: 2 }}>Feed löschen</Button>
                 </DialogActions>
             </Dialog>
 

@@ -41,6 +41,8 @@ import CloseIcon from '@mui/icons-material/Close';
 import GavelIcon from '@mui/icons-material/Gavel';
 import ForumIcon from '@mui/icons-material/Forum';
 import NotificationsIcon from '@mui/icons-material/Notifications';
+import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
 import ShareIcon from '@mui/icons-material/Share';
 import StorefrontIcon from '@mui/icons-material/Storefront';
@@ -91,7 +93,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [notifications, setNotifications] = useState<any[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
     const [desktopSearchExpanded, setDesktopSearchExpanded] = useState(false);
-    const [notifExpandedInMenu, setNotifExpandedInMenu] = useState(false); 
+    const [notifExpandedInMenu, setNotifExpandedInMenu] = useState(false);
+    const [dashboardHeaderActions, setDashboardHeaderActions] = useState<React.ReactNode | null>(null);
     
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -133,6 +136,23 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     useEffect(() => {
         setIsSubscribed(!!user?.newsletter_opt_in);
     }, [user?.newsletter_opt_in]);
+
+    useEffect(() => {
+        const handleHeaderActionsChange = (event: Event) => {
+            const customEvent = event as CustomEvent<{ actions?: React.ReactNode | null }>;
+            setDashboardHeaderActions(customEvent.detail?.actions || null);
+        };
+
+        const clearHeaderActions = () => setDashboardHeaderActions(null);
+
+        window.addEventListener('dashboard-header-actions-change', handleHeaderActionsChange);
+        window.addEventListener('dashboard-header-actions-clear', clearHeaderActions);
+
+        return () => {
+            window.removeEventListener('dashboard-header-actions-change', handleHeaderActionsChange);
+            window.removeEventListener('dashboard-header-actions-clear', clearHeaderActions);
+        };
+    }, []);
 
     const handleNewsletterToggle = async (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -203,7 +223,29 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     
     const handleClose = () => setAnchorEl(null);
 
+    const systemNotificationTypes = ['system_update_reload', 'system_update_info', 'system_update_admin'];
+    const isSystemNotification = (notif: any) => systemNotificationTypes.includes(notif?.type);
+
+    const markSingleNotificationRead = async (notificationId: string) => {
+        try {
+            await apiClient.put('/api/notifications/read', { notificationId });
+            setNotifications(prev => prev.map(n => n.id === notificationId ? { ...n, is_read: true } : n));
+            setUnreadCount(prev => Math.max(0, prev - 1));
+        } catch (e) {
+            console.error('Fehler beim Markieren der Benachrichtigung:', e);
+        }
+    };
+
+    const handleSystemUpdateRefresh = async (notif: any) => {
+        if (notif?.id && !notif.is_read) {
+            await markSingleNotificationRead(notif.id);
+        }
+        window.location.reload();
+    };
+
     const handleNotifItemClick = (notif: any) => {
+        if (isSystemNotification(notif)) return;
+
         handleClose();
         if (['community_comment', 'community_like', 'community_mention'].includes(notif.type)) {
             navigate('/community'); 
@@ -484,6 +526,20 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             </Box>
                         )}
                     </Box>
+
+                    {!isMobile && dashboardHeaderActions && (
+                        <Box
+                            sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                flexShrink: 0,
+                                mr: 1,
+                                gap: 0.75,
+                            }}
+                        >
+                            {dashboardHeaderActions}
+                        </Box>
+                    )}
                     
                     <SessionTimer />
                     
@@ -558,23 +614,98 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                                 Keine Benachrichtigungen
                                             </Typography>
                                         ) : (
-                                            notifications.map((n) => (
-                                                <MenuItem 
-                                                    key={n.id} 
-                                                    onClick={() => handleNotifItemClick(n)}
-                                                    sx={{ 
-                                                        whiteSpace: 'normal', 
-                                                        bgcolor: n.is_read ? 'transparent' : alpha(theme.palette.primary.main, 0.05),
-                                                        borderLeft: n.is_read ? 'none' : `3px solid ${theme.palette.error.main}`,
-                                                        py: 1,
-                                                        px: 2,
-                                                        display: 'block'
-                                                    }}
-                                                >
-                                                    <Typography variant="subtitle2" sx={{ fontSize: '0.8rem', fontWeight: n.is_read ? 'normal' : 'bold' }}>{n.title}</Typography>
-                                                    <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', lineHeight: 1.3 }}>{n.message}</Typography>
-                                                </MenuItem>
-                                            ))
+                                            notifications.map((n) => {
+                                                const isSystem = isSystemNotification(n);
+                                                const needsReload = n.type === 'system_update_reload';
+                                                const isAdminUpdate = n.type === 'system_update_admin';
+
+                                                return (
+                                                    <MenuItem 
+                                                        key={n.id} 
+                                                        onClick={() => handleNotifItemClick(n)}
+                                                        sx={{ 
+                                                            whiteSpace: 'normal', 
+                                                            bgcolor: n.is_read
+                                                                ? 'transparent'
+                                                                : isSystem
+                                                                    ? alpha(theme.palette.warning.main, 0.08)
+                                                                    : alpha(theme.palette.primary.main, 0.05),
+                                                            borderLeft: n.is_read
+                                                                ? 'none'
+                                                                : `3px solid ${isSystem ? theme.palette.warning.main : theme.palette.error.main}`,
+                                                            py: isSystem ? 1.25 : 1,
+                                                            px: 2,
+                                                            display: 'block',
+                                                            cursor: isSystem ? 'default' : 'pointer',
+                                                        }}
+                                                    >
+                                                        {isSystem ? (
+                                                            <Box>
+                                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.6 }}>
+                                                                    <Box sx={{ display: 'flex', color: isAdminUpdate ? 'success.main' : 'warning.main' }}>
+                                                                        {isAdminUpdate ? <RocketLaunchIcon fontSize="small" /> : <SystemUpdateAltIcon fontSize="small" />}
+                                                                    </Box>
+                                                                    <Typography variant="subtitle2" sx={{ fontSize: '0.82rem', fontWeight: 900, flexGrow: 1 }}>
+                                                                        {n.title}
+                                                                    </Typography>
+                                                                    <Chip
+                                                                        size="small"
+                                                                        label={isAdminUpdate ? 'Admin' : 'System'}
+                                                                        color={isAdminUpdate ? 'success' : 'warning'}
+                                                                        variant={n.is_read ? 'outlined' : 'filled'}
+                                                                        sx={{ height: 18, fontSize: '0.62rem', fontWeight: 850 }}
+                                                                    />
+                                                                </Box>
+                                                                <Typography
+                                                                    variant="body2"
+                                                                    color="text.secondary"
+                                                                    sx={{
+                                                                        fontSize: '0.75rem',
+                                                                        lineHeight: 1.35,
+                                                                        whiteSpace: 'pre-line',
+                                                                    }}
+                                                                >
+                                                                    {n.message}
+                                                                </Typography>
+                                                                <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                                                                    {needsReload && (
+                                                                        <Button
+                                                                            size="small"
+                                                                            variant="contained"
+                                                                            color="warning"
+                                                                            startIcon={<SystemUpdateAltIcon />}
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                handleSystemUpdateRefresh(n);
+                                                                            }}
+                                                                            sx={{ fontWeight: 850 }}
+                                                                        >
+                                                                            Jetzt aktualisieren
+                                                                        </Button>
+                                                                    )}
+                                                                    {!needsReload && !n.is_read && (
+                                                                        <Button
+                                                                            size="small"
+                                                                            variant="outlined"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                markSingleNotificationRead(n.id);
+                                                                            }}
+                                                                        >
+                                                                            Gelesen
+                                                                        </Button>
+                                                                    )}
+                                                                </Box>
+                                                            </Box>
+                                                        ) : (
+                                                            <>
+                                                                <Typography variant="subtitle2" sx={{ fontSize: '0.8rem', fontWeight: n.is_read ? 'normal' : 'bold' }}>{n.title}</Typography>
+                                                                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', lineHeight: 1.3 }}>{n.message}</Typography>
+                                                            </>
+                                                        )}
+                                                    </MenuItem>
+                                                );
+                                            })
                                         )}
                                         {unreadCount > 0 && (
                                             <Box sx={{ p: 1, textAlign: 'center' }}>

@@ -9,8 +9,6 @@ services:
 
   api:
     command: npm run dev:api
-    ports:
-      - "5001:5000"
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -25,7 +23,7 @@ services:
       - ./backend:/app
       - /app/node_modules
     env_file:
-      - .env 
+      - .env
 
   worker-scrape:
     command: npm run dev:scrape

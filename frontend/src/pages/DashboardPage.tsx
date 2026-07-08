@@ -1,15 +1,16 @@
 // frontend/src/pages/DashboardPage.tsx
-import React, { useState, useEffect, useCallback, Suspense, memo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, Suspense, memo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   Container, Box, CircularProgress, Alert, Menu, MenuItem, Button, Snackbar,
   useTheme, useMediaQuery, SpeedDial, SpeedDialIcon, SpeedDialAction, Dialog, DialogTitle, DialogContent,
   List, ListItem, ListItemButton, ListItemIcon, ListItemText, Typography,
-  IconButton, Tooltip, Badge, Chip
+  IconButton, Tooltip
 } from '@mui/material';
-import { Link as RouterLink } from 'react-router-dom';
-import TuneIcon from '@mui/icons-material/Tune';
+import { alpha } from '@mui/material/styles';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import SaveIcon from '@mui/icons-material/Save';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -35,18 +36,6 @@ interface SnackbarState {
 interface LastDeletedState {
   widget: WidgetConfig;
   layouts: Layouts;
-}
-
-interface AnimatedActionButtonProps {
-  id: string;
-  icon: React.ReactNode;
-  text: string;
-  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void | Promise<void>;
-  variant?: 'text' | 'outlined' | 'contained';
-  color?: 'inherit' | 'primary' | 'secondary' | 'success' | 'error' | 'info' | 'warning';
-  disabled?: boolean;
-  isExpanded: boolean; 
-  onExpand: () => void; 
 }
 
 function asArray<T = any>(value: any): T[] {
@@ -104,61 +93,11 @@ const MemoizedWidgetContent = memo(({
     );
 });
 
-const AnimatedActionButton: React.FC<AnimatedActionButtonProps> = ({ 
-    id, icon, text, onClick, variant = "outlined", color = "primary", disabled = false,
-    isExpanded, onExpand
-}) => (
-    <Tooltip title={!isExpanded ? text : ''} placement="top">
-        <span>
-            <Button
-                id={id}
-                variant={variant}
-                color={color}
-                onClick={(e) => {
-                    onExpand(); 
-                    onClick(e); 
-                }}
-                disabled={disabled}
-                sx={{
-                    minWidth: isExpanded ? 'auto' : '40px',
-                    width: isExpanded ? 'auto' : '40px',
-                    height: '40px',
-                    p: isExpanded ? '6px 16px' : '6px',
-                    transition: 'all 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    opacity: variant === 'text' && !disabled ? 0.7 : 1,
-                    '&:hover': { opacity: 1 }
-                }}
-            >
-                {icon}
-                <Box
-                    component="span"
-                    sx={{
-                        maxWidth: isExpanded ? '150px' : '0px',
-                        opacity: isExpanded ? 1 : 0,
-                        overflow: 'hidden',
-                        whiteSpace: 'nowrap',
-                        transition: 'all 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
-                        ml: isExpanded ? 1 : 0
-                    }}
-                >
-                    {text}
-                </Box>
-            </Button>
-        </span>
-    </Tooltip>
-);
-
 const DashboardPage: React.FC = () => {
   const { 
     user, 
     businessPartner, 
-    dashboardRefreshKey, 
-    userTags, 
-    refreshUserTags, 
-    triggerDashboardRefresh 
+    dashboardRefreshKey 
   } = useAuth();
   
   const [dashboardConfig, setDashboardConfig] = useState<DashboardSavedConfig>(emptyConfig());
@@ -174,8 +113,6 @@ const DashboardPage: React.FC = () => {
   const [openSpeedDial, setOpenSpeedDial] = useState(false);
   const [addWidgetDialogOpen, setAddWidgetDialogOpen] = useState(false);
   const [isAiChatOpen, setIsAiChatOpen] = useState(false);
-  
-  const [activeButtonId, setActiveButtonId] = useState<string | 'all' | null>('all');
   
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -227,19 +164,6 @@ const DashboardPage: React.FC = () => {
       return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges]);
 
-  const handleRemoveTag = (tagToRemove: string) => async () => {
-      if (user?.role === 'demo') return;
-      try {
-          await apiClient.delete(`/api/users/tags/${encodeURIComponent(tagToRemove)}`);
-          setSnackbar({ open: true, message: `Thema "${tagToRemove}" entfernt.`, severity: 'info' });
-          refreshUserTags();
-          triggerDashboardRefresh();
-      } catch (err) {
-          console.error("Fehler beim Entfernen des Tags:", err);
-          setSnackbar({ open: true, message: 'Fehler beim Entfernen des Themas.', severity: 'error' });
-      }
-  };
-
   const fetchAll = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -287,7 +211,7 @@ const DashboardPage: React.FC = () => {
   };
 
   const handleOpenAddWidgetMenu = (event: React.MouseEvent<HTMLElement>) => {
-      setAnchorEl(event.currentTarget);
+      setAnchorEl((current) => current ? null : event.currentTarget);
   };
   const handleCloseAddWidgetMenu = () => setAnchorEl(null);
 
@@ -381,6 +305,106 @@ const DashboardPage: React.FC = () => {
     { icon: <SaveIcon />, name: 'Layout speichern', handler: () => { handleSaveConfig(); setOpenSpeedDial(false); } }
   ];
 
+  const dashboardHeaderActions = useMemo(() => {
+    if (loading || error) return null;
+
+    const isWidgetMenuOpen = Boolean(anchorEl);
+
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        <Tooltip title={isWidgetMenuOpen ? 'Widget-Menü schließen' : 'Dashboard mit Widgets anpassen'}>
+          <Button
+            id="add-widget-button"
+            size="small"
+            variant="outlined"
+            color="inherit"
+            startIcon={<AddCircleOutlineIcon />}
+            endIcon={isWidgetMenuOpen ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+            onClick={handleOpenAddWidgetMenu}
+            sx={{
+              height: 34,
+              px: 1.15,
+              borderRadius: 999,
+              textTransform: 'none',
+              fontWeight: 850,
+              letterSpacing: 0.1,
+              borderColor: alpha(theme.palette.common.white, isWidgetMenuOpen ? 0.78 : 0.42),
+              color: 'inherit',
+              bgcolor: isWidgetMenuOpen
+                ? alpha(theme.palette.common.white, 0.24)
+                : alpha(theme.palette.common.white, 0.10),
+              boxShadow: isWidgetMenuOpen ? `inset 0 0 0 1px ${alpha(theme.palette.common.white, 0.18)}` : 'none',
+              '&:hover': {
+                borderColor: alpha(theme.palette.common.white, 0.82),
+                bgcolor: alpha(theme.palette.common.white, 0.22),
+              },
+              '& .MuiButton-startIcon': { mr: 0.55 },
+              '& .MuiButton-endIcon': { ml: 0.35 },
+            }}
+          >
+            Dashboard anpassen
+          </Button>
+        </Tooltip>
+
+        {hasUnsavedChanges && (
+          <Tooltip title="Änderungen am Dashboard-Layout speichern">
+            <span>
+              <Button
+                id="save-layout-button"
+                size="small"
+                variant="contained"
+                color="inherit"
+                startIcon={isSaving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />}
+                onClick={handleSaveConfig}
+                disabled={isSaving}
+                sx={{
+                  height: 34,
+                  px: 1.25,
+                  borderRadius: 999,
+                  textTransform: 'none',
+                  fontWeight: 900,
+                  color: theme.palette.primary.main,
+                  bgcolor: theme.palette.common.white,
+                  boxShadow: `0 6px 18px ${alpha(theme.palette.common.black, 0.14)}`,
+                  '&:hover': {
+                    bgcolor: alpha(theme.palette.common.white, 0.94),
+                    boxShadow: `0 8px 22px ${alpha(theme.palette.common.black, 0.18)}`,
+                  },
+                  '&.Mui-disabled': {
+                    color: alpha(theme.palette.primary.main, 0.55),
+                    bgcolor: alpha(theme.palette.common.white, 0.78),
+                  },
+                  '& .MuiButton-startIcon': { mr: 0.6 },
+                }}
+              >
+                {isSaving ? 'Speichert…' : 'Änderungen speichern'}
+              </Button>
+            </span>
+          </Tooltip>
+        )}
+      </Box>
+    );
+  }, [anchorEl, error, handleOpenAddWidgetMenu, handleSaveConfig, hasUnsavedChanges, isSaving, loading, theme]);
+
+  useEffect(() => {
+    if (isMobile || !dashboardHeaderActions) {
+      window.dispatchEvent(new CustomEvent('dashboard-header-actions-clear'));
+      return;
+    }
+
+    const dispatchActions = () => {
+      window.dispatchEvent(new CustomEvent('dashboard-header-actions-change', { detail: { actions: dashboardHeaderActions } }));
+    };
+
+    dispatchActions();
+    const timeoutId = window.setTimeout(dispatchActions, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.dispatchEvent(new CustomEvent('dashboard-header-actions-clear'));
+    };
+  }, [dashboardHeaderActions, isMobile]);
+
   if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', p: 5 }}><CircularProgress /></Box>;
   if (error) return <Container maxWidth="md" sx={{ mt: 4 }}><Alert severity="error">{error}</Alert></Container>;
 
@@ -390,76 +414,6 @@ const DashboardPage: React.FC = () => {
     <Container maxWidth={false} sx={{ mt: 0, px: { xs: 1, sm: 2 } }}>
         {!!user && user.has_seen_welcome_widget === false && <WelcomeWidget />}
 
-        <Box 
-            sx={{ 
-                display: 'flex', 
-                flexWrap: 'wrap', 
-                alignItems: 'center', 
-                justifyContent: 'space-between',
-                gap: 2, 
-                mb: 2, 
-                p: 1.5, 
-                bgcolor: 'background.paper', 
-                borderRadius: 1, 
-                boxShadow: 1 
-            }}
-        >
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, flexGrow: 1 }}>
-                <Typography variant="subtitle2" color="text.secondary" sx={{ mr: 1, display: { xs: 'none', sm: 'block' } }}>
-                    Meine Filter:
-                </Typography>
-                
-                {userTags && userTags.length > 0 ? (
-                    userTags.map(tag => (
-                        <Chip
-                            key={tag}
-                            label={tag}
-                            onDelete={user?.role !== 'demo' ? handleRemoveTag(tag) : undefined}
-                            variant="outlined"
-                            color="primary"
-                            size="small"
-                        />
-                    ))
-                ) : (
-                    <Typography variant="body2" color="text.disabled">Keine Filter ausgewählt</Typography>
-                )}
-                
-                <Tooltip title="Themen bearbeiten">
-                    <IconButton component={RouterLink} to="/profile#my-tags" size="small" sx={{ ml: 1 }}>
-                        <Badge badgeContent={userTags?.length || 0} color="primary" sx={{ '& .MuiBadge-badge': { fontSize: '0.6rem', height: 16, minWidth: 16 } }}>
-                            <TuneIcon fontSize="small" />
-                        </Badge>
-                    </IconButton>
-                </Tooltip>
-            </Box>
-
-            {!isMobile && (
-                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexShrink: 0 }}>
-                    <AnimatedActionButton 
-                        id="add-widget-button"
-                        icon={<AddCircleOutlineIcon />}
-                        text="Widgets verwalten"
-                        onClick={handleOpenAddWidgetMenu}
-                        variant="outlined"
-                        color="primary"
-                        isExpanded={Boolean(anchorEl)}
-                        onExpand={() => {}}
-                    />
-                    
-                    <AnimatedActionButton 
-                        id="save-layout-button"
-                        icon={isSaving ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />}
-                        text={isSaving ? 'Speichert...' : 'Layout speichern'}
-                        onClick={handleSaveConfig}
-                        variant="contained"
-                        color="primary"
-                        disabled={isSaving || !hasUnsavedChanges}
-                        isExpanded={activeButtonId === 'all' || activeButtonId === 'save-layout-button'}
-                        onExpand={() => setActiveButtonId('save-layout-button')}
-                    />
-                </Box>
-            )}
-        </Box>
 
         <Menu 
           anchorEl={anchorEl} 

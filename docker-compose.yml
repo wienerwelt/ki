@@ -26,6 +26,8 @@ services:
 
   api:
     <<: *default-logging
+    ports:
+      - "127.0.0.1:5001:5000"    
     build: ./backend
     container_name: mobiliti-dashboard-api
     restart: unless-stopped
@@ -36,6 +38,8 @@ services:
     volumes:
       - mobiliti_dashboard_public_directory_logos:/app/public/directory_logos
       - mobiliti_dashboard_public_logos:/app/public/logos
+      - mobiliti_dashboard_public_social_media:/app/public/social-media
+      - mobiliti_dashboard_public_grafiken:/app/public/grafiken
 
   worker-ai:
     <<: *default-logging
@@ -93,3 +97,5 @@ volumes:
   mobiliti_dashboard_redis_data:
   mobiliti_dashboard_public_directory_logos:
   mobiliti_dashboard_public_logos:
+  mobiliti_dashboard_public_social_media:
+  mobiliti_dashboard_public_grafiken:

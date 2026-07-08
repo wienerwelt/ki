@@ -1454,11 +1454,97 @@ exports.getVignettePrices = async (req, res) => {
 };
 
 
-exports.getAccountIntelligence = async (req, res) => {
-    const { business_partner_id: businessPartnerId } = req.user;
 
-    if (!businessPartnerId) {
-        // Wenn der Nutzer keinem Partner zugeordnet ist, gibt es nichts zu zeigen.
+const ACCOUNT_INTELLIGENCE_STATUSES = new Set(['new', 'read', 'done', 'ignored']);
+
+const safeDateDiffDays = (dateValue) => {
+    if (!dateValue) return 999;
+    const date = new Date(dateValue);
+    if (Number.isNaN(date.getTime())) return 999;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    date.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.floor((today.getTime() - date.getTime()) / (1000 * 60 * 60 * 24)));
+};
+
+const getDomainFromUrl = (url) => {
+    if (!url) return null;
+    try {
+        return new URL(url).hostname.replace(/^www\./, '');
+    } catch (_) {
+        return String(url).replace(/^https?:\/\//i, '').split('/')[0] || null;
+    }
+};
+
+const classifyAccountIntelligenceArticle = (article, type) => {
+    const text = `${article.article_title || ''} ${article.summary || ''}`.toLowerCase();
+    const isCompetitor = type === 'competitor';
+    const ageDays = safeDateDiffDays(article.published_at);
+
+    let signalType = isCompetitor ? 'Wettbewerbsbewegung' : 'Account-Signal';
+    let recommendedAction = isCompetitor
+        ? 'Prüfen, ob daraus ein Gesprächsanlass oder ein Gegenangebot für den Account entsteht.'
+        : 'Kurz bewerten und als Gesprächsanlass für den Account nutzen.';
+    let relevanceScore = isCompetitor ? 74 : 70;
+
+    const hasAny = (patterns) => patterns.some((pattern) => text.includes(pattern));
+
+    if (hasAny(['fuhrpark', 'flotte', 'fleet', 'mobilität', 'mobility', 'leasing', 'nutzfahrzeug', 'fahrzeug', 'e-mobilität', 'elektromobilität'])) {
+        signalType = 'Fuhrpark-/Mobilitätssignal';
+        recommendedAction = 'Mit Mobilitäts-, Fuhrpark- oder Ladeinfrastruktur-Angebot anknüpfen.';
+        relevanceScore = 90;
+    } else if (hasAny(['ladeinfrastruktur', 'charging', 'ladestation', 'wallbox', 'ev ', 'e-truck', 'elektrisch'])) {
+        signalType = 'Lade-/E-Mobilitätschance';
+        recommendedAction = 'Bedarf für Ladeinfrastruktur, Betriebskosten oder Elektrifizierung prüfen.';
+        relevanceScore = 88;
+    } else if (hasAny(['investition', 'investiert', 'finanzierung', 'förderung', 'subvention', 'budget', 'million', 'mio', 'expansion', 'ausbau', 'erweitert'])) {
+        signalType = 'Wachstums-/Investitionssignal';
+        recommendedAction = 'Kontakt aufnehmen und prüfen, ob neue Projekte oder Beschaffungen entstehen.';
+        relevanceScore = 84;
+    } else if (hasAny(['kooperation', 'partnerschaft', 'partner', 'joint venture', 'zusammenarbeit'])) {
+        signalType = 'Partnerschaftssignal';
+        recommendedAction = 'Beziehung und mögliche Kooperations-/Vertriebsansätze prüfen.';
+        relevanceScore = 78;
+    } else if (hasAny(['gesetz', 'verordnung', 'regulierung', 'richtlinie', 'steuer', 'co2', 'maut', 'vignette', 'compliance'])) {
+        signalType = 'Regulatorik-/Compliance-Signal';
+        recommendedAction = 'Auswirkungen auf den Account prüfen und Beratung/Briefing anbieten.';
+        relevanceScore = 76;
+    } else if (hasAny(['wechsel', 'vorstand', 'geschäftsführer', 'ceo', 'cfo', 'leitung', 'management'])) {
+        signalType = 'Management-/Organisationssignal';
+        recommendedAction = 'Ansprechpartner und Timing für erneute Kontaktaufnahme prüfen.';
+        relevanceScore = 72;
+    }
+
+    if (isCompetitor) {
+        relevanceScore += 4;
+        if (!recommendedAction.toLowerCase().includes('wettbewerb')) {
+            recommendedAction = `Wettbewerb beobachten: ${recommendedAction}`;
+        }
+    }
+
+    if (ageDays <= 3) relevanceScore += 6;
+    else if (ageDays <= 7) relevanceScore += 4;
+    else if (ageDays <= 30) relevanceScore += 2;
+
+    relevanceScore = Math.max(1, Math.min(99, relevanceScore));
+
+    return {
+        ...article,
+        type,
+        signal_type: signalType,
+        recommended_action: recommendedAction,
+        relevance_score: relevanceScore,
+        source_domain: getDomainFromUrl(article.article_url),
+        days_old: ageDays,
+        status: article.status || 'new',
+        is_new: !article.status || article.status === 'new'
+    };
+};
+
+exports.getAccountIntelligence = async (req, res) => {
+    const { id: userId, business_partner_id: businessPartnerId } = req.user;
+
+    if (!businessPartnerId || !userId) {
         return res.json([]);
     }
 
@@ -1467,41 +1553,137 @@ exports.getAccountIntelligence = async (req, res) => {
             SELECT
                 acc.id,
                 acc.name,
-                -- 1. Neueste Nachrichten zum Account selbst (wo competitor_name leer ist)
+                acc.status as account_status,
+                acc.website_url,
+                acc.linkedin_url,
                 (
-                    SELECT COALESCE(json_agg(news.*), '[]'::json)
+                    SELECT COALESCE(json_agg(news.* ORDER BY news.published_at DESC NULLS LAST), '[]'::json)
                     FROM (
-                        -- FIX: 'summary' hinzugefügt
-                        SELECT article_title, article_url, source_name, published_at, summary
-                        FROM business_partner_tracked_articles
-                        WHERE account_id = acc.id AND competitor_name IS NULL
-                        ORDER BY published_at DESC
-                        LIMIT 3
+                        SELECT
+                            bpta.id::text,
+                            bpta.account_id::text,
+                            bpta.article_title,
+                            bpta.article_url,
+                            bpta.source_name,
+                            bpta.published_at,
+                            bpta.summary,
+                            bpta.created_at,
+                            COALESCE(ais.status, 'new') AS status,
+                            ais.updated_at AS status_updated_at
+                        FROM business_partner_tracked_articles bpta
+                        LEFT JOIN account_intelligence_item_status ais
+                          ON ais.tracked_article_id = bpta.id
+                         AND ais.user_id = $2
+                        WHERE bpta.account_id = acc.id
+                          AND bpta.competitor_name IS NULL
+                          AND COALESCE(ais.status, 'new') <> 'ignored'
+                        ORDER BY bpta.published_at DESC NULLS LAST, bpta.created_at DESC
+                        LIMIT 5
                     ) as news
                 ) as account_news,
-                -- 2. Neueste Nachrichten zu den Wettbewerbern (wo competitor_name gesetzt ist)
                 (
-                    SELECT COALESCE(json_agg(comp_news.*), '[]'::json)
+                    SELECT COALESCE(json_agg(comp_news.* ORDER BY comp_news.published_at DESC NULLS LAST), '[]'::json)
                     FROM (
-                        -- FIX: 'summary' hinzugefügt
-                        SELECT competitor_name, article_title, article_url, source_name, published_at, summary
-                        FROM business_partner_tracked_articles
-                        WHERE account_id = acc.id AND competitor_name IS NOT NULL
-                        ORDER BY published_at DESC
-                        LIMIT 5
+                        SELECT
+                            bpta.id::text,
+                            bpta.account_id::text,
+                            bpta.competitor_name,
+                            bpta.article_title,
+                            bpta.article_url,
+                            bpta.source_name,
+                            bpta.published_at,
+                            bpta.summary,
+                            bpta.created_at,
+                            COALESCE(ais.status, 'new') AS status,
+                            ais.updated_at AS status_updated_at
+                        FROM business_partner_tracked_articles bpta
+                        LEFT JOIN account_intelligence_item_status ais
+                          ON ais.tracked_article_id = bpta.id
+                         AND ais.user_id = $2
+                        WHERE bpta.account_id = acc.id
+                          AND bpta.competitor_name IS NOT NULL
+                          AND COALESCE(ais.status, 'new') <> 'ignored'
+                        ORDER BY bpta.published_at DESC NULLS LAST, bpta.created_at DESC
+                        LIMIT 8
                     ) as comp_news
                 ) as competitor_news
             FROM business_partner_accounts acc
             WHERE acc.business_partner_id = $1
+              AND COALESCE(acc.is_active, TRUE) = TRUE
             ORDER BY acc.name ASC;
         `;
-        
-        const { rows } = await db.query(query, [businessPartnerId]);
-        res.json(rows);
 
+        const { rows } = await db.query(query, [businessPartnerId, userId]);
+
+        const enrichedRows = rows.map((account) => ({
+            ...account,
+            account_news: Array.isArray(account.account_news)
+                ? account.account_news.map((article) => classifyAccountIntelligenceArticle(article, 'account'))
+                : [],
+            competitor_news: Array.isArray(account.competitor_news)
+                ? account.competitor_news.map((article) => classifyAccountIntelligenceArticle(article, 'competitor'))
+                : []
+        }));
+
+        res.json(enrichedRows);
     } catch (err) {
         console.error('Error fetching account intelligence data:', err.message);
-        res.status(500).send('Server error');
+        res.status(500).json({ message: 'Fehler beim Laden der Account Intelligence Daten.' });
+    }
+};
+
+exports.updateAccountIntelligenceStatus = async (req, res) => {
+    const { id: userId, business_partner_id: businessPartnerId } = req.user;
+    const { articleId } = req.params;
+    const { status } = req.body || {};
+
+    if (!userId || !businessPartnerId) {
+        return res.status(401).json({ message: 'Authentifizierung erforderlich.' });
+    }
+
+    if (!isValidUUID(articleId)) {
+        return res.status(400).json({ message: 'Ungültige Artikel-ID.' });
+    }
+
+    if (!ACCOUNT_INTELLIGENCE_STATUSES.has(status)) {
+        return res.status(400).json({ message: 'Ungültiger Status.' });
+    }
+
+    try {
+        const ownershipCheck = await db.query(`
+            SELECT bpta.id
+            FROM business_partner_tracked_articles bpta
+            JOIN business_partner_accounts bpa ON bpa.id = bpta.account_id
+            WHERE bpta.id = $1
+              AND bpa.business_partner_id = $2
+            LIMIT 1
+        `, [articleId, businessPartnerId]);
+
+        if (ownershipCheck.rows.length === 0) {
+            return res.status(404).json({ message: 'Artikel nicht gefunden oder nicht für diesen Mandanten freigegeben.' });
+        }
+
+        if (status === 'new') {
+            await db.query(`
+                DELETE FROM account_intelligence_item_status
+                WHERE user_id = $1 AND tracked_article_id = $2
+            `, [userId, articleId]);
+
+            return res.json({ article_id: articleId, status: 'new' });
+        }
+
+        const result = await db.query(`
+            INSERT INTO account_intelligence_item_status (user_id, tracked_article_id, status, updated_at)
+            VALUES ($1, $2, $3, NOW())
+            ON CONFLICT (user_id, tracked_article_id)
+            DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()
+            RETURNING tracked_article_id::text AS article_id, status, updated_at
+        `, [userId, articleId, status]);
+
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Error updating account intelligence status:', err.message);
+        res.status(500).json({ message: 'Status konnte nicht gespeichert werden.' });
     }
 };
 
@@ -2668,7 +2850,6 @@ exports.getCalendarEvents = async (req, res) => {
 const normalizeCalendarCategory = (value) => {
     const v = String(value || '').trim();
     if (!v) return null;
-    if (v === 'businesspartner_events') return 'events';
     return v;
 };
 
@@ -2697,25 +2878,28 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
                 .filter(Boolean);
 
             const uniqueCategories = [...new Set(categoryArray)];
+            const wantsBusinessPartnerEvents = uniqueCategories.includes('businesspartner_events');
+            const globalCategories = uniqueCategories.filter(c => c !== 'businesspartner_events');
+            const categoryParts = [];
 
-            if (uniqueCategories.length === 1) {
-                categoryWhere = `sc.category = $${paramIndex}`;
-                queryParams.push(uniqueCategories[0]);
+            if (globalCategories.length === 1) {
+                categoryParts.push(`sc.category = $${paramIndex}`);
+                queryParams.push(globalCategories[0]);
                 paramIndex++;
-            } else if (uniqueCategories.length > 1) {
-                categoryWhere = `sc.category = ANY($${paramIndex}::text[])`;
-                queryParams.push(uniqueCategories);
+            } else if (globalCategories.length > 1) {
+                categoryParts.push(`sc.category = ANY($${paramIndex}::text[])`);
+                queryParams.push(globalCategories);
                 paramIndex++;
             }
 
-            if (businessPartnerId) {
+            if (wantsBusinessPartnerEvents && businessPartnerId) {
                 const bpSourceIdentifier = `${businessPartnerId}_events`;
-                
-                categoryWhere = `(${categoryWhere} OR (sc.source_identifier = $${paramIndex} AND sc.category = 'businesspartner_events'))`;
+                categoryParts.push(`(sc.source_identifier = $${paramIndex} AND sc.category = 'businesspartner_events')`);
                 queryParams.push(bpSourceIdentifier);
                 paramIndex++;
             }
-            
+
+            categoryWhere = categoryParts.length > 0 ? categoryParts.join(' OR ') : 'FALSE';
             whereClauses.push(`(${categoryWhere})`);
             
         } else {
@@ -3037,98 +3221,285 @@ exports.getAllTags = async (req, res) => {
 
 exports.globalSearch = async (req, res) => {
     const { term } = req.query;
-    const { business_partner_id } = req.user; 
+    const {
+        business_partner_id: rawBusinessPartnerId,
+        role: rawRole
+    } = req.user || {};
 
     if (!term || typeof term !== 'string' || term.trim().length < 3) {
-        return res.status(400).json({ message: 'Ein Suchbegriff mit mindestens 3 Zeichen ist erforderlich.' });
+        return res.status(400).json({
+            message: 'Ein Suchbegriff mit mindestens 3 Zeichen ist erforderlich.'
+        });
     }
 
     const searchTerm = term.trim();
+    const role = String(rawRole || '').toLowerCase();
+    const isAdmin = role === 'admin';
+    const businessPartnerId = isValidUUID(rawBusinessPartnerId) ? rawBusinessPartnerId : null;
 
     try {
-        // ÄNDERUNG: 'category' Spalte hinzugefügt zu allen SELECTs
         const query = `
-            SELECT id, title, summary, published_date, type, relevance, url, category
+            SELECT
+                id,
+                title,
+                summary,
+                published_date,
+                type,
+                relevance,
+                url,
+                category,
+                source_identifier,
+                owner_business_partner_id,
+                owner_business_partner_name,
+                visibility_scope,
+                admin_notice
             FROM (
-                -- 1. Scraped Content (Hier kommt die echte category her)
+                -- 1. Scraped Content
                 SELECT
-                    id, title, summary, published_date,
-                    'scraped' as type,
-                    original_url as url,
-                    category, -- ✅ Echte Kategorie
-                    ts_rank(to_tsvector('german', title || ' ' || COALESCE(summary, '')), websearch_to_tsquery('german', $1)) as relevance
-                FROM scraped_content
-                WHERE to_tsvector('german', title || ' ' || COALESCE(summary, '')) @@ websearch_to_tsquery('german', $1)
-                
+                    sc.id::text AS id,
+                    sc.title,
+                    sc.summary,
+                    COALESCE(
+                        sc.published_date::timestamptz,
+                        sc.event_date::timestamptz,
+                        sc.scraped_at,
+                        sc.created_at
+                    ) AS published_date,
+                    'scraped'::text AS type,
+                    sc.original_url::text AS url,
+                    sc.category::text AS category,
+                    sc.source_identifier::text AS source_identifier,
+                    owner_bp.id::text AS owner_business_partner_id,
+                    owner_bp.name::text AS owner_business_partner_name,
+                    CASE
+                        WHEN sc.category IN ('businesspartner_news', 'businesspartner_events')
+                             AND owner_bp.id::text = $2::text
+                            THEN 'own_mandant'
+                        WHEN sc.category IN ('businesspartner_news', 'businesspartner_events')
+                            THEN 'other_mandant'
+                        ELSE 'global'
+                    END::text AS visibility_scope,
+                    CASE
+                        WHEN $3::boolean
+                             AND sc.category IN ('businesspartner_news', 'businesspartner_events')
+                             AND owner_bp.name IS NOT NULL
+                            THEN 'Admin-Ansicht · Mandant: ' || owner_bp.name
+                        WHEN $3::boolean
+                             AND sc.category IN ('businesspartner_news', 'businesspartner_events')
+                            THEN 'Admin-Ansicht · Mandant unbekannt'
+                        WHEN $3::boolean
+                            THEN 'Admin-Ansicht · Globaler Inhalt'
+                        ELSE NULL
+                    END::text AS admin_notice,
+                    ts_rank(
+                        to_tsvector('german', sc.title || ' ' || COALESCE(sc.summary, '')),
+                        websearch_to_tsquery('german', $1)
+                    ) AS relevance
+                FROM scraped_content sc
+                LEFT JOIN business_partners owner_bp
+                    ON (
+                        sc.source_identifier = owner_bp.id::text || '_news'
+                        OR sc.source_identifier = owner_bp.id::text || '_events'
+                    )
+                WHERE
+                    to_tsvector('german', sc.title || ' ' || COALESCE(sc.summary, ''))
+                        @@ websearch_to_tsquery('german', $1)
+                    AND (
+                        $3::boolean
+                        OR sc.category NOT IN ('businesspartner_news', 'businesspartner_events')
+                        OR sc.source_identifier = $2::text || '_news'
+                        OR sc.source_identifier = $2::text || '_events'
+                    )
+
                 UNION ALL
-                
+
                 -- 2. AI Content
                 SELECT
-                    id, title, generated_output as summary, created_at as published_date,
-                    'ai' as type,
-                    source_reference as url,
-                    NULL as category, -- ∅ Kein Feld in dieser Tabelle
-                    ts_rank(to_tsvector('german', title || ' ' || COALESCE(generated_output, '')), websearch_to_tsquery('german', $1)) as relevance
-                FROM ai_generated_content
-                WHERE to_tsvector('german', title || ' ' || COALESCE(generated_output, '')) @@ websearch_to_tsquery('german', $1)
+                    agc.id::text AS id,
+                    COALESCE(agc.title, 'KI-Inhalt') AS title,
+                    agc.generated_output AS summary,
+                    agc.created_at AS published_date,
+                    'ai'::text AS type,
+                    agc.source_reference::text AS url,
+                    NULL::text AS category,
+                    NULL::text AS source_identifier,
+                    ai_bp.id::text AS owner_business_partner_id,
+                    ai_bp.name::text AS owner_business_partner_name,
+                    CASE
+                        WHEN agc.user_id IS NULL THEN 'global'
+                        WHEN ai_bp.id::text = $2::text THEN 'own_mandant'
+                        ELSE 'other_mandant'
+                    END::text AS visibility_scope,
+                    CASE
+                        WHEN $3::boolean AND ai_bp.name IS NOT NULL
+                            THEN 'Admin-Ansicht · Mandant: ' || ai_bp.name
+                        WHEN $3::boolean AND agc.user_id IS NULL
+                            THEN 'Admin-Ansicht · Globaler KI-Inhalt'
+                        WHEN $3::boolean
+                            THEN 'Admin-Ansicht · Mandant unbekannt'
+                        ELSE NULL
+                    END::text AS admin_notice,
+                    ts_rank(
+                        to_tsvector('german', COALESCE(agc.title, '') || ' ' || COALESCE(agc.generated_output, '')),
+                        websearch_to_tsquery('german', $1)
+                    ) AS relevance
+                FROM ai_generated_content agc
+                LEFT JOIN users ai_user
+                    ON ai_user.id = agc.user_id
+                LEFT JOIN business_partners ai_bp
+                    ON ai_bp.id = ai_user.business_partner_id
+                WHERE
+                    to_tsvector('german', COALESCE(agc.title, '') || ' ' || COALESCE(agc.generated_output, ''))
+                        @@ websearch_to_tsquery('german', $1)
+                    AND (
+                        $3::boolean
+                        OR agc.user_id IS NULL
+                        OR ai_user.business_partner_id = $2::uuid
+                    )
 
                 UNION ALL
 
-                -- 3. Account News
+                -- 3. Account Intelligence / Tracked Articles
                 SELECT
-                    id, article_title as title, summary, published_at as published_date,
-                    'tracked_account_news' as type,
-                    article_url as url,
-                    NULL as category, -- ∅
-                    ts_rank(to_tsvector('german', article_title || ' ' || COALESCE(summary, '')), websearch_to_tsquery('german', $1)) as relevance
-                FROM business_partner_tracked_articles
-                WHERE to_tsvector('german', article_title || ' ' || COALESCE(summary, '')) @@ websearch_to_tsquery('german', $1)
+                    bpta.id::text AS id,
+                    bpta.article_title AS title,
+                    bpta.summary,
+                    COALESCE(bpta.published_at, bpta.created_at) AS published_date,
+                    'tracked_account_news'::text AS type,
+                    bpta.article_url::text AS url,
+                    NULL::text AS category,
+                    NULL::text AS source_identifier,
+                    bp.id::text AS owner_business_partner_id,
+                    bp.name::text AS owner_business_partner_name,
+                    CASE
+                        WHEN bp.id::text = $2::text THEN 'own_mandant'
+                        ELSE 'other_mandant'
+                    END::text AS visibility_scope,
+                    CASE
+                        WHEN $3::boolean AND bp.name IS NOT NULL
+                            THEN 'Admin-Ansicht · Mandant: ' || bp.name
+                        WHEN $3::boolean
+                            THEN 'Admin-Ansicht · Mandant unbekannt'
+                        ELSE NULL
+                    END::text AS admin_notice,
+                    ts_rank(
+                        to_tsvector('german', bpta.article_title || ' ' || COALESCE(bpta.summary, '')),
+                        websearch_to_tsquery('german', $1)
+                    ) AS relevance
+                FROM business_partner_tracked_articles bpta
+                JOIN business_partner_accounts bpa
+                    ON bpa.id = bpta.account_id
+                JOIN business_partners bp
+                    ON bp.id = bpa.business_partner_id
+                WHERE
+                    to_tsvector('german', bpta.article_title || ' ' || COALESCE(bpta.summary, ''))
+                        @@ websearch_to_tsquery('german', $1)
+                    AND (
+                        $3::boolean
+                        OR bpa.business_partner_id = $2::uuid
+                    )
 
                 UNION ALL
 
                 -- 4. Dateien
                 SELECT
-                    id, 
-                    filename as title, 
-                    COALESCE(description, 'Datei im Dateimanager') as summary, 
-                    created_at as published_date,
-                    'file' as type,
-                    '/files' as url,
-                    NULL as category, -- ∅
-                    ts_rank(to_tsvector('german', filename || ' ' || COALESCE(description, '') || ' ' || COALESCE(array_to_string(tags, ' '), '')), websearch_to_tsquery('german', $1)) as relevance
-                FROM business_partner_files
-                WHERE 
-                    business_partner_id = $2
-                    AND to_tsvector('german', filename || ' ' || COALESCE(description, '') || ' ' || COALESCE(array_to_string(tags, ' '), '')) @@ websearch_to_tsquery('german', $1)
+                    bpf.id::text AS id,
+                    bpf.filename AS title,
+                    COALESCE(bpf.description, 'Datei im Dateimanager') AS summary,
+                    bpf.created_at AS published_date,
+                    'file'::text AS type,
+                    '/files'::text AS url,
+                    NULL::text AS category,
+                    NULL::text AS source_identifier,
+                    bp.id::text AS owner_business_partner_id,
+                    bp.name::text AS owner_business_partner_name,
+                    CASE
+                        WHEN bp.id::text = $2::text THEN 'own_mandant'
+                        ELSE 'other_mandant'
+                    END::text AS visibility_scope,
+                    CASE
+                        WHEN $3::boolean AND bp.name IS NOT NULL
+                            THEN 'Admin-Ansicht · Mandant: ' || bp.name
+                        WHEN $3::boolean
+                            THEN 'Admin-Ansicht · Mandant unbekannt'
+                        ELSE NULL
+                    END::text AS admin_notice,
+                    ts_rank(
+                        to_tsvector(
+                            'german',
+                            bpf.filename || ' ' ||
+                            COALESCE(bpf.description, '') || ' ' ||
+                            COALESCE(array_to_string(bpf.tags, ' '), '')
+                        ),
+                        websearch_to_tsquery('german', $1)
+                    ) AS relevance
+                FROM business_partner_files bpf
+                JOIN business_partners bp
+                    ON bp.id = bpf.business_partner_id
+                WHERE
+                    to_tsvector(
+                        'german',
+                        bpf.filename || ' ' ||
+                        COALESCE(bpf.description, '') || ' ' ||
+                        COALESCE(array_to_string(bpf.tags, ' '), '')
+                    ) @@ websearch_to_tsquery('german', $1)
+                    AND (
+                        $3::boolean
+                        OR bpf.business_partner_id = $2::uuid
+                    )
 
                 UNION ALL
 
                 -- 5. Community Posts
                 SELECT
-                    p.id, 
-                    'Community Beitrag' as title, 
-                    p.content as summary, 
-                    p.created_at as published_date,
-                    'community_post' as type,
-                    '/community' as url,
-                    NULL as category, -- ∅
-                    ts_rank(to_tsvector('german', p.content), websearch_to_tsquery('german', $1)) as relevance
-                FROM community_posts p
-                WHERE 
-                    p.business_partner_id = $2
-                    AND to_tsvector('german', p.content) @@ websearch_to_tsquery('german', $1)
-
-            ) as search_results
-            ORDER BY relevance DESC
+                    cp.id::text AS id,
+                    'Community Beitrag'::text AS title,
+                    cp.content AS summary,
+                    cp.created_at AS published_date,
+                    'community_post'::text AS type,
+                    '/community'::text AS url,
+                    NULL::text AS category,
+                    NULL::text AS source_identifier,
+                    bp.id::text AS owner_business_partner_id,
+                    bp.name::text AS owner_business_partner_name,
+                    CASE
+                        WHEN bp.id::text = $2::text THEN 'own_mandant'
+                        ELSE 'other_mandant'
+                    END::text AS visibility_scope,
+                    CASE
+                        WHEN $3::boolean AND bp.name IS NOT NULL
+                            THEN 'Admin-Ansicht · Mandant: ' || bp.name
+                        WHEN $3::boolean
+                            THEN 'Admin-Ansicht · Mandant unbekannt'
+                        ELSE NULL
+                    END::text AS admin_notice,
+                    ts_rank(
+                        to_tsvector('german', COALESCE(cp.content, '')),
+                        websearch_to_tsquery('german', $1)
+                    ) AS relevance
+                FROM community_posts cp
+                JOIN business_partners bp
+                    ON bp.id = cp.business_partner_id
+                WHERE
+                    to_tsvector('german', COALESCE(cp.content, ''))
+                        @@ websearch_to_tsquery('german', $1)
+                    AND (
+                        $3::boolean
+                        OR cp.business_partner_id = $2::uuid
+                    )
+            ) AS search_results
+            ORDER BY relevance DESC, published_date DESC NULLS LAST
             LIMIT 30;
         `;
 
-        const { rows } = await db.query(query, [searchTerm, business_partner_id]);
+        const { rows } = await db.query(query, [searchTerm, businessPartnerId, isAdmin]);
         res.json(rows);
-
     } catch (err) {
-        console.error('Fehler bei der globalen Suche:', err.message);
-        res.status(500).json({ message: 'Serverfehler bei der Suche.', error: err.message });
+        console.error('Fehler bei der globalen Suche:', err);
+        res.status(500).json({
+            message: 'Serverfehler bei der Suche.',
+            error: err.message
+        });
     }
 };
 

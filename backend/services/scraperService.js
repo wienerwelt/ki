@@ -94,61 +94,130 @@ async function _processYoutubeChannel(rule, jobId, availableTags) {
         await logToDb(jobId, 'ERROR', 'YouTube API Key ist nicht in der .env-Datei konfiguriert.');
         throw new Error('YouTube API Key not configured.');
     }
+
     const channelUrl = rule.url_pattern;
-    const channelIdMatch = channelUrl.match(/youtube\.com\/channel\/([a-zA-Z0-9_-]+)/);
-    if (!channelIdMatch || !channelIdMatch[1]) {
-        await logToDb(jobId, 'ERROR', `Ungültige YouTube-Kanal-URL: ${channelUrl}`);
-        throw new Error('Invalid YouTube Channel URL format.');
+
+    let channelId;
+    try {
+        channelId = await _ytResolveChannelId(jobId, channelUrl);
+    } catch (resolveError) {
+        await logToDb(jobId, 'ERROR', `Ungültige oder nicht auflösbare YouTube-Kanal-URL: ${channelUrl}`);
+        await logToDb(jobId, 'ERROR', resolveError.message);
+        throw new Error(`Invalid YouTube Channel URL format: ${resolveError.message}`);
     }
-    const channelId = channelIdMatch[1];
+
     await logToDb(jobId, 'INFO', `Starte YouTube API Abfrage für Kanal-ID: ${channelId}`);
+
     try {
         const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
-            params: { key: YOUTUBE_API_KEY, channelId: channelId, part: 'snippet', order: 'date', maxResults: 20, type: 'video' }
+            params: {
+                key: YOUTUBE_API_KEY,
+                channelId,
+                part: 'snippet',
+                order: 'date',
+                maxResults: 20,
+                type: 'video'
+            }
         });
-        const videos = response.data.items;
-        if (!videos || videos.length === 0) {
-            await logToDb(jobId, 'INFO', 'Keine neuen Videos auf dem Kanal gefunden.');
+
+        const videos = response.data.items || [];
+
+        if (videos.length === 0) {
+            await logToDb(jobId, 'INFO', 'Keine Videos auf dem Kanal gefunden.');
             return 0;
         }
-        const channelTitle = videos[0].snippet.channelTitle;
-        await logToDb(jobId, 'INFO', `${videos.length} Videos vom Kanal "${channelTitle}" gefunden. Speichere in DB...`);
-        let itemsInserted = 0;
-        for (const video of videos) {
-            const videoId = video.id.videoId;
-            const snippet = video.snippet;
-            const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-            const publishedAt = new Date(snippet.publishedAt);
 
-            // ERWEITERT: Tag-Extraktion und Relevanz-Score-Berechnung
-            const textForTags = `${snippet.title} ${snippet.description}`;
+        const channelTitle = videos[0]?.snippet?.channelTitle || channelId;
+
+        await logToDb(
+            jobId,
+            'INFO',
+            `${videos.length} Videos vom Kanal "${channelTitle}" gefunden. Prüfe neue Einträge.`
+        );
+
+        let itemsInserted = 0;
+        let itemsAlreadyExisting = 0;
+        let itemsSkipped = 0;
+
+        for (const video of videos) {
+            const videoId = video?.id?.videoId;
+            const snippet = video?.snippet;
+
+            if (!videoId || !snippet) {
+                itemsSkipped++;
+                continue;
+            }
+
+            const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+            const publishedAt = snippet.publishedAt ? new Date(snippet.publishedAt) : null;
+
+            const textForTags = `${snippet.title || ''} ${snippet.description || ''}`;
             const foundTagIds = extractTags(textForTags, availableTags);
             const relevanceScore = computeRelevanceScore(publishedAt, foundTagIds.length);
 
-            // ERWEITERT: INSERT-Statement enthält jetzt relevance_score
+            const thumbnailUrl =
+                snippet.thumbnails?.high?.url ||
+                snippet.thumbnails?.standard?.url ||
+                snippet.thumbnails?.medium?.url ||
+                snippet.thumbnails?.default?.url ||
+                null;
+
             const contentResult = await db.query(
-                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, category, region, thumbnail_url, full_text, relevance_score)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
+                `INSERT INTO scraped_content (
+                    source_identifier,
+                    original_url,
+                    title,
+                    summary,
+                    published_date,
+                    category,
+                    region,
+                    thumbnail_url,
+                    full_text,
+                    relevance_score
+                 )
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 ON CONFLICT (original_url) DO NOTHING
+                 RETURNING id;`,
                 [
-                    rule.source_identifier, videoUrl, snippet.title, snippet.description, publishedAt,
-                    rule.category_default, rule.region, snippet.thumbnails.high.url, channelTitle, relevanceScore
+                    rule.source_identifier,
+                    videoUrl,
+                    snippet.title || 'Ohne Titel',
+                    snippet.description || null,
+                    publishedAt,
+                    rule.category_default,
+                    rule.region,
+                    thumbnailUrl,
+                    channelTitle,
+                    relevanceScore
                 ]
             );
+
             if (contentResult.rowCount > 0) {
                 itemsInserted++;
-                // ERWEITERT: Speichern der gefundenen Tags
+
                 const scrapedContentId = contentResult.rows[0].id;
+
                 if (foundTagIds.length > 0) {
                     for (const tagId of foundTagIds) {
                         await db.query(
                             `INSERT INTO scraped_content_tags (scraped_content_id, tag_id)
-                             VALUES ($1, $2) ON CONFLICT DO NOTHING;`,
+                             VALUES ($1, $2)
+                             ON CONFLICT DO NOTHING;`,
                             [scrapedContentId, tagId]
                         );
                     }
                 }
+            } else {
+                itemsAlreadyExisting++;
             }
         }
+
+        await logToDb(
+            jobId,
+            'INFO',
+            `YouTube-Zusammenfassung: ${videos.length} gefunden, ${itemsInserted} neu gespeichert, ${itemsAlreadyExisting} bereits vorhanden, ${itemsSkipped} übersprungen.`
+        );
+
         return itemsInserted;
     } catch (error) {
         const errorMessage = error.response?.data?.error?.message || error.message;
@@ -1095,6 +1164,282 @@ async function _ytVideosListBulk(jobId, videoIds) {
 }
 
 
+async function _getExistingOriginalUrls(urls) {
+    const cleanUrls = [...new Set((urls || []).filter(Boolean))];
+    if (cleanUrls.length === 0) return new Set();
+    const { rows } = await db.query(
+        `SELECT original_url FROM scraped_content WHERE original_url = ANY($1::text[])`,
+        [cleanUrls]
+    );
+    return new Set(rows.map(r => r.original_url));
+}
+
+function _summarizePreviewItems(items, existingUrls) {
+    const previewItems = (items || []).map(item => ({
+        ...item,
+        exists: item.original_url ? existingUrls.has(item.original_url) : false,
+    }));
+
+    return {
+        found: previewItems.length,
+        already_existing: previewItems.filter(i => i.exists).length,
+        would_insert: previewItems.filter(i => !i.exists && i.original_url).length,
+        skipped: previewItems.filter(i => !i.original_url).length,
+        items: previewItems,
+    };
+}
+
+async function _previewYoutubeChannel(rule, limit) {
+    const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+    if (!YOUTUBE_API_KEY) throw new Error('YouTube API Key not configured.');
+
+    const channelId = await _ytResolveChannelId(null, rule.url_pattern);
+    const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+        params: {
+            key: YOUTUBE_API_KEY,
+            channelId,
+            part: 'snippet',
+            order: 'date',
+            maxResults: Math.min(Math.max(limit || 10, 1), 20),
+            type: 'video'
+        }
+    });
+
+    const videos = response.data.items || [];
+    const channelTitle = videos[0]?.snippet?.channelTitle || channelId;
+    const items = videos.map(video => {
+        const videoId = video?.id?.videoId;
+        const snippet = video?.snippet || {};
+        return {
+            title: snippet.title || 'Ohne Titel',
+            original_url: videoId ? `https://www.youtube.com/watch?v=${videoId}` : null,
+            published_date: snippet.publishedAt || null,
+            summary: snippet.description || null,
+            thumbnail_url: snippet.thumbnails?.high?.url || snippet.thumbnails?.standard?.url || snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || null,
+            source_name: channelTitle,
+        };
+    });
+
+    const existing = await _getExistingOriginalUrls(items.map(i => i.original_url));
+    return {
+        kind: 'youtube_channel',
+        channel_id: channelId,
+        channel_title: channelTitle,
+        ..._summarizePreviewItems(items, existing),
+    };
+}
+
+async function _previewYoutubeMusic(rule, limit) {
+    const playlistIdMatch = (rule.url_pattern || '').match(/list=([a-zA-Z0-9_-]+)/);
+    if (!playlistIdMatch || !playlistIdMatch[1]) throw new Error('Invalid YouTube Music Playlist URL format.');
+
+    const playlistId = playlistIdMatch[1];
+    const playlistItems = await _ytListPlaylistItems(null, playlistId);
+    const videoIds = [...new Set(playlistItems.map(it => it.contentDetails?.videoId || it.snippet?.resourceId?.videoId).filter(Boolean))]
+        .slice(0, Math.min(Math.max(limit || 10, 1), 50));
+    const videosMap = await _ytVideosListBulk(null, videoIds);
+
+    const items = videoIds.map(id => {
+        const v = videosMap.get(id);
+        const sn = v?.snippet || {};
+        return {
+            title: sn.title || 'Ohne Titel',
+            original_url: `https://www.youtube.com/watch?v=${id}`,
+            published_date: sn.publishedAt || null,
+            summary: sn.description || null,
+            thumbnail_url: sn.thumbnails?.high?.url || sn.thumbnails?.standard?.url || sn.thumbnails?.medium?.url || sn.thumbnails?.default?.url || null,
+            source_name: sn.channelTitle || null,
+        };
+    });
+
+    const existing = await _getExistingOriginalUrls(items.map(i => i.original_url));
+    return {
+        kind: 'youtube_music',
+        playlist_id: playlistId,
+        ..._summarizePreviewItems(items, existing),
+    };
+}
+
+async function _previewYoutubePodcast(rule, limit) {
+    const channelId = await _ytResolveChannelId(null, rule.url_pattern);
+    let playlistIds = await _ytGetPodcastPlaylistIdsFromSections(null, channelId);
+    if (!playlistIds.length) playlistIds = await _ytGetPodcastPlaylistIdsHeuristic(null, channelId);
+
+    const allVideoIds = new Set();
+    for (const playlistId of playlistIds) {
+        const playlistItems = await _ytListPlaylistItems(null, playlistId);
+        for (const it of playlistItems) {
+            const videoId = it.contentDetails?.videoId || it.snippet?.resourceId?.videoId;
+            if (videoId) allVideoIds.add(videoId);
+            if (allVideoIds.size >= Math.min(Math.max(limit || 10, 1), 50)) break;
+        }
+        if (allVideoIds.size >= Math.min(Math.max(limit || 10, 1), 50)) break;
+    }
+
+    const videoIds = [...allVideoIds];
+    const videosMap = await _ytVideosListBulk(null, videoIds);
+    const items = videoIds.map(id => {
+        const v = videosMap.get(id);
+        const sn = v?.snippet || {};
+        return {
+            title: sn.title || 'Ohne Titel',
+            original_url: `https://www.youtube.com/watch?v=${id}`,
+            published_date: sn.publishedAt || null,
+            summary: sn.description || null,
+            thumbnail_url: sn.thumbnails?.high?.url || sn.thumbnails?.standard?.url || sn.thumbnails?.medium?.url || sn.thumbnails?.default?.url || null,
+            source_name: sn.channelTitle || null,
+        };
+    });
+
+    const existing = await _getExistingOriginalUrls(items.map(i => i.original_url));
+    return {
+        kind: 'youtube_podcast',
+        channel_id: channelId,
+        playlist_ids: playlistIds,
+        ..._summarizePreviewItems(items, existing),
+    };
+}
+
+async function _previewXmlFeed(rawContent, rule, limit) {
+    const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
+    const result = await parser.parseStringPromise(rawContent);
+    const feedTitle = result.rss?.channel?.title || result.feed?.title || null;
+    const rawItems = result.rss?.channel?.item || result.feed?.entry || [];
+    const feedItems = (Array.isArray(rawItems) ? rawItems : [rawItems]).filter(Boolean).slice(0, limit);
+
+    const items = feedItems.map(item => {
+        const title = sanitizeHtml(item.title?._ || item.title || 'Kein Titel');
+        const originalUrl = item.link?.href || item.link || item.guid?._ || item.guid || null;
+        const descriptionHtml = item['content:encoded'] || item.description?._ || item.summary?._ || item.description || item.summary || null;
+        const date = parseDateString(item.pubDate || item.updated, rule.date_format, null);
+        return {
+            title,
+            original_url: originalUrl,
+            published_date: date ? date.toISOString() : null,
+            summary: sanitizeHtml(descriptionHtml),
+            source_name: feedTitle,
+        };
+    });
+
+    const existing = await _getExistingOriginalUrls(items.map(i => i.original_url));
+    return {
+        kind: 'xml_feed',
+        feed_title: feedTitle,
+        ..._summarizePreviewItems(items, existing),
+    };
+}
+
+async function _previewHtml(rule, rawContent, limit) {
+    const $ = cheerio.load(rawContent);
+    const containers = $(rule.content_container_selector || '');
+    const items = [];
+
+    containers.slice(0, limit).each((_, container) => {
+        const element = $(container);
+        const title = sanitizeHtml(element.find(rule.title_selector || '').text()) || sanitizeHtml(element.text()).slice(0, 180) || 'Ohne Titel';
+        const linkHref = rule.link_selector ? element.find(rule.link_selector).attr('href') : null;
+        let originalUrl = null;
+        if (linkHref) {
+            try { originalUrl = new URL(linkHref, rule.url_pattern).href; } catch (_) { originalUrl = linkHref; }
+        }
+        const summary = rule.description_selector ? sanitizeHtml(element.find(rule.description_selector).text()) : null;
+        const dateString = rule.date_selector ? element.find(rule.date_selector).text() : null;
+        const parsedDate = parseDateString(dateString, rule.date_format, null);
+        const thumbnailSrc = rule.thumbnail_selector ? element.find(rule.thumbnail_selector).attr('src') : null;
+        let thumbnailUrl = null;
+        if (thumbnailSrc) {
+            try { thumbnailUrl = new URL(thumbnailSrc, rule.url_pattern).href; } catch (_) { thumbnailUrl = thumbnailSrc; }
+        }
+        items.push({
+            title,
+            original_url: originalUrl,
+            published_date: parsedDate ? parsedDate.toISOString() : null,
+            summary,
+            thumbnail_url: thumbnailUrl,
+        });
+    });
+
+    const existing = await _getExistingOriginalUrls(items.map(i => i.original_url));
+    return {
+        kind: 'html',
+        container_selector: rule.content_container_selector || null,
+        containers_found: containers.length,
+        ..._summarizePreviewItems(items, existing),
+    };
+}
+
+async function _previewHtmlEmbeddedJson(rule, rawContent, limit) {
+    const $ = cheerio.load(rawContent);
+    const candidates = [];
+    $('script[type="application/ld+json"], script').each((_, node) => {
+        const txt = $(node).html() || '';
+        if (/\b(url|title|name)\b/i.test(txt) && candidates.length < limit) {
+            candidates.push({
+                title: `JSON/Script-Kandidat ${candidates.length + 1}`,
+                original_url: rule.url_pattern,
+                summary: txt.slice(0, 300),
+                published_date: null,
+            });
+        }
+    });
+    const existing = await _getExistingOriginalUrls(candidates.map(i => i.original_url));
+    return {
+        kind: 'html_embedded_json',
+        scripts_found: $('script').length,
+        ..._summarizePreviewItems(candidates, existing),
+    };
+}
+
+async function _previewStandard(rule, limit) {
+    let rawContent;
+    let contentType = '';
+
+    if (rule.use_headless_browser) {
+        rawContent = await _fetchContentWithPuppeteer(rule.url_pattern, null, null);
+        contentType = 'text/html';
+    } else {
+        const response = await axios.get(rule.url_pattern, {
+            timeout: 15000,
+            responseType: 'text',
+            maxContentLength: 5 * 1024 * 1024,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36'
+            }
+        });
+        rawContent = response.data;
+        contentType = response.headers['content-type'] || '';
+    }
+
+    const head = typeof rawContent === 'string' ? rawContent.trim().slice(0, 200) : '';
+    if (contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom') || head.startsWith('<?xml') || head.startsWith('<rss') || head.startsWith('<feed')) {
+        return _previewXmlFeed(rawContent, rule, limit);
+    }
+
+    if (rule.scraping_strategy === 'html_embedded_json') {
+        return _previewHtmlEmbeddedJson(rule, rawContent, limit);
+    }
+
+    return _previewHtml(rule, rawContent, limit);
+}
+
+async function previewScrapingRule(rule, options = {}) {
+    const limit = Math.min(Math.max(Number(options.limit) || 10, 1), 20);
+
+    switch (rule.scraping_strategy) {
+        case 'youtube_channel':
+            return _previewYoutubeChannel(rule, limit);
+        case 'youtube_music':
+            return _previewYoutubeMusic(rule, limit);
+        case 'youtube_podcast':
+            return _previewYoutubePodcast(rule, limit);
+        case 'html_embedded_json':
+        case 'standard':
+        default:
+            return _previewStandard(rule, limit);
+    }
+}
+
+
 async function processNewsKeywordSearch(jobData) {
     const { search_term, account_id, competitor_name } = jobData;
 
@@ -1184,4 +1529,5 @@ module.exports = {
     getScrapingRuleSuggestion,
     extractTextFromUrl,
     processNewsKeywordSearch,
+    previewScrapingRule,
 };

@@ -5,8 +5,9 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 console.log("--- ENVIRONMENT CHECK ---");
-console.log("DATABASE_URL:", process.env.DATABASE_URL);
-console.log("DB_HOST:", process.env.DB_HOST);
+console.log("NODE_ENV:", process.env.NODE_ENV || "undefined");
+console.log("DB_HOST gesetzt:", process.env.DB_HOST ? "ja" : "nein");
+console.log("DATABASE_URL gesetzt:", process.env.DATABASE_URL ? "ja" : "nein");
 console.log("-------------------------");
 
 // --- 1. IMPORTE ---
@@ -237,37 +238,7 @@ app.use('/api/admin/directory', adminDirectoryRoutes);
 app.use('/api/directory', directoryRoutes);
 
 
-// Debug-Routen
-app.get('/api/debug/db-inspector', async (req, res) => {
-  try {
-    const dbNameResult = await db.query('SELECT current_database();');
-    const currentDb = dbNameResult.rows[0].current_database;
-
-    const tablesResult = await db.query(
-      "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename;"
-    );
-    const tables = tablesResult.rows.map(row => row.tablename);
-
-    res.status(200).json({
-      message: 'Datenbank-Inspektor-Bericht',
-      verbindung_hergestellt_zu_db: currentDb,
-      gefundene_tabellen: tables
-    });
-  } catch (err) {
-    console.error('[DEBUG] DB-Inspector Fehler:', err);
-    res.status(500).json({ error: 'Fehler im DB-Inspektor', message: err.message });
-  }
-});
-
-app.get('/api/debug/users', async (req, res) => {
-  try {
-    const { rows } = await db.query('SELECT * FROM users');
-    res.status(200).json(rows);
-  } catch (err) {
-    console.error('[DEBUG] Users-Route Fehler:', err);
-    res.status(500).json({ error: 'Fehler beim Abrufen der Daten' });
-  }
-});
+// Debug-Routen wurden aus Sicherheitsgründen entfernt.
 
 // --- 5. FRONTEND & FEHLERBEHANDLUNG ---
 app.use('/api/*', (req, res) => {

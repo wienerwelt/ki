@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+// frontend/src/pages/AdminSocialMediaGenerator.tsx
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
     Box, Typography, Container, Paper, Button, FormControl, InputLabel, Select, MenuItem,
     Grid, CircularProgress, Alert, TextField, Divider, Tabs, Tab, Link as MuiLink, Chip,
-    ToggleButtonGroup, ToggleButton, Backdrop, IconButton
+    ToggleButtonGroup, ToggleButton, Backdrop, IconButton, Stack, Tooltip, Collapse
 } from '@mui/material';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import DownloadIcon from '@mui/icons-material/Download';
@@ -18,102 +19,249 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import LightModeIcon from '@mui/icons-material/LightMode';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import DeleteIcon from '@mui/icons-material/Delete';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import StorageIcon from '@mui/icons-material/Storage';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import * as htmlToImage from 'html-to-image';
 
 import apiClient from '../apiClient';
 import DashboardLayout from '../components/DashboardLayout';
 import { useSnackbar } from '../context/SnackbarContext';
 
-// --- MOCK ARCHIV DATEN ---
-const ARCHIVE_DATA: Record<string, Record<string, any[]>> = {
-    'AT': {
-        '2026': [
-            { month: '2', fileName: 'AT_Statistik_Neuzulassungen_2026_02.ods', url: '#' },
-            { month: '1', fileName: 'AT_Statistik_Neuzulassungen_2026_01.ods', url: '#' }
-        ],
-        '2025': [{ month: '12', fileName: 'AT_Statistik_Neuzulassungen_2025_12.ods', url: '#' }]
-    },
-    'DE': {
-        '2026': [{ month: '3', fileName: 'KBA_Fahrzeugzulassungen_03_2026.csv', url: '#' }]
-    }
+interface ArchiveFile {
+    country_code: string;
+    country?: string;
+    year: number;
+    month: number;
+    month_label?: string;
+    time_period?: string;
+    archive_path: string;
+    fileName: string;
+    source_name?: string;
+    source_url?: string;
+    sourceDownloadUrl?: string;
+    last_updated?: string;
+    row_count?: number;
+    parser_status?: 'ready' | 'pending';
+    parser_note?: string | null;
+}
+
+interface GalleryFile {
+    id: string;
+    name: string;
+    type: string;
+    url: string;
+    rawUrl?: string;
+    date: string;
+    dateTime?: string;
+    mtimeMs?: number;
+    size: string;
+    format: string;
+}
+
+const EMPTY_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+const countryLabel = (code: string) => {
+    if (code === 'AT') return 'Österreich';
+    if (code === 'DE') return 'Deutschland';
+    return code;
+};
+
+const getMonthLabel = (month: number) => {
+    if (!month || Number.isNaN(month)) return '';
+    return new Date(2000, month - 1).toLocaleString('de-DE', { month: 'long' });
+};
+
+const formatDateTime = (dateString?: string) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString('de-DE', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
 };
 
 const AdminSocialMediaGenerator: React.FC = () => {
     const { showSnackbar } = useSnackbar();
-    
+
+    const [archiveFiles, setArchiveFiles] = useState<ArchiveFile[]>([]);
+    const [loadingArchive, setLoadingArchive] = useState(false);
+    const [expandedArchiveYears, setExpandedArchiveYears] = useState<Record<string, boolean>>({});
     const [country, setCountry] = useState('AT');
-    const [year, setYear] = useState('2026');
-    const [month, setMonth] = useState('2'); 
-    
+    const [year, setYear] = useState('');
+    const [month, setMonth] = useState('');
+
     const [graphicTheme, setGraphicTheme] = useState('standard');
     const [colorMode, setColorMode] = useState<'light' | 'dark'>('light');
     const [aspectRatio, setAspectRatio] = useState('1 / 1');
     const [activeTab, setActiveTab] = useState(0);
-    
+
     const [isLoading, setIsLoading] = useState(false);
-    const [isSavingImage, setIsSavingImage] = useState(false); 
+    const [isSavingImage, setIsSavingImage] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    
+
     const [aiText, setAiText] = useState('');
     const [chartData, setChartData] = useState<any | null>(null);
     const [sourceFileUrl, setSourceFileUrl] = useState<string | null>(null);
 
-    const [galleryFiles, setGalleryFiles] = useState<{ logos: any[], socialMedia: any[], grafiken: any[] }>({ logos: [], socialMedia: [], grafiken: [] });
+    const [galleryFiles, setGalleryFiles] = useState<{ logos: GalleryFile[], socialMedia: GalleryFile[], grafiken: GalleryFile[] }>({ logos: [], socialMedia: [], grafiken: [] });
     const [loadingGallery, setLoadingGallery] = useState(false);
 
     const graphicRef = useRef<HTMLDivElement>(null);
 
-    useEffect(() => {
-        fetchGalleryFiles();
+    const fetchArchiveFiles = useCallback(async () => {
+        setLoadingArchive(true);
+        try {
+            const response = await apiClient.get('/api/admin/social-media/archive-files');
+            const items = Array.isArray(response.data?.items) ? response.data.items : Array.isArray(response.data) ? response.data : [];
+            setArchiveFiles(items);
+        } catch (err: any) {
+            console.error('Fehler beim Laden der Archivdaten:', err);
+            setError(err.response?.data?.message || 'Archivdaten konnten nicht geladen werden.');
+        } finally {
+            setLoadingArchive(false);
+        }
     }, []);
 
-    useEffect(() => {
-        const availableYears = Object.keys(ARCHIVE_DATA[country] || {}).sort((a, b) => parseInt(b) - parseInt(a));
-        if (availableYears.length > 0 && !availableYears.includes(year)) setYear(availableYears[0]);
-    }, [country]);
-
-    useEffect(() => {
-        const availableFiles = ARCHIVE_DATA[country]?.[year] || [];
-        const availableMonths = availableFiles.map(f => f.month);
-        if (availableMonths.length > 0 && !availableMonths.includes(month)) {
-            const latestMonth = [...availableMonths].sort((a, b) => parseInt(b) - parseInt(a))[0];
-            setMonth(latestMonth);
-        }
-    }, [country, year]);
-
-    const fetchGalleryFiles = async () => {
+    const fetchGalleryFiles = useCallback(async () => {
         setLoadingGallery(true);
         try {
-            const token = localStorage.getItem('jwt_token');
-            const response = await apiClient.get('/api/admin/social-media/gallery-files', {
-                headers: { 'x-auth-token': token }
+            const response = await apiClient.get('/api/admin/social-media/gallery-files');
+            setGalleryFiles({
+                logos: Array.isArray(response.data?.logos) ? response.data.logos : [],
+                socialMedia: Array.isArray(response.data?.socialMedia) ? response.data.socialMedia : [],
+                grafiken: Array.isArray(response.data?.grafiken) ? response.data.grafiken : [],
             });
-            setGalleryFiles(response.data);
         } catch (err) {
-            console.error("Fehler beim Laden der Galerie:", err);
+            console.error('Fehler beim Laden der Galerie:', err);
         } finally {
             setLoadingGallery(false);
         }
+    }, []);
+
+    useEffect(() => {
+        fetchArchiveFiles();
+        fetchGalleryFiles();
+    }, [fetchArchiveFiles, fetchGalleryFiles]);
+
+    const countryOptions = useMemo(() => {
+        return [...new Set(archiveFiles.map((file) => file.country_code))]
+            .sort()
+            .map((code) => ({ code, label: countryLabel(code) }));
+    }, [archiveFiles]);
+
+    const filesForCountry = useMemo(() => {
+        return archiveFiles.filter((file) => file.country_code === country);
+    }, [archiveFiles, country]);
+
+    const availableYears = useMemo(() => {
+        return [...new Set(filesForCountry.map((file) => String(file.year)))]
+            .sort((a, b) => Number(b) - Number(a));
+    }, [filesForCountry]);
+
+    const filesForYear = useMemo(() => {
+        return filesForCountry.filter((file) => String(file.year) === String(year));
+    }, [filesForCountry, year]);
+
+    const availableMonths = useMemo(() => {
+        return [...new Map(
+            filesForYear
+                .sort((a, b) => b.month - a.month)
+                .map((file) => [String(file.month), file])
+        ).values()];
+    }, [filesForYear]);
+
+    const activeArchiveFile = useMemo(() => {
+        const candidates = filesForYear.filter((file) => String(file.month) === String(month));
+        return candidates.sort((a, b) => {
+            const dateDiff = new Date(b.last_updated || 0).getTime() - new Date(a.last_updated || 0).getTime();
+            return dateDiff || String(a.fileName).localeCompare(String(b.fileName), 'de');
+        })[0] || null;
+    }, [filesForYear, month]);
+
+    useEffect(() => {
+        if (archiveFiles.length === 0) return;
+
+        const preferredCountry = archiveFiles.some((file) => file.country_code === country)
+            ? country
+            : archiveFiles[0].country_code;
+
+        if (preferredCountry !== country) {
+            setCountry(preferredCountry);
+            return;
+        }
+
+        const nextYears = [...new Set(archiveFiles
+            .filter((file) => file.country_code === preferredCountry)
+            .map((file) => String(file.year))
+        )].sort((a, b) => Number(b) - Number(a));
+
+        if (nextYears.length > 0 && !nextYears.includes(String(year))) {
+            setYear(nextYears[0]);
+        }
+    }, [archiveFiles, country, year]);
+
+    useEffect(() => {
+        if (!country || !year) return;
+
+        const nextMonths = archiveFiles
+            .filter((file) => file.country_code === country && String(file.year) === String(year))
+            .sort((a, b) => b.month - a.month)
+            .map((file) => String(file.month));
+
+        if (nextMonths.length > 0 && !nextMonths.includes(String(month))) {
+            setMonth(nextMonths[0]);
+        }
+    }, [archiveFiles, country, year, month]);
+
+    useEffect(() => {
+        if (!year) return;
+        setExpandedArchiveYears((prev) => ({ ...prev, [String(year)]: true }));
+    }, [year]);
+
+    const handleToggleArchiveYear = (archiveYear: string) => {
+        setExpandedArchiveYears((prev) => ({
+            ...prev,
+            [archiveYear]: !(prev[archiveYear] ?? archiveYear === String(year)),
+        }));
+    };
+
+    const handleRefreshAll = () => {
+        fetchArchiveFiles();
+        fetchGalleryFiles();
     };
 
     const handleGenerate = async () => {
+        if (!activeArchiveFile) {
+            showSnackbar('Bitte wählen Sie zuerst eine verfügbare Archivdatei.', 'warning');
+            return;
+        }
+
         setIsLoading(true);
         setError(null);
-        try {
-            const token = localStorage.getItem('jwt_token');
-            const response = await apiClient.post('/api/admin/social-media/generate', 
-                { country, year: parseInt(year), month: parseInt(month) },
-                { headers: { 'x-auth-token': token } }
-            );
 
-            setAiText(response.data.text);
+        try {
+            const response = await apiClient.post('/api/admin/social-media/generate', {
+                country,
+                year: Number(year),
+                month: Number(month),
+            });
+
+            setAiText(response.data.text || '');
             setChartData(response.data.parsedData);
-            setSourceFileUrl(response.data.sourceDownloadUrl || '#'); 
+            setSourceFileUrl(response.data.sourceDownloadUrl || activeArchiveFile.source_url || activeArchiveFile.sourceDownloadUrl || '#');
             showSnackbar('Inhalt erfolgreich generiert!', 'success');
         } catch (err: any) {
-            console.error("Fehler bei Generierung:", err);
-            setError(err.response?.data?.message || 'Fehler beim Abrufen der Daten.');
-            showSnackbar(err.response?.data?.message || 'Fehler', 'error');
+            console.error('Fehler bei Generierung:', err);
+            const message = err.response?.data?.message || 'Fehler beim Abrufen der Daten.';
+            setError(message);
+            showSnackbar(message, 'error');
         } finally {
             setIsLoading(false);
         }
@@ -126,15 +274,10 @@ const AdminSocialMediaGenerator: React.FC = () => {
         setTimeout(async () => {
             try {
                 const dataUrl = await htmlToImage.toPng(graphicRef.current!, { cacheBust: true, pixelRatio: 2 });
-                
-                // NEU: Dateiname an Basisdatei koppeln
-                const activeFiles = ARCHIVE_DATA[country]?.[year] || [];
-                const activeFile = activeFiles.find(f => f.month === month);
-                // Wenn Basis-Datei gefunden, nimm den Namen (ohne .ods/.csv), ansonsten baue einen Fallback
-                const baseName = activeFile ? activeFile.fileName.replace(/\.[^/.]+$/, "") : `${country}_Statistik_${year}_${month.padStart(2, '0')}`;
+                const baseName = activeArchiveFile?.fileName
+                    ? activeArchiveFile.fileName.replace(/\.[^/.]+$/, '')
+                    : `${country}_Statistik_${year}_${String(month).padStart(2, '0')}`;
                 const formatLabel = aspectRatio === '1 / 1' ? '1x1' : aspectRatio === '4 / 5' ? '4x5' : '16x9';
-                
-                // Der neue smarte Dateiname!
                 const filename = `${baseName}_${formatLabel}.png`;
 
                 const link = document.createElement('a');
@@ -142,16 +285,11 @@ const AdminSocialMediaGenerator: React.FC = () => {
                 link.href = dataUrl;
                 link.click();
 
-                const token = localStorage.getItem('jwt_token');
-                await apiClient.post('/api/admin/social-media/save', 
-                    { imageBase64: dataUrl, filename: filename },
-                    { headers: { 'x-auth-token': token } }
-                );
-
+                await apiClient.post('/api/admin/social-media/save', { imageBase64: dataUrl, filename });
                 fetchGalleryFiles();
                 showSnackbar(`Grafik als ${filename} gespeichert!`, 'success');
             } catch (err) {
-                console.error("Fehler beim Bilderstellung:", err);
+                console.error('Fehler beim Bilderstellung:', err);
                 showSnackbar('Fehler beim Speichern der Grafik.', 'error');
             } finally {
                 setIsSavingImage(false);
@@ -162,12 +300,9 @@ const AdminSocialMediaGenerator: React.FC = () => {
     const handleDeleteFile = async (folder: string, filename: string) => {
         if (!window.confirm(`Möchten Sie die Datei "${filename}" wirklich unwiderruflich löschen?`)) return;
         try {
-            const token = localStorage.getItem('jwt_token');
-            await apiClient.delete(`/api/admin/social-media/gallery-files?folder=${folder}&filename=${filename}`, {
-                headers: { 'x-auth-token': token }
-            });
+            await apiClient.delete(`/api/admin/social-media/gallery-files?folder=${encodeURIComponent(folder)}&filename=${encodeURIComponent(filename)}`);
             showSnackbar('Datei erfolgreich gelöscht.', 'success');
-            fetchGalleryFiles(); 
+            fetchGalleryFiles();
         } catch (err) {
             console.error('Fehler beim Löschen:', err);
             showSnackbar('Fehler beim Löschen der Datei.', 'error');
@@ -175,13 +310,25 @@ const AdminSocialMediaGenerator: React.FC = () => {
     };
 
     const handleDownloadSource = () => {
-        if (sourceFileUrl && sourceFileUrl !== '#') window.open(sourceFileUrl, '_blank');
+        const targetUrl = sourceFileUrl || activeArchiveFile?.source_url || activeArchiveFile?.sourceDownloadUrl;
+        if (targetUrl && targetUrl !== '#') window.open(targetUrl, '_blank', 'noopener,noreferrer');
         else showSnackbar('Download-Link für Rohdaten aktuell nicht bereitgestellt.', 'warning');
     };
 
     const handleCopyText = () => {
         navigator.clipboard.writeText(aiText);
         showSnackbar('Text in die Zwischenablage kopiert.', 'success');
+    };
+
+    const getImageUrl = (url: string | null) => {
+        if (!url) return '';
+        if (url.startsWith('http')) return url;
+        let baseUrl = import.meta.env.VITE_API_URL || '';
+        if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+        let cleanUrl = url.startsWith('/') ? url : `/${url}`;
+        if (cleanUrl.startsWith('/api/')) cleanUrl = cleanUrl.substring(4);
+        const apiPrefix = baseUrl.endsWith('/api') ? '' : '/api';
+        return `${baseUrl}${apiPrefix}${cleanUrl}`;
     };
 
     const handleCopyUrl = (url: string) => {
@@ -198,34 +345,170 @@ const AdminSocialMediaGenerator: React.FC = () => {
         return { text: `${val > 0 ? '+' : ''}${val.toFixed(1).replace('.', ',')}%`, isPositive: val > 0 };
     };
 
-    const getImageUrl = (url: string | null) => {
-        if (!url) return '';
-        if (url.startsWith('http')) return url;
-        let baseUrl = import.meta.env.VITE_API_URL || '';
-        if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
-        let cleanUrl = url.startsWith('/') ? url : `/${url}`;
-        if (cleanUrl.startsWith('/api/')) cleanUrl = cleanUrl.substring(4);
-        const apiPrefix = baseUrl.endsWith('/api') ? '' : '/api';
-        return `${baseUrl}${apiPrefix}${cleanUrl}`;
-    };
-
     const getSmartLogoUrl = (slug: string) => {
-        if (!slug) return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-        const foundLogo = galleryFiles?.logos?.find(l => l.name.startsWith(`${slug}.`));
-        if (foundLogo) return getImageUrl(`/api/logos/${foundLogo.name}`);
-        return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        if (!slug) return EMPTY_PIXEL;
+        const foundLogo = galleryFiles?.logos?.find((l) => l.name.startsWith(`${slug}.`));
+        if (foundLogo) return getImageUrl(foundLogo.rawUrl || `/api/logos/${foundLogo.name}`);
+        return EMPTY_PIXEL;
     };
 
-    const availableYears = useMemo(() => Object.keys(ARCHIVE_DATA[country] || {}).sort((a, b) => parseInt(b) - parseInt(a)), [country]);
-    const availableMonths = useMemo(() => (ARCHIVE_DATA[country]?.[year] || []).map(f => f.month).sort((a, b) => parseInt(a) - parseInt(b)), [country, year]);
+    const renderArchiveCard = () => {
+        if (loadingArchive) {
+            return (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <CircularProgress size={18} />
+                    <Typography variant="body2" color="text.secondary">Archivdaten werden geladen...</Typography>
+                </Box>
+            );
+        }
 
-    // --- RENDERING DER GRAFIK ---
+        if (archiveFiles.length === 0) {
+            return <Alert severity="warning">Keine Archivdaten in economic_statistics gefunden.</Alert>;
+        }
+
+        const groupedByYear = filesForCountry.reduce((acc, file) => {
+            const key = String(file.year);
+            if (!acc[key]) acc[key] = [];
+            acc[key].push(file);
+            return acc;
+        }, {} as Record<string, ArchiveFile[]>);
+
+        return (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                    <Typography variant="subtitle2" fontWeight={900}>
+                        {filesForCountry.length} Zeiträume verfügbar
+                    </Typography>
+                    <Tooltip title="Archiv und Galerie aktualisieren">
+                        <IconButton size="small" onClick={handleRefreshAll}>
+                            <RefreshIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                </Stack>
+
+                {Object.entries(groupedByYear)
+                    .sort(([a], [b]) => Number(b) - Number(a))
+                    .map(([archiveYear, files]) => {
+                        const yearFiles = [...files].sort((a, b) => b.month - a.month);
+                        const isSelectedYear = String(archiveYear) === String(year);
+                        const isExpanded = expandedArchiveYears[archiveYear] ?? isSelectedYear;
+                        const pendingCount = yearFiles.filter((file) => file.parser_status === 'pending').length;
+                        const latestMonth = yearFiles.length > 0 ? Math.max(...yearFiles.map((file) => file.month)) : null;
+
+                        return (
+                            <Paper
+                                key={archiveYear}
+                                elevation={0}
+                                sx={{
+                                    border: '1px solid',
+                                    borderColor: isSelectedYear ? 'primary.light' : 'divider',
+                                    borderRadius: 2,
+                                    overflow: 'hidden',
+                                    bgcolor: isSelectedYear ? 'rgba(2, 132, 199, 0.04)' : 'background.paper',
+                                }}
+                            >
+                                <Box
+                                    onClick={() => handleToggleArchiveYear(archiveYear)}
+                                    sx={{
+                                        px: 1,
+                                        py: 0.75,
+                                        cursor: 'pointer',
+                                        bgcolor: isExpanded ? 'action.hover' : 'transparent',
+                                        '&:hover': { bgcolor: 'action.hover' },
+                                    }}
+                                >
+                                    <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', color: 'text.secondary', mr: 0.25 }}>
+                                            {isExpanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
+                                        </Box>
+                                        <Typography variant="body2" sx={{ fontWeight: 900, color: isSelectedYear ? 'primary.main' : 'text.primary' }}>
+                                            {archiveYear}
+                                        </Typography>
+                                        {isSelectedYear && <Chip size="small" color="primary" label="ausgewählt" sx={{ height: 20, fontSize: '0.65rem', fontWeight: 800 }} />}
+                                        <Chip size="small" variant="outlined" label={`${yearFiles.length} Monate`} sx={{ height: 20, fontSize: '0.65rem' }} />
+                                        {latestMonth && <Chip size="small" variant="outlined" label={`neu: ${getMonthLabel(latestMonth)}`} sx={{ height: 20, fontSize: '0.65rem' }} />}
+                                        {pendingCount > 0 && <Chip size="small" color="warning" variant="outlined" label={`${pendingCount} ohne Parser`} sx={{ height: 20, fontSize: '0.65rem' }} />}
+                                    </Stack>
+                                </Box>
+
+                                <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, p: 0.75, pt: 0.75 }}>
+                                        {yearFiles.map((file) => {
+                                            const isActive = file.country_code === country && String(file.year) === String(year) && String(file.month) === String(month);
+                                            const canGenerate = file.parser_status !== 'pending';
+                                            return (
+                                                <Box
+                                                    key={`${file.country_code}-${file.year}-${file.month}-${file.archive_path}`}
+                                                    onClick={() => {
+                                                        setCountry(file.country_code);
+                                                        setYear(String(file.year));
+                                                        setMonth(String(file.month));
+                                                    }}
+                                                    sx={{
+                                                        display: 'flex',
+                                                        alignItems: 'flex-start',
+                                                        gap: 1,
+                                                        p: 0.8,
+                                                        bgcolor: isActive ? '#e0f2fe' : 'transparent',
+                                                        borderRadius: 1,
+                                                        cursor: 'pointer',
+                                                        border: '1px solid',
+                                                        borderColor: isActive ? '#bae6fd' : 'transparent',
+                                                        '&:hover': { bgcolor: isActive ? '#e0f2fe' : 'action.hover' },
+                                                    }}
+                                                >
+                                                    {isActive ? <CheckCircleIcon color="primary" sx={{ fontSize: 18, mt: 0.2 }} /> : <InsertDriveFileIcon sx={{ fontSize: 18, mt: 0.2, color: '#94a3b8' }} />}
+                                                    <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+                                                        <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap>
+                                                            <Typography variant="body2" sx={{ fontWeight: isActive ? 850 : 650 }}>
+                                                                {getMonthLabel(file.month)}
+                                                            </Typography>
+                                                            {!canGenerate && (
+                                                                <Chip size="small" color="warning" variant="outlined" label="Parser fehlt" sx={{ height: 18, fontSize: '0.62rem' }} />
+                                                            )}
+                                                        </Stack>
+                                                        <MuiLink
+                                                            href={file.source_url || '#'}
+                                                            target="_blank"
+                                                            underline="hover"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            sx={{
+                                                                display: 'block',
+                                                                fontSize: '0.72rem',
+                                                                color: isActive ? '#0284c7' : '#64748b',
+                                                                fontWeight: isActive ? 'bold' : 'normal',
+                                                                wordBreak: 'break-all',
+                                                            }}
+                                                        >
+                                                            {file.fileName}
+                                                        </MuiLink>
+                                                        {file.last_updated && (
+                                                            <Typography variant="caption" color="text.secondary">
+                                                                aktualisiert: {formatDateTime(file.last_updated)}
+                                                            </Typography>
+                                                        )}
+                                                    </Box>
+                                                </Box>
+                                            );
+                                        })}
+                                    </Box>
+                                </Collapse>
+                            </Paper>
+                        );
+                    })}
+            </Box>
+        );
+    };
+
     const renderGraphic = () => {
         if (!chartData || !chartData.topMarken || chartData.topMarken.length === 0) return null;
 
-        const displayMonth = country === 'AT' && month === '1' ? 'Jänner' : new Date(2000, parseInt(month) - 1).toLocaleString('de-DE', { month: 'long' });
+        const displayMonth = getMonthLabel(Number(month));
         const topMarke = chartData.topMarken[0];
-        const validTrends = chartData.topMarken.filter((m: any) => m.zulassungen > 100 && m.vergleichVorjahr !== 'n.v.').map((m: any) => ({ ...m, trendVal: parseFloat(String(m.vergleichVorjahr).replace(',', '.')) })).sort((a: any, b: any) => b.trendVal - a.trendVal);
+        const validTrends = chartData.topMarken
+            .filter((m: any) => m.zulassungen > 100 && m.vergleichVorjahr !== 'n.v.')
+            .map((m: any) => ({ ...m, trendVal: parseFloat(String(m.vergleichVorjahr).replace(',', '.')) }))
+            .sort((a: any, b: any) => b.trendVal - a.trendVal);
         const topWinner = validTrends[0];
         const topLoser = validTrends[validTrends.length - 1];
         const topElektro = chartData.topElektro && chartData.topElektro.length > 0 ? chartData.topElektro[0] : null;
@@ -241,24 +524,25 @@ const AdminSocialMediaGenerator: React.FC = () => {
             shadow: isDark ? 'inset 0 0 100px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0,0,0,0.05)',
         };
 
-        let bgStyle = graphicTheme === 'standard' 
+        const bgStyle = graphicTheme === 'standard'
             ? { bgcolor: uiColors.bg }
             : {
-                backgroundImage: isDark 
+                backgroundImage: isDark
                     ? `linear-gradient(to bottom, rgba(15, 23, 42, 0.85), rgba(15, 23, 42, 0.95)), url('${getImageUrl(`/api/grafiken/${graphicTheme}`)}')`
                     : `linear-gradient(to bottom, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.95)), url('${getImageUrl(`/api/grafiken/${graphicTheme}`)}')`,
-                backgroundSize: 'cover', backgroundPosition: 'center'
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
             };
 
         return (
-            <Box 
-                ref={graphicRef} 
-                sx={{ 
-                    width: '100%', maxWidth: '800px', aspectRatio: aspectRatio,
+            <Box
+                ref={graphicRef}
+                sx={{
+                    width: '100%', maxWidth: '800px', aspectRatio,
                     color: uiColors.text, p: 5, borderRadius: 3,
                     boxShadow: uiColors.shadow, fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
                     position: 'relative', overflow: 'hidden', ...bgStyle,
-                    display: 'flex', flexDirection: 'column', justifyContent: 'space-between'
+                    display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
                 }}
             >
                 {graphicTheme === 'standard' && (
@@ -275,7 +559,7 @@ const AdminSocialMediaGenerator: React.FC = () => {
                         </Typography>
                         <Box sx={{ width: '60%', height: '2px', bgcolor: '#3b82f6', mx: 'auto', mt: 1, mb: 1, boxShadow: isDark ? '0 0 10px #3b82f6' : 'none' }} />
                         <Typography variant="h6" sx={{ fontWeight: 400, color: uiColors.textMuted }}>
-                            {country === 'AT' ? 'Österreich' : 'Deutschland'} im Wandel
+                            {countryLabel(country)} im Wandel
                         </Typography>
                     </Box>
 
@@ -288,7 +572,7 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                 </Box>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                                     <Box sx={{ width: 60, height: 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
-                                        <img src={getSmartLogoUrl(topMarke?.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'; }} />
+                                        <img src={getSmartLogoUrl(topMarke?.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                     </Box>
                                     <Box>
                                         <Typography variant="h4" sx={{ fontWeight: 800 }}>{topMarke?.zulassungen.toLocaleString('de-DE')}</Typography>
@@ -307,7 +591,7 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                 {topElektro ? (
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                                         <Box sx={{ width: 60, height: 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
-                                            <img src={getSmartLogoUrl(topElektro.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'; }} />
+                                            <img src={getSmartLogoUrl(topElektro.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                         </Box>
                                         <Box>
                                             <Typography variant="h4" sx={{ fontWeight: 800 }}>{topElektro.zulassungen.toLocaleString('de-DE')}</Typography>
@@ -326,7 +610,7 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                 {topWinner && (
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                                         <Box sx={{ width: 60, height: 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
-                                            <img src={getSmartLogoUrl(topWinner.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'; }} />
+                                            <img src={getSmartLogoUrl(topWinner.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                         </Box>
                                         <Box>
                                             <Typography variant="h3" sx={{ fontWeight: 900, color: '#16a34a' }}>{formatPercent(topWinner.vergleichVorjahr).text}</Typography>
@@ -345,7 +629,7 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                 {topLoser && (
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                                         <Box sx={{ width: 60, height: 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
-                                            <img src={getSmartLogoUrl(topLoser.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'; }} />
+                                            <img src={getSmartLogoUrl(topLoser.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                         </Box>
                                         <Box>
                                             <Typography variant="h3" sx={{ fontWeight: 900, color: '#ef4444' }}>{formatPercent(topLoser.vergleichVorjahr).text}</Typography>
@@ -363,9 +647,9 @@ const AdminSocialMediaGenerator: React.FC = () => {
                         </Box>
 
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pt: 2, borderTop: uiColors.divider }}>
-                            <Typography variant="body2" sx={{ color: uiColors.textMuted }}>Quelle: {country === 'AT' ? 'Statistik Austria' : 'KBA'}</Typography>
+                            <Typography variant="body2" sx={{ color: uiColors.textMuted }}>Quelle: {activeArchiveFile?.source_name || (country === 'AT' ? 'Statistik Austria' : 'KBA')}</Typography>
                             <Box component="a" href="https://mobiliti.at" target="_blank" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, textDecoration: 'none', bgcolor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', px: 2, py: 1, borderRadius: 8 }}>
-                                <img src={getSmartLogoUrl('de-mobiliti')} crossOrigin="anonymous" alt="Mobiliti Logo" style={{ height: '24px' }} onError={(e) => { e.currentTarget.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'; }} />
+                                <img src={getSmartLogoUrl('de-mobiliti')} crossOrigin="anonymous" alt="Mobiliti Logo" style={{ height: '24px' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                 <Typography variant="body1" sx={{ fontWeight: 800, color: uiColors.text }}>mobiliti.at</Typography>
                             </Box>
                         </Box>
@@ -375,6 +659,8 @@ const AdminSocialMediaGenerator: React.FC = () => {
         );
     };
 
+    const canGenerate = !!activeArchiveFile && activeArchiveFile.parser_status !== 'pending';
+
     return (
         <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
@@ -383,7 +669,17 @@ const AdminSocialMediaGenerator: React.FC = () => {
                     <Typography variant="h6">Bild wird in höchster Qualität gerendert und gespeichert...</Typography>
                 </Backdrop>
 
-                <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold' }}>Social Media Generator</Typography>
+                <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ xs: 'flex-start', sm: 'center' }} justifyContent="space-between" spacing={2} sx={{ mb: 2 }}>
+                    <Box>
+                        <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold', mb: 0 }}>Social Media Generator</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                            Archivdaten werden dynamisch aus economic_statistics geladen.
+                        </Typography>
+                    </Box>
+                    <Button variant="outlined" startIcon={<RefreshIcon />} onClick={handleRefreshAll} disabled={loadingArchive || loadingGallery}>
+                        Aktualisieren
+                    </Button>
+                </Stack>
 
                 <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
                     <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)}>
@@ -398,29 +694,14 @@ const AdminSocialMediaGenerator: React.FC = () => {
                     <Grid container spacing={4}>
                         <Grid item xs={12} md={4}>
                             <Paper sx={{ p: 3, mb: 3, borderRadius: 2, borderLeft: '4px solid #3b82f6', bgcolor: '#f8fafc' }}>
-                                <Typography variant="subtitle1" fontWeight="bold" gutterBottom>🗄️ Daten-Quelle (S3)</Typography>
-                                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Verfügbare Rohdaten für den gewählten Markt:</Typography>
-                                
-                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                                    {ARCHIVE_DATA[country] && Object.entries(ARCHIVE_DATA[country]).map(([y, files]) => (
-                                        <Box key={y}>
-                                            <Typography variant="caption" fontWeight="bold" color="primary">{y}</Typography>
-                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mt: 0.5 }}>
-                                                {files.map((file) => {
-                                                    const isActive = file.month === month && y === year;
-                                                    return (
-                                                        <Box key={file.month} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 0.5, bgcolor: isActive ? '#e0f2fe' : 'transparent', borderRadius: 1 }}>
-                                                            {isActive ? <CheckCircleIcon color="primary" sx={{ fontSize: 16 }} /> : <InsertDriveFileIcon sx={{ fontSize: 16, color: '#94a3b8' }} />}
-                                                            <MuiLink href={file.url} target="_blank" underline="hover" sx={{ fontSize: '0.75rem', color: isActive ? '#0284c7' : '#64748b', fontWeight: isActive ? 'bold' : 'normal', wordBreak: 'break-all' }}>
-                                                                {file.fileName}
-                                                            </MuiLink>
-                                                        </Box>
-                                                    );
-                                                })}
-                                            </Box>
-                                        </Box>
-                                    ))}
-                                </Box>
+                                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                                    <StorageIcon color="primary" />
+                                    <Typography variant="subtitle1" fontWeight="bold">Daten-Quelle</Typography>
+                                </Stack>
+                                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                    Verfügbare Rohdaten aus der Datenbank. Neueste Zeiträume stehen oben.
+                                </Typography>
+                                {renderArchiveCard()}
                             </Paper>
 
                             <Paper sx={{ p: 3, borderRadius: 2 }}>
@@ -428,28 +709,44 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, mt: 2 }}>
                                     <FormControl fullWidth size="small">
                                         <InputLabel>Land / Markt</InputLabel>
-                                        <Select value={country} label="Land / Markt" onChange={(e) => setCountry(e.target.value)}>
-                                            <MenuItem value="AT">Österreich</MenuItem>
-                                            <MenuItem value="DE">Deutschland</MenuItem>
+                                        <Select value={country} label="Land / Markt" onChange={(e) => { setCountry(e.target.value); setYear(''); setMonth(''); }}>
+                                            {countryOptions.map((option) => (
+                                                <MenuItem key={option.code} value={option.code}>{option.label}</MenuItem>
+                                            ))}
                                         </Select>
                                     </FormControl>
 
                                     <Box sx={{ display: 'flex', gap: 2 }}>
                                         <FormControl fullWidth size="small">
                                             <InputLabel>Jahr</InputLabel>
-                                            <Select value={year} label="Jahr" onChange={(e) => setYear(e.target.value)} disabled={availableYears.length === 0}>
-                                                {availableYears.map(y => <MenuItem key={y} value={y}>{y}</MenuItem>)}
+                                            <Select value={year} label="Jahr" onChange={(e) => { setYear(e.target.value); setMonth(''); }} disabled={availableYears.length === 0}>
+                                                {availableYears.map((y) => <MenuItem key={y} value={y}>{y}</MenuItem>)}
                                             </Select>
                                         </FormControl>
                                         <FormControl fullWidth size="small">
                                             <InputLabel>Monat</InputLabel>
                                             <Select value={month} label="Monat" onChange={(e) => setMonth(e.target.value)} disabled={availableMonths.length === 0}>
-                                                {availableMonths.map(m => (
-                                                    <MenuItem key={m} value={m}>{new Date(2000, parseInt(m) - 1).toLocaleString('de-DE', { month: 'long' })}</MenuItem>
+                                                {availableMonths.map((file) => (
+                                                    <MenuItem key={`${file.year}-${file.month}-${file.archive_path}`} value={String(file.month)}>
+                                                        {getMonthLabel(file.month)}
+                                                    </MenuItem>
                                                 ))}
                                             </Select>
                                         </FormControl>
                                     </Box>
+
+                                    {activeArchiveFile && (
+                                        <Alert severity={activeArchiveFile.parser_status === 'pending' ? 'warning' : 'info'} icon={activeArchiveFile.parser_status === 'pending' ? <WarningAmberIcon /> : undefined}>
+                                            <Typography variant="body2" fontWeight={800}>{activeArchiveFile.fileName}</Typography>
+                                            <Typography variant="caption" display="block">
+                                                Quelle: {activeArchiveFile.source_name || 'unbekannt'}
+                                                {activeArchiveFile.last_updated ? ` · DB-Update: ${formatDateTime(activeArchiveFile.last_updated)}` : ''}
+                                            </Typography>
+                                            {activeArchiveFile.parser_note && (
+                                                <Typography variant="caption" display="block">{activeArchiveFile.parser_note}</Typography>
+                                            )}
+                                        </Alert>
+                                    )}
 
                                     <FormControl fullWidth size="small">
                                         <InputLabel>Größe / Format</InputLabel>
@@ -470,20 +767,20 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                                 ))}
                                             </Select>
                                         </FormControl>
-                                        
-                                        <ToggleButtonGroup value={colorMode} exclusive onChange={(_, newMode) => { if(newMode) setColorMode(newMode); }} size="small" fullWidth>
+
+                                        <ToggleButtonGroup value={colorMode} exclusive onChange={(_, newMode) => { if (newMode) setColorMode(newMode); }} size="small" fullWidth>
                                             <ToggleButton value="light" title="Heller Modus"><LightModeIcon fontSize="small" /></ToggleButton>
                                             <ToggleButton value="dark" title="Dunkler Modus"><DarkModeIcon fontSize="small" /></ToggleButton>
                                         </ToggleButtonGroup>
                                     </Box>
 
-                                    <Button variant="contained" fullWidth size="large" onClick={handleGenerate} disabled={isLoading || availableMonths.length === 0} startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : <AutoAwesomeIcon />}>
+                                    <Button variant="contained" fullWidth size="large" onClick={handleGenerate} disabled={isLoading || loadingArchive || !canGenerate} startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : <AutoAwesomeIcon />}>
                                         {isLoading ? 'Generiere...' : 'Daten laden & Vorschau'}
                                     </Button>
 
-                                    {chartData && (
+                                    {activeArchiveFile && (
                                         <Button variant="outlined" fullWidth onClick={handleDownloadSource} startIcon={<FileDownloadIcon />} sx={{ mt: -1 }}>
-                                            Rohdaten (Excel) laden
+                                            Rohdaten öffnen
                                         </Button>
                                     )}
                                 </Box>
@@ -516,7 +813,7 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                 </Box>
                             ) : (
                                 <Paper sx={{ p: 5, borderRadius: 2, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: '#f8fafc', border: '1px dashed #cbd5e1' }}>
-                                    <Typography color="text.secondary">Bitte wählen Sie einen Zeitraum und klicken Sie auf "Daten laden & Vorschau".</Typography>
+                                    <Typography color="text.secondary">Bitte wählen Sie einen Zeitraum und klicken Sie auf „Daten laden & Vorschau“.</Typography>
                                 </Paper>
                             )}
                         </Grid>
@@ -525,12 +822,13 @@ const AdminSocialMediaGenerator: React.FC = () => {
 
                 {activeTab === 1 && (
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        
-                        {/* 1. SOCIAL MEDIA */}
                         <Paper sx={{ p: 4, borderRadius: 2 }}>
-                            <Typography variant="h5" gutterBottom>Ordner: /social-media</Typography>
+                            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2} sx={{ mb: 1 }}>
+                                <Typography variant="h5">Ordner: /social-media</Typography>
+                                <Chip label={`${galleryFiles.socialMedia.length} Dateien`} color="primary" variant="outlined" />
+                            </Stack>
                             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                                Hier liegen alle fertigen, generierten Social-Media Posts.
+                                Fertige, generierte Social-Media Posts. Neueste Dateien stehen oben.
                             </Typography>
                             {loadingGallery ? <CircularProgress /> : (
                                 <Grid container spacing={3}>
@@ -542,20 +840,19 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                                 <IconButton size="small" color="error" onClick={() => handleDeleteFile('social-media', item.name)} sx={{ position: 'absolute', top: 5, right: 5, bgcolor: 'rgba(255,255,255,0.8)', '&:hover': { bgcolor: 'white' } }}>
                                                     <DeleteIcon fontSize="small" />
                                                 </IconButton>
-                                                
+
                                                 <Box sx={{ height: 180, bgcolor: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid divider', overflow: 'hidden' }}>
                                                     <img src={getImageUrl(item.url)} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                                 </Box>
                                                 <Box sx={{ p: 1.5 }}>
-                                                    {/* NEU: Format und Größe anzeigen */}
-                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1, gap: 1 }}>
                                                         <Chip label={item.type} size="small" color="primary" sx={{ fontSize: '0.65rem', height: 20 }} />
                                                         <Chip label={`${item.format} • ${item.size}`} size="small" variant="outlined" sx={{ fontSize: '0.65rem', height: 20 }} />
                                                     </Box>
                                                     <Typography variant="subtitle2" noWrap title={item.name}>{item.name}</Typography>
                                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
-                                                        <Typography variant="caption" color="text.secondary">{item.date}</Typography>
-                                                        <Button size="small" variant="text" sx={{ minWidth: 'auto', p: 0.5 }} onClick={() => handleCopyUrl(item.url)}>URL</Button>
+                                                        <Typography variant="caption" color="text.secondary">{item.dateTime || item.date}</Typography>
+                                                        <Button size="small" variant="text" sx={{ minWidth: 'auto', p: 0.5 }} onClick={() => handleCopyUrl(item.rawUrl || item.url)}>URL</Button>
                                                     </Box>
                                                 </Box>
                                             </Paper>
@@ -565,9 +862,11 @@ const AdminSocialMediaGenerator: React.FC = () => {
                             )}
                         </Paper>
 
-                        {/* 2. GRAFIKEN */}
                         <Paper sx={{ p: 4, borderRadius: 2 }}>
-                            <Typography variant="h5" gutterBottom>Ordner: /grafiken</Typography>
+                            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2} sx={{ mb: 1 }}>
+                                <Typography variant="h5">Ordner: /grafiken</Typography>
+                                <Chip label={`${galleryFiles.grafiken.length} Dateien`} variant="outlined" />
+                            </Stack>
                             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
                                 Hintergrundbilder, die im Generator ausgewählt werden können.
                             </Typography>
@@ -586,14 +885,14 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                                     <img src={getImageUrl(item.url)} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                                 </Box>
                                                 <Box sx={{ p: 1.5 }}>
-                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1, gap: 1 }}>
                                                         <Chip label={item.type} size="small" color="default" sx={{ fontSize: '0.65rem', height: 20 }} />
                                                         <Chip label={`${item.format} • ${item.size}`} size="small" variant="outlined" sx={{ fontSize: '0.65rem', height: 20 }} />
                                                     </Box>
                                                     <Typography variant="subtitle2" noWrap title={item.name}>{item.name}</Typography>
                                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
-                                                        <Typography variant="caption" color="text.secondary">{item.date}</Typography>
-                                                        <Button size="small" variant="text" sx={{ minWidth: 'auto', p: 0.5 }} onClick={() => handleCopyUrl(item.url)}>URL</Button>
+                                                        <Typography variant="caption" color="text.secondary">{item.dateTime || item.date}</Typography>
+                                                        <Button size="small" variant="text" sx={{ minWidth: 'auto', p: 0.5 }} onClick={() => handleCopyUrl(item.rawUrl || item.url)}>URL</Button>
                                                     </Box>
                                                 </Box>
                                             </Paper>
@@ -603,9 +902,11 @@ const AdminSocialMediaGenerator: React.FC = () => {
                             )}
                         </Paper>
 
-                        {/* 3. LOGOS */}
                         <Paper sx={{ p: 4, borderRadius: 2 }}>
-                            <Typography variant="h5" gutterBottom>Ordner: /logos</Typography>
+                            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2} sx={{ mb: 1 }}>
+                                <Typography variant="h5">Ordner: /logos</Typography>
+                                <Chip label={`${galleryFiles.logos.length} Logos`} variant="outlined" />
+                            </Stack>
                             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
                                 Die in den Grafiken verwendeten Markenlogos.
                             </Typography>
@@ -621,11 +922,12 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                                 </IconButton>
 
                                                 <Box sx={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 1, mt: 2 }}>
-                                                    <img src={getImageUrl(`/api/logos/${logo.name}`)} alt={logo.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                                                    <img src={getImageUrl(logo.rawUrl || `/api/logos/${logo.name}`)} alt={logo.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
                                                 </Box>
                                                 <Typography variant="caption" display="block" noWrap>{logo.name}</Typography>
                                                 <Typography variant="caption" display="block" color="text.secondary">{logo.format} • {logo.size}</Typography>
-                                                <Button size="small" variant="text" sx={{ fontSize: '0.6rem', mt: 0.5 }} onClick={() => handleCopyUrl(`/api/logos/${logo.name}`)}>URL kopieren</Button>
+                                                <Typography variant="caption" display="block" color="text.secondary">{logo.dateTime || logo.date}</Typography>
+                                                <Button size="small" variant="text" sx={{ fontSize: '0.6rem', mt: 0.5 }} onClick={() => handleCopyUrl(logo.rawUrl || `/api/logos/${logo.name}`)}>URL kopieren</Button>
                                             </Paper>
                                         </Grid>
                                     ))}

@@ -51,7 +51,8 @@ interface Action {
   id: number | string;
   layout_type: 'layout_1' | 'layout_2' | 'layout_3' | 'layout_compact' | string;
   title: string;
-  content_text: string | null;
+  content_text?: string | null;
+  description?: string | null;
   link_url: string | null;
   image_url: string | null;
   created_at: string;
@@ -63,6 +64,8 @@ interface Action {
   secondary_cta_label?: string | null;
   priority?: number | null;
   info?: ActionInfo | null;
+  legal_note?: string | null;
+  legalNote?: string | null;
 }
 
 interface BpActionsWidgetProps extends BaseWidgetProps {
@@ -122,7 +125,7 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
     setError(null);
     try {
       const endpoint = isPublic ? '/api/public/actions' : '/api/data/actions';
-      const params: any = { page: 1, limit: isPublic ? 6 : 10 };
+      const params: any = { page: 1, limit: 10 };
 
       if (isPublic) {
         if (!partnerId) {
@@ -206,17 +209,39 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
     const contact = info?.contact;
     if (!contact?.name && !contact?.email && !contact?.phone) return null;
 
+    const contactTextColor = isPublic ? alpha(darkBlue, 0.84) : theme.palette.text.secondary;
+
     return (
-      <Box sx={{ mt: 1.5, p: 1.25, borderRadius: 2, bgcolor: alpha(customPrimary, 0.07), border: `1px solid ${alpha(customPrimary, 0.12)}` }}>
+      <Box
+        sx={{
+          mt: 1.5,
+          p: 1.25,
+          borderRadius: 2,
+          bgcolor: isPublic ? alpha(customPrimary, 0.055) : alpha(customPrimary, 0.07),
+          border: `1px solid ${alpha(customPrimary, isPublic ? 0.22 : 0.12)}`,
+        }}
+      >
         <Stack direction="row" spacing={1} alignItems="flex-start">
-          <ContactMailIcon sx={{ fontSize: 18, color: customPrimary, mt: 0.2 }} />
+          <ContactMailIcon sx={{ fontSize: 18, color: customPrimary, mt: 0.2, flexShrink: 0 }} />
           <Box sx={{ minWidth: 0 }}>
             <Typography variant="caption" sx={{ display: 'block', fontWeight: 900, color: isPublic ? darkBlue : 'text.primary' }}>
               {contact?.name || 'Ansprechpartner'}
             </Typography>
-            {contact?.role && <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{contact.role}</Typography>}
-            {contact?.email && <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{contact.email}</Typography>}
-            {contact?.phone && <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{contact.phone}</Typography>}
+            {contact?.role && (
+              <Typography variant="caption" sx={{ display: 'block', color: contactTextColor, fontWeight: isPublic ? 700 : 400 }}>
+                {contact.role}
+              </Typography>
+            )}
+            {contact?.email && (
+              <Typography variant="caption" sx={{ display: 'block', color: contactTextColor, fontWeight: isPublic ? 700 : 400, wordBreak: 'break-all' }}>
+                {contact.email}
+              </Typography>
+            )}
+            {contact?.phone && (
+              <Typography variant="caption" sx={{ display: 'block', color: contactTextColor, fontWeight: isPublic ? 700 : 400 }}>
+                {contact.phone}
+              </Typography>
+            )}
           </Box>
         </Stack>
       </Box>
@@ -229,6 +254,8 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
     const mediaHeight = isHero ? 190 : isPublic ? 160 : 140;
     const secondaryImageUrl = action.secondary_image_url ? getAssetUrl(action.secondary_image_url) : '';
     const highlights = Array.isArray(action.info?.highlights) ? action.info?.highlights?.filter(Boolean).slice(0, 3) : [];
+    const descriptionText = action.content_text || action.description || '';
+    const legalNoteText = action.info?.legalNote || action.legal_note || action.legalNote || '';
 
     return (
       <Card
@@ -239,7 +266,7 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
           bgcolor: isPublic ? '#fff' : 'background.paper',
           color: isPublic ? darkBlue : 'inherit',
           borderRadius: 3,
-          overflow: 'hidden',
+          overflow: isPublic ? 'visible' : 'hidden',
           border: '1px solid',
           borderColor: isPublic ? alpha(darkBlue, 0.1) : 'divider',
           boxShadow: isPublic ? `0 18px 40px ${alpha(darkBlue, 0.08)}` : theme.shadows[1],
@@ -272,20 +299,24 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
               {action.title}
             </Typography>
 
-            {action.content_text && (
+            {descriptionText && (
               <Typography
                 variant="body2"
-                color="text.secondary"
                 sx={{
                   lineHeight: 1.5,
-                  display: '-webkit-box',
-                  WebkitLineClamp: isPublic ? 4 : 3,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
                   whiteSpace: 'pre-wrap',
+                  color: isPublic ? alpha(darkBlue, 0.78) : 'text.secondary',
+                  ...(isPublic
+                    ? {}
+                    : {
+                        display: '-webkit-box',
+                        WebkitLineClamp: 3,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }),
                 }}
               >
-                {action.content_text}
+                {descriptionText}
               </Typography>
             )}
 
@@ -313,9 +344,18 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
 
             {renderContact(action.info)}
 
-            {action.info?.legalNote && (
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.2, fontStyle: 'italic' }}>
-                {action.info.legalNote}
+            {legalNoteText && (
+              <Typography
+                variant="caption"
+                sx={{
+                  display: 'block',
+                  mt: 1.2,
+                  fontStyle: 'italic',
+                  whiteSpace: 'pre-wrap',
+                  color: isPublic ? alpha(darkBlue, 0.62) : 'text.secondary',
+                }}
+              >
+                {legalNoteText}
               </Typography>
             )}
           </CardContent>
@@ -332,7 +372,16 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
                     variant="contained"
                     size="small"
                     endIcon={<OpenInNewIcon fontSize="small" />}
-                    sx={{ bgcolor: customPrimary, borderRadius: 2, textTransform: 'none', fontWeight: 900, '&:hover': { bgcolor: customPrimary, filter: 'brightness(0.94)' } }}
+                    sx={{
+                      bgcolor: customPrimary,
+                      color: '#fff',
+                      borderRadius: 2,
+                      textTransform: 'none',
+                      fontWeight: 900,
+                      boxShadow: `0 8px 18px ${alpha(customPrimary, 0.28)}`,
+                      '& .MuiButton-endIcon, & .MuiSvgIcon-root': { color: '#fff' },
+                      '&:hover': { bgcolor: customPrimary, color: '#fff', filter: 'brightness(0.9)' },
+                    }}
                   >
                     {action.cta_label || 'Mehr erfahren'}
                   </Button>
@@ -378,14 +427,7 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
       isPublic={isPublic}
     >
       <Box sx={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}>
-        {isPublic && (
-          <Box sx={{ bgcolor: alpha(customPrimary, 0.1), p: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1, borderBottom: '1px solid', borderColor: alpha(customPrimary, 0.18) }}>
-            <PublicIcon sx={{ fontSize: 16, color: customPrimary }} />
-            <Typography variant="caption" sx={{ color: customPrimary, fontWeight: 900 }}>Live-Aktionen des Partners</Typography>
-          </Box>
-        )}
-
-        <Box sx={{ flexGrow: 1, width: '100%', display: 'flex', alignItems: 'stretch', justifyContent: 'center', p: 2, minHeight: isPublic ? 360 : 300 }}>
+        <Box sx={{ flexGrow: 1, width: '100%', display: 'flex', alignItems: 'stretch', justifyContent: 'center', p: 2, minHeight: isPublic ? 560 : 300 }}>
           {isLoading ? (
             <Box sx={{ width: '100%' }}>
               <Skeleton variant="rounded" height={220} sx={{ mb: 2, borderRadius: 3 }} />
@@ -413,7 +455,7 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
               style={{ width: '100%', height: '100%', paddingBottom: '34px' }}
             >
               {items.map((action) => (
-                <SwiperSlide key={action.id} style={{ width: isPublic ? '86%' : '80%', maxWidth: isPublic ? 420 : 340, height: 'auto' }}>
+                <SwiperSlide key={action.id} style={{ width: isPublic ? '90%' : '80%', maxWidth: isPublic ? 640 : 340, height: 'auto' }}>
                   {renderActionCard(action)}
                 </SwiperSlide>
               ))}
