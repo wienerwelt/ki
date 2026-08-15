@@ -25,6 +25,7 @@ Das Deployment:
 - überschreibt kein vorhandenes Backup;
 - führt jede nummerierte Migration höchstens einmal aus und blockiert nachträglich veränderte Migrationen;
 - erhält PostgreSQL- und Redis-Volumes sowie Upload-Verzeichnisse;
+- erhält die bestehenden Zugriffsrechte des produktiven Projekt-Roots für Nginx/Plesk;
 - aktiviert ein Release erst nach erfolgreichem API-Healthcheck.
 
 Nicht automatisch rückgängig gemacht werden Datenbankmigrationen. Migrationen müssen deshalb additiv und mit der vorherigen App-Version kompatibel sein. Ein normaler Rollback betrifft zuerst nur den Code.
@@ -115,7 +116,7 @@ Format: `vYYYY.MM.DD.N`. `N` beginnt pro Tag bei `1` und wird für jedes weitere
 Für das aktuelle Release in PowerShell setzen:
 
 ```powershell
-$ReleaseVersion = 'v2026.08.15.1'
+$ReleaseVersion = 'v2026.08.15.2'
 ```
 
 Eine Versionsnummer darf nach erfolgreichem Deployment niemals wiederverwendet werden.
@@ -300,7 +301,7 @@ Stoppen, wenn:
 Upload-Dateien prüfen:
 
 ```bash
-RELEASE_VERSION='v2026.08.15.1'
+RELEASE_VERSION='v2026.08.15.2'
 ls -lh ".deploy/incoming/mobiliti-dashboard-${RELEASE_VERSION}.tar.gz" \
        ".deploy/incoming/mobiliti-dashboard-${RELEASE_VERSION}.tar.gz.sha256"
 ```
@@ -408,7 +409,7 @@ Ein Restore kann neuere Produktionsdaten löschen. Deshalb nur durchführen, wen
 
    ```bash
    cd /var/www/vhosts/mobiliti.at/httpdocs/dashboard
-   RESTORE_BACKUP='backups/pre-v2026.08.15.1-YYYYMMDDTHHMMSSZ.dump'
+   RESTORE_BACKUP='backups/pre-v2026.08.15.2-YYYYMMDDTHHMMSSZ.dump'
    test -s "$RESTORE_BACKUP"
    (cd backups && sha256sum --check "$(basename "$RESTORE_BACKUP").sha256")
    ```

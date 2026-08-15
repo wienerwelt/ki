@@ -24,7 +24,7 @@ cd "$ROOT_DIR"
 
 if [[ -z "$ARCHIVE_INPUT" ]]; then
   echo "Verwendung: bash ./deploy.sh <release-archiv.tar.gz>"
-  echo "Beispiel:   bash ./deploy.sh .deploy/incoming/mobiliti-dashboard-v2026.08.15.1.tar.gz"
+  echo "Beispiel:   bash ./deploy.sh .deploy/incoming/mobiliti-dashboard-v2026.08.15.2.tar.gz"
   exit 2
 fi
 
@@ -35,7 +35,7 @@ if [[ ! -f "$ROOT_DIR/.mobiliti-dashboard-root" ]] || \
   exit 2
 fi
 
-for command_name in npm docker curl tar sha256sum rsync realpath mktemp grep date; do
+for command_name in npm docker curl tar sha256sum rsync realpath mktemp grep date chmod; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Fehlendes Programm auf dem Server: $command_name"
     exit 2
@@ -120,6 +120,11 @@ fi
 
 mkdir -p "$DEPLOY_DIR"
 STAGING_DIR="$(mktemp -d "$DEPLOY_DIR/staging.XXXXXX")"
+# mktemp erstellt Verzeichnisse absichtlich mit 0700. Da rsync -a auch die
+# Rechte des Quell-Roots übernimmt, muss der Staging-Root vor dem Kopieren
+# dieselben Rechte wie der produktive Projekt-Root erhalten. Andernfalls kann
+# Nginx nach dem Deployment das Frontend nicht mehr lesen.
+chmod --reference="$ROOT_DIR" "$STAGING_DIR"
 tar -xzf "$ARCHIVE_PATH" -C "$STAGING_DIR"
 
 for required_file in \
