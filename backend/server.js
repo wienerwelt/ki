@@ -19,9 +19,11 @@ const PORT = process.env.PORT || 5000;
 const cron = require('node-cron');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const cookieParser = require('cookie-parser');
 
 const db = require('./config/db');
+const healthController = require('./controllers/healthController');
 const auth = require('./middleware/authMiddleware');
 const bullAuth = require('./middleware/bullAuth');
 const jobManager = require('./services/jobManagerService');
@@ -89,6 +91,7 @@ const updateLastActive = require('./middleware/activityLogger');
 const adminBriefingRoutes = require('./routes/adminBriefingEditorialRoutes');
 const directoryRoutes = require('./routes/directoryRoutes');
 const adminDirectoryRoutes = require('./routes/adminDirectoryRoutes');
+const softwareRoutes = require('./routes/softwareRoutes');
 
 
 
@@ -186,6 +189,8 @@ app.use((req, res, next) => {
 });
 
 // --- 4. ROUTEN ---
+app.get('/api/health', healthController.getHealth);
+
 app.use('/api/admin/jobs', bullAuth);
 app.use('/api/admin/jobs', serverAdapter.getRouter());
 
@@ -236,6 +241,7 @@ app.use('/api/onboarding', require('./routes/onboardingRoutes'));
 app.use('/api/admin/social-media', require('./routes/adminSocialMediaRoutes'));
 app.use('/api/admin/directory', adminDirectoryRoutes);
 app.use('/api/directory', directoryRoutes);
+app.use('/api/software', softwareRoutes);
 
 
 // Debug-Routen wurden aus Sicherheitsgründen entfernt.
@@ -247,8 +253,76 @@ app.use('/api/*', (req, res) => {
 
 const frontendDistPath = path.resolve(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(frontendDistPath));
-app.get('*', (req, res) => {
-  res.sendFile(path.join(frontendDistPath, 'index.html'));
+const frontendIndexPath = path.join(frontendDistPath, 'index.html');
+const publicDashboardOrigin = String(process.env.FRONTEND_URL || 'https://dashboard.mobiliti.at').replace(/\/$/, '');
+
+const escapeSeoHtml = (value = '') => String(value)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;');
+
+app.get('/sitemap.xml', async (req, res, next) => {
+  try {
+    const partners = await db.query(`
+      SELECT slug, updated_at
+      FROM business_partners
+      WHERE is_active = true AND slug IS NOT NULL AND BTRIM(slug) <> ''
+      ORDER BY slug
+    `);
+    const urls = partners.rows.map((partner) => `
+      <url>
+        <loc>${escapeSeoHtml(`${publicDashboardOrigin}/${encodeURIComponent(partner.slug)}`)}</loc>
+        <lastmod>${new Date(partner.updated_at || Date.now()).toISOString()}</lastmod>
+        <changefreq>weekly</changefreq>
+      </url>`).join('');
+    res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
+      <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}
+      </urlset>`);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('*', async (req, res, next) => {
+  try {
+    let html = await fs.promises.readFile(frontendIndexPath, 'utf8');
+    const pathParts = req.path.split('/').filter(Boolean);
+    const slug = pathParts.length === 1 ? decodeURIComponent(pathParts[0]).toLowerCase() : '';
+    const reservedPaths = new Set(['login', 'register', 'dashboard', 'community', 'privacy', 'terms', 'disclaimer', 'cookie-settings']);
+
+    if (slug && !reservedPaths.has(slug) && /^[a-z0-9_-]{1,120}$/.test(slug)) {
+      const partnerResult = await db.query(`
+        SELECT name, slug, dashboard_title, logo_url
+        FROM business_partners
+        WHERE lower(slug) = $1 AND is_active = true
+        LIMIT 1
+      `, [slug]);
+      const partner = partnerResult.rows[0];
+      if (partner) {
+        const canonicalUrl = `${publicDashboardOrigin}/${encodeURIComponent(partner.slug)}`;
+        const title = `${partner.dashboard_title || partner.name} | Branchenverzeichnis & Software-Lexikon`;
+        const description = `${partner.name}: öffentliches Branchenverzeichnis, Software-Lexikon, Termine und ausgewählte Brancheninformationen.`.slice(0, 160);
+        const logo = partner.logo_url && /^https?:\/\//i.test(partner.logo_url)
+          ? partner.logo_url
+          : `${publicDashboardOrigin}${partner.logo_url && partner.logo_url.startsWith('/') ? partner.logo_url : '/og-image.jpg'}`;
+
+        html = html
+          .replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeSeoHtml(title)}</title>`)
+          .replace(/<meta name="description"[^>]*>/i, `<meta name="description" content="${escapeSeoHtml(description)}" />`)
+          .replace(/<meta property="og:title"[^>]*>/i, `<meta property="og:title" content="${escapeSeoHtml(title)}" />`)
+          .replace(/<meta property="og:description"[^>]*>/i, `<meta property="og:description" content="${escapeSeoHtml(description)}" />`)
+          .replace(/<meta property="og:url"[^>]*>/i, `<meta property="og:url" content="${escapeSeoHtml(canonicalUrl)}" />`)
+          .replace(/<meta property="og:image"[^>]*>/i, `<meta property="og:image" content="${escapeSeoHtml(logo)}" />`)
+          .replace('</head>', `<link rel="canonical" href="${escapeSeoHtml(canonicalUrl)}" />\n  </head>`);
+      }
+    }
+
+    res.type('html').send(html);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.use((err, req, res, next) => {

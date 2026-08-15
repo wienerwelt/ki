@@ -2760,30 +2760,46 @@ exports.getActiveActionsForWidget = async (req, res) => {
 
         const dataQuery = `
             SELECT
-                id,
-                business_partner_id,
-                layout_type,
-                title,
-                content_text,
-                link_url,
-                image_url,
-                created_at,
-                updated_at,
-                start_date,
-                end_date,
-                target_widget_category,
-                target_region,
-                is_click_tracking_enabled,
-                promotion_label,
-                promotion_type,
-                cta_label,
-                secondary_image_url,
-                secondary_link_url,
-                secondary_cta_label,
-                priority,
-                COALESCE(info, '{}'::jsonb) AS info
-            ${baseQuery}
-            ORDER BY priority DESC, start_date DESC NULLS LAST, created_at DESC
+                a.id,
+                a.business_partner_id,
+                a.layout_type,
+                a.title,
+                a.content_text,
+                a.link_url,
+                a.image_url,
+                a.created_at,
+                a.updated_at,
+                a.start_date,
+                a.end_date,
+                a.target_widget_category,
+                a.target_region,
+                a.is_click_tracking_enabled,
+                a.promotion_label,
+                a.promotion_type,
+                a.cta_label,
+                a.secondary_image_url,
+                a.secondary_link_url,
+                a.secondary_cta_label,
+                a.priority,
+                COALESCE(a.info, '{}'::jsonb) AS info,
+                a.directory_provider_id,
+                dp.name AS directory_provider_name,
+                dp.logo_url AS directory_provider_logo_url,
+                a.software_tool_id,
+                st.name AS software_tool_name,
+                st.product_url AS software_tool_url,
+                st.logo_url AS software_tool_logo_url
+            FROM business_partner_actions a
+            LEFT JOIN directory_providers dp ON dp.id = a.directory_provider_id
+            LEFT JOIN software_tools st
+              ON st.id = a.software_tool_id
+             AND st.business_partner_id = a.business_partner_id
+            WHERE
+                a.business_partner_id = $1
+                AND a.is_active = TRUE
+                AND (a.start_date IS NULL OR a.start_date <= NOW())
+                AND (a.end_date IS NULL OR a.end_date >= NOW())
+            ORDER BY a.priority DESC, a.start_date DESC NULLS LAST, a.created_at DESC
             LIMIT $2 OFFSET $3
         `;
         const dataResult = await db.query(dataQuery, [...queryParams, safeLimit, offset]);
@@ -3120,7 +3136,7 @@ exports.getDashboardConfig = async (req, res) => {
       SELECT
         u.preferred_theme,
         u.preferred_language,
-        bp.id, bp.name, bp.address, bp.logo_url,
+        bp.id, bp.name, bp.slug, bp.address, bp.logo_url,
         bp.subscription_start_date, bp.subscription_end_date,
         bp.storage_tier, bp.storage_limit_bytes, bp.storage_usage_bytes,
         bp.dashboard_title, bp.url_businesspartner,
@@ -3184,6 +3200,7 @@ exports.getDashboardConfig = async (req, res) => {
       businessPartner: {
         id: r.id,
         name: r.name,
+        slug: r.slug,
         address: r.address,
         logo_url: r.logo_url,
         subscription_start_date: r.subscription_start_date,

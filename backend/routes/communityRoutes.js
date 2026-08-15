@@ -45,6 +45,7 @@ router.get('/feed/:postId/comments', communityController.getComments);
 router.post('/feed/:postId/comments', communityController.createComment);
 
 router.put('/feed/:id/pin', communityController.togglePin);
+router.get('/members/:userId/profile', communityController.getMemberProfile);
 router.get('/members', communityController.getMembers);
 router.post('/report', communityController.reportContent);
 router.post('/poll/vote', communityController.votePoll);

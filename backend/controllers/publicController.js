@@ -2,16 +2,16 @@
 const db = require('../config/db');
 const crypto = require('crypto');
 const dataController = require('./dataController');
+const { sendEmail } = require('../services/emailService');
 
 // --- HILFSFUNKTIONEN ---
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
 async function resolvePartnerIdByCode(code) {
     if (!code || typeof code !== 'string' || code.trim() === '') return null;
-    
-    const cleanCode = code.trim().toLowerCase();
-    // Erweitert: Erlaubt jetzt auch Binde- und Unterstriche für Slugs (z.B. "stadt-wien")
-    if (!/^[a-z0-9-_]+$/i.test(cleanCode)) return null;
+    const cleanLookup = code.trim().replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 120);
+    if (!cleanLookup) return null;
+    const cleanCode = cleanLookup.toLowerCase();
     
     try {
         // SUCHT JETZT NACH ID *ODER* SLUG
@@ -19,6 +19,7 @@ async function resolvePartnerIdByCode(code) {
             `SELECT
                 bp.id,
                 bp.name,
+                bp.slug,
                 bp.logo_url,
                 bp.dashboard_title,
                 bp.color_scheme_id,
@@ -39,16 +40,45 @@ async function resolvePartnerIdByCode(code) {
                       AND c.category_type = 'industry'
                 ), '[]'::json) AS industries
              FROM business_partners bp
-             WHERE (LOWER(RIGHT(bp.id::text, 8)) = $1 OR LOWER(bp.slug) = $1)
+             WHERE (
+                    LOWER(RIGHT(bp.id::text, 8)) = $1
+                    OR LOWER(bp.slug) = $1
+                    OR LOWER(bp.name) = LOWER($2)
+                   )
                AND bp.is_active = true
              LIMIT 1`,
-            [cleanCode]
+            [cleanCode, cleanLookup]
         );
         return r.rows[0] || null;
     } catch (err) {
         console.error("Datenbankfehler bei Partner-Lookup:", err.message);
         return null;
     }
+}
+
+function escapeHtml(value = '') {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function normalizeOptionalField(value, maxLength = 500) {
+    if (value === undefined || value === null) return '';
+    return String(value).trim().slice(0, maxLength);
+}
+
+function normalizePublicFilter(value, maxLength = 120) {
+    return normalizeOptionalField(value, maxLength)
+        .replace(/[\u0000-\u001f\u007f]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function escapeLikePattern(value) {
+    return String(value || '').replace(/[\\%_]/g, '\\$&');
 }
 
 
@@ -119,14 +149,41 @@ const loadPublicBusinessPartnerActions = async ({ partnerId, page = 1, limit = 1
             a.secondary_link_url,
             a.secondary_cta_label,
             a.priority,
-            COALESCE(a.info, '{}'::jsonb) AS info
+            COALESCE(a.info, '{}'::jsonb) AS info,
+            a.directory_provider_id,
+            dp.name AS directory_provider_name,
+            dp.logo_url AS directory_provider_logo_url,
+            a.software_tool_id,
+            st.name AS software_tool_name,
+            st.product_url AS software_tool_url,
+            st.logo_url AS software_tool_logo_url
         FROM business_partner_actions a
         INNER JOIN business_partners bp ON bp.id = a.business_partner_id
+        LEFT JOIN directory_providers dp ON dp.id = a.directory_provider_id
+        LEFT JOIN software_tools st
+          ON st.id = a.software_tool_id
+         AND st.business_partner_id = a.business_partner_id
+         AND st.status = 'published'
+         AND st.is_active = true
+         AND st.is_public = true
         WHERE a.business_partner_id = $1
           AND bp.is_active = true
           AND a.is_active = true
           AND (a.start_date IS NULL OR a.start_date <= NOW())
           AND (a.end_date IS NULL OR a.end_date >= NOW())
+          AND (
+              a.directory_provider_id IS NULL
+              OR (
+                  dp.is_public = true
+                  AND EXISTS (
+                      SELECT 1
+                      FROM directory_provider_mandant_settings action_ms
+                      WHERE action_ms.provider_id = a.directory_provider_id
+                        AND action_ms.business_partner_id = a.business_partner_id
+                        AND action_ms.status = 'active'
+                  )
+              )
+          )
         ORDER BY a.priority DESC, a.start_date DESC NULLS LAST, a.created_at DESC
         LIMIT $2 OFFSET $3
     `, [partnerId, safeLimit, offset]);
@@ -149,7 +206,7 @@ exports.getPublicContext = async (req, res) => {
         let colorScheme = null;
         let allowedWidgets = []; 
         let defaultRegionCode = 'AT'; 
-        let stats = { total_directory_entries: 0, community_members: 0, community_activity: 0 };
+        let stats = { total_directory_entries: 0, total_software_entries: 0, community_members: 0, community_activity: 0 };
 
         if (partnerCode && partnerCode !== 'undefined' && partnerCode !== 'null') {
             partnerData = await resolvePartnerIdByCode(partnerCode);
@@ -193,6 +250,26 @@ exports.getPublicContext = async (req, res) => {
                     console.error('Fehler beim Zählen der Verzeichnis-Einträge:', e.message); 
                 }
 
+                try {
+                    const softwareCount = await db.query(`
+                        SELECT COUNT(*)::int AS count
+                        FROM software_tools st
+                        JOIN directory_providers p ON p.id = st.provider_id
+                        JOIN directory_provider_mandant_settings ms
+                          ON ms.provider_id = st.provider_id
+                         AND ms.business_partner_id = st.business_partner_id
+                        WHERE st.business_partner_id = $1
+                          AND st.status = 'published'
+                          AND st.is_active = true
+                          AND st.is_public = true
+                          AND p.is_public = true
+                          AND ms.status = 'active'
+                    `, [partnerData.id]);
+                    stats.total_software_entries = softwareCount.rows[0]?.count || 0;
+                } catch(e) {
+                    console.error('Fehler beim Zählen der Software-Einträge:', e.message);
+                }
+
                 // 2. Registrierte User zählen (jetzt für den "Für Mitglieder" Reiter)
                 try {
                     const userCount = await db.query(`SELECT COUNT(*) as count FROM users WHERE business_partner_id = $1`, [partnerData.id]);
@@ -228,45 +305,452 @@ exports.getPublicContext = async (req, res) => {
         });
     } catch (err) {
         console.error('Public Context Error:', err);
-        res.status(500).json({ partner: null, theme: null, stats: { total_directory_entries: 0, community_members: 0 }, allowedWidgets: [], defaultRegion: 'AT' });
+        res.status(500).json({ partner: null, theme: null, stats: { total_directory_entries: 0, total_software_entries: 0, community_members: 0 }, allowedWidgets: [], defaultRegion: 'AT' });
     }
 };
 
 
 // ==============================================================================
-// 2. KONTAKTFORMULAR (Spam-Schutz)
+// 2. KONTAKTFORMULAR
+// Speichert Anfrage in der Datenbank,
+// sendet interne Benachrichtigung und Bestätigung an den Absender.
 // ==============================================================================
 exports.submitContactForm = async (req, res) => {
-    const { name, org, email, audience, message, website, type = 'demo_request' } = req.body;
+    const {
+        name,
+        org,
+        email,
+        audience,
+        message,
+        website,
+        type = 'contact'
+    } = req.body || {};
 
-    // HONEYPOT: Wenn ein Bot das versteckte "website" Feld ausfüllt -> Ignorieren!
+    // Honeypot:
+    // Bots bekommen absichtlich eine Erfolgsmeldung, ohne dass etwas gespeichert
+    // oder verschickt wird.
     if (website) {
         console.warn(`[Spam-Schutz] Bot geblockt. IP: ${req.ip}`);
-        return res.status(200).json({ message: 'Erfolgreich gesendet.' });
+        return res.status(200).json({
+            message: 'Anfrage erfolgreich gesendet.'
+        });
     }
 
-    if (!name || !email || !message) {
-        return res.status(400).json({ message: 'Bitte füllen Sie alle Pflichtfelder aus.' });
+    const cleanName = normalizeOptionalField(name, 120);
+    const cleanOrg = normalizeOptionalField(org, 200);
+    const cleanEmail = normalizeOptionalField(email, 254).toLowerCase();
+    const cleanAudience = normalizeOptionalField(audience, 200);
+    const cleanMessage = normalizeOptionalField(message, 5000);
+    const cleanType = normalizeOptionalField(type, 100) || 'contact';
+
+    // Pflichtfelder
+    if (!cleanName || !cleanEmail || !cleanMessage) {
+        return res.status(400).json({
+            message: 'Bitte füllen Sie alle Pflichtfelder aus.'
+        });
     }
 
-    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip;
-    const userAgent = req.headers['user-agent'];
-    const title = `Landingpage Anfrage (${type})`;
+    // Einfache E-Mail-Validierung
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(cleanEmail)) {
+        return res.status(400).json({
+            message: 'Bitte geben Sie eine gültige E-Mail-Adresse ein.'
+        });
+    }
+
+    if (cleanName.length < 2) {
+        return res.status(400).json({
+            message: 'Der Name ist zu kurz.'
+        });
+    }
+
+    if (cleanMessage.length < 10) {
+        return res.status(400).json({
+            message: 'Die Nachricht muss mindestens 10 Zeichen enthalten.'
+        });
+    }
+
+    const rawForwardedFor = req.headers['x-forwarded-for'];
+
+    const ipAddress = Array.isArray(rawForwardedFor)
+        ? rawForwardedFor[0]
+        : String(
+            rawForwardedFor ||
+            req.socket?.remoteAddress ||
+            req.ip ||
+            ''
+        )
+            .split(',')[0]
+            .trim();
+
+    const userAgent = String(req.headers['user-agent'] || '').slice(0, 1000);
+
+    const title = `Landingpage-Anfrage (${cleanType})`;
+
+    // Zieladresse für interne Benachrichtigung
+    const contactRecipient =
+        process.env.CONTACT_EMAIL ||
+        process.env.EMAIL_ADMIN ||
+        process.env.EMAIL_USER;
+
+    if (!contactRecipient) {
+        console.error(
+            '[Kontaktformular] Keine Empfängeradresse konfiguriert. ' +
+            'Bitte CONTACT_EMAIL, EMAIL_ADMIN oder EMAIL_USER setzen.'
+        );
+    }
 
     try {
-        const query = `
-            INSERT INTO feedback_items 
-            (type, title, description, name, organization, email, audience, ip_address, user_agent)
+        // 1. Anfrage in Datenbank speichern
+        const insertQuery = `
+            INSERT INTO feedback_items
+            (
+                type,
+                title,
+                description,
+                name,
+                organization,
+                email,
+                audience,
+                ip_address,
+                user_agent
+            )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id, created_at
         `;
-        const values = [type, title, message, name, org, email, audience, ipAddress, userAgent];
-        
-        await db.query(query, values);
 
-        res.status(200).json({ message: 'Anfrage erfolgreich gesendet.' });
+        const values = [
+            cleanType,
+            title,
+            cleanMessage,
+            cleanName,
+            cleanOrg || null,
+            cleanEmail,
+            cleanAudience || null,
+            ipAddress || null,
+            userAgent || null
+        ];
+
+        const insertResult = await db.query(insertQuery, values);
+        const savedRequest = insertResult.rows[0];
+
+        // Werte sicher für HTML-Mail aufbereiten
+        const safeName = escapeHtml(cleanName);
+        const safeOrg = escapeHtml(cleanOrg || 'Nicht angegeben');
+        const safeEmail = escapeHtml(cleanEmail);
+        const safeAudience = escapeHtml(cleanAudience || 'Nicht angegeben');
+        const safeMessage = escapeHtml(cleanMessage).replace(/\n/g, '<br>');
+        const safeType = escapeHtml(cleanType);
+        const safeIpAddress = escapeHtml(ipAddress || 'Nicht verfügbar');
+
+        // 2. Interne Benachrichtigungsmail
+        const internalSubject = `Neue mobiliti-Anfrage von ${cleanName}`;
+
+        const internalHtml = `
+            <div style="
+                font-family:Arial,Helvetica,sans-serif;
+                max-width:680px;
+                margin:0 auto;
+                color:#0f172a;
+                line-height:1.6;
+            ">
+                <div style="
+                    padding:24px;
+                    border-radius:16px 16px 0 0;
+                    background:linear-gradient(135deg,#1c6cf0,#10b981);
+                    color:#ffffff;
+                ">
+                    <h1 style="margin:0;font-size:24px;">
+                        Neue Anfrage über mobiliti.at
+                    </h1>
+                </div>
+
+                <div style="
+                    padding:24px;
+                    border:1px solid #e2e8f0;
+                    border-top:none;
+                    border-radius:0 0 16px 16px;
+                    background:#ffffff;
+                ">
+                    <table
+                        role="presentation"
+                        width="100%"
+                        cellspacing="0"
+                        cellpadding="8"
+                        style="border-collapse:collapse;"
+                    >
+                        <tr>
+                            <td style="width:160px;color:#64748b;">
+                                Name
+                            </td>
+                            <td>
+                                <strong>${safeName}</strong>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <td style="color:#64748b;">
+                                Organisation
+                            </td>
+                            <td>
+                                ${safeOrg}
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <td style="color:#64748b;">
+                                E-Mail
+                            </td>
+                            <td>
+                                <a href="mailto:${safeEmail}">
+                                    ${safeEmail}
+                                </a>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <td style="color:#64748b;">
+                                Zielgruppe
+                            </td>
+                            <td>
+                                ${safeAudience}
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <td style="color:#64748b;">
+                                Formular-Typ
+                            </td>
+                            <td>
+                                ${safeType}
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <td style="color:#64748b;">
+                                Datenbank-ID
+                            </td>
+                            <td>
+                                ${escapeHtml(savedRequest?.id || 'Nicht verfügbar')}
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <td style="color:#64748b;">
+                                IP-Adresse
+                            </td>
+                            <td>
+                                ${safeIpAddress}
+                            </td>
+                        </tr>
+                    </table>
+
+                    <div style="
+                        margin-top:20px;
+                        padding:18px;
+                        border-radius:12px;
+                        background:#f8fafc;
+                        border-left:4px solid #1c6cf0;
+                    ">
+                        <strong>Nachricht</strong>
+
+                        <div style="margin-top:10px;">
+                            ${safeMessage}
+                        </div>
+                    </div>
+
+                    <div style="margin-top:24px;">
+                        <a
+                            href="mailto:${safeEmail}?subject=${encodeURIComponent(
+                                'Ihre Anfrage bei mobiliti'
+                            )}"
+                            style="
+                                display:inline-block;
+                                padding:12px 20px;
+                                border-radius:10px;
+                                background:#1c6cf0;
+                                color:#ffffff;
+                                text-decoration:none;
+                                font-weight:700;
+                            "
+                        >
+                            Direkt antworten
+                        </a>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        const internalText = [
+            'Neue Anfrage über mobiliti.at',
+            '',
+            `Name: ${cleanName}`,
+            `Organisation: ${cleanOrg || 'Nicht angegeben'}`,
+            `E-Mail: ${cleanEmail}`,
+            `Zielgruppe: ${cleanAudience || 'Nicht angegeben'}`,
+            `Formular-Typ: ${cleanType}`,
+            `Datenbank-ID: ${savedRequest?.id || 'Nicht verfügbar'}`,
+            '',
+            'Nachricht:',
+            cleanMessage
+        ].join('\n');
+
+        const internalMailOptions = {
+            to: contactRecipient,
+            subject: internalSubject,
+            html: internalHtml,
+            text: internalText,
+
+            // Antwort auf die Benachrichtigungsmail geht direkt
+            // an den Formularabsender.
+            replyTo: cleanEmail,
+
+            fromName: 'mobiliti Kontaktformular'
+        };
+
+        // 3. Automatische Bestätigung an den Interessenten
+        const confirmationSubject =
+            'Vielen Dank für Ihre Anfrage bei mobiliti';
+
+        const confirmationHtml = `
+            <div style="
+                font-family:Arial,Helvetica,sans-serif;
+                max-width:640px;
+                margin:0 auto;
+                color:#0f172a;
+                line-height:1.65;
+            ">
+                <div style="
+                    padding:24px;
+                    border-radius:16px 16px 0 0;
+                    background:linear-gradient(135deg,#1c6cf0,#10b981);
+                    color:#ffffff;
+                ">
+                    <h1 style="margin:0;font-size:24px;">
+                        Vielen Dank für Ihre Nachricht
+                    </h1>
+                </div>
+
+                <div style="
+                    padding:24px;
+                    border:1px solid #e2e8f0;
+                    border-top:none;
+                    border-radius:0 0 16px 16px;
+                    background:#ffffff;
+                ">
+                    <p>Guten Tag ${safeName},</p>
+
+                    <p>
+                        vielen Dank für Ihr Interesse an mobiliti.
+                        Ihre Anfrage ist bei uns eingegangen.
+                    </p>
+
+                    <p>
+                        Wir prüfen Ihr Anliegen und melden uns
+                        so bald wie möglich bei Ihnen.
+                    </p>
+
+                    <div style="
+                        margin:22px 0;
+                        padding:16px;
+                        background:#f8fafc;
+                        border-radius:12px;
+                    ">
+                        <strong>Ihre Nachricht:</strong>
+
+                        <div style="margin-top:8px;color:#475569;">
+                            ${safeMessage}
+                        </div>
+                    </div>
+
+                    <p>
+                        Freundliche Grüße<br>
+                        <strong>Steffen Peschel</strong><br>
+                        mobiliti
+                    </p>
+
+                    <p style="font-size:13px;color:#64748b;">
+                        Diese Nachricht wurde automatisch versendet.
+                        Sie können direkt auf diese E-Mail antworten.
+                    </p>
+                </div>
+            </div>
+        `;
+
+        const confirmationText = [
+            `Guten Tag ${cleanName},`,
+            '',
+            'vielen Dank für Ihr Interesse an mobiliti.',
+            'Ihre Anfrage ist bei uns eingegangen.',
+            '',
+            'Wir prüfen Ihr Anliegen und melden uns so bald wie möglich.',
+            '',
+            'Ihre Nachricht:',
+            cleanMessage,
+            '',
+            'Freundliche Grüße',
+            'Steffen Peschel',
+            'mobiliti'
+        ].join('\n');
+
+        const confirmationMailOptions = {
+            to: cleanEmail,
+            subject: confirmationSubject,
+            html: confirmationHtml,
+            text: confirmationText,
+
+            // Antworten des Interessenten gehen an deine Kontaktadresse.
+            replyTo: contactRecipient,
+
+            fromName: 'mobiliti'
+        };
+
+        // Das Speichern der Anfrage und der Mailversand sind zwei getrennte
+        // Ergebnisse. Ein vorübergehender SMTP-Fehler darf dem Browser keinen
+        // Fehler melden, weil ein erneuter Submit sonst einen zweiten Datensatz
+        // erzeugen würde.
+        const mailResults = await Promise.allSettled([
+            sendEmail(internalMailOptions),
+            sendEmail(confirmationMailOptions)
+        ]);
+
+        const failedMailCount = mailResults.filter(
+            (result) => result.status === 'rejected'
+        ).length;
+
+        if (failedMailCount > 0) {
+            const failureMessages = mailResults
+                .filter((result) => result.status === 'rejected')
+                .map((result) => result.reason?.message || 'Unbekannter Mailfehler');
+
+            console.error(
+                `[Kontaktformular] Anfrage ${savedRequest?.id || ''} gespeichert, ` +
+                `${failedMailCount} E-Mail(s) konnten nicht versendet werden:`,
+                failureMessages
+            );
+        } else {
+            console.log(
+                `[Kontaktformular] Anfrage ${savedRequest?.id || ''} ` +
+                'gespeichert und E-Mails versendet.'
+            );
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: 'Anfrage erfolgreich gesendet.'
+        });
     } catch (err) {
-        console.error('Fehler beim Speichern der Kontaktanfrage:', err);
-        res.status(500).json({ message: 'Ein interner Fehler ist aufgetreten.' });
+        console.error(
+            '[Kontaktformular] Fehler beim Speichern oder Mailversand:',
+            err
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                'Die Anfrage konnte derzeit nicht vollständig verarbeitet werden.'
+        });
     }
 };
 
@@ -697,7 +1181,7 @@ exports.getPublicDirectory = async (req, res) => {
     }
 
     const safePage = toPositiveInt(page, 1, 1000);
-    const safeLimit = toPositiveInt(limit, 12, 24);
+    const safeLimit = toPositiveInt(limit, 12, 200);
     const offset = (safePage - 1) * safeLimit;
 
     const buildWhereClause = () => {
@@ -709,20 +1193,20 @@ exports.getPublicDirectory = async (req, res) => {
               AND p.is_public = true
         `;
 
-        const searchTerm = String(search || '').trim();
+        const searchTerm = normalizePublicFilter(search, 120);
         if (searchTerm) {
             whereSql += `
               AND (
-                p.name ILIKE $${paramIndex}
-                OR COALESCE(p.description, '') ILIKE $${paramIndex}
+                p.name ILIKE $${paramIndex} ESCAPE '\\'
+                OR COALESCE(p.description, '') ILIKE $${paramIndex} ESCAPE '\\'
                 OR EXISTS (
                     SELECT 1
                     FROM directory_provider_categories dpc_search
                     JOIN categories c_search ON c_search.id = dpc_search.category_id
                     WHERE dpc_search.provider_id = p.id
                       AND (
-                        c_search.name ILIKE $${paramIndex}
-                        OR COALESCE(c_search.name_lang, '') ILIKE $${paramIndex}
+                        c_search.name ILIKE $${paramIndex} ESCAPE '\\'
+                        OR COALESCE(c_search.name_lang, '') ILIKE $${paramIndex} ESCAPE '\\'
                       )
                 )
                 OR EXISTS (
@@ -730,19 +1214,19 @@ exports.getPublicDirectory = async (req, res) => {
                     FROM directory_provider_locations l_search
                     WHERE l_search.provider_id = p.id
                       AND (
-                        COALESCE(l_search.city, '') ILIKE $${paramIndex}
-                        OR COALESCE(l_search.zip_code, '') ILIKE $${paramIndex}
-                        OR COALESCE(l_search.country, '') ILIKE $${paramIndex}
-                        OR COALESCE(l_search.address, '') ILIKE $${paramIndex}
+                        COALESCE(l_search.city, '') ILIKE $${paramIndex} ESCAPE '\\'
+                        OR COALESCE(l_search.zip_code, '') ILIKE $${paramIndex} ESCAPE '\\'
+                        OR COALESCE(l_search.country, '') ILIKE $${paramIndex} ESCAPE '\\'
+                        OR COALESCE(l_search.address, '') ILIKE $${paramIndex} ESCAPE '\\'
                       )
                 )
               )
             `;
-            values.push(`%${searchTerm}%`);
+            values.push(`%${escapeLikePattern(searchTerm)}%`);
             paramIndex++;
         }
 
-        const categoryValue = String(category || '').trim();
+        const categoryValue = normalizePublicFilter(category, 150);
         if (categoryValue && categoryValue !== 'all') {
             whereSql += `
               AND EXISTS (
@@ -761,7 +1245,7 @@ exports.getPublicDirectory = async (req, res) => {
             paramIndex++;
         }
 
-        const regionValue = String(region || '').trim();
+        const regionValue = normalizePublicFilter(region, 150);
         if (regionValue && regionValue !== 'all') {
             whereSql += `
               AND EXISTS (
@@ -799,14 +1283,18 @@ exports.getPublicDirectory = async (req, res) => {
                 ROUND(COALESCE(r.avg_rating, 0), 1) AS average_rating,
                 COALESCE(r.rev_count, 0) AS review_count,
                 COALESCE(ms.is_recommended, false) AS is_recommended,
+                COALESCE(linked_entries.software_count, 0)::int AS software_count,
+                COALESCE(linked_entries.action_count, 0)::int AS action_count,
                 COALESCE(locations.locations, '[]'::json) AS locations
             FROM directory_providers p
             INNER JOIN directory_provider_mandant_settings ms ON p.id = ms.provider_id
-            LEFT JOIN (
-                SELECT provider_id, AVG(rating) AS avg_rating, COUNT(id) AS rev_count
-                FROM directory_provider_reviews
-                GROUP BY provider_id
-            ) r ON p.id = r.provider_id
+            LEFT JOIN LATERAL (
+                SELECT AVG(rev.rating) AS avg_rating, COUNT(rev.id) AS rev_count
+                FROM directory_provider_reviews rev
+                JOIN users review_user ON review_user.id = rev.user_id
+                WHERE rev.provider_id = p.id
+                  AND review_user.business_partner_id = $1
+            ) r ON true
             LEFT JOIN LATERAL (
                 SELECT c.name
                 FROM directory_provider_categories dpc
@@ -829,6 +1317,23 @@ exports.getPublicDirectory = async (req, res) => {
                 JOIN categories c ON dpc.category_id = c.id
                 WHERE dpc.provider_id = p.id
             ) all_categories ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    (SELECT COUNT(*)
+                     FROM software_tools linked_software
+                     WHERE linked_software.provider_id = p.id
+                       AND linked_software.business_partner_id = $1
+                       AND linked_software.status = 'published'
+                       AND linked_software.is_active = true
+                       AND linked_software.is_public = true) AS software_count,
+                    (SELECT COUNT(*)
+                     FROM business_partner_actions linked_action
+                     WHERE linked_action.directory_provider_id = p.id
+                       AND linked_action.business_partner_id = $1
+                       AND linked_action.is_active = true
+                       AND (linked_action.start_date IS NULL OR linked_action.start_date <= NOW())
+                       AND (linked_action.end_date IS NULL OR linked_action.end_date >= NOW())) AS action_count
+            ) linked_entries ON true
             LEFT JOIN LATERAL (
                 SELECT json_agg(
                     json_build_object(

@@ -585,7 +585,10 @@ exports.generateAndSendBriefingNewsletters = async () => {
  * Zeitraum: Letzter voller Kalendermonat vs. Monat davor
  * =========================
  */
-exports.generateAndSendMonthlyReport = async () => {
+exports.generateAndSendMonthlyReport = async (options = {}) => {
+    const dryRun = Boolean(options.dryRun);
+    const targetBusinessPartnerId = options.targetBusinessPartnerId || null;
+    const includeUnsubscribedRecipients = dryRun && Boolean(options.includeUnsubscribedRecipients);
     console.log(
         '[Reporting] Starte Generierung der monatlichen Mandanten-Reports...'
     );
@@ -672,6 +675,16 @@ exports.generateAndSendMonthlyReport = async () => {
             `[Reporting] Zeitspalte für gelesene Inhalte: ${readTimestampColumn}`
         );
 
+        const partnerParams = [];
+        let partnerWhere = `
+            bp.is_active = TRUE
+            AND COALESCE(bp.allow_automated_newsletter, FALSE) = TRUE
+        `;
+        if (targetBusinessPartnerId) {
+            partnerParams.push(targetBusinessPartnerId);
+            partnerWhere += ` AND bp.id = $1::uuid`;
+        }
+
         const { rows: partners } = await client.query(`
             SELECT
                 bp.*,
@@ -679,18 +692,23 @@ exports.generateAndSendMonthlyReport = async () => {
             FROM business_partners bp
             LEFT JOIN color_schemes cs
                 ON bp.color_scheme_id = cs.id
-            WHERE bp.is_active = TRUE
+            WHERE ${partnerWhere}
             ORDER BY bp.name ASC
-        `);
+        `, partnerParams);
 
         console.log(
             `[Reporting] ${partners.length} aktive Partner gefunden.`
         );
 
         let sentCount = 0;
+        let plannedCount = 0;
         let skippedPartnerCount = 0;
+        let skippedAlreadySentCount = 0;
+        let failedCount = 0;
+        const reportMonth = lastMonthStart.toISOString().slice(0, 10);
 
         for (const partner of partners) {
+            const optInCondition = includeUnsubscribedRecipients ? '' : 'AND newsletter_opt_in = TRUE';
             const { rows: recipients } = await client.query(`
                 SELECT
                     id,
@@ -701,7 +719,7 @@ exports.generateAndSendMonthlyReport = async () => {
                 FROM users
                 WHERE business_partner_id = $1
                   AND role IN ('assistenz', 'admin')
-                  AND newsletter_opt_in = TRUE
+                  ${optInCondition}
                   AND is_active = TRUE
                   AND email IS NOT NULL
                   AND TRIM(email) <> ''
@@ -896,6 +914,45 @@ exports.generateAndSendMonthlyReport = async () => {
             );
 
             for (const user of recipients) {
+                if (dryRun) {
+                    const previewHtml = renderMonthlyPartnerReportEmail({ stats, partner, user });
+                    if (!previewHtml) {
+                        failedCount++;
+                    } else {
+                        plannedCount++;
+                    }
+                    continue;
+                }
+
+                const { rows: deliveryClaims } = await client.query(`
+                    INSERT INTO monthly_report_deliveries (
+                        business_partner_id,
+                        user_id,
+                        report_month,
+                        status
+                    )
+                    VALUES ($1, $2, $3, 'sending')
+                    ON CONFLICT (business_partner_id, user_id, report_month) DO UPDATE
+                    SET status = 'sending',
+                        created_at = CURRENT_TIMESTAMP,
+                        sent_at = NULL,
+                        failed_at = NULL,
+                        error_message = NULL
+                    WHERE monthly_report_deliveries.status = 'failed'
+                       OR (
+                            monthly_report_deliveries.status = 'sending'
+                            AND monthly_report_deliveries.created_at < CURRENT_TIMESTAMP - INTERVAL '2 hours'
+                       )
+                    RETURNING id
+                `, [partner.id, user.id, reportMonth]);
+
+                if (deliveryClaims.length === 0) {
+                    skippedAlreadySentCount++;
+                    console.log(`[Reporting] Monatsreport für ${user.email} wurde bereits verarbeitet.`);
+                    continue;
+                }
+
+                const deliveryId = deliveryClaims[0].id;
                 const htmlContent = renderMonthlyPartnerReportEmail({
                     stats,
                     partner,
@@ -903,24 +960,50 @@ exports.generateAndSendMonthlyReport = async () => {
                 });
 
                 if (!htmlContent) {
-                    throw new Error(
-                        `Das E-Mail-Template lieferte keinen Inhalt für ${user.email}.`
-                    );
+                    failedCount++;
+                    await client.query(`
+                        UPDATE monthly_report_deliveries
+                        SET status = 'failed',
+                            failed_at = CURRENT_TIMESTAMP,
+                            error_message = 'Das E-Mail-Template lieferte keinen Inhalt.'
+                        WHERE id = $1
+                    `, [deliveryId]);
+                    console.error(`[Reporting] Das E-Mail-Template lieferte keinen Inhalt für ${user.email}.`);
+                    continue;
                 }
 
-                await sendEmail({
-                    to: user.email,
-                    subject:
-                        `Ihre monatliche Plattform-Auswertung: ${stats.monthName}`,
-                    html: htmlContent,
-                    fromName: 'Dashboard Insights'
-                });
+                try {
+                    await sendEmail({
+                        to: user.email,
+                        subject:
+                            `Ihre monatliche Plattform-Auswertung: ${stats.monthName}`,
+                        html: htmlContent,
+                        fromName: 'Dashboard Insights'
+                    });
 
-                sentCount++;
+                    await client.query(`
+                        UPDATE monthly_report_deliveries
+                        SET status = 'sent',
+                            sent_at = CURRENT_TIMESTAMP,
+                            failed_at = NULL,
+                            error_message = NULL
+                        WHERE id = $1
+                    `, [deliveryId]);
 
-                console.log(
-                    `[Reporting] Monatsreport erfolgreich an ${user.email} versendet.`
-                );
+                    sentCount++;
+                    console.log(`[Reporting] Monatsreport erfolgreich an ${user.email} versendet.`);
+                } catch (sendError) {
+                    failedCount++;
+                    const sendErrorMessage = String(sendError?.message || 'Unbekannter Versandfehler').slice(0, 1000);
+                    await client.query(`
+                        UPDATE monthly_report_deliveries
+                        SET status = 'failed',
+                            failed_at = CURRENT_TIMESTAMP,
+                            error_message = $2
+                        WHERE id = $1
+                    `, [deliveryId, sendErrorMessage]);
+                    console.error(`[Reporting] Monatsreport an ${user.email} fehlgeschlagen:`, sendError.message);
+                }
             }
         }
 
@@ -928,14 +1011,28 @@ exports.generateAndSendMonthlyReport = async () => {
             '[Reporting] Monatliche Mandanten-Reports erfolgreich verarbeitet.',
             {
                 sentCount,
-                skippedPartnerCount
+                plannedCount,
+                skippedPartnerCount,
+                skippedAlreadySentCount,
+                failedCount,
+                dryRun,
+                includeUnsubscribedRecipients
             }
         );
+
+        if (failedCount > 0) {
+            throw new Error(`${failedCount} Monatsreport(s) konnten nicht versendet werden.`);
+        }
 
         return {
             ok: true,
             sentCount,
-            skippedPartnerCount
+            plannedCount,
+            skippedPartnerCount,
+            skippedAlreadySentCount,
+            failedCount,
+            dryRun,
+            includeUnsubscribedRecipients
         };
 
     } catch (err) {

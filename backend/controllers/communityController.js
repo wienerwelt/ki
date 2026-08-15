@@ -10,6 +10,7 @@ const { sendCommunityReplyNotification } = require('../services/emailService');
 
 // --- HILFSFUNKTIONEN ---
 const getFileExtension = (originalname) => originalname.split('.').pop();
+const isValidUuid = (value) => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(String(value || ''));
 
 // Helper: Mentions verarbeiten (@username)
 const processMentions = async (content, referenceId, authorId, client) => {
@@ -72,6 +73,9 @@ exports.getPostById = async (req, res) => {
         const query = `
             SELECT 
                 p.id, p.content, p.image_url, p.created_at, p.is_pinned,
+                p.software_tool_id, p.software_rating,
+                st.name AS software_tool_name, st.logo_url AS software_tool_logo_url,
+                st.product_url AS software_tool_url, software_provider.name AS software_provider_name,
                 c.name as category_name, c.id as category_id,
                 u.id as author_id, u.first_name, u.last_name, u.username, u.profile_image_url,
                 COALESCE(u.organization_name, bp.name) as organization_name, u.role as author_role, u.membership_level, u.linkedin_url, 
@@ -89,6 +93,8 @@ exports.getPostById = async (req, res) => {
             JOIN users u ON p.user_id = u.id
             JOIN business_partners bp ON p.business_partner_id = bp.id
             LEFT JOIN categories c ON p.category_id = c.id
+            LEFT JOIN software_tools st ON st.id = p.software_tool_id
+            LEFT JOIN directory_providers software_provider ON software_provider.id = st.provider_id
             WHERE p.id = $1 AND p.business_partner_id = $3
         `;
         const { rows } = await db.query(query, [id, userId, business_partner_id]);
@@ -111,6 +117,9 @@ exports.getFeed = async (req, res) => {
         let query = `
             SELECT 
                 p.id, p.content, p.image_url, p.created_at, p.is_pinned,
+                p.software_tool_id, p.software_rating,
+                st.name AS software_tool_name, st.logo_url AS software_tool_logo_url,
+                st.product_url AS software_tool_url, software_provider.name AS software_provider_name,
                 c.name as category_name, c.id as category_id,
                 
                 -- Autor Infos (COALESCE für sauberen organization_name Fallback)
@@ -139,6 +148,8 @@ exports.getFeed = async (req, res) => {
             JOIN users u ON p.user_id = u.id
             JOIN business_partners bp ON p.business_partner_id = bp.id
             LEFT JOIN categories c ON p.category_id = c.id
+            LEFT JOIN software_tools st ON st.id = p.software_tool_id
+            LEFT JOIN directory_providers software_provider ON software_provider.id = st.provider_id
             WHERE p.business_partner_id = $2
         `;
         
@@ -170,7 +181,7 @@ exports.createPost = async (req, res) => {
         return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Beiträge erstellen.' });
     }
 
-    const { content, categoryId, existingFileUrl, pollOptions } = req.body; 
+    const { content, categoryId, existingFileUrl, pollOptions, softwareToolId } = req.body;
     const { id: userId, business_partner_id } = req.user;
     const file = req.file;
 
@@ -183,13 +194,54 @@ exports.createPost = async (req, res) => {
         }
     }
 
-    if (!content && !file && !existingFileUrl && parsedOptions.length === 0) {
+    const parsedSoftwareRating = req.body.softwareRating === undefined || req.body.softwareRating === ''
+        ? null
+        : Number.parseInt(req.body.softwareRating, 10);
+
+    if (softwareToolId && !/^[0-9a-fA-F-]{36}$/.test(softwareToolId)) {
+        return res.status(400).json({ message: 'Ungültige Software-Auswahl.' });
+    }
+    if (parsedSoftwareRating !== null && (!Number.isInteger(parsedSoftwareRating) || parsedSoftwareRating < 1 || parsedSoftwareRating > 5)) {
+        return res.status(400).json({ message: 'Die Software-Bewertung muss zwischen 1 und 5 liegen.' });
+    }
+    if (parsedSoftwareRating !== null && !softwareToolId) {
+        return res.status(400).json({ message: 'Eine Bewertung benötigt eine Software-Zuordnung.' });
+    }
+
+    if (!content && !file && !existingFileUrl && parsedOptions.length === 0 && !softwareToolId) {
         return res.status(400).json({ message: 'Inhalt fehlt.' });
     }
 
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+
+        let effectiveCategoryId = categoryId || null;
+        if (softwareToolId) {
+            const softwareCheck = await client.query(`
+                SELECT id
+                FROM software_tools
+                WHERE id = $1
+                  AND business_partner_id = $2
+                  AND status = 'published'
+                  AND is_active = true
+                LIMIT 1
+            `, [softwareToolId, business_partner_id]);
+            if (softwareCheck.rows.length === 0) {
+                const error = new Error('Die Software ist für diesen Mandanten nicht verfügbar.');
+                error.statusCode = 400;
+                throw error;
+            }
+
+            const softwareCategory = await client.query(`
+                SELECT id
+                FROM categories
+                WHERE category_type = 'community'
+                  AND lower(name) = lower('Software & Tools')
+                LIMIT 1
+            `);
+            effectiveCategoryId = softwareCategory.rows[0]?.id || effectiveCategoryId;
+        }
         
         let publicUrl = existingFileUrl || null;
         if (file) {
@@ -207,13 +259,28 @@ exports.createPost = async (req, res) => {
         }
 
         const insertQuery = `
-            INSERT INTO community_posts (business_partner_id, user_id, content, image_url, category_id)
-            VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at
+            INSERT INTO community_posts (
+                business_partner_id, user_id, content, image_url, category_id,
+                software_tool_id, software_rating
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at
         `;
         const postResult = await client.query(insertQuery, [
-            business_partner_id, userId, content || '', publicUrl, categoryId || null
+            business_partner_id, userId, content || '', publicUrl, effectiveCategoryId,
+            softwareToolId || null, parsedSoftwareRating
         ]);
         const postId = postResult.rows[0].id;
+
+        if (softwareToolId && parsedSoftwareRating !== null) {
+            await client.query(`
+                INSERT INTO software_ratings (
+                    software_tool_id, business_partner_id, user_id, rating
+                ) VALUES ($1, $2, $3, $4)
+                ON CONFLICT (software_tool_id, business_partner_id, user_id) DO UPDATE
+                SET rating = EXCLUDED.rating,
+                    updated_at = CURRENT_TIMESTAMP
+            `, [softwareToolId, business_partner_id, userId, parsedSoftwareRating]);
+        }
 
         if (content) {
             await processMentions(content, postId, userId, client);
@@ -236,6 +303,9 @@ exports.createPost = async (req, res) => {
         const fullPostRes = await client.query(`
             SELECT 
                 p.id, p.content, p.image_url, p.created_at, p.is_pinned,
+                p.software_tool_id, p.software_rating,
+                st.name AS software_tool_name, st.logo_url AS software_tool_logo_url,
+                st.product_url AS software_tool_url, software_provider.name AS software_provider_name,
                 c.name as category_name, c.id as category_id,
                 u.id as author_id, u.first_name, u.last_name, u.username, u.profile_image_url,
                 COALESCE(u.organization_name, bp.name) as organization_name, u.role as author_role, u.membership_level, u.linkedin_url, 
@@ -251,6 +321,8 @@ exports.createPost = async (req, res) => {
             JOIN users u ON p.user_id = u.id
             JOIN business_partners bp ON p.business_partner_id = bp.id
             LEFT JOIN categories c ON p.category_id = c.id
+            LEFT JOIN software_tools st ON st.id = p.software_tool_id
+            LEFT JOIN directory_providers software_provider ON software_provider.id = st.provider_id
             WHERE p.id = $1
         `, [postId]);
 
@@ -259,7 +331,7 @@ exports.createPost = async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
-        res.status(500).json({ message: 'Fehler.' });
+        res.status(err.statusCode || 500).json({ message: err.statusCode ? err.message : 'Fehler.' });
     } finally {
         client.release();
     }
@@ -585,6 +657,56 @@ exports.reportContent = async (req, res) => {
 };
 
 // 13. Get Members
+exports.getMemberProfile = async (req, res) => {
+    const { business_partner_id } = req.user;
+    const { userId } = req.params;
+
+    if (!isValidUuid(userId)) {
+        return res.status(400).json({ message: 'Ungültige Benutzer-ID.' });
+    }
+
+    try {
+        const { rows } = await db.query(`
+            SELECT
+                u.id,
+                u.first_name,
+                u.last_name,
+                u.username,
+                u.email,
+                u.profile_image_url,
+                u.membership_level,
+                u.role,
+                COALESCE(NULLIF(BTRIM(u.organization_name), ''), bp.name) AS organization_name,
+                bp.name AS business_partner_name,
+                u.linkedin_url,
+                u.contribution_score,
+                u.last_login_at,
+                u.created_at AS member_since,
+                ARRAY(
+                    SELECT ust.tag_name
+                    FROM user_saved_tags ust
+                    WHERE ust.user_id = u.id
+                    ORDER BY ust.tag_name ASC
+                ) AS tags
+            FROM users u
+            JOIN business_partners bp ON bp.id = u.business_partner_id
+            WHERE u.id = $1
+              AND u.business_partner_id = $2
+              AND u.is_active = TRUE
+            LIMIT 1
+        `, [userId, business_partner_id]);
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Community-Profil nicht gefunden.' });
+        }
+
+        return res.json(rows[0]);
+    } catch (err) {
+        console.error('Fehler beim Laden des Community-Profils:', err);
+        return res.status(500).json({ message: 'Community-Profil konnte nicht geladen werden.' });
+    }
+};
+
 exports.getMembers = async (req, res) => {
     const { business_partner_id } = req.user;
     const { search } = req.query;
@@ -594,8 +716,15 @@ exports.getMembers = async (req, res) => {
             SELECT 
                 u.id, u.first_name, u.last_name, u.username, u.email, 
                 u.profile_image_url, u.membership_level, u.role, 
-                COALESCE(u.organization_name, bp.name) as organization_name,
-                u.contribution_score, u.last_login_at
+                COALESCE(NULLIF(BTRIM(u.organization_name), ''), bp.name) as organization_name,
+                bp.name as business_partner_name,
+                u.contribution_score, u.last_login_at, u.created_at as member_since,
+                ARRAY(
+                    SELECT ust.tag_name
+                    FROM user_saved_tags ust
+                    WHERE ust.user_id = u.id
+                    ORDER BY ust.tag_name ASC
+                ) as tags
             FROM users u
             JOIN business_partners bp ON u.business_partner_id = bp.id
             WHERE u.business_partner_id = $1 AND u.is_active = TRUE
@@ -603,7 +732,16 @@ exports.getMembers = async (req, res) => {
         const params = [business_partner_id];
 
         if (search) {
-            query += ` AND (u.first_name ILIKE $2 OR u.last_name ILIKE $2 OR u.username ILIKE $2)`;
+            query += ` AND (
+                u.first_name ILIKE $2
+                OR u.last_name ILIKE $2
+                OR u.username ILIKE $2
+                OR COALESCE(NULLIF(BTRIM(u.organization_name), ''), bp.name) ILIKE $2
+                OR EXISTS (
+                    SELECT 1 FROM user_saved_tags ust
+                    WHERE ust.user_id = u.id AND ust.tag_name ILIKE $2
+                )
+            )`;
             params.push(`%${search}%`);
         }
 
@@ -674,7 +812,7 @@ exports.searchExperts = async (req, res) => {
         const sql = `
             SELECT DISTINCT
                 u.id, u.first_name, u.last_name, u.username, u.profile_image_url,
-                u.role, COALESCE(u.organization_name, bp.name) as organization_name, u.membership_level, u.contribution_score,
+                u.role, COALESCE(NULLIF(BTRIM(u.organization_name), ''), bp.name) as organization_name, u.membership_level, u.contribution_score,
                 u.created_at as member_since,
                 bp.name as business_partner_name,
                 (
@@ -714,7 +852,7 @@ exports.getRecentComments = async (req, res) => {
     try {
         const query = `
             SELECT 
-                c.id, c.content, c.created_at, c.post_id,
+                c.id, c.content, c.created_at, c.post_id, u.id as author_id,
                 u.username, u.first_name, u.last_name, u.profile_image_url
             FROM community_comments c
             JOIN users u ON c.user_id = u.id

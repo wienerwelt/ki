@@ -25,8 +25,8 @@ WORKDIR /app
 # Package-Dateien kopieren
 COPY package*.json ./
 
-# Abhängigkeiten installieren (für Dev nutzen wir npm install)
-RUN npm install
+# Exakt die im Lockfile festgelegten Abhängigkeiten installieren
+RUN npm ci
 
 # Den restlichen Backend-Code in den Container kopieren
 COPY . .

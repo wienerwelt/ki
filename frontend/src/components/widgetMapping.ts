@@ -12,6 +12,8 @@ export const WIDGET_COMPONENTS: { [key: string]: React.LazyExoticComponent<React
     VignettePreise: React.lazy(() => import('./widgets/VignetteWidget')),
     EVStation: React.lazy(() => import('./widgets/EVStationWidget')),
     BusinessPartnerAktionen: React.lazy(() => import('./widgets/BusinessPartnerActionsWidget')),
+    SoftwareCatalog: React.lazy(() => import('./widgets/SoftwareCatalogWidget')),
+    SoftwareCatalogWidget: React.lazy(() => import('./widgets/SoftwareCatalogWidget')),
     TrustedSources: React.lazy(() => import('./widgets/TrustedSourcesWidget')),
     CommodityPrices: React.lazy(() => import('./widgets/CommodityPricesWidget')),
     FileDownload: React.lazy(() => import('./widgets/FileDownloadWidget')),

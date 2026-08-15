@@ -43,10 +43,11 @@ interface DailyCockpitWidgetProps extends Partial<BaseWidgetProps> {
   widgetTypeKey?: string;
   widgetId?: string;
   isPublic?: boolean;
+  partnerSlug?: string;
 }
 
 const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = ({
-  widgetId, onDelete, isRemovable, widgetTypeKey, icon: propsIcon, title, isPublic = false
+  widgetId, onDelete, isRemovable, widgetTypeKey, icon: propsIcon, title, isPublic = false, partnerSlug
 }) => {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -145,8 +146,9 @@ const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = ({
   // --- HILFSKOMPONENTEN (Innerhalb definiert, um useNavigate im Scope zu haben) ---
   const handlePublicClick = () => {
     // Wenn User im Public-Modus klickt -> Weiterleitung zum Login (ggf. mit Partner-Param)
-    const loginUrl = businessPartner?.name 
-        ? `/login?partner=${encodeURIComponent(businessPartner.name)}` 
+    const canonicalSlug = partnerSlug || businessPartner?.slug;
+    const loginUrl = canonicalSlug
+        ? `/${encodeURIComponent(canonicalSlug)}?login=1`
         : '/login';
     navigate(loginUrl);
   };

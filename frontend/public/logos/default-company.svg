@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 96" role="img" aria-labelledby="title desc">
+  <title id="title">Standard-Unternehmenslogo</title>
+  <desc id="desc">Abstraktes Gebäude in einem abgerundeten Rahmen</desc>
+  <rect width="160" height="96" rx="18" fill="#f1f5f9"/>
+  <rect x="47" y="28" width="66" height="48" rx="7" fill="#0b2442"/>
+  <path d="M38 76h84M61 28V18h38v10" fill="none" stroke="#ff4b2b" stroke-width="6" stroke-linecap="round"/>
+  <path d="M61 42h8m11 0h8m11 0h8M61 55h8m11 0h8m11 0h8M76 76V63h8v13" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+</svg>

@@ -267,10 +267,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     };
 
     const handleLogout = () => {
-        const partnerCode = businessPartner?.id ? businessPartner.id.slice(-8) : null;
-        posthog.capture('user_logged_out');
-        logout();
-        const targetUrl = partnerCode ? `/login?partner=${partnerCode}` : '/login';
+        posthog.capture('user_logged_out', {
+            business_partner_id: businessPartner?.id || user?.business_partner_id || null,
+            business_partner_name: businessPartner?.name || user?.business_partner_name || null,
+            business_partner_slug: businessPartner?.slug || null,
+        });
+        const targetUrl = logout();
         navigate(targetUrl, { 
           state: { 
             snackbarMessage: 'Sie wurden erfolgreich abgemeldet.',

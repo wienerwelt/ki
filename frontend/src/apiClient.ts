@@ -1,4 +1,5 @@
 // frontend/src/apiClient.ts
+import { getPartnerPublicPath } from './utils/partnerNavigation';
 
 // Basis-URL: Wir nutzen im Dev-Modus einen leeren String, damit der Vite-Proxy greift.
 const API_BASE: string =
@@ -145,9 +146,10 @@ export async function apiRequest<T = any>(path: string, init: LooseInit = {}): P
         window.localStorage.removeItem('jwt_token');
         window.localStorage.removeItem('token');
         
-        // Nur weiterleiten, wenn wir nicht sowieso auf /login oder / sind
-        if (window.location.pathname !== '/login' && window.location.pathname !== '/') {
-          window.location.href = '/login';
+        // Abgelaufene Sitzungen bleiben im zuletzt verwendeten Mandantenkontext.
+        const publicPath = getPartnerPublicPath();
+        if (window.location.pathname !== publicPath) {
+          window.location.href = publicPath;
         }
       }
       // Wir werfen hier einen Fehler, damit die aufrufende Komponente abbricht
