@@ -8,7 +8,7 @@ Arbeitsregel: Jeden nummerierten Schritt vollständig abschließen. Sobald ein B
 
 Es gibt genau diese drei Stationen:
 
-- **DEV / Windows:** VS Code mit integriertem PowerShell-Terminal und Docker Desktop. Der Prompt beginnt beispielsweise mit `PS C:\DATEN\WWW\projekte-App\dashboard>`. Hier werden die Abschnitte 4 bis 7 sowie der als DEV markierte Teil von Abschnitt 15 ausgeführt.
+- **DEV / Windows:** VS Code mit integriertem PowerShell-Terminal und Docker Desktop. Der Prompt beginnt beispielsweise mit `PS C:\DATEN\WWW\projekte-App\dashboard>`. Hier werden die Abschnitte 4 bis 7 sowie der als DEV markierte Teil von Abschnitt 15 ausgeführt. Abschnitt 16 enthält die vollständigen Copy-&-Paste-Blöcke für spätere Routine-Updates.
 - **ÜBERTRAGUNG / Windows:** Ein SFTP-Programm überträgt ausschließlich die in Abschnitt 8 genannten zwei Release-Dateien auf den Ubuntu-Server.
 - **PROD / Ubuntu:** Zugriff über PuTTY/SSH oder das Plesk-Terminal; die Anwendung läuft in Docker. Der Prompt enthält beispielsweise `@...:~/httpdocs/dashboard$`. Hier werden ausschließlich Abschnitt 3, die Abschnitte 9 bis 14 sowie der als PROD markierte Teil von Abschnitt 15 ausgeführt.
 
@@ -114,10 +114,17 @@ Nur wenn beide Befehle eine positive Ausgabe liefern, mit dem normalen Ablauf fo
 
 Format: `vYYYY.MM.DD.N`. `N` beginnt pro Tag bei `1` und wird für jedes weitere Release erhöht.
 
-Für das aktuelle Release in PowerShell setzen:
+Für jedes Release in PowerShell eine neue Version eingeben:
 
 ```powershell
-$ReleaseVersion = 'v2026.08.15.3'
+$ReleaseVersion = (Read-Host 'Neue Release-Version, z. B. v2026.08.16.1').Trim()
+if ($ReleaseVersion -notmatch '^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$') {
+  throw 'Ungültiges Format. Erwartet: vYYYY.MM.DD.N'
+}
+if (git tag --list $ReleaseVersion) {
+  throw "Release-Version existiert bereits: $ReleaseVersion"
+}
+$ReleaseVersion
 ```
 
 Eine Versionsnummer darf nach erfolgreichem Deployment niemals wiederverwendet werden.
@@ -130,6 +137,7 @@ Eine Versionsnummer darf nach erfolgreichem Deployment niemals wiederverwendet w
    Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
    docker compose up -d
    docker compose ps
+   Invoke-RestMethod 'http://127.0.0.1:5001/api/health'
    ```
 
 2. Offene Migrationen lokal anwenden:
@@ -170,11 +178,23 @@ Eine Versionsnummer darf nach erfolgreichem Deployment niemals wiederverwendet w
 
 Der Preflight prüft Dev- und Prod-Compose, alle npm-Abhängigkeiten einschließlich Build-/Dev-Werkzeugen auf kritische Sicherheitsmeldungen, `deploy.sh`, Backend-Syntax, Migrationen und Frontend-Build. Danach baut er die Docker-Images neu, erstellt die lokale API und Worker daraus neu und prüft API-Health sowie alle sicheren fachlichen Smoke-Tests. Er versendet keine E-Mails. Nur bei der Meldung `Preflight vollständig erfolgreich.` fortfahren.
 
+6. DEV nach der Arbeit sicher stoppen:
+
+   Im PowerShell-Fenster mit dem laufenden Frontend zuerst `Strg+C` drücken. Danach in einem PowerShell-Fenster ausführen:
+
+   ```powershell
+   Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+   docker compose stop
+   docker compose ps
+   ```
+
+   `docker compose stop` erhält Datenbank, Redis-Daten und Uploads. Docker Desktop darf anschließend beendet werden. Niemals `docker compose down -v` verwenden.
+
 ## 6. DEV / VS Code-PowerShell: Änderungen vollständig in Git abschließen
 
 Git wird hier als lokales Sicherheitsnetz und als eindeutige Quelle für das Release-Archiv verwendet. Dafür sind keine Git-Vorkenntnisse nötig. Git übernimmt ausschließlich Projektcode und Konfigurationen, die nicht durch `.gitignore` ausgeschlossen sind. Die lokale oder produktive Datenbank, `.env`, Backups, Uploads, `node_modules` und `frontend/dist` werden dadurch weder übertragen noch verändert.
 
-Beim aktuellen ersten Sammelrelease werden die bisher noch nicht konsequent gespeicherten Projektänderungen einmal gemeinsam in einem Commit festgehalten. Danach enthält jedes weitere Release nur die seit dem letzten Commit hinzugekommenen Änderungen.
+Jedes Änderungspaket wird auf einem eigenen Feature-Branch entwickelt. Erst der vollständig geprüfte Stand wird nach `main` übernommen. Abschnitt 16 enthält dafür einen zusammenhängenden Copy-&-Paste-Block.
 
 1. Aktuellen Feature-Branch merken und Änderungen prüfen:
 
@@ -188,7 +208,7 @@ Beim aktuellen ersten Sammelrelease werden die bisher noch nicht konsequent gesp
    git -c core.pager=cat -c core.safecrlf=false diff --check
    ```
 
-   Beim aktuellen Sammelrelease muss die erste Ausgabe `codex/public-widgets-release` lauten. Bei unbekannten oder nicht beabsichtigten Dateien stoppen.
+   Die erste Ausgabe muss den absichtlich verwendeten Feature-Branch zeigen. Bei unbekannten oder nicht beabsichtigten Dateien stoppen.
 
 2. Den vollständig geprüften aktuellen Arbeitsstand stagen und nochmals kontrollieren:
 
@@ -204,7 +224,7 @@ Beim aktuellen ersten Sammelrelease werden die bisher noch nicht konsequent gesp
 3. Commit erstellen:
 
    ```powershell
-   git commit -m "Release: Dashboard, Public Page und Betriebsprozess"
+   git commit -m "Release: $ReleaseVersion"
    ```
 
 4. Den gemerkten Feature-Branch nach `main` übernehmen:
@@ -303,7 +323,12 @@ Stoppen, wenn:
 Upload-Dateien prüfen:
 
 ```bash
-RELEASE_VERSION='v2026.08.15.3'
+while true; do
+  read -r -p 'Release-Version, z. B. v2026.08.16.1: ' RELEASE_VERSION
+  [[ "$RELEASE_VERSION" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$ ]] && break
+  echo 'Ungültiges Format. Erwartet: vYYYY.MM.DD.N'
+done
+
 ls -lh ".deploy/incoming/mobiliti-dashboard-${RELEASE_VERSION}.tar.gz" \
        ".deploy/incoming/mobiliti-dashboard-${RELEASE_VERSION}.tar.gz.sha256"
 ```
@@ -330,12 +355,18 @@ Bei irgendeinem Fehler direkt zu Abschnitt 13 wechseln. Nicht denselben Befehl b
 ## 11. PROD / Ubuntu über PuTTY oder Plesk: Backup und Serverzustand prüfen
 
 ```bash
+cd /var/www/vhosts/mobiliti.at/httpdocs/dashboard
 cat .deploy/current-release
 LATEST_BACKUP="$(ls -1t "backups/pre-${RELEASE_VERSION}-"*.dump | head -n 1)"
 test -s "$LATEST_BACKUP" && echo "Backup vorhanden: $LATEST_BACKUP"
 (cd backups && sha256sum --check "$(basename "$LATEST_BACKUP").sha256")
+stat -c '%A  %a  %U:%G  %n' .
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+curl --fail --silent http://127.0.0.1:5001/api/health
+echo
 curl --fail --silent https://dashboard.mobiliti.at/api/health
+echo
+curl --fail --silent --show-error --head https://dashboard.mobiliti.at/
 ```
 
 Erwartet:
@@ -343,8 +374,10 @@ Erwartet:
 - `current-release` entspricht der neuen Version;
 - Backup ist vorhanden und nicht leer;
 - Prüfsumme ist `OK`;
+- der Projekt-Root hat weiterhin die Plesk-Rechte `755`;
 - alle benötigten Container laufen;
-- Healthcheck liefert `"status":"ok"`.
+- beide Healthchecks liefern `"status":"ok"`;
+- die öffentliche Startseite liefert HTTP-Status `200`.
 
 ## 12. PROD / Ubuntu über PuTTY oder Plesk und Browser: fachlich testen
 
@@ -411,7 +444,11 @@ Ein Restore kann neuere Produktionsdaten löschen. Deshalb nur durchführen, wen
 
    ```bash
    cd /var/www/vhosts/mobiliti.at/httpdocs/dashboard
-   RESTORE_BACKUP='backups/pre-v2026.08.15.3-YYYYMMDDTHHMMSSZ.dump'
+   while true; do
+     read -r -p 'Exakter Backup-Pfad, z. B. backups/pre-vYYYY.MM.DD.N-ZEITSTEMPEL.dump: ' RESTORE_BACKUP
+     [[ "$RESTORE_BACKUP" == backups/pre-v*.dump ]] && break
+     echo 'Ungültiger Backup-Pfad.'
+   done
    test -s "$RESTORE_BACKUP"
    (cd backups && sha256sum --check "$(basename "$RESTORE_BACKUP").sha256")
    ```
@@ -458,25 +495,279 @@ Danach auf **DEV / VS Code-PowerShell** im Projekt-Root Release-Tag und `main` i
 
   ```powershell
   Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+  if ([string]::IsNullOrWhiteSpace($ReleaseVersion)) {
+    $ReleaseVersion = (Read-Host 'Erfolgreich deployte Release-Version').Trim()
+  }
   git push origin main
   git push origin $ReleaseVersion
   ```
 
 - Kurz dokumentieren: Version, Zeitpunkt, Ergebnis, Backup-Datei und besondere Beobachtungen.
 
-## 16. Kurzfassung für spätere Routine-Releases
+## 16. Copy & Paste: vollständiges Routine-Update DEV → PROD
 
-Wenn der einmalige Umstieg abgeschlossen ist:
+Dieser Abschnitt ist die Copy-&-Paste-Kurzfassung. Die Abschnitte 4 bis 15 erklären die Prüfungen, Fehlerfälle und erwarteten Ergebnisse. Abschnitt 3 ist nur für den einmaligen Umstieg gedacht und wird nicht wiederholt.
 
-Der normale Ablauf beginnt immer bei Abschnitt 4. Abschnitt 3 ist nur für den
-einmaligen Umstieg gedacht und wird bei späteren Releases nicht wiederholt.
+### A. DEV / PowerShell: neue Änderung beginnen
 
-1. In Abschnitt 4 eine neue, noch nie verwendete `$ReleaseVersion` festlegen.
-2. Lokal entwickeln, manuell testen und den Preflight nach Abschnitt 5 erfolgreich ausführen.
-3. Änderungen nach Abschnitt 6 vollständig committen und nach `main` übernehmen.
-4. Auf einem sauberen `main` das Release-Paket nach Abschnitt 7 erzeugen.
-5. Genau Archiv und `.sha256` nach Abschnitt 8 per SFTP nach `.deploy/incoming/` laden.
-6. Die Produktions-Vorprüfung aus Abschnitt 9 ausführen.
-7. Genau einen `deploy.sh`-Befehl aus Abschnitt 10 ausführen.
-8. Backup und Serverzustand nach Abschnitt 11 sowie Anwendung und Logs nach Abschnitt 12 prüfen.
-9. `main` und Release-Tag nach Abschnitt 15 ins Git-Remote übertragen und das Ergebnis dokumentieren.
+Nur einmal am Anfang eines neuen Änderungspakets ausführen, nicht bei jedem Start am nächsten Tag:
+
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+
+function Assert-NativeSuccess([string]$Message) {
+  if ($LASTEXITCODE -ne 0) { throw "STOPP: $Message" }
+}
+
+git switch main
+Assert-NativeSuccess 'main konnte nicht ausgecheckt werden.'
+git pull --ff-only
+Assert-NativeSuccess 'main konnte nicht sicher aktualisiert werden.'
+if (git status --porcelain) {
+  throw 'STOPP: main enthält lokale Änderungen.'
+}
+
+$FeatureBranch = "codex/update-$(Get-Date -Format 'yyyyMMdd-HHmm')"
+git switch -c $FeatureBranch
+Assert-NativeSuccess 'Feature-Branch konnte nicht erstellt werden.'
+git status --short --branch
+Assert-NativeSuccess 'Git-Status konnte nicht gelesen werden.'
+```
+
+### B. DEV / PowerShell: Entwicklungsumgebung starten
+
+Zuerst Docker Desktop starten. Dann im ersten VS-Code-PowerShell-Fenster:
+
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+
+function Assert-NativeSuccess([string]$Message) {
+  if ($LASTEXITCODE -ne 0) { throw "STOPP: $Message" }
+}
+
+if (-not (Test-Path '.\.mobiliti-dashboard-root')) {
+  throw 'STOPP: falsches Projektverzeichnis.'
+}
+
+docker compose up -d
+Assert-NativeSuccess 'Docker-Dienste konnten nicht gestartet werden.'
+docker compose ps
+Assert-NativeSuccess 'Docker-Status konnte nicht gelesen werden.'
+docker compose exec -T api npm run migrate
+Assert-NativeSuccess 'Lokale Migrationen sind fehlgeschlagen.'
+Invoke-RestMethod 'http://127.0.0.1:5001/api/health'
+```
+
+Im zweiten VS-Code-PowerShell-Fenster das Frontend starten und dieses Fenster geöffnet lassen:
+
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+
+if (-not (Test-Path '.\frontend\package.json')) {
+  throw 'STOPP: frontend\package.json wurde nicht gefunden.'
+}
+
+npm.cmd --prefix .\frontend run dev
+```
+
+Frontend im Browser über die von Vite angezeigte lokale URL öffnen, normalerweise `http://localhost:5173`.
+
+### C. DEV / PowerShell: Entwicklungsumgebung stoppen
+
+Im Frontend-Fenster zuerst `Strg+C` drücken. Danach:
+
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+function Assert-NativeSuccess([string]$Message) {
+  if ($LASTEXITCODE -ne 0) { throw "STOPP: $Message" }
+}
+docker compose stop
+Assert-NativeSuccess 'Docker-Dienste konnten nicht gestoppt werden.'
+docker compose ps
+Assert-NativeSuccess 'Docker-Status konnte nicht gelesen werden.'
+```
+
+Das erhält Datenbank, Redis-Daten und Uploads. Niemals `docker compose down -v` verwenden.
+
+### D. DEV / PowerShell: geprüftes Release erzeugen
+
+Erst ausführen, wenn Entwicklung und manueller Browsertest abgeschlossen sind:
+
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+
+function Assert-NativeSuccess([string]$Message) {
+  if ($LASTEXITCODE -ne 0) { throw "STOPP: $Message" }
+}
+
+$ReleaseVersion = (Read-Host 'Neue Release-Version, z. B. v2026.08.16.1').Trim()
+if ($ReleaseVersion -notmatch '^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$') {
+  throw 'STOPP: ungültiges Versionsformat. Erwartet: vYYYY.MM.DD.N'
+}
+if (git tag --list $ReleaseVersion) {
+  throw "STOPP: Release-Version existiert bereits: $ReleaseVersion"
+}
+
+$FeatureBranch = (git branch --show-current).Trim()
+if ([string]::IsNullOrWhiteSpace($FeatureBranch) -or $FeatureBranch -eq 'main') {
+  throw 'STOPP: Vor dem Release muss der geprüfte Feature-Branch aktiv sein.'
+}
+
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\preflight.ps1
+Assert-NativeSuccess 'Preflight fehlgeschlagen.'
+
+git -c core.pager=cat -c core.safecrlf=false diff --check
+Assert-NativeSuccess 'Arbeitsbaum enthält ungültige Änderungen.'
+git -c core.safecrlf=false add -A
+Assert-NativeSuccess 'Änderungen konnten nicht gestagt werden.'
+git -c core.pager=cat -c core.safecrlf=false diff --cached --check
+Assert-NativeSuccess 'Gestagte Änderungen enthalten Fehler.'
+git status --short
+Assert-NativeSuccess 'Git-Status konnte nicht gelesen werden.'
+git --no-pager diff --cached --stat
+Assert-NativeSuccess 'Commit-Übersicht konnte nicht erzeugt werden.'
+
+$Freigabe = (Read-Host 'Nur wenn alle Dateien beabsichtigt sind, JA eingeben').Trim()
+if ($Freigabe -cne 'JA') {
+  throw 'STOPP: Commit wurde nicht freigegeben.'
+}
+
+git commit -m "Release: $ReleaseVersion"
+Assert-NativeSuccess 'Release-Commit ist fehlgeschlagen.'
+git switch main
+Assert-NativeSuccess 'main konnte nicht ausgecheckt werden.'
+git pull --ff-only
+Assert-NativeSuccess 'main konnte nicht sicher aktualisiert werden.'
+git merge --no-ff $FeatureBranch
+Assert-NativeSuccess 'Feature-Branch konnte nicht nach main übernommen werden.'
+
+if ((git branch --show-current).Trim() -ne 'main' -or (git status --porcelain)) {
+  throw 'STOPP: main ist nach dem Merge nicht sauber.'
+}
+
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\create-sftp-release.ps1 -Version $ReleaseVersion
+Assert-NativeSuccess 'Release-Paket wurde nicht erstellt.'
+
+Get-ChildItem ".\releases\mobiliti-dashboard-$ReleaseVersion.tar.gz*" |
+  Select-Object Name, Length, LastWriteTime
+```
+
+Erwartet: `Preflight vollständig erfolgreich.` sowie genau ein Archiv und eine `.sha256`-Datei.
+
+### E. SFTP / Windows: genau zwei Dateien übertragen
+
+Von:
+
+```text
+C:\DATEN\WWW\projekte-App\dashboard\releases\
+```
+
+Nach:
+
+```text
+/var/www/vhosts/mobiliti.at/httpdocs/dashboard/.deploy/incoming/
+```
+
+Nur diese beiden Dateien der neuen Version übertragen:
+
+```text
+mobiliti-dashboard-<Version>.tar.gz
+mobiliti-dashboard-<Version>.tar.gz.sha256
+```
+
+### F. PROD / PuTTY: prüfen, bestätigen, deployen und technisch testen
+
+Den gesamten folgenden Block in PuTTY einfügen. Die Release-Version wird abgefragt. Bei einem Fehler stoppt nur der Block; die SSH-Sitzung bleibt geöffnet. Das Deployment startet erst nach Eingabe von `DEPLOY`.
+
+```bash
+(
+  set -Eeuo pipefail
+
+  cd /var/www/vhosts/mobiliti.at/httpdocs/dashboard
+
+  read -r -p 'Release-Version, z. B. v2026.08.16.1: ' RELEASE_VERSION
+  [[ "$RELEASE_VERSION" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$ ]] || {
+    echo 'STOPP: ungültiges Versionsformat.'
+    exit 1
+  }
+
+  test "$(pwd)" = '/var/www/vhosts/mobiliti.at/httpdocs/dashboard'
+
+  PROJECT_MARKER=''
+  IFS= read -r PROJECT_MARKER < .mobiliti-dashboard-root || true
+  PROJECT_MARKER="${PROJECT_MARKER%$'\r'}"
+  test "$PROJECT_MARKER" = 'mobiliti-dashboard'
+
+  test -f .env
+  grep -F 'FRONTEND_URL=https://dashboard.mobiliti.at' .env
+  test "$(stat -c '%a' .)" = '755'
+
+  test -f ".deploy/incoming/mobiliti-dashboard-${RELEASE_VERSION}.tar.gz"
+  test -f ".deploy/incoming/mobiliti-dashboard-${RELEASE_VERSION}.tar.gz.sha256"
+
+  df -h .
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+
+  (
+    cd .deploy/incoming
+    sha256sum --check "mobiliti-dashboard-${RELEASE_VERSION}.tar.gz.sha256"
+  )
+
+  read -r -p 'Nur wenn alle Prüfungen passen, DEPLOY eingeben: ' DEPLOY_CONFIRMATION
+  test "$DEPLOY_CONFIRMATION" = 'DEPLOY'
+
+  bash ./deploy.sh ".deploy/incoming/mobiliti-dashboard-${RELEASE_VERSION}.tar.gz"
+
+  test "$(<.deploy/current-release)" = "$RELEASE_VERSION"
+
+  LATEST_BACKUP="$(ls -1t "backups/pre-${RELEASE_VERSION}-"*.dump | head -n 1)"
+  test -s "$LATEST_BACKUP"
+  (
+    cd backups
+    sha256sum --check "$(basename "$LATEST_BACKUP").sha256"
+  )
+
+  test "$(stat -c '%a' .)" = '755'
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+
+  curl --fail --silent http://127.0.0.1:5001/api/health
+  echo
+  curl --fail --silent https://dashboard.mobiliti.at/api/health
+  echo
+  curl --fail --silent --show-error --head https://dashboard.mobiliti.at/
+
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --since=15m --tail=150 api
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --since=15m --tail=100 worker-mail
+
+  echo "Technische Prüfung für ${RELEASE_VERSION} abgeschlossen."
+  echo "Backup: ${LATEST_BACKUP}"
+)
+```
+
+Danach den fachlichen Browsertest aus Abschnitt 12 durchführen. Bei einem Fehler Abschnitt 13 verwenden und den Deployment-Befehl nicht blind wiederholen.
+
+### G. DEV / PowerShell: erfolgreiches Release in Git sichern
+
+Erst nach erfolgreichem technischen und fachlichen Produktionstest:
+
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+
+function Assert-NativeSuccess([string]$Message) {
+  if ($LASTEXITCODE -ne 0) { throw "STOPP: $Message" }
+}
+
+$ReleaseVersion = (Read-Host 'Erfolgreich deployte Release-Version').Trim()
+if ($ReleaseVersion -notmatch '^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$') {
+  throw 'STOPP: ungültiges Versionsformat.'
+}
+
+git push origin main
+Assert-NativeSuccess 'main konnte nicht gepusht werden.'
+git push origin $ReleaseVersion
+Assert-NativeSuccess 'Release-Tag konnte nicht gepusht werden.'
+git status --short --branch
+Assert-NativeSuccess 'Git-Status konnte nicht gelesen werden.'
+```
+
+Erwartet: `main...origin/main` ohne `ahead` und ohne geänderte Dateien.
