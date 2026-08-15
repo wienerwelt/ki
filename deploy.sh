@@ -24,12 +24,16 @@ cd "$ROOT_DIR"
 
 if [[ -z "$ARCHIVE_INPUT" ]]; then
   echo "Verwendung: bash ./deploy.sh <release-archiv.tar.gz>"
-  echo "Beispiel:   bash ./deploy.sh .deploy/incoming/mobiliti-dashboard-v2026.08.15.2.tar.gz"
+  echo "Beispiel:   bash ./deploy.sh .deploy/incoming/mobiliti-dashboard-v2026.08.15.3.tar.gz"
   exit 2
 fi
 
-if [[ ! -f "$ROOT_DIR/.mobiliti-dashboard-root" ]] || \
-   [[ "$(<"$ROOT_DIR/.mobiliti-dashboard-root")" != 'mobiliti-dashboard' ]]; then
+PROJECT_MARKER=''
+if [[ -f "$ROOT_DIR/.mobiliti-dashboard-root" ]]; then
+  IFS= read -r PROJECT_MARKER < "$ROOT_DIR/.mobiliti-dashboard-root" || true
+  PROJECT_MARKER="${PROJECT_MARKER%$'\r'}"
+fi
+if [[ "$PROJECT_MARKER" != 'mobiliti-dashboard' ]]; then
   echo "Abbruch: .mobiliti-dashboard-root fehlt oder ist ungültig."
   echo "deploy.sh muss im Root des mobiliti-Dashboard-Projekts liegen."
   exit 2
@@ -140,6 +144,14 @@ for required_file in \
     exit 2
   fi
 done
+
+STAGED_PROJECT_MARKER=''
+IFS= read -r STAGED_PROJECT_MARKER < "$STAGING_DIR/.mobiliti-dashboard-root" || true
+STAGED_PROJECT_MARKER="${STAGED_PROJECT_MARKER%$'\r'}"
+if [[ "$STAGED_PROJECT_MARKER" != 'mobiliti-dashboard' ]]; then
+  echo "Ungültiges Release: .mobiliti-dashboard-root hat einen falschen Inhalt."
+  exit 2
+fi
 
 echo "[3/9] Produktionsdatenbank sichern und Backup prüfen"
 "${COMPOSE[@]}" config --quiet

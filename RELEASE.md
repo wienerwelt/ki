@@ -103,7 +103,8 @@ Dieser Abschnitt wird nur beim ersten Release mit dem neuen Verfahren ausgeführ
 
    ```bash
    cd /var/www/vhosts/mobiliti.at/httpdocs/dashboard
-   test "$(cat .mobiliti-dashboard-root)" = "mobiliti-dashboard" && echo "Projektmarker OK"
+   PROJECT_MARKER="$(<.mobiliti-dashboard-root)"
+   test "${PROJECT_MARKER%$'\r'}" = "mobiliti-dashboard" && echo "Projektmarker OK"
    grep -F "Produktionsdatenbank sichern und Backup prüfen" deploy.sh
    ```
 
@@ -116,7 +117,7 @@ Format: `vYYYY.MM.DD.N`. `N` beginnt pro Tag bei `1` und wird für jedes weitere
 Für das aktuelle Release in PowerShell setzen:
 
 ```powershell
-$ReleaseVersion = 'v2026.08.15.2'
+$ReleaseVersion = 'v2026.08.15.3'
 ```
 
 Eine Versionsnummer darf nach erfolgreichem Deployment niemals wiederverwendet werden.
@@ -283,7 +284,8 @@ Im Plesk-Terminal oder per SSH:
 ```bash
 cd /var/www/vhosts/mobiliti.at/httpdocs/dashboard
 pwd
-test "$(cat .mobiliti-dashboard-root)" = "mobiliti-dashboard" && echo "Projektmarker OK"
+PROJECT_MARKER="$(<.mobiliti-dashboard-root)"
+test "${PROJECT_MARKER%$'\r'}" = "mobiliti-dashboard" && echo "Projektmarker OK"
 test -f .env && echo ".env vorhanden"
 grep -F 'FRONTEND_URL=https://dashboard.mobiliti.at' .env
 df -h .
@@ -301,7 +303,7 @@ Stoppen, wenn:
 Upload-Dateien prüfen:
 
 ```bash
-RELEASE_VERSION='v2026.08.15.2'
+RELEASE_VERSION='v2026.08.15.3'
 ls -lh ".deploy/incoming/mobiliti-dashboard-${RELEASE_VERSION}.tar.gz" \
        ".deploy/incoming/mobiliti-dashboard-${RELEASE_VERSION}.tar.gz.sha256"
 ```
@@ -409,7 +411,7 @@ Ein Restore kann neuere Produktionsdaten löschen. Deshalb nur durchführen, wen
 
    ```bash
    cd /var/www/vhosts/mobiliti.at/httpdocs/dashboard
-   RESTORE_BACKUP='backups/pre-v2026.08.15.2-YYYYMMDDTHHMMSSZ.dump'
+   RESTORE_BACKUP='backups/pre-v2026.08.15.3-YYYYMMDDTHHMMSSZ.dump'
    test -s "$RESTORE_BACKUP"
    (cd backups && sha256sum --check "$(basename "$RESTORE_BACKUP").sha256")
    ```
