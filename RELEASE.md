@@ -468,11 +468,15 @@ Danach auf **DEV / VS Code-PowerShell** im Projekt-Root Release-Tag und `main` i
 
 Wenn der einmalige Umstieg abgeschlossen ist:
 
-1. Lokal entwickeln und manuell testen.
-2. `scripts\preflight.ps1` erfolgreich ausführen.
-3. Änderungen committen und nach `main` mergen.
-4. Auf sauberem `main` `create-sftp-release.ps1` ausführen.
-5. Genau Archiv und `.sha256` per SFTP nach `.deploy/incoming/` laden.
-6. Produktions-Vorprüfung aus Abschnitt 9 ausführen.
-7. Einen `deploy.sh`-Befehl aus Abschnitt 10 ausführen.
-8. Backup, Healthcheck, Anwendung und Logs nach Abschnitt 11 und 12 prüfen.
+Der normale Ablauf beginnt immer bei Abschnitt 4. Abschnitt 3 ist nur für den
+einmaligen Umstieg gedacht und wird bei späteren Releases nicht wiederholt.
+
+1. In Abschnitt 4 eine neue, noch nie verwendete `$ReleaseVersion` festlegen.
+2. Lokal entwickeln, manuell testen und den Preflight nach Abschnitt 5 erfolgreich ausführen.
+3. Änderungen nach Abschnitt 6 vollständig committen und nach `main` übernehmen.
+4. Auf einem sauberen `main` das Release-Paket nach Abschnitt 7 erzeugen.
+5. Genau Archiv und `.sha256` nach Abschnitt 8 per SFTP nach `.deploy/incoming/` laden.
+6. Die Produktions-Vorprüfung aus Abschnitt 9 ausführen.
+7. Genau einen `deploy.sh`-Befehl aus Abschnitt 10 ausführen.
+8. Backup und Serverzustand nach Abschnitt 11 sowie Anwendung und Logs nach Abschnitt 12 prüfen.
+9. `main` und Release-Tag nach Abschnitt 15 ins Git-Remote übertragen und das Ergebnis dokumentieren.
