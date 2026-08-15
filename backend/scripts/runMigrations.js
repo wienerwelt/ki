@@ -20,7 +20,14 @@ const poolConfig = process.env.DATABASE_URL
 
 const pool = new Pool(poolConfig);
 
-const checksum = (content) => crypto.createHash('sha256').update(content).digest('hex');
+// Git kann dieselbe SQL-Datei unter Windows mit CRLF und auf Ubuntu mit LF
+// auschecken. Für die Unveränderlichkeitsprüfung zählt der SQL-Inhalt, nicht
+// der betriebssystemspezifische Zeilenumbruch.
+const normalizeForChecksum = (content) => content.replace(/\r\n?/g, '\n');
+const checksum = (content) => crypto
+    .createHash('sha256')
+    .update(normalizeForChecksum(content))
+    .digest('hex');
 
 async function run() {
     const client = await pool.connect();
