@@ -3,9 +3,11 @@ import { useAuth } from '../context/AuthContext';
 import { Chip, IconButton, Tooltip } from '@mui/material';
 import TimerIcon from '@mui/icons-material/Timer';
 import AutorenewIcon from '@mui/icons-material/Autorenew';
+import { useNavigate } from 'react-router-dom';
 
 const SessionTimer: React.FC = () => {
     const { tokenExp, logout, renewSession } = useAuth();
+    const navigate = useNavigate();
     const [timeLeft, setTimeLeft] = useState<number | null>(null);
     const [isRenewing, setIsRenewing] = useState(false);
 
@@ -27,12 +29,12 @@ const SessionTimer: React.FC = () => {
             if (remaining <= 0) {
                 clearInterval(interval);
                 alert("Ihre Sitzung ist abgelaufen. Sie werden nun ausgeloggt.");
-                logout();
+                navigate(logout(), { replace: true });
             }
         }, 1000);
 
         return () => clearInterval(interval);
-    }, [tokenExp, logout]);
+    }, [tokenExp, logout, navigate]);
 
     const handleRenew = async () => {
         setIsRenewing(true);

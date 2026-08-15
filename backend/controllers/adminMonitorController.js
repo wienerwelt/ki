@@ -5,6 +5,94 @@ const { ListObjectsV2Command, GetObjectCommand } = require("@aws-sdk/client-s3")
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const s3Client = require("../config/s3Client.js");
 
+const isValidUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+
+exports.getMonthlyReportDeliveries = async (req, res) => {
+    const businessPartnerId = req.user?.business_partner_id;
+
+    if (!isValidUuid(businessPartnerId)) {
+        return res.status(400).json({ message: 'Dem Benutzer ist kein gültiger Business Partner zugeordnet.' });
+    }
+
+    try {
+        const [settingsResult, monthlyResult, deliveriesResult] = await Promise.all([
+            db.query(`
+                SELECT
+                    bp.id,
+                    bp.name,
+                    COALESCE(bp.allow_automated_newsletter, FALSE) AS allow_automated_newsletter,
+                    COUNT(u.id) FILTER (
+                        WHERE u.is_active = TRUE
+                          AND u.role IN ('assistenz', 'admin')
+                          AND u.email IS NOT NULL
+                          AND TRIM(u.email) <> ''
+                    )::int AS configured_recipients,
+                    COUNT(u.id) FILTER (
+                        WHERE u.is_active = TRUE
+                          AND u.role IN ('assistenz', 'admin')
+                          AND u.newsletter_opt_in = TRUE
+                          AND u.email IS NOT NULL
+                          AND TRIM(u.email) <> ''
+                    )::int AS eligible_recipients
+                FROM business_partners bp
+                LEFT JOIN users u ON u.business_partner_id = bp.id
+                WHERE bp.id = $1
+                GROUP BY bp.id, bp.name, bp.allow_automated_newsletter
+            `, [businessPartnerId]),
+            db.query(`
+                SELECT
+                    report_month,
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE status = 'sent')::int AS sent,
+                    COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+                    COUNT(*) FILTER (WHERE status = 'sending')::int AS sending,
+                    MAX(sent_at) AS last_sent_at,
+                    MAX(failed_at) AS last_failed_at
+                FROM monthly_report_deliveries
+                WHERE business_partner_id = $1
+                GROUP BY report_month
+                ORDER BY report_month DESC
+                LIMIT 12
+            `, [businessPartnerId]),
+            db.query(`
+                SELECT
+                    mrd.id,
+                    mrd.report_month,
+                    mrd.status,
+                    mrd.created_at,
+                    mrd.sent_at,
+                    mrd.failed_at,
+                    mrd.error_message,
+                    u.email,
+                    NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') AS recipient_name
+                FROM monthly_report_deliveries mrd
+                JOIN users u ON u.id = mrd.user_id
+                WHERE mrd.business_partner_id = $1
+                ORDER BY COALESCE(mrd.sent_at, mrd.failed_at, mrd.created_at) DESC
+                LIMIT 25
+            `, [businessPartnerId]),
+        ]);
+
+        const monthly = monthlyResult.rows;
+        const totals = monthly.reduce((sum, item) => ({
+            total: sum.total + Number(item.total || 0),
+            sent: sum.sent + Number(item.sent || 0),
+            failed: sum.failed + Number(item.failed || 0),
+            sending: sum.sending + Number(item.sending || 0),
+        }), { total: 0, sent: 0, failed: 0, sending: 0 });
+
+        return res.json({
+            settings: settingsResult.rows[0] || null,
+            totals,
+            monthly,
+            deliveries: deliveriesResult.rows,
+        });
+    } catch (error) {
+        console.error('Fehler beim Laden der Monatsreport-Statistik:', error);
+        return res.status(500).json({ message: 'Monatsreport-Statistik konnte nicht geladen werden.' });
+    }
+};
+
 exports.getActivityLogs = async (req, res) => {
     const { page = 1, limit = 20, actionType, username, startDate, endDate, sortBy = 'timestamp', sortOrder = 'desc' } = req.query;
     const offset = (page - 1) * limit;

@@ -17,6 +17,7 @@ const {
 } = require('../controllers/adminBpActionsController');
 
 const authMiddleware = require('../middleware/authMiddleware');
+const softwareController = require('../controllers/softwareController');
 
 // --- Multer-Setup für den Datei-Upload ---
 const storage = multer.memoryStorage(); // Hält die Datei im RAM für S3
@@ -35,6 +36,26 @@ const upload = multer({
     }
 });
 
+const softwareLogoUpload = multer({
+    storage,
+    limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+    fileFilter: (req, file, cb) => {
+        const allowedMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
+        if (allowedMimeTypes.has(String(file.mimetype || '').toLowerCase())) return cb(null, true);
+        return cb(new Error('Nur JPEG-, PNG-, WebP- oder AVIF-Logos sind erlaubt.'));
+    },
+});
+
+const receiveSoftwareLogo = (req, res, next) => {
+    softwareLogoUpload.single('softwareLogo')(req, res, (error) => {
+        if (!error) return next();
+        const message = error.code === 'LIMIT_FILE_SIZE'
+            ? 'Das Logo darf maximal 5 MB groß sein.'
+            : error.message;
+        return res.status(400).json({ message });
+    });
+};
+
 const isBpManager = (req, res, next) => {
     if (req.user && (req.user.role === 'admin' || req.user.role === 'assistenz')) {
         next();
@@ -45,6 +66,14 @@ const isBpManager = (req, res, next) => {
 
 router.use(authMiddleware, isBpManager);
 
+router.get('/catalog/options', softwareController.getManagedOptions);
+router.post('/software-logo/upload', receiveSoftwareLogo, softwareController.uploadSoftwareLogo);
+router.route('/software')
+    .get(softwareController.getManagedSoftware)
+    .post(softwareController.createSoftware);
+router.route('/software/:id')
+    .put(softwareController.updateSoftware)
+    .delete(softwareController.archiveSoftware);
 router.route('/').get(getActionsForBusinessPartner).post(createAction);
 router.route('/:id').put(updateAction).delete(deleteAction);
 router.post('/upload', upload.single('actionImage'), uploadActionImage);

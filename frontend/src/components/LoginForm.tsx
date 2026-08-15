@@ -38,6 +38,7 @@ const DisclaimerContent = React.lazy(() => import('../components/DisclaimerConte
 interface LoginFormProps {
   isRegister?: boolean;
   prefilledUsername?: string;
+  partnerCodeOverride?: string;
 }
 
 type LegalDialogContent = 'terms' | 'privacy' | 'disclaimer' | null;
@@ -51,14 +52,14 @@ const LEGAL_VERSIONS = {
 const COOKIE_SETTINGS_URL = '/cookie-settings';
 const IMPRINT_URL = 'https://www.mobiliti.at/impressum.html';
 
-const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUsername = '' }) => {
+const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUsername = '', partnerCodeOverride = '' }) => {
   const [searchParams] = useSearchParams();
   const { showSnackbar } = useSnackbar();
   const navigate = useNavigate();
   const theme = useTheme();
 
   const { login, businessPartner, setPartnerByCode } = useAuth();
-  const partnerCode = searchParams.get('partner') || '';
+  const partnerCode = partnerCodeOverride || searchParams.get('partner') || '';
 
   const customPrimaryColor = businessPartner?.color_scheme?.primary_color || theme.palette.primary.main;
   const customTextColor = businessPartner?.color_scheme?.primary_text_color || '#ffffff';
@@ -124,8 +125,11 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
   };
 
   const handleSwitchAuthMode = () => {
-    const targetPath = isRegister ? '/login' : '/register';
-    navigate(`${targetPath}?${searchParams.toString()}`);
+    if (isRegister) {
+      navigate(partnerCode ? `/${encodeURIComponent(partnerCode)}?login=1` : '/login');
+    } else {
+      navigate(partnerCode ? `/register?partner=${encodeURIComponent(partnerCode)}` : '/register');
+    }
   };
 
   const generatePassword = () => {
@@ -212,7 +216,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
 
       if (isRegister) {
         showSnackbar(data?.message || 'Registrierung erfolgreich! Bitte E-Mail bestätigen.', 'success');
-        navigate(`/login?${searchParams.toString()}`);
+        navigate(partnerCode ? `/${encodeURIComponent(partnerCode)}?login=1` : '/login');
       } else {
         if (!data?.token || !data?.user) {
           throw new Error('Ungültige Serverantwort');

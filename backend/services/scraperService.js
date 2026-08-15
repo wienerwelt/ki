@@ -1,6 +1,7 @@
 // backend/services/scraperService.js
 const axios = require('axios');
 const cheerio = require('cheerio');
+const crypto = require('crypto');
 const xml2js = require('xml2js');
 const { JSDOM } = require('jsdom');
 const { Readability } = require('@mozilla/readability');
@@ -50,6 +51,75 @@ const parseDateString = (dateString, dateFormat, jobId) => {
 const sanitizeHtml = (htmlString) => {
     if (!htmlString) return null;
     return cheerio.load(htmlString).text().trim();
+};
+
+const sanitizeFeedDescription = (htmlString) => {
+    if (!htmlString) return null;
+    const $ = cheerio.load(`<body>${String(htmlString)}</body>`);
+    $('br').replaceWith('\n');
+    $('p, li, div').each((_, element) => {
+        $(element).append('\n');
+    });
+    const text = $('body').text()
+        .split(/\r?\n/)
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+        .join('\n');
+    return text || null;
+};
+
+const isEventCategory = (category) => {
+    const normalized = String(category || '').trim().toLowerCase();
+    return normalized === 'event' || normalized === 'events' || normalized.endsWith('_events');
+};
+
+const normalizeEventTitle = (title) => String(title || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' und ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const getEventBusinessDate = (summary, parsedDate) => {
+    const match = String(summary || '').match(/\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b/);
+    if (match) {
+        return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+    }
+    if (!parsedDate || Number.isNaN(parsedDate.getTime())) return null;
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Europe/Vienna',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).format(parsedDate);
+};
+
+const buildEventFingerprint = (title, summary, parsedDate) => {
+    const normalizedTitle = normalizeEventTitle(title);
+    const businessDate = getEventBusinessDate(summary, parsedDate);
+    if (!normalizedTitle || !businessDate) return null;
+    return crypto.createHash('sha256').update(`${businessDate}|${normalizedTitle}`, 'utf8').digest('hex');
+};
+
+const mergeEventSummaries = (currentSummary, incomingSummary) => {
+    const current = String(currentSummary || '').trim();
+    const incoming = String(incomingSummary || '').trim();
+    if (!current) return incoming || null;
+    if (!incoming) return current;
+
+    const normalizeLine = (line) => line
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    const known = new Set(current.split(/\r?\n/).map(normalizeLine).filter(Boolean));
+    const additions = incoming.split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line && !known.has(normalizeLine(line)));
+
+    return additions.length > 0 ? `${current}\n\n${additions.join('\n')}` : current;
 };
 
 const escapeRegex = (string) => {
@@ -265,6 +335,7 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags, all
     const items = result.rss?.channel?.item || result.feed?.entry || [];
     const feedItems = Array.isArray(items) ? items : [items];
     let itemsInserted = 0;
+    let itemsMerged = 0;
     await logToDb(jobId, 'INFO', `Verarbeite ${feedItems.length} Einträge für Regel '${sourceIdentifier}'. Feed-Titel: ${feedTitle}`);
 
     for (const item of feedItems) {
@@ -300,7 +371,7 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags, all
             } else {
                 originalUrl = item.link?.href || item.link || null;
                 const descriptionHtml = item['content:encoded'] || item.description?._ || item.summary?._ || item.description || item.summary || null;
-                summary = sanitizeHtml(descriptionHtml);
+                summary = sanitizeFeedDescription(descriptionHtml);
                 fullText = null;
             }
 
@@ -331,32 +402,125 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags, all
 
             const foundTagIds = extractTags(`${cleanTitle} ${summary}`, availableTags);
             const relevanceScore = computeRelevanceScore(parsedDate, foundTagIds.length);
+            const eventCategory = isEventCategory(category_default);
+            const eventFingerprint = eventCategory ? buildEventFingerprint(cleanTitle, summary, parsedDate) : null;
+            let scrapedContentId = null;
 
-            const contentResult = await db.query(
-                `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, event_date, category, category_id, region, thumbnail_url, full_text, relevance_score)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
-                [
-                    sourceIdentifier, originalUrl, cleanTitle, summary,
-                    category_default === 'event' ? null : parsedDate,
-                    category_default === 'event' ? parsedDate : null,
-                    category_default, categoryId, ruleRegion, thumbnailUrl, fullText, relevanceScore
-                ]
-            );
-            
-            if (contentResult.rowCount > 0) {
-                itemsInserted++;
-                const scrapedContentId = contentResult.rows[0].id;
-                if (foundTagIds.length > 0) {
-                    for (const tagId of foundTagIds) {
-                        await db.query(
-                            `INSERT INTO scraped_content_tags (scraped_content_id, tag_id)
-                             VALUES ($1, $2) ON CONFLICT DO NOTHING;`,
-                            [scrapedContentId, tagId]
-                        );
+            if (eventCategory && !parsedDate) {
+                await logToDb(jobId, 'WARN', `Termin "${cleanTitle}" ohne gültiges Datum übersprungen.`);
+                continue;
+            }
+
+            if (eventCategory) {
+                const directMatch = await db.query(`
+                    SELECT id, title, summary
+                    FROM scraped_content
+                    WHERE original_url = $1
+                       OR ($2::text IS NOT NULL AND event_fingerprint = $2)
+                    ORDER BY CASE WHEN original_url = $1 THEN 0 ELSE 1 END
+                    LIMIT 1
+                `, [originalUrl, eventFingerprint]);
+
+                let existing = directMatch.rows[0] || null;
+                if (!existing) {
+                    const nearby = await db.query(`
+                        SELECT id, title, summary
+                        FROM scraped_content
+                        WHERE event_date BETWEEN $1::timestamptz - INTERVAL '36 hours'
+                                             AND $1::timestamptz + INTERVAL '36 hours'
+                        ORDER BY updated_at DESC NULLS LAST, created_at DESC
+                        LIMIT 50
+                    `, [parsedDate]);
+                    existing = nearby.rows.find((candidate) => normalizeEventTitle(candidate.title) === normalizeEventTitle(cleanTitle)) || null;
+                }
+
+                if (existing) {
+                    const mergedSummary = mergeEventSummaries(existing.summary, summary);
+                    const updateResult = await db.query(`
+                        UPDATE scraped_content
+                        SET summary = $2,
+                            event_fingerprint = COALESCE(event_fingerprint, $3),
+                            thumbnail_url = COALESCE(thumbnail_url, $4),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = $1
+                        RETURNING id
+                    `, [existing.id, mergedSummary, eventFingerprint, thumbnailUrl]);
+                    scrapedContentId = updateResult.rows[0]?.id || existing.id;
+                    itemsMerged++;
+                } else {
+                    try {
+                        const insertResult = await db.query(`
+                            INSERT INTO scraped_content (
+                                source_identifier, original_url, title, summary, published_date,
+                                event_date, category, category_id, region, thumbnail_url, full_text,
+                                relevance_score, event_fingerprint
+                            )
+                            VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, $12)
+                            RETURNING id
+                        `, [
+                            sourceIdentifier, originalUrl, cleanTitle, summary, parsedDate,
+                            category_default, categoryId, ruleRegion, thumbnailUrl, fullText,
+                            relevanceScore, eventFingerprint,
+                        ]);
+                        scrapedContentId = insertResult.rows[0].id;
+                        itemsInserted++;
+                    } catch (insertError) {
+                        if (insertError.code !== '23505') throw insertError;
+                        const conflict = await db.query(`
+                            SELECT id, summary
+                            FROM scraped_content
+                            WHERE original_url = $1
+                               OR ($2::text IS NOT NULL AND event_fingerprint = $2)
+                            LIMIT 1
+                        `, [originalUrl, eventFingerprint]);
+                        if (!conflict.rows[0]) throw insertError;
+                        scrapedContentId = conflict.rows[0].id;
+                        await db.query(`
+                            UPDATE scraped_content
+                            SET summary = $2, updated_at = CURRENT_TIMESTAMP
+                            WHERE id = $1
+                        `, [scrapedContentId, mergeEventSummaries(conflict.rows[0].summary, summary)]);
+                        itemsMerged++;
                     }
+                }
+
+                const sourceGuid = item.guid?._ || item.guid || originalUrl;
+                await db.query(`
+                    INSERT INTO scraped_content_sources (
+                        scraped_content_id, source_identifier, source_url, source_guid, raw_summary
+                    )
+                    VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (scraped_content_id, source_url) DO UPDATE
+                    SET source_guid = EXCLUDED.source_guid,
+                        raw_summary = EXCLUDED.raw_summary,
+                        last_seen_at = CURRENT_TIMESTAMP
+                `, [scrapedContentId, sourceIdentifier, originalUrl, sourceGuid, summary]);
+            } else {
+                const contentResult = await db.query(
+                    `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, event_date, category, category_id, region, thumbnail_url, full_text, relevance_score)
+                     VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, $11)
+                     ON CONFLICT (original_url) DO NOTHING RETURNING id;`,
+                    [sourceIdentifier, originalUrl, cleanTitle, summary, parsedDate, category_default, categoryId, ruleRegion, thumbnailUrl, fullText, relevanceScore]
+                );
+                if (contentResult.rowCount > 0) {
+                    scrapedContentId = contentResult.rows[0].id;
+                    itemsInserted++;
+                }
+            }
+
+            if (scrapedContentId && foundTagIds.length > 0) {
+                for (const tagId of foundTagIds) {
+                    await db.query(
+                        `INSERT INTO scraped_content_tags (scraped_content_id, tag_id)
+                         VALUES ($1, $2) ON CONFLICT DO NOTHING;`,
+                        [scrapedContentId, tagId]
+                    );
                 }
             }
         }
+    }
+    if (itemsMerged > 0) {
+        await logToDb(jobId, 'INFO', `${itemsMerged} bestehende Termine wurden ohne Dublette um neue Quelldaten ergänzt.`);
     }
     return itemsInserted;
 }
@@ -1530,4 +1694,10 @@ module.exports = {
     extractTextFromUrl,
     processNewsKeywordSearch,
     previewScrapingRule,
+    __test: {
+        processXmlFeedByRule: _processXmlFeedByRule,
+        isEventCategory,
+        buildEventFingerprint,
+        mergeEventSummaries,
+    },
 };

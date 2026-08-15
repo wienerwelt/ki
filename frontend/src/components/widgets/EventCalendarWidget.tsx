@@ -639,9 +639,9 @@ title={
               ref={eventListRef}
               sx={{ 
                 flexGrow: 1, 
-                minHeight: 0,
-                height: isPublic ? '400px' : '100%', 
-                maxHeight: isPublic ? '400px' : 'none', 
+                height: '100%',
+                minHeight: isPublic ? '400px' : 0,
+                maxHeight: 'none',
                 overflowY: 'auto', 
                 position: 'relative',
                 p: 2, 

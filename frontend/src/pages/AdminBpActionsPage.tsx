@@ -1,3 +1,4 @@
+// frontend/src/pages/AdminBpActionsPage.tsx
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Alert,
@@ -49,6 +50,7 @@ import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 import { Region, WidgetTypeMeta } from '../types/dashboard.types';
+import SoftwareCatalogAdminPanel from '../components/SoftwareCatalogAdminPanel';
 
 interface ActionInfo {
     contact?: {
@@ -84,12 +86,19 @@ interface BusinessPartnerAction {
     secondary_cta_label?: string;
     priority?: number | string;
     info?: ActionInfo;
+    directory_provider_id?: string;
+    directory_provider_name?: string;
+    software_tool_id?: string;
+    software_tool_name?: string;
 }
 
 interface BusinessPartner {
     id: string;
     name: string;
 }
+
+interface DirectoryProviderOption { id: string; name: string; logo_url?: string; }
+interface SoftwareOption { id: string; provider_id: string; name: string; status: string; }
 
 type SortDirection = 'asc' | 'desc';
 
@@ -132,6 +141,8 @@ const DEFAULT_FORM_STATE: Partial<BusinessPartnerAction> = {
         highlights: [],
         legalNote: '',
     },
+    directory_provider_id: '',
+    software_tool_id: '',
 };
 
 const AdminBpActionsPage: React.FC = () => {
@@ -146,6 +157,9 @@ const AdminBpActionsPage: React.FC = () => {
     const [editingAction, setEditingAction] = useState<BusinessPartnerAction | null>(null);
     const [formState, setFormState] = useState<Partial<BusinessPartnerAction>>({ ...DEFAULT_FORM_STATE });
     const [uploadError, setUploadError] = useState<string | null>(null);
+    const [providerOptions, setProviderOptions] = useState<DirectoryProviderOption[]>([]);
+    const [softwareOptions, setSoftwareOptions] = useState<SoftwareOption[]>([]);
+    const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
 
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
@@ -251,6 +265,32 @@ const AdminBpActionsPage: React.FC = () => {
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
+    useEffect(() => {
+        const businessPartnerId = formState.business_partner_id;
+        if (!openDialog || !businessPartnerId) {
+            setProviderOptions([]);
+            setSoftwareOptions([]);
+            return;
+        }
+
+        let active = true;
+        setCatalogOptionsLoading(true);
+        apiClient.get('/api/admin/actions/catalog/options', { params: { businessPartnerId } })
+            .then((response) => {
+                if (!active) return;
+                setProviderOptions(response.data.providers || []);
+                setSoftwareOptions(response.data.software || []);
+            })
+            .catch((err) => {
+                if (active) setUploadError(err.response?.data?.message || 'Anbieter und Software konnten nicht geladen werden.');
+            })
+            .finally(() => {
+                if (active) setCatalogOptionsLoading(false);
+            });
+
+        return () => { active = false; };
+    }, [openDialog, formState.business_partner_id]);
+
     const handleSortRequest = (key: string) => {
         setSortConfig(prev => ({ key, direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc' }));
     };
@@ -288,7 +328,12 @@ const AdminBpActionsPage: React.FC = () => {
 
     const handleSelectChange = (e: SelectChangeEvent<string>) => {
         const { name, value } = e.target;
-        setFormState(prev => ({ ...prev, [name]: value }));
+        setFormState(prev => ({
+            ...prev,
+            [name]: value,
+            ...(name === 'business_partner_id' ? { directory_provider_id: '', software_tool_id: '' } : {}),
+            ...(name === 'directory_provider_id' ? { software_tool_id: '' } : {}),
+        }));
     };
 
     const handleInfoContactChange = (field: keyof NonNullable<ActionInfo['contact']>, value: string) => {
@@ -330,6 +375,11 @@ const AdminBpActionsPage: React.FC = () => {
 
         if (!formState.business_partner_id) {
             setUploadError('Bitte wählen Sie einen Business Partner aus.');
+            return;
+        }
+
+        if (!formState.directory_provider_id) {
+            setUploadError('Bitte zuerst einen Anbieter aus dem Branchenverzeichnis auswählen.');
             return;
         }
 
@@ -432,7 +482,7 @@ const AdminBpActionsPage: React.FC = () => {
     return (
         <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
-                <Typography variant="h4" component="h1">Business Partner Aktionen</Typography>
+                <Typography variant="h4" component="h1">Actions & Software</Typography>
                 <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'stretch', md: 'center' }} sx={{ width: { xs: '100%', md: 'auto' } }}>
                     {user?.role === 'admin' && (
                         <FormControl size="small" sx={{ minWidth: { xs: '100%', md: 260 } }}>
@@ -504,6 +554,8 @@ const AdminBpActionsPage: React.FC = () => {
                                     <Stack spacing={0.5}>
                                         <Typography variant="body2" fontWeight={800}>{action.title}</Typography>
                                         {action.promotion_label && <Chip size="small" label={action.promotion_label} sx={{ alignSelf: 'flex-start', fontWeight: 800 }} />}
+                                        {action.directory_provider_name && <Typography variant="caption" color="text.secondary">Anbieter: {action.directory_provider_name}</Typography>}
+                                        {action.software_tool_name && <Chip size="small" variant="outlined" label={action.software_tool_name} sx={{ alignSelf: 'flex-start' }} />}
                                     </Stack>
                                 </TableCell>
                                 {user?.role === 'admin' && <TableCell>{action.business_partner_name}</TableCell>}
@@ -522,6 +574,8 @@ const AdminBpActionsPage: React.FC = () => {
                 </Table></TableContainer></Paper>
             )}
 
+            <SoftwareCatalogAdminPanel />
+
             <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
                 <DialogTitle>{editingAction ? 'Aktion bearbeiten' : 'Neue Aktion erstellen'}</DialogTitle>
                 <DialogContent dividers>
@@ -538,6 +592,31 @@ const AdminBpActionsPage: React.FC = () => {
                                         {allBusinessPartners.map(bp => <MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>)}
                                     </Select>
                                 </FormControl>
+                            </Grid>
+                        )}
+
+                        <Grid item xs={12} md={6}>
+                            <FormControl fullWidth size="small" required disabled={!formState.business_partner_id || catalogOptionsLoading}>
+                                <InputLabel>Anbieter aus Branchenverzeichnis *</InputLabel>
+                                <Select name="directory_provider_id" value={formState.directory_provider_id || ''} label="Anbieter aus Branchenverzeichnis *" onChange={handleSelectChange}>
+                                    {providerOptions.map(provider => <MenuItem key={provider.id} value={provider.id}>{provider.name}</MenuItem>)}
+                                </Select>
+                            </FormControl>
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                            <FormControl fullWidth size="small" disabled={!formState.directory_provider_id || catalogOptionsLoading}>
+                                <InputLabel>Software bewerben (optional)</InputLabel>
+                                <Select name="software_tool_id" value={formState.software_tool_id || ''} label="Software bewerben (optional)" onChange={handleSelectChange}>
+                                    <MenuItem value=""><em>Keine Software-Verknüpfung</em></MenuItem>
+                                    {softwareOptions
+                                        .filter(tool => tool.provider_id === formState.directory_provider_id)
+                                        .map(tool => <MenuItem key={tool.id} value={tool.id}>{tool.name}{tool.status === 'draft' ? ' (Entwurf)' : ''}</MenuItem>)}
+                                </Select>
+                            </FormControl>
+                        </Grid>
+                        {formState.business_partner_id && providerOptions.length === 0 && !catalogOptionsLoading && (
+                            <Grid item xs={12}>
+                                <Alert severity="warning">Für diesen Mandanten ist noch kein aktiver Anbieter im Branchenverzeichnis vorhanden. Zuerst dort einen Eintrag anlegen bzw. zuordnen.</Alert>
                             </Grid>
                         )}
 
@@ -715,6 +794,11 @@ const AdminBpActionsPage: React.FC = () => {
                                         {formState.promotion_label && <Chip size="small" label={formState.promotion_label} color="primary" sx={{ position: 'absolute', top: 8, left: 8, fontWeight: 900 }} />}
                                     </Box>
                                     <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                                        <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ mb: 0.8 }}>
+                                            {formState.promotion_type === 'sponsored' && <Chip size="small" color="warning" label="Sponsored" />}
+                                            {providerOptions.find(p => p.id === formState.directory_provider_id)?.name && <Chip size="small" variant="outlined" label={providerOptions.find(p => p.id === formState.directory_provider_id)?.name} />}
+                                            {softwareOptions.find(s => s.id === formState.software_tool_id)?.name && <Chip size="small" label={softwareOptions.find(s => s.id === formState.software_tool_id)?.name} />}
+                                        </Stack>
                                         <Typography variant="subtitle1" fontWeight="bold" sx={{ wordBreak: 'break-word' }}>
                                             {formState.title || 'Titel der Aktion'}
                                         </Typography>

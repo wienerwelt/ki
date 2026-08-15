@@ -1,13 +1,13 @@
 // frontend/src/pages/CommunityPage.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-    Container, Grid, Paper, Typography, Box, Button,
+    Container, Grid, Paper, Typography, Box, Button, Stack,
     Card, CardHeader, CardContent, CardMedia, CardActions, IconButton,
     Divider, CircularProgress, Tooltip, Chip, useTheme, useMediaQuery,
     MenuItem, Select, FormControl, InputLabel, Collapse, Popover,
     Tabs, Tab, List, ListItem, ListItemAvatar, ListItemText, InputAdornment,
     TextField, Alert, Dialog, DialogTitle, DialogContent,
-    DialogActions, alpha
+    DialogActions, Rating, alpha, LinearProgress
 } from '@mui/material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import ReactQuill from 'react-quill-new';
@@ -82,9 +82,16 @@ interface CommunityPost extends UserProfileData {
     is_pinned: boolean;
     author_role?: string;
     poll_options?: PollOption[];
+    software_tool_id?: string;
+    software_rating?: number | null;
+    software_tool_name?: string;
+    software_provider_name?: string;
+    software_tool_url?: string;
+    software_tool_logo_url?: string;
 }
 
 interface Category { id: string; name: string; }
+interface SoftwareOption { id: string; name: string; provider_name: string; logo_url?: string | null; }
 interface LeaderboardUser extends UserProfileData {}
 interface Member extends UserProfileData {
     email: string;
@@ -98,6 +105,7 @@ interface RecentComment {
     first_name: string | null;
     last_name: string | null;
     profile_image_url: string | null;
+    author_id: string;
 }
 
 // --- HELPER ---
@@ -110,6 +118,34 @@ const safeFormatDistance = (dateString: string | undefined | null) => {
     } catch (e) {
         return 'Gerade eben';
     }
+};
+
+const getCommunityRoleLabel = (role?: string) => {
+    if (role === 'admin') return 'Administrator';
+    if (role === 'assistenz') return 'Assistenz';
+    return 'Mitglied';
+};
+
+const CommunityProfileDetails: React.FC<{ profile: UserProfileData }> = ({ profile }) => {
+    const organization = profile.organization_name?.trim() || profile.business_partner_name?.trim() || 'Nicht angegeben';
+    const expertise = Array.from(new Set((profile.tags || []).map((tag) => String(tag || '').trim()).filter(Boolean)));
+
+    return (
+        <Box component="span" sx={{ display: 'block', mt: 0.5 }}>
+            <Typography component="span" variant="body2" color="text.secondary" display="block">
+                {getCommunityRoleLabel(profile.role)}
+            </Typography>
+            <Typography component="span" variant="body2" color="text.primary" display="block" sx={{ mt: 0.35 }}>
+                Organisation: <strong>{organization}</strong>
+            </Typography>
+            {expertise.length > 0 && (
+                <Box component="span" sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, mt: 0.8 }}>
+                    <Typography component="span" variant="caption" color="text.secondary" fontWeight="bold">Experte für:</Typography>
+                    {expertise.map((tag) => <Chip key={tag} label={tag} size="small" sx={{ height: 22, fontSize: '0.7rem' }} />)}
+                </Box>
+            )}
+        </Box>
+    );
 };
 
 const renderMedia = (url: string) => {
@@ -184,6 +220,8 @@ const CommunityPage: React.FC = () => {
 
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [selectedUser, setSelectedUser] = useState<UserProfileData | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const profileRequestRef = useRef(0);
 
   const [detailPost, setDetailPost] = useState<CommunityPost | null>(null);
 
@@ -191,6 +229,9 @@ const CommunityPage: React.FC = () => {
   const [newContent, setNewContent] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [softwareOptions, setSoftwareOptions] = useState<SoftwareOption[]>([]);
+  const [selectedSoftwareToolId, setSelectedSoftwareToolId] = useState('');
+  const [softwareRating, setSoftwareRating] = useState<number | null>(null);
   
   const [isPollMode, setIsPollMode] = useState(false);
   const [pollOptions, setPollOptions] = useState(['', '']);
@@ -206,16 +247,18 @@ const CommunityPage: React.FC = () => {
 
   const loadFeedData = useCallback(async () => {
     try {
-        const [postsRes, catRes, lbRes, commentsRes] = await Promise.all([
+        const [postsRes, catRes, lbRes, commentsRes, softwareRes] = await Promise.all([
             apiClient.get(`/api/community/feed?limit=20&categoryId=${filterCategory}`),
             apiClient.get('/api/community/categories'),
             apiClient.get('/api/community/leaderboard'),
-            apiClient.get('/api/community/recent-comments')
+            apiClient.get('/api/community/recent-comments'),
+            apiClient.get('/api/software/options')
         ]);
         setPosts(postsRes.data);
         setCategories(catRes.data);
         setLeaderboard(lbRes.data);
         setRecentComments(commentsRes.data);
+        setSoftwareOptions(softwareRes.data || []);
     } catch (err) {
         showSnackbar('Fehler beim Laden des Feeds.', 'error');
     } finally {
@@ -267,7 +310,21 @@ const CommunityPage: React.FC = () => {
     if (location.state && (location.state as any).defaultTab) {
         setCurrentTab((location.state as any).defaultTab);
     }
+    const requestedSoftwareId = (location.state as any)?.softwareToolId;
+    if (requestedSoftwareId) {
+        setSelectedSoftwareToolId(String(requestedSoftwareId));
+        const requestedRating = Number((location.state as any)?.softwareRating);
+        if (Number.isInteger(requestedRating) && requestedRating >= 1 && requestedRating <= 5) {
+            setSoftwareRating(requestedRating);
+        }
+    }
   }, [location]);
+
+  useEffect(() => {
+    if (!selectedSoftwareToolId || categories.length === 0) return;
+    const softwareCategory = categories.find(c => c.name.toLowerCase() === 'software & tools');
+    if (softwareCategory) setSelectedCategory(softwareCategory.id);
+  }, [categories, selectedSoftwareToolId]);
 
   const handleOpenPostDetail = async (postId: string) => {
       const existingPost = posts.find(p => p.id === postId);
@@ -292,13 +349,18 @@ const CommunityPage: React.FC = () => {
     if (isDemo) return; 
     // Strip HTML Tags nur für leeren Check
     const cleanText = newContent.replace(/<[^>]*>?/gm, '').trim();
-    if (!cleanText && !selectedImage && (!isPollMode || pollOptions.every(o => !o.trim()))) return;
-    if (!selectedCategory) { showSnackbar('Bitte wähle eine Kategorie.', 'warning'); return; }
+    if (!cleanText && !selectedImage && !selectedSoftwareToolId && (!isPollMode || pollOptions.every(o => !o.trim()))) {
+        showSnackbar('Bitte Text, Bild, Umfrage oder eine Software-Bewertung angeben.', 'warning');
+        return;
+    }
+    if (!selectedCategory && !selectedSoftwareToolId) { showSnackbar('Bitte eine Kategorie wählen.', 'warning'); return; }
 
     setCreateLoading(true);
     const formData = new FormData();
     formData.append('content', newContent); // Schickt sauberes HTML
     formData.append('categoryId', selectedCategory);
+    if (selectedSoftwareToolId) formData.append('softwareToolId', selectedSoftwareToolId);
+    if (softwareRating) formData.append('softwareRating', String(softwareRating));
     if (selectedImage) formData.append('image', selectedImage);
 
     if (isPollMode) {
@@ -318,13 +380,15 @@ const CommunityPage: React.FC = () => {
       setNewContent(''); 
       setSelectedImage(null); 
       setSelectedCategory('');
+      setSelectedSoftwareToolId('');
+      setSoftwareRating(null);
       setIsPollMode(false);
       setPollOptions(['', '']);
       if (fileInputRef.current) fileInputRef.current.value = '';
       
       showSnackbar('Beitrag veröffentlicht! (+10 Punkte)', 'success');
-    } catch (err) { 
-        showSnackbar('Fehler beim Veröffentlichen.', 'error'); 
+    } catch (err: any) {
+        showSnackbar(err.response?.data?.message || 'Fehler beim Veröffentlichen.', 'error');
     } finally { 
         setCreateLoading(false); 
     }
@@ -479,15 +543,40 @@ const CommunityPage: React.FC = () => {
 
   const handleProfileClick = (event: React.MouseEvent, userData: any) => {
     event.stopPropagation();
+    const profileUserId = String(userData.author_id || userData.user_id || userData.id || '');
     const normalizedUser = {
         ...userData,
+        id: profileUserId,
         role: userData.author_role || userData.role 
     };
     setSelectedUser(normalizedUser);
     setAnchorEl(event.currentTarget as HTMLElement);
+    const requestId = ++profileRequestRef.current;
+
+    if (!/^[0-9a-fA-F-]{36}$/.test(profileUserId)) {
+        setProfileLoading(false);
+        return;
+    }
+
+    setProfileLoading(true);
+    apiClient.get(`/api/community/members/${encodeURIComponent(profileUserId)}/profile`)
+        .then((response) => {
+            if (profileRequestRef.current !== requestId) return;
+            setSelectedUser({ ...normalizedUser, ...response.data, id: profileUserId });
+        })
+        .catch(() => {
+            if (profileRequestRef.current === requestId) {
+                showSnackbar('Die vollständigen Profildaten konnten nicht geladen werden.', 'warning');
+            }
+        })
+        .finally(() => {
+            if (profileRequestRef.current === requestId) setProfileLoading(false);
+        });
   };
   
   const handlePopoverClose = () => {
+    profileRequestRef.current += 1;
+    setProfileLoading(false);
     setAnchorEl(null);
     setSelectedUser(null);
   };
@@ -549,6 +638,18 @@ const CommunityPage: React.FC = () => {
             subheader={<Typography variant="caption" color="text.secondary">{safeFormatDistance(post.created_at)}</Typography>}
         />
         <CardContent sx={{ pt: 0, pb: 1, px: 3 }}>
+            {post.software_tool_id && (
+                <Paper variant="outlined" sx={{ p: 1.5, mb: 2, borderRadius: 2, bgcolor: alpha(theme.palette.primary.main, 0.035) }}>
+                    <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
+                        <Box sx={{ minWidth: 0 }}>
+                            <Typography variant="subtitle2" fontWeight={900}>{post.software_tool_name}</Typography>
+                            <Typography variant="caption" color="text.secondary">{post.software_provider_name}</Typography>
+                            {post.software_rating && <Rating value={post.software_rating} readOnly size="small" sx={{ display: 'block', mt: 0.5 }} />}
+                        </Box>
+                        {post.software_tool_url && <Button size="small" href={post.software_tool_url} target="_blank" rel="noopener noreferrer">Produktseite</Button>}
+                    </Stack>
+                </Paper>
+            )}
             <HTMLContentRenderer html={post.content} />
             
             {post.poll_options && post.poll_options.length > 0 && (
@@ -742,6 +843,40 @@ const CommunityPage: React.FC = () => {
                                 </FormControl>
                             </Box>
 
+                            <Paper variant="outlined" sx={{ mt: 1, p: 1.5, borderRadius: 2 }}>
+                                <Typography variant="subtitle2" fontWeight={900} sx={{ mb: 1 }}>Software-Erfahrung oder Hinweis (optional)</Typography>
+                                <Grid container spacing={1.5} alignItems="center">
+                                    <Grid item xs={12} sm={8}>
+                                        <FormControl fullWidth size="small" disabled={isDemo}>
+                                            <InputLabel>Software auswählen</InputLabel>
+                                            <Select
+                                                value={selectedSoftwareToolId}
+                                                label="Software auswählen"
+                                                onChange={(e) => {
+                                                    const softwareId = e.target.value;
+                                                    setSelectedSoftwareToolId(softwareId);
+                                                    setSoftwareRating(null);
+                                                    if (softwareId) {
+                                                        const softwareCategory = categories.find(c => c.name.toLowerCase() === 'software & tools');
+                                                        if (softwareCategory) setSelectedCategory(softwareCategory.id);
+                                                    }
+                                                }}
+                                            >
+                                                <MenuItem value=""><em>Keine Software-Zuordnung</em></MenuItem>
+                                                {softwareOptions.map(option => <MenuItem key={option.id} value={option.id}>{option.provider_name} · {option.name}</MenuItem>)}
+                                            </Select>
+                                        </FormControl>
+                                    </Grid>
+                                    <Grid item xs={12} sm={4}>
+                                        <Stack direction="row" alignItems="center" spacing={1}>
+                                            <Typography variant="caption" color="text.secondary">Bewertung</Typography>
+                                            <Rating value={softwareRating} disabled={!selectedSoftwareToolId || isDemo} onChange={(_, value) => setSoftwareRating(value)} />
+                                        </Stack>
+                                    </Grid>
+                                </Grid>
+                                <Typography variant="caption" color="text.secondary">Der Beitrag erscheint automatisch in „Software & Tools“. Öffentlich werden nur Anzahl und Bewertungsdurchschnitt gezeigt.</Typography>
+                            </Paper>
+
                             {selectedImage && (
                                 <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1, bgcolor: alpha(theme.palette.info.main, 0.1), p: 1.5, borderRadius: 2, border: `1px solid ${theme.palette.info.light}` }}>
                                     <ImageIcon fontSize="small" color="info" />
@@ -831,10 +966,8 @@ const CommunityPage: React.FC = () => {
                                             </Typography>
                                         }
                                         secondary={
-                                            <Box component="span" sx={{ display: 'block', mt: 0.5 }}>
-                                                <Typography component="span" variant="body2" color="text.primary" display="block">
-                                                    {member.role} {member.organization_name ? `bei ${member.organization_name}` : ''}
-                                                </Typography>
+                                            <Box component="span" sx={{ display: 'block' }}>
+                                                <CommunityProfileDetails profile={member} />
                                                 <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
                                                     <StarsIcon fontSize="small" color="warning" /> {member.contribution_score} Community-Punkte
                                                 </Typography>
@@ -965,20 +1098,7 @@ const CommunityPage: React.FC = () => {
                                                 {expert.membership_level && <Chip label={expert.membership_level} size="small" color="secondary" sx={{ height: 20, fontSize: '0.7rem', fontWeight: 'bold' }} />}
                                             </Box>
                                         }
-                                        secondary={
-                                            <Box component="span" sx={{ display: 'block' }}>
-                                                <Typography component="span" variant="body2" color="text.primary" display="block" sx={{ mb: 1 }}>
-                                                    {expert.role} {expert.organization_name ? `bei ${expert.organization_name}` : ''}
-                                                </Typography>
-                                                        {expert.tags && expert.tags.length > 0 && (
-                                                            <Box component="span" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
-                                                        {expert.tags.map(tag => (
-                                                            <Chip key={tag} label={tag} size="small" sx={{ height: 22, fontSize: '0.7rem', bgcolor: alpha(theme.palette.primary.main, 0.05), border: `1px solid ${alpha(theme.palette.primary.main, 0.2)}` }} />
-                                                        ))}
-                                                    </Box>
-                                                )}
-                                            </Box>
-                                        }
+                                        secondary={<CommunityProfileDetails profile={expert} />}
                                     />
                                     <Button 
                                         size="small" 
@@ -1144,6 +1264,7 @@ const CommunityPage: React.FC = () => {
             sx: { borderRadius: 4, overflow: 'hidden', width: 320, maxWidth: '95vw', boxShadow: theme.shadows[8] }
         }}
       >
+        {profileLoading && <LinearProgress />}
         {selectedUser && (
             <ProfileCard user={selectedUser as UserProfileData} />
         )}

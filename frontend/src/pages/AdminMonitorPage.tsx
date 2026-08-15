@@ -15,6 +15,8 @@ import StorageIcon from '@mui/icons-material/Storage';
 import MemoryIcon from '@mui/icons-material/Memory';
 import SettingsApplicationsIcon from '@mui/icons-material/SettingsApplications';
 import CloudQueueIcon from '@mui/icons-material/CloudQueue'; // NEU: Icon für S3
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 
 import apiClient from '../apiClient';
@@ -50,6 +52,29 @@ interface HealthStatus {
     workers: { [key: string]: ServiceStatus };
 }
 
+interface MonthlyReportMonitoring {
+    settings: {
+        id: string;
+        name: string;
+        allow_automated_newsletter: boolean;
+        configured_recipients: number;
+        eligible_recipients: number;
+    } | null;
+    totals: { total: number; sent: number; failed: number; sending: number };
+    monthly: Array<{ report_month: string; total: number; sent: number; failed: number; sending: number }>;
+    deliveries: Array<{
+        id: string;
+        report_month: string;
+        status: 'sending' | 'sent' | 'failed';
+        created_at: string;
+        sent_at?: string | null;
+        failed_at?: string | null;
+        error_message?: string | null;
+        email: string;
+        recipient_name?: string | null;
+    }>;
+}
+
 const COMMON_ACTION_TYPES = [
     'LOGIN', 'LOGOUT', 'FAILED_LOGIN', 'USER_CREATED', 'USER_UPDATED', 
     'USER_DELETED', 'PASSWORD_CHANGED', 'DATA_EXPORT', 'SETTINGS_CHANGED'
@@ -77,6 +102,9 @@ const AdminMonitorPage: React.FC = () => {
     const [isDeleting, setIsDeleting] = useState(false);
     const [snackbar, setSnackbar] = useState<SnackbarState>({ open: false, message: '', severity: 'success' });
     const [globalStats, setGlobalStats] = useState({ success: 0, failed: 0 });
+    const [monthlyReportData, setMonthlyReportData] = useState<MonthlyReportMonitoring | null>(null);
+    const [monthlyReportLoading, setMonthlyReportLoading] = useState(true);
+    const [monthlyReportError, setMonthlyReportError] = useState<string | null>(null);
 
     // --- HEALTH WIDGET LOGIK ---
     const [healthData, setHealthData] = useState<HealthStatus | null>(null);
@@ -185,6 +213,23 @@ const AdminMonitorPage: React.FC = () => {
         today.setDate(today.getDate() - 30);
         setDeleteUntilDate(today.toISOString().split('T')[0]);
     }, [fetchLogs]);
+
+    const fetchMonthlyReportData = useCallback(async () => {
+        setMonthlyReportLoading(true);
+        try {
+            const response = await apiClient.get('/api/admin/monitor/monthly-report-deliveries');
+            setMonthlyReportData(response.data);
+            setMonthlyReportError(null);
+        } catch (err: any) {
+            setMonthlyReportError(err.response?.data?.message || 'Monatsreport-Statistik konnte nicht geladen werden.');
+        } finally {
+            setMonthlyReportLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchMonthlyReportData();
+    }, [fetchMonthlyReportData]);
 
     const handleFilter = () => { setPage(1); fetchLogs(1); };
     const handleClearFilters = () => {
@@ -427,6 +472,80 @@ const AdminMonitorPage: React.FC = () => {
         );
     };
 
+    const renderMonthlyReportMonitor = () => {
+        if (monthlyReportLoading && !monthlyReportData) {
+            return <Paper sx={{ p: 4, mb: 4, display: 'flex', justifyContent: 'center' }}><CircularProgress size={30} /></Paper>;
+        }
+
+        if (monthlyReportError) {
+            return <Alert severity="warning" sx={{ mb: 4 }}>{monthlyReportError}</Alert>;
+        }
+
+        if (!monthlyReportData) return null;
+
+        const { settings, totals, deliveries } = monthlyReportData;
+        const reportStatus = (status: string) => {
+            if (status === 'sent') return { label: 'Versendet', color: 'success' as const };
+            if (status === 'failed') return { label: 'Fehlgeschlagen', color: 'error' as const };
+            return { label: 'In Versand', color: 'warning' as const };
+        };
+
+        return (
+            <Box sx={{ mb: 4 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, mb: 2 }}>
+                    <Typography variant="h5" sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <EmailOutlinedIcon color="primary" /> Monatlicher E-Mail-Report
+                    </Typography>
+                    <Button size="small" startIcon={<RefreshIcon />} onClick={fetchMonthlyReportData} disabled={monthlyReportLoading}>Aktualisieren</Button>
+                </Box>
+
+                {settings && !settings.allow_automated_newsletter && (
+                    <Alert severity="warning" sx={{ mb: 2 }}>Der automatische Newsletter-Versand ist für {settings.name} deaktiviert.</Alert>
+                )}
+                {settings && settings.allow_automated_newsletter && Number(settings.eligible_recipients) === 0 && (
+                    <Alert severity="info" sx={{ mb: 2 }}>Kein aktiver Admin oder Assistent hat derzeit ein Newsletter-Opt-in. Es wird kein Monatsreport versendet.</Alert>
+                )}
+
+                <Grid container spacing={2} sx={{ mb: 2 }}>
+                    <Grid item xs={12} sm={6} md={3}><Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}><Typography variant="caption" color="text.secondary">Versandbereite Empfänger</Typography><Typography variant="h5" fontWeight="bold">{settings?.eligible_recipients || 0} / {settings?.configured_recipients || 0}</Typography></Paper></Grid>
+                    <Grid item xs={12} sm={6} md={3}><Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}><Typography variant="caption" color="text.secondary">Versendet</Typography><Typography variant="h5" fontWeight="bold" color="success.main">{totals.sent}</Typography></Paper></Grid>
+                    <Grid item xs={12} sm={6} md={3}><Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}><Typography variant="caption" color="text.secondary">Fehlgeschlagen</Typography><Typography variant="h5" fontWeight="bold" color="error.main">{totals.failed}</Typography></Paper></Grid>
+                    <Grid item xs={12} sm={6} md={3}><Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}><Typography variant="caption" color="text.secondary">In Verarbeitung</Typography><Typography variant="h5" fontWeight="bold" color="warning.main">{totals.sending}</Typography></Paper></Grid>
+                </Grid>
+
+                <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2 }}>
+                    <Table size="small">
+                        <TableHead>
+                            <TableRow>
+                                <TableCell>Berichtsmonat</TableCell>
+                                <TableCell>Empfänger</TableCell>
+                                <TableCell>Status</TableCell>
+                                <TableCell>Zeitpunkt</TableCell>
+                                <TableCell>Hinweis</TableCell>
+                            </TableRow>
+                        </TableHead>
+                        <TableBody>
+                            {deliveries.map((delivery) => {
+                                const status = reportStatus(delivery.status);
+                                const timestamp = delivery.sent_at || delivery.failed_at || delivery.created_at;
+                                return (
+                                    <TableRow key={delivery.id} hover>
+                                        <TableCell>{new Date(delivery.report_month).toLocaleDateString('de-AT', { month: 'long', year: 'numeric' })}</TableCell>
+                                        <TableCell>{delivery.recipient_name || delivery.email}<Typography variant="caption" display="block" color="text.secondary">{delivery.recipient_name ? delivery.email : ''}</Typography></TableCell>
+                                        <TableCell><Chip label={status.label} color={status.color} variant="outlined" size="small" /></TableCell>
+                                        <TableCell>{formatDate(timestamp)}</TableCell>
+                                        <TableCell sx={{ maxWidth: 360 }}><Typography variant="caption" color={delivery.error_message ? 'error' : 'text.secondary'}>{delivery.error_message || '—'}</Typography></TableCell>
+                                    </TableRow>
+                                );
+                            })}
+                            {deliveries.length === 0 && <TableRow><TableCell colSpan={5} align="center" sx={{ py: 3 }}>Noch kein Monatsreport-Versand protokolliert.</TableCell></TableRow>}
+                        </TableBody>
+                    </Table>
+                </TableContainer>
+            </Box>
+        );
+    };
+
     return (
         <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
             <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 'bold' }}>
@@ -434,6 +553,8 @@ const AdminMonitorPage: React.FC = () => {
             </Typography>
 
             {renderHealthWidget()}
+
+            {renderMonthlyReportMonitor()}
 
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, mt: 4 }}>
                 <Typography variant="h5" sx={{ fontWeight: 'bold' }}>Sicherheitsprotokolle</Typography>

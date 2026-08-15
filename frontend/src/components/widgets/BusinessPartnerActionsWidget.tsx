@@ -66,6 +66,13 @@ interface Action {
   info?: ActionInfo | null;
   legal_note?: string | null;
   legalNote?: string | null;
+  directory_provider_id?: string | null;
+  directory_provider_name?: string | null;
+  directory_provider_logo_url?: string | null;
+  software_tool_id?: string | null;
+  software_tool_name?: string | null;
+  software_tool_url?: string | null;
+  software_tool_logo_url?: string | null;
 }
 
 interface BpActionsWidgetProps extends BaseWidgetProps {
@@ -295,6 +302,19 @@ const BpActionsWidget: React.FC<BpActionsWidgetProps> = ({
 
         <Box sx={{ minWidth: 0, display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
           <CardContent sx={{ flexGrow: 1, p: isPublic ? 2.25 : 2 }}>
+            {(action.directory_provider_name || action.software_tool_name || action.promotion_type === 'sponsored') && (
+              <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ mb: 1.2 }}>
+                {action.promotion_type === 'sponsored' && (
+                  <Chip size="small" label="Sponsored" color="warning" sx={{ fontWeight: 900 }} />
+                )}
+                {action.directory_provider_name && (
+                  <Chip size="small" variant="outlined" label={`Anbieter: ${action.directory_provider_name}`} sx={{ fontWeight: 800 }} />
+                )}
+                {action.software_tool_name && (
+                  <Chip size="small" label={`Software: ${action.software_tool_name}`} sx={{ bgcolor: alpha(customPrimary, 0.1), color: customPrimary, fontWeight: 900 }} />
+                )}
+              </Stack>
+            )}
             <Typography gutterBottom variant={isHero ? 'h5' : 'h6'} component="div" sx={{ fontWeight: 950, lineHeight: 1.15, color: isPublic ? darkBlue : 'inherit' }}>
               {action.title}
             </Typography>

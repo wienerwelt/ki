@@ -27,6 +27,7 @@ import QrCodeIcon from '@mui/icons-material/QrCode';
 import CloseIcon from '@mui/icons-material/Close';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import BusinessIcon from '@mui/icons-material/Business';
 
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -38,12 +39,12 @@ export interface UserProfileData {
     username?: string;
     profile_image_url: string | null;
     membership_level?: string;
-    organization_name?: string;
-    business_partner_name?: string;
+    organization_name?: string | null;
+    business_partner_name?: string | null;
     role?: string;
     linkedin_url?: string;
     email?: string;
-    member_since?: string;
+    member_since?: string | null;
     contribution_score?: number;
     last_login_at?: string;
     tags?: string[] | null;
@@ -90,6 +91,14 @@ const normalizeExternalUrl = (url?: string) => {
     }
 
     return `https://${url}`;
+};
+
+const formatMemberSince = (value?: string | null): string | null => {
+    if (!value) return null;
+    const date = new Date(value);
+    const now = new Date();
+    if (!Number.isFinite(date.getTime()) || date.getTime() > now.getTime() + 24 * 60 * 60 * 1000) return null;
+    return date.toLocaleDateString('de-AT', { month: 'long', year: 'numeric' });
 };
 
 // --- Avatar-Komponente ---
@@ -189,8 +198,14 @@ export const ProfileCard: React.FC<{
         'Unbekanntes Mitglied';
 
     const orgName =
-        user.organization_name ||
-        user.business_partner_name;
+        user.organization_name?.trim() ||
+        user.business_partner_name?.trim() ||
+        'Nicht angegeben';
+
+    const expertise = Array.from(new Set(
+        (user.tags || []).map((tag) => String(tag || '').trim()).filter(Boolean)
+    ));
+    const memberSinceLabel = formatMemberSince(user.member_since);
 
     const linkedinUrl = normalizeExternalUrl(
         user.linkedin_url
@@ -301,9 +316,14 @@ export const ProfileCard: React.FC<{
                             sx={{ mt: 0.5 }}
                         >
                             {getRoleLabel(user.role)}
-
-                            {orgName && ` bei ${orgName}`}
                         </Typography>
+
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75, mt: 1 }}>
+                            <BusinessIcon sx={{ fontSize: 17, color: 'text.secondary', mt: '2px' }} />
+                            <Typography variant="body2" color="text.primary">
+                                Organisation: <strong>{orgName}</strong>
+                            </Typography>
+                        </Box>
 
                         <Typography
                             variant="caption"
@@ -324,7 +344,7 @@ export const ProfileCard: React.FC<{
                     </Box>
 
                     {/* Kompetenzen */}
-                    {user.tags && user.tags.length > 0 && (
+                    {expertise.length > 0 && (
                         <Box sx={{ mt: 2 }}>
                             <Typography
                                 variant="caption"
@@ -338,7 +358,7 @@ export const ProfileCard: React.FC<{
                                 }}
                             >
                                 <LocalOfferIcon fontSize="inherit" />
-                                Kompetenzen
+                                Experte für
                             </Typography>
 
                             <Box
@@ -348,7 +368,7 @@ export const ProfileCard: React.FC<{
                                     gap: 0.5,
                                 }}
                             >
-                                {user.tags.map((tag, index) => (
+                                {expertise.map((tag, index) => (
                                     <Chip
                                         key={`${tag}-${index}`}
                                         label={tag}
@@ -378,18 +398,9 @@ export const ProfileCard: React.FC<{
                                 <EventIcon fontSize="inherit" />
 
                                 <Typography variant="caption">
-                                    Seit{' '}
-                                    {user.member_since
-                                        ? new Date(
-                                            user.member_since
-                                        ).toLocaleDateString(
-                                            'de-DE',
-                                            {
-                                                month: 'short',
-                                                year: 'numeric',
-                                            }
-                                        )
-                                        : '-'}
+                                    {memberSinceLabel
+                                        ? `Angemeldet seit ${memberSinceLabel}`
+                                        : 'Anmeldedatum nicht verfügbar'}
                                 </Typography>
                             </Box>
                         </Grid>

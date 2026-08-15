@@ -19,6 +19,7 @@ exports.getMyBusinessPartner = async (req, res) => {
             `SELECT
                 bp.id,
                 bp.name,
+                bp.slug,
                 bp.dashboard_title,
                 bp.address,
                 bp.logo_url,

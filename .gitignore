@@ -72,6 +72,7 @@ docker-data/
 pg-rescue/
 *.sql
 *.dump
+!backend/migrations/*.sql
 
 # =========================================================
 # IDE / Editor
@@ -101,6 +102,8 @@ vite.config.*.timestamp-*
 # =========================================================
 Startanleitung.txt
 todo.txt
+/releases/
+/.deploy/
 
 # optional SQL working directory
 /sql/

@@ -55,6 +55,8 @@ interface Provider {
   is_recommended: boolean;
   average_rating?: number | string;
   review_count?: number | string;
+  software_count?: number;
+  action_count?: number;
   categories: string[];
   tags: string[];
   locations?: ProviderLocation[];
@@ -583,6 +585,13 @@ const InternalDirectoryPage: React.FC = () => {
 
                     {provider.is_recommended && (
                       <Chip icon={<VerifiedUserIcon fontSize="small" />} label="Empfohlen" size="small" color="primary" sx={{ mb: 2, height: 20, fontSize: '0.7rem', fontWeight: 'bold' }} />
+                    )}
+
+                    {(Number(provider.software_count) > 0 || Number(provider.action_count) > 0) && (
+                      <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 1.5 }}>
+                        {Number(provider.software_count) > 0 && <Chip size="small" label={`Software ${provider.software_count}`} color="info" variant="outlined" />}
+                        {Number(provider.action_count) > 0 && <Chip size="small" label={`Angebote ${provider.action_count}`} color="secondary" variant="outlined" />}
+                      </Box>
                     )}
 
                     <Typography variant="body2" color="text.secondary" sx={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', mb: 2 }}>

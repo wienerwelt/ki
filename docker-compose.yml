@@ -6,6 +6,12 @@ x-logging: &default-logging
       max-size: "10m"
       max-file: "3"
 
+x-service-dependencies: &service-dependencies
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+
 services:
   postgres:
     <<: *default-logging
@@ -15,6 +21,12 @@ services:
     env_file: .env
     volumes:
       - mobiliti_dashboard_pg17_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   redis:
     <<: *default-logging
@@ -23,6 +35,12 @@ services:
     restart: unless-stopped
     volumes:
       - mobiliti_dashboard_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   api:
     <<: *default-logging
@@ -32,14 +50,18 @@ services:
     container_name: mobiliti-dashboard-api
     restart: unless-stopped
     env_file: .env
-    depends_on:
-      - postgres
-      - redis
+    depends_on: *service-dependencies
     volumes:
       - mobiliti_dashboard_public_directory_logos:/app/public/directory_logos
       - mobiliti_dashboard_public_logos:/app/public/logos
       - mobiliti_dashboard_public_social_media:/app/public/social-media
       - mobiliti_dashboard_public_grafiken:/app/public/grafiken
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/health').then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1));"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   worker-ai:
     <<: *default-logging
@@ -47,9 +69,7 @@ services:
     container_name: mobiliti-worker-ai
     restart: unless-stopped
     env_file: .env
-    depends_on:
-      - postgres
-      - redis
+    depends_on: *service-dependencies
 
   worker-scrape:
     <<: *default-logging
@@ -58,9 +78,7 @@ services:
     restart: unless-stopped
     shm_size: '1gb'
     env_file: .env
-    depends_on:
-      - postgres
-      - redis
+    depends_on: *service-dependencies
 
   worker-mail:
     <<: *default-logging
@@ -68,9 +86,7 @@ services:
     container_name: mobiliti-worker-mail
     restart: unless-stopped
     env_file: .env
-    depends_on:
-      - postgres
-      - redis
+    depends_on: *service-dependencies
 
   worker-data:
     <<: *default-logging
@@ -78,9 +94,7 @@ services:
     container_name: mobiliti-worker-data
     restart: unless-stopped
     env_file: .env
-    depends_on:
-      - postgres
-      - redis
+    depends_on: *service-dependencies
 
   worker-funding:
     <<: *default-logging
@@ -88,9 +102,7 @@ services:
     container_name: mobiliti-worker-funding
     restart: unless-stopped
     env_file: .env
-    depends_on:
-      - postgres
-      - redis
+    depends_on: *service-dependencies
 
 volumes:
   mobiliti_dashboard_pg17_data:

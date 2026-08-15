@@ -24,6 +24,7 @@ export interface WidgetPaperProps {
     loading?: boolean;
     error?: string | null;
     isPublic?: boolean; 
+    publicHeaderColor?: string;
 }
 
 const WidgetPaper: React.FC<WidgetPaperProps> = ({ 
@@ -38,6 +39,7 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
     loading = false,
     error = null,
     isPublic = false,
+    publicHeaderColor,
     ...rest
 }) => {
     const navigate = useNavigate();
@@ -140,8 +142,9 @@ const WidgetPaper: React.FC<WidgetPaperProps> = ({
         
         // HIER IST DER FIX: Einheitlicher Hintergrund für ALLE Header im Public Mode
         backgroundColor: isPublic 
-            ? 'rgba(0, 0, 0, 0.2)'  // <--- Das sorgt für den einheitlichen Glass-Header
+            ? (publicHeaderColor || 'rgba(0, 0, 0, 0.2)')
             : (theme.palette.mode === 'dark' ? 'background.paper' : '#f8fafc'),
+        color: isPublic && publicHeaderColor ? '#fff' : 'inherit',
             
         minHeight: isMobile ? 44 : 48,
     }}

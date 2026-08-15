@@ -2,6 +2,7 @@ const pool = require('../config/db');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const s3Client = require('../config/s3Client.js');
 const { v4: uuidv4 } = require('uuid');
+const { assertActionLinks } = require('./softwareController');
 
 // UUID-Helper: akzeptiert alle RFC4122 UUID-Versionen, nicht nur v4.
 const isValidUUID = (uuid) =>
@@ -126,6 +127,8 @@ const normalizeActionPayload = (body, fallbackBusinessPartnerId) => {
         secondary_cta_label: normalizeOptionalText(payload.secondary_cta_label),
         priority: normalizeOptionalInteger(payload.priority, 0),
         info: normalizeInfo(payload.info),
+        directory_provider_id: normalizeOptionalText(payload.directory_provider_id),
+        software_tool_id: normalizeOptionalText(payload.software_tool_id),
     };
 };
 
@@ -177,6 +180,8 @@ const buildInsertValues = (payload) => [
     payload.secondary_cta_label,
     payload.priority,
     JSON.stringify(payload.info || {}),
+    payload.directory_provider_id,
+    payload.software_tool_id,
 ];
 
 // GET alle Aktionen mit Filterung, Suche und Sortierung
@@ -194,9 +199,13 @@ exports.getActionsForBusinessPartner = async (req, res) => {
 
         if (role === 'admin') {
             query = `
-                SELECT a.*, bp.name as business_partner_name
+                SELECT a.*, bp.name as business_partner_name,
+                       dp.name AS directory_provider_name,
+                       st.name AS software_tool_name
                 FROM business_partner_actions a
                 LEFT JOIN business_partners bp ON a.business_partner_id = bp.id
+                LEFT JOIN directory_providers dp ON dp.id = a.directory_provider_id
+                LEFT JOIN software_tools st ON st.id = a.software_tool_id
             `;
 
             if (businessPartnerId) {
@@ -214,12 +223,19 @@ exports.getActionsForBusinessPartner = async (req, res) => {
                     OR a.content_text ILIKE $${paramIndex}
                     OR a.promotion_label ILIKE $${paramIndex}
                     OR bp.name ILIKE $${paramIndex}
+                    OR dp.name ILIKE $${paramIndex}
+                    OR st.name ILIKE $${paramIndex}
                 )`);
                 queryParams.push(`%${search}%`);
                 paramIndex++;
             }
         } else if (role === 'assistenz' && business_partner_id) {
-            query = `SELECT a.* FROM business_partner_actions a`;
+            query = `
+                SELECT a.*, dp.name AS directory_provider_name, st.name AS software_tool_name
+                FROM business_partner_actions a
+                LEFT JOIN directory_providers dp ON dp.id = a.directory_provider_id
+                LEFT JOIN software_tools st ON st.id = a.software_tool_id
+            `;
             whereClauses.push(`a.business_partner_id = $${paramIndex}`);
             queryParams.push(business_partner_id);
             paramIndex++;
@@ -229,6 +245,8 @@ exports.getActionsForBusinessPartner = async (req, res) => {
                     a.title ILIKE $${paramIndex}
                     OR a.content_text ILIKE $${paramIndex}
                     OR a.promotion_label ILIKE $${paramIndex}
+                    OR dp.name ILIKE $${paramIndex}
+                    OR st.name ILIKE $${paramIndex}
                 )`);
                 queryParams.push(`%${search}%`);
                 paramIndex++;
@@ -279,6 +297,11 @@ exports.createAction = async (req, res) => {
         }
 
         const partner = await assertBusinessPartnerExists(target_bp_id);
+        await assertActionLinks(pool, {
+            businessPartnerId: target_bp_id,
+            providerId: payload.directory_provider_id,
+            softwareToolId: payload.software_tool_id,
+        });
         console.info('[BP-Actions] createAction', {
             role,
             business_partner_id: target_bp_id,
@@ -293,13 +316,13 @@ exports.createAction = async (req, res) => {
                 is_active, start_date, end_date,
                 target_widget_category, target_region, is_click_tracking_enabled,
                 promotion_label, promotion_type, cta_label, secondary_image_url, secondary_link_url,
-                secondary_cta_label, priority, info
+                secondary_cta_label, priority, info, directory_provider_id, software_tool_id
              ) VALUES (
                 $1, $2, $3, $4, $5, $6,
                 $7, $8, $9,
                 $10, $11, $12,
                 $13, $14, $15, $16, $17,
-                $18, $19, $20::jsonb
+                $18, $19, $20::jsonb, $21, $22
              ) RETURNING *`,
             buildInsertValues(payload)
         );
@@ -337,6 +360,11 @@ exports.updateAction = async (req, res) => {
         }
 
         await assertBusinessPartnerExists(target_bp_id);
+        await assertActionLinks(pool, {
+            businessPartnerId: target_bp_id,
+            providerId: payload.directory_provider_id,
+            softwareToolId: payload.software_tool_id,
+        });
 
         const updatedAction = await pool.query(
             `UPDATE business_partner_actions SET
@@ -360,8 +388,10 @@ exports.updateAction = async (req, res) => {
                 secondary_cta_label = $18,
                 priority = $19,
                 info = $20::jsonb,
+                directory_provider_id = $21,
+                software_tool_id = $22,
                 updated_at = NOW()
-             WHERE id = $21 RETURNING *`,
+             WHERE id = $23 RETURNING *`,
             [...buildInsertValues(payload), id]
         );
         res.json(updatedAction.rows[0]);
@@ -440,6 +470,9 @@ exports.copyAction = async (req, res) => {
         if (role === 'assistenz' && original.business_partner_id !== business_partner_id) {
             return res.status(403).json({ message: 'Zugriff verweigert.' });
         }
+        if (!original.directory_provider_id) {
+            return res.status(400).json({ message: 'Vor dem Kopieren muss der Altbestand einem Anbieter aus dem Branchenverzeichnis zugeordnet werden.' });
+        }
 
         const newAction = await pool.query(
             `INSERT INTO business_partner_actions (
@@ -447,13 +480,13 @@ exports.copyAction = async (req, res) => {
                 is_active, start_date, end_date,
                 target_widget_category, target_region, is_click_tracking_enabled,
                 promotion_label, promotion_type, cta_label, secondary_image_url, secondary_link_url,
-                secondary_cta_label, priority, info
+                secondary_cta_label, priority, info, directory_provider_id, software_tool_id
              ) VALUES (
                 $1, $2, $3, $4, $5, $6,
                 false, $7, $8,
                 $9, $10, $11,
                 $12, $13, $14, $15, $16,
-                $17, $18, $19::jsonb
+                $17, $18, $19::jsonb, $20, $21
              ) RETURNING *`,
             [
                 original.business_partner_id,
@@ -475,6 +508,8 @@ exports.copyAction = async (req, res) => {
                 original.secondary_cta_label,
                 original.priority || 0,
                 JSON.stringify(original.info || {}),
+                original.directory_provider_id,
+                original.software_tool_id,
             ]
         );
         res.status(201).json(newAction.rows[0]);

@@ -1,7 +1,7 @@
 services:
   postgres:
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - ./backups:/backups
 
@@ -19,6 +19,7 @@ services:
       - /var/www/vhosts/mobiliti.at/httpdocs/dashboard/backend/public/logos:/app/public/logos
       - /var/www/vhosts/mobiliti.at/httpdocs/dashboard/backend/public/social-media:/app/public/social-media
       - /var/www/vhosts/mobiliti.at/httpdocs/dashboard/backend/public/grafiken:/app/public/grafiken
+      - /var/www/vhosts/mobiliti.at/httpdocs/dashboard/frontend/dist:/frontend/dist:ro
 
   worker-ai:
     command: npm run start:ai

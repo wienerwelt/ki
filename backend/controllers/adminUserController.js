@@ -46,6 +46,7 @@ exports.getAllUsers = async (req, res) => {
         last_name, 
         email, 
         organization_name,
+        search,
         limit = 50, 
         page = 1 
     } = req.query;
@@ -101,6 +102,20 @@ exports.getAllUsers = async (req, res) => {
             queryParams.push(`%${organization_name.trim()}%`);
             paramIndex++;
         }
+        if (search && search.trim() !== '') {
+            const normalizedSearch = search.trim().slice(0, 200);
+            whereClauses.push(`(
+                u.username ILIKE $${paramIndex}
+                OR u.first_name ILIKE $${paramIndex}
+                OR u.last_name ILIKE $${paramIndex}
+                OR CONCAT_WS(' ', u.first_name, u.last_name) ILIKE $${paramIndex}
+                OR u.email ILIKE $${paramIndex}
+                OR u.organization_name ILIKE $${paramIndex}
+                OR bp.name ILIKE $${paramIndex}
+            )`);
+            queryParams.push(`%${normalizedSearch}%`);
+            paramIndex++;
+        }
 
         // Klauseln zusammenführen
         if (whereClauses.length > 0) {
@@ -124,8 +139,8 @@ exports.getAllUsers = async (req, res) => {
             ORDER BY u.last_name ASC, u.first_name ASC
         `;
 
-        const parsedLimit = parseInt(limit, 10);
-        const parsedPage = parseInt(page, 10);
+        const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
+        const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
         const offset = (parsedPage - 1) * parsedLimit;
 
         dataQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;

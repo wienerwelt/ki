@@ -5,6 +5,7 @@ import type { Layouts } from 'react-grid-layout';
 export interface Region {
   id: string;
   name: string;
+  slug?: string | null;
   code: string;
   is_default: boolean;
 }

@@ -195,25 +195,27 @@ const fetchUsers = useCallback(async (currentPage = 1, bpFilterOverride?: string
     if (searchLastName) userUrl += `&last_name=${encodeURIComponent(searchLastName)}`;
     if (searchEmail) userUrl += `&email=${encodeURIComponent(searchEmail)}`;
     if (searchOrgName) userUrl += `&organization_name=${encodeURIComponent(searchOrgName)}`;
+    if (debouncedSearch.trim()) userUrl += `&search=${encodeURIComponent(debouncedSearch.trim())}`;
     
     const userRes = await apiClient.get(userUrl);
     const responseData = userRes.data;
     const newUsers = asArray<User>(responseData.users || responseData);
     
-    setTotalUsersCount(responseData.total_count || newUsers.length);
+    const totalCount = Number(responseData.total_count ?? newUsers.length);
+    setTotalUsersCount(totalCount);
 
     if (currentPage === 1) {
         setUsers(newUsers);
     } else {
         setUsers(prev => [...prev, ...newUsers]);
     }
-    setHasMore(newUsers.length === 50);
+    setHasMore(currentPage * 50 < totalCount);
   } catch (err: any) {
     setError(err?.response?.data?.message || 'Fehler beim Laden.');
   } finally {
       setLoading(false);
   }
-}, [isAdmin, isAssistant, adminFilterBpId, loggedInUser?.business_partner_id, selectedBpFilter, searchFirstName, searchLastName, searchEmail, searchOrgName]);
+}, [isAdmin, isAssistant, adminFilterBpId, loggedInUser?.business_partner_id, selectedBpFilter, searchFirstName, searchLastName, searchEmail, searchOrgName, debouncedSearch]);
 
   useEffect(() => {
     const fetchDropdownData = async () => {
@@ -423,6 +425,7 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         (user.first_name || '').toLowerCase().includes(q) ||
         (user.last_name || '').toLowerCase().includes(q) ||
         (user.organization_name || '').toLowerCase().includes(q) ||
+        (user.business_partner_name || '').toLowerCase().includes(q) ||
         (user.email || '').toLowerCase().includes(q)
       );
     }

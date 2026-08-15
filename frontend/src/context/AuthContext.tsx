@@ -12,6 +12,7 @@ import apiClient from '../apiClient';
 import { Region } from '../types/dashboard.types';
 import i18n from 'i18next';
 import posthog from 'posthog-js';
+import { getPartnerPublicPath, rememberPartnerSlug } from '../utils/partnerNavigation';
 
 interface ColorScheme {
   id: string;
@@ -56,6 +57,8 @@ export interface UserPayload {
 export interface BusinessPartnerData {
   id: string;
   name: string;
+  slug?: string | null;
+  url_businesspartner?: string | null;
   address: string | null;
   logo_url: string | null;
   subscription_start_date: string | null;
@@ -82,7 +85,7 @@ interface AuthContextType {
   isLoading: boolean;
   tokenExp: number | null;
   login: (token: string, userData: UserPayload) => void;
-  logout: () => void;
+  logout: () => string;
   renewSession: () => Promise<void>;
   updateUser: (newUserData: Partial<UserPayload>) => void;
   fetchBusinessPartnerData: () => Promise<void>;
@@ -224,6 +227,7 @@ const fetchBusinessPartnerData = useCallback(async () => {
     try {
       const response = await apiClient.get('/api/data/dashboard/config');
       const { businessPartner: bp } = response.data; 
+      rememberPartnerSlug(bp?.slug);
       setBusinessPartner(bp || null);
     } catch (error: any) {
       // AbortErrors ignorieren, um Branding-Reset zu verhindern!
@@ -250,6 +254,7 @@ const setPartnerByCode = useCallback(async (code: string) => {
         color_scheme: data.theme // Wir mappen "theme" auf "color_scheme"
       };
       
+      rememberPartnerSlug(fullPartnerData.slug);
       setBusinessPartner(fullPartnerData);
       console.log("Branding erfolgreich geladen:", fullPartnerData);
     }
@@ -352,7 +357,8 @@ useEffect(() => {
     });
   }, []);
 
-  const logout = () => {
+  const logout = useCallback(() => {
+    const publicPath = getPartnerPublicPath(businessPartner?.slug);
     setStoredToken(null);
     setUser(null);
     setBusinessPartner(null);
@@ -360,7 +366,8 @@ useEffect(() => {
     setConfigLoaded(false);
     setUserTags([]);
     posthog.reset();
-  };
+    return publicPath;
+  }, [businessPartner?.slug]);
   
   const renewSession = async () => {};
 

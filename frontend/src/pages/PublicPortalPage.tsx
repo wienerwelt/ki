@@ -35,6 +35,7 @@ import {
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
@@ -62,6 +63,10 @@ import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
 import StorefrontIcon from '@mui/icons-material/Storefront';
 import UpdateIcon from '@mui/icons-material/Update';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
+import MapOutlinedIcon from '@mui/icons-material/MapOutlined';
+import ViewListOutlinedIcon from '@mui/icons-material/ViewListOutlined';
+import AppsOutlinedIcon from '@mui/icons-material/AppsOutlined';
+import LocalOfferOutlinedIcon from '@mui/icons-material/LocalOfferOutlined';
 
 // --- WIDGETS (lazy) ---
 const EVStationWidget = lazy(() => import('../components/widgets/EVStationWidget'));
@@ -71,24 +76,38 @@ const DailyCockpitWidget = lazy(() => import('../components/widgets/DailyCockpit
 const EventCalendarWidget = lazy(() => import('../components/widgets/EventCalendarWidget'));
 const FundingWidget = lazy(() => import('../components/widgets/FundingWidget'));
 const BpActionsWidget = lazy(() => import('../components/widgets/BusinessPartnerActionsWidget'));
+const SoftwareCatalogWidget = lazy(() => import('../components/widgets/SoftwareCatalogWidget'));
 
 interface PublicPortalPageProps {
     isRegister?: boolean;
 }
 
+const DEFAULT_COMPANY_LOGO = '/logos/default-company.svg';
+
 // --- HILFSKOMPONENTE FÜR FEHLENDE BILDER ---
 const ImageWithFallback = ({ src, alt, fallbackColor, sx, ...props }: any) => {
     const [hasError, setHasError] = useState(false);
 
-    if (!src || hasError) {
-        return (
-            <Box sx={{ ...sx, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: alpha(fallbackColor || '#0B2442', 0.08), borderRadius: 1 }}>
-                <StorefrontIcon sx={{ color: alpha(fallbackColor || '#0B2442', 0.4), fontSize: sx?.maxHeight ? Number(sx.maxHeight) * 0.5 : 24 }} />
-            </Box>
-        );
-    }
-    return <Box component="img" src={src} alt={alt} sx={sx} onError={() => setHasError(true)} {...props} />;
+    useEffect(() => setHasError(false), [src]);
+
+    return (
+        <Box
+            component="img"
+            src={!src || hasError ? DEFAULT_COMPANY_LOGO : src}
+            alt={alt}
+            sx={{ bgcolor: alpha(fallbackColor || '#0B2442', 0.04), borderRadius: 1, ...sx }}
+            onError={() => setHasError(true)}
+            {...props}
+        />
+    );
 };
+
+const escapeMapHtml = (value: unknown) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 
 
 const getEventCategoryToken = (item: any): string => {
@@ -166,9 +185,14 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     const [isHeroOpen, setIsHeroOpen] = useState(true);
 
     const [publicProviders, setPublicProviders] = useState<any[]>([]);
+    const [networkProviders, setNetworkProviders] = useState<any[]>([]);
     const [isFetchingDirectory, setIsFetchingDirectory] = useState(false);
     const [page, setPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
+    const [directoryTotal, setDirectoryTotal] = useState(0);
+    const [directoryView, setDirectoryView] = useState<'list' | 'map'>('list');
+    const [mapProviders, setMapProviders] = useState<any[]>([]);
+    const [isFetchingMap, setIsFetchingMap] = useState(false);
 
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -183,6 +207,8 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
 
     const mapContainerRef = useRef<HTMLDivElement | null>(null);
     const mapInstanceRef = useRef<any>(null);
+    const directoryMapContainerRef = useRef<HTMLDivElement | null>(null);
+    const directoryMapInstanceRef = useRef<any>(null);
 
     const theme = useTheme();
     const location = useLocation();
@@ -218,6 +244,12 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     }, [isPageLoading, isRegisterMode]);
 
     useEffect(() => {
+        if (!isPageLoading && (location.pathname.toLowerCase() === '/login' || searchParams.get('login') === '1')) {
+            setLoginDialogOpen(true);
+        }
+    }, [isPageLoading, location.pathname, searchParams]);
+
+    useEffect(() => {
         const timer = setTimeout(() => setIsHeroOpen(false), 3000);
         return () => clearTimeout(timer);
     }, []);
@@ -235,8 +267,79 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     const dashboardTitle = partner?.dashboard_title || 'Ihr Branchen-Dashboard';
     const defaultRegion = publicContext?.defaultRegion || 'AT';
     const allowedWidgets = publicContext?.allowedWidgets || [];
-    const tenantStats = publicContext?.stats || { total_directory_entries: 0, community_members: 0, community_activity: 0 };
-    const loginRoute = `/login${urlPartnerCode ? `?partner=${encodeURIComponent(urlPartnerCode)}` : ''}`;
+    const tenantStats = publicContext?.stats || { total_directory_entries: 0, total_software_entries: 0, community_members: 0, community_activity: 0 };
+    const canonicalPartnerSlug = partner?.slug || (partnerSlug ? String(partnerSlug) : '');
+    const canonicalPartnerPath = canonicalPartnerSlug ? `/${encodeURIComponent(canonicalPartnerSlug)}` : '/';
+    const loginRoute = `${canonicalPartnerPath}${canonicalPartnerPath.includes('?') ? '&' : '?'}login=1`;
+
+    useEffect(() => {
+        if (!partner?.slug || location.pathname.toLowerCase() !== '/login') return;
+        navigate(`/${encodeURIComponent(partner.slug)}?login=1`, { replace: true });
+    }, [partner?.slug, location.pathname, navigate]);
+
+    useEffect(() => {
+        if (!partner) return;
+        const canonicalUrl = `${window.location.origin}${canonicalPartnerPath}`;
+        const seoTitle = `${partner.dashboard_title || partner.name} | Branchenverzeichnis & Software-Lexikon`;
+        const seoDescription = `${partner.name}: öffentliches Branchenverzeichnis, Software-Lexikon, Termine und ausgewählte Brancheninformationen.`.slice(0, 160);
+        const absoluteLogo = logoUrl
+            ? (/^https?:\/\//i.test(logoUrl) ? logoUrl : `${window.location.origin}${logoUrl.startsWith('/') ? '' : '/'}${logoUrl}`)
+            : `${window.location.origin}/og-image.jpg`;
+
+        const setNamedMeta = (name: string, content: string) => {
+            let element = document.head.querySelector(`meta[name="${name}"]`) as HTMLMetaElement | null;
+            if (!element) {
+                element = document.createElement('meta');
+                element.name = name;
+                document.head.appendChild(element);
+            }
+            element.content = content;
+        };
+        const setPropertyMeta = (property: string, content: string) => {
+            let element = document.head.querySelector(`meta[property="${property}"]`) as HTMLMetaElement | null;
+            if (!element) {
+                element = document.createElement('meta');
+                element.setAttribute('property', property);
+                document.head.appendChild(element);
+            }
+            element.content = content;
+        };
+
+        document.title = seoTitle;
+        document.documentElement.lang = 'de';
+        setNamedMeta('description', seoDescription);
+        setNamedMeta('robots', 'index,follow,max-image-preview:large');
+        setPropertyMeta('og:type', 'website');
+        setPropertyMeta('og:title', seoTitle);
+        setPropertyMeta('og:description', seoDescription);
+        setPropertyMeta('og:url', canonicalUrl);
+        setPropertyMeta('og:image', absoluteLogo);
+        setPropertyMeta('og:site_name', partner.name);
+
+        let canonical = document.head.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
+        if (!canonical) {
+            canonical = document.createElement('link');
+            canonical.rel = 'canonical';
+            document.head.appendChild(canonical);
+        }
+        canonical.href = canonicalUrl;
+
+        let structuredData = document.getElementById('tenant-public-structured-data') as HTMLScriptElement | null;
+        if (!structuredData) {
+            structuredData = document.createElement('script');
+            structuredData.id = 'tenant-public-structured-data';
+            structuredData.type = 'application/ld+json';
+            document.head.appendChild(structuredData);
+        }
+        structuredData.textContent = JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'Organization',
+            name: partner.name,
+            url: canonicalUrl,
+            logo: absoluteLogo,
+            sameAs: partner.url_businesspartner ? [partner.url_businesspartner] : undefined,
+        });
+    }, [partner, canonicalPartnerPath, logoUrl]);
     
     // --- MANUELLE BILD-WEICHE ---
     const customHeroImages: Record<string, string> = {
@@ -293,6 +396,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
                     regions: Array.isArray(nextFilters.regions) ? nextFilters.regions : [],
                 });
                 setHasMore(typeof res.data.hasMore === 'boolean' ? res.data.hasMore : newData.length >= 12);
+                setDirectoryTotal(Number(res.data.total || 0));
                 setPublicProviders(prev => page === 1 ? newData : [...prev, ...newData]);
             } catch (error) {
                 showSnackbar('Fehler beim Laden der Anbieter', 'error');
@@ -303,6 +407,47 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
 
         fetchDirectory();
     }, [partner?.id, page, debouncedSearch, selectedCategory, selectedRegion, showSnackbar]);
+
+    useEffect(() => {
+        if (directoryView !== 'map' || !partner?.id) return;
+        let active = true;
+
+        const fetchMapProviders = async () => {
+            setIsFetchingMap(true);
+            try {
+                const params = new URLSearchParams({ partnerId: partner.id, page: '1', limit: '200' });
+                if (debouncedSearch) params.append('search', debouncedSearch);
+                if (selectedCategory !== 'all') params.append('category', selectedCategory);
+                if (selectedRegion !== 'all') params.append('region', selectedRegion);
+                const response = await apiClient.get(`/api/public/directory?${params.toString()}`);
+                if (!active) return;
+                setMapProviders(response.data.data || []);
+                setDirectoryTotal(Number(response.data.total || 0));
+            } catch (error) {
+                if (active) showSnackbar('Kartenansicht konnte nicht geladen werden.', 'error');
+            } finally {
+                if (active) setIsFetchingMap(false);
+            }
+        };
+
+        fetchMapProviders();
+        return () => { active = false; };
+    }, [directoryView, partner?.id, debouncedSearch, selectedCategory, selectedRegion, showSnackbar]);
+
+    useEffect(() => {
+        if (!partner?.id) return;
+        let active = true;
+
+        apiClient.get('/api/public/directory', {
+            params: { partnerId: partner.id, page: 1, limit: 200 },
+        }).then((response) => {
+            if (active) setNetworkProviders(response.data?.data || []);
+        }).catch(() => {
+            if (active) setNetworkProviders([]);
+        });
+
+        return () => { active = false; };
+    }, [partner?.id]);
 
     const categoryOptions = useMemo(() => {
         if (directoryFilters.categories.length > 0) {
@@ -426,6 +571,59 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         return `${baseUrl}${apiPrefix}${cleanUrl}`;
     }
 
+    useEffect(() => {
+        if (directoryView !== 'map' || !directoryMapContainerRef.current || isFetchingMap) return;
+
+        if (directoryMapInstanceRef.current) {
+            directoryMapInstanceRef.current.remove();
+            directoryMapInstanceRef.current = null;
+        }
+
+        const map = L.map(directoryMapContainerRef.current, { scrollWheelZoom: false });
+        directoryMapInstanceRef.current = map;
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap-Mitwirkende',
+            maxZoom: 19,
+        }).addTo(map);
+
+        const bounds: L.LatLngExpression[] = [];
+        mapProviders.forEach((provider) => {
+            (provider.locations || []).forEach((providerLocation: any) => {
+                const latitude = Number(providerLocation.latitude);
+                const longitude = Number(providerLocation.longitude);
+                if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
+                const rawLogoUrl = provider.logo_url ? getAssetUrl(provider.logo_url) : DEFAULT_COMPANY_LOGO;
+                const logoUrl = /^(https?:\/\/|\/)/i.test(rawLogoUrl) ? rawLogoUrl : DEFAULT_COMPANY_LOGO;
+                const providerName = escapeMapHtml(provider.name || 'Brancheneintrag');
+                const visual = `<img src="${escapeMapHtml(logoUrl)}" alt="" style="width:42px;height:42px;object-fit:contain;display:block" />`;
+                const icon = L.divIcon({
+                    className: 'mobiliti-directory-logo-marker',
+                    html: `<a href="#branchenverzeichnis" aria-label="${providerName} öffnen" style="width:52px;height:52px;border-radius:16px;background:#fff;border:2px solid #061b33;box-shadow:0 8px 22px rgba(6,27,51,.24);display:flex;align-items:center;justify-content:center;overflow:hidden;text-decoration:none;padding:4px;box-sizing:border-box">${visual}</a>`,
+                    iconSize: [52, 52],
+                    iconAnchor: [26, 26],
+                });
+                const marker = L.marker([latitude, longitude], { icon }).addTo(map);
+                const markerImage = marker.getElement()?.querySelector('img');
+                markerImage?.addEventListener('error', () => {
+                    markerImage.setAttribute('src', DEFAULT_COMPANY_LOGO);
+                }, { once: true });
+                marker.bindTooltip(providerName, { direction: 'top', offset: [0, -22] });
+                marker.on('click', () => { setSelectedTeaserProvider(provider); setTeaserTab(0); });
+                bounds.push([latitude, longitude]);
+            });
+        });
+
+        if (bounds.length > 0) map.fitBounds(bounds, { padding: [48, 48], maxZoom: 12 });
+        else map.setView([47.6, 13.7], 6);
+        window.setTimeout(() => map.invalidateSize(), 0);
+
+        return () => {
+            map.remove();
+            if (directoryMapInstanceRef.current === map) directoryMapInstanceRef.current = null;
+        };
+    }, [directoryView, mapProviders, isFetchingMap]);
+
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
     const handleLoginCta = () => {
@@ -441,7 +639,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
     };
 
-    const navItems = ['Für Mitglieder', 'Branchenverzeichnis', 'News & Insights', 'Community', 'Statistiken', 'Über uns'];
+    const navItems = ['Für Mitglieder', 'Branchenverzeichnis', 'Software', 'News & Insights', 'Community', 'Über uns'];
 
     const handleNavItemClick = (item: string) => {
         setMobileNavOpen(false);
@@ -449,6 +647,11 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
 
         if (item === 'Branchenverzeichnis') {
             handleScrollToDirectory();
+            return;
+        }
+
+        if (item === 'Software') {
+            document.getElementById('software-lexikon')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             return;
         }
 
@@ -484,7 +687,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         { value: tenantStats.events_per_year ? formatNumber(Number(tenantStats.events_per_year)) : 'Live', label: 'Veranstaltungen/Jahr', helper: 'Termine & Insights', icon: CalendarMonthIcon },
         { value: tenantStats.member_satisfaction ? `${tenantStats.member_satisfaction}%` : '—', label: 'Mitgliederzufriedenheit', helper: tenantStats.member_satisfaction ? '★★★★★' : 'nach Login', icon: BarChartIcon },
     ];
-    const logoProviders = publicProviders.filter((p) => p.logo_url).slice(0, 8);
+    const logoProviders = networkProviders.length > 0 ? networkProviders : publicProviders;
 
     const eventCalendarWidgetInfo = useMemo(() => getEventCalendarWidgetInfo(allowedWidgets), [allowedWidgets]);
 
@@ -530,7 +733,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         // HIER NEU: Das EventCalendarWidget wird nicht mehr im unteren Vorschau-Cockpit gerendert!
         if (widgetInfo.type_key === 'EventCalendar') return null;
 
-        const props = { isPublic: true, widgetId: `pub-${widgetInfo.type_key}-${index}`, widgetTypeKey: widgetInfo.type_key, title: widgetInfo.name, isRemovable: false, onDelete: () => {}, partnerId: partner?.id, primaryColor };
+        const props = { isPublic: true, widgetId: `pub-${widgetInfo.type_key}-${index}`, widgetTypeKey: widgetInfo.type_key, title: widgetInfo.name, isRemovable: false, onDelete: () => {}, partnerId: partner?.id, partnerSlug: canonicalPartnerSlug, primaryColor };
         let content: React.ReactNode;
         switch (widgetInfo.type_key) {
             case 'EVStation': content = <EVStationWidget {...props} />; break;
@@ -538,6 +741,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
             case 'sentiment_widget': content = <SentimentWidget {...props} />; break;
             case 'daily_cockpit': content = <DailyCockpitWidget {...props} />; break;
             case 'business-partner-actions': case 'BusinessPartnerAktionen': case 'BusinessPartnerActionsWidget': content = <BpActionsWidget {...props} />; break;
+            case 'SoftwareCatalog': content = <SoftwareCatalogWidget {...props} />; break;
             case 'funding_widget': case 'Funding': case 'FundingWidget': content = <FundingWidget {...props} />; break;
             default: content = <Paper sx={{ p: 4, borderRadius: 3, bgcolor: 'rgba(255,255,255, 0.1)', border: '1px dashed rgba(255,255,255,0.3)' }}><Typography sx={{ color: '#fff' }} align="center">Widget "{widgetInfo.name}" ist noch nicht konfiguriert.</Typography></Paper>;
         }
@@ -550,7 +754,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     if (allowedWidgets && allowedWidgets.length > 0) {
         fullWidthWidgets = allowedWidgets.filter((w: any) => w.type_key === 'daily_cockpit');
         // KORREKTUR: Filtert den EventCalendar raus, da er jetzt oben fest eingebaut ist
-        const nonFullWidth = allowedWidgets.filter((w: any) => w.type_key !== 'daily_cockpit' && w.type_key !== 'EventCalendar');
+        const nonFullWidth = allowedWidgets.filter((w: any) => w.type_key !== 'daily_cockpit' && w.type_key !== 'EventCalendar' && w.type_key !== 'SoftwareCatalog');
         nonFullWidth.forEach((w: any, index: number) => {
             if (index % 2 === 0) mainColumnWidgets.push(w);
             else sideColumnWidgets.push(w);
@@ -608,6 +812,13 @@ const renderProviderPreviewCard = (provider: any) => {
             <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.58), mb: 1, display: 'block' }}>
                 {getProviderCategoryLabel(provider)}
             </Typography>
+
+            {(Number(provider.software_count) > 0 || Number(provider.action_count) > 0) && (
+                <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap" sx={{ mb: 1.2 }}>
+                    {Number(provider.software_count) > 0 && <Chip icon={<AppsOutlinedIcon />} size="small" label={`Software ${provider.software_count}`} sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900 }} />}
+                    {Number(provider.action_count) > 0 && <Chip icon={<LocalOfferOutlinedIcon />} size="small" label={`Angebote ${provider.action_count}`} sx={{ bgcolor: alpha(secondaryColor, 0.1), color: secondaryColor, fontWeight: 900 }} />}
+                </Stack>
+            )}
             
             <Typography 
                 variant="body2" 
@@ -695,6 +906,7 @@ const renderProviderPreviewCard = (provider: any) => {
                             {navItems.map((item) => {
                                 let badgeCount = null;
                                 if (item === 'Branchenverzeichnis' && tenantStats.total_directory_entries > 0) badgeCount = tenantStats.total_directory_entries;
+                                if (item === 'Software' && tenantStats.total_software_entries > 0) badgeCount = tenantStats.total_software_entries;
                                 if (item === 'Für Mitglieder' && tenantStats.community_members > 0) badgeCount = tenantStats.community_members;
                                 if (item === 'Community' && tenantStats.community_activity > 0) badgeCount = tenantStats.community_activity;
 
@@ -975,7 +1187,7 @@ const renderProviderPreviewCard = (provider: any) => {
                             </Typography>
                             <Stack direction="row" alignItems="center" spacing={1} sx={{ minHeight: 56, borderRadius: 2, px: 2, border: `1px solid ${alpha(darkBlue, 0.14)}`, bgcolor: '#fff' }}>
                                 <SearchIcon sx={{ color: alpha(darkBlue, 0.45) }} />
-                                <InputBase fullWidth value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Dienstleistung, Anbieter, News ..." sx={{ color: darkBlue, fontWeight: 700 }} />
+                                <InputBase fullWidth value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} inputProps={{ maxLength: 120, 'aria-label': 'Branchenverzeichnis durchsuchen' }} placeholder="Dienstleistung, Anbieter, News ..." sx={{ color: darkBlue, fontWeight: 700 }} />
                             </Stack>
                         </Grid>
                         <Grid item xs={12} md={3.1}>
@@ -983,7 +1195,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                 In der Branche ...
                             </Typography>
                             <Select fullWidth value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value as string)} IconComponent={KeyboardArrowDownIcon} sx={{ minHeight: 56, borderRadius: 2, bgcolor: '#fff', color: selectedCategory === 'all' ? alpha(darkBlue, 0.58) : darkBlue, fontWeight: 800, '& .MuiOutlinedInput-notchedOutline': { borderColor: alpha(darkBlue, 0.14) } }}>
-                                <MenuItem value="all">Branche auswählen</MenuItem>
+                                <MenuItem value="all">Alle Branchen ({directoryTotal || tenantStats.total_directory_entries || 0})</MenuItem>
                                 {categoryOptions.map((cat) => (
                                     <MenuItem key={cat.value} value={cat.value}>{cat.label} ({cat.count})</MenuItem>
                                 ))}
@@ -994,7 +1206,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                 Region
                             </Typography>
                             <Select fullWidth value={selectedRegion} onChange={(e) => setSelectedRegion(e.target.value as string)} IconComponent={KeyboardArrowDownIcon} sx={{ minHeight: 56, borderRadius: 2, bgcolor: '#fff', color: selectedRegion === 'all' ? alpha(darkBlue, 0.58) : darkBlue, fontWeight: 800, '& .MuiOutlinedInput-notchedOutline': { borderColor: alpha(darkBlue, 0.14) } }}>
-                                <MenuItem value="all">Region auswählen</MenuItem>
+                                <MenuItem value="all">Alle Regionen ({directoryTotal || tenantStats.total_directory_entries || 0})</MenuItem>
                                 {regionOptions.map((region) => (
                                     <MenuItem key={region.value} value={region.value}>{region.label} ({region.count})</MenuItem>
                                 ))}
@@ -1013,14 +1225,14 @@ const renderProviderPreviewCard = (provider: any) => {
             <Container maxWidth="xl" sx={{ pb: 7 }}>
                 <Grid container spacing={3} id="branchenverzeichnis">
                     {/* BRANCHENVERZEICHNIS */}
-                    <Grid item xs={12} lg={5.6}>
+                    <Grid item xs={12} lg={directoryView === 'map' ? 12 : 5.6}>
                         <Paper elevation={0} sx={{ p: { xs: 2.2, md: 3 }, borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.1)}`, boxShadow: `0 18px 40px ${alpha(darkBlue, 0.06)}`, height: '100%' }}>
-                            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 3 }}>
+                            <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between" spacing={1.5} sx={{ mb: 3 }}>
                                 <Stack direction="row" alignItems="center" spacing={1.5}>
                                     <Typography variant="h5" fontWeight={950} color={darkBlue}>Branchenverzeichnis</Typography>
-                                    {tenantStats.total_directory_entries > 0 && (
+                                    {directoryTotal > 0 && (
                                         <Chip 
-                                            label={isMobile ? `${tenantStats.total_directory_entries}` : `${tenantStats.total_directory_entries} Einträge`} 
+                                            label={isMobile ? `${directoryTotal}` : `${directoryTotal} Treffer`}
                                             size="small" 
                                             sx={{ 
                                                 bgcolor: alpha(primaryColor, 0.1), 
@@ -1033,24 +1245,38 @@ const renderProviderPreviewCard = (provider: any) => {
                                         />
                                     )}
                                 </Stack>
-                                {isFetchingDirectory && <CircularProgress size={20} />}
+                                <Stack direction="row" spacing={1} alignItems="center">
+                                    <Button size="small" variant={directoryView === 'list' ? 'contained' : 'outlined'} startIcon={<ViewListOutlinedIcon />} onClick={() => setDirectoryView('list')} sx={{ textTransform: 'none', fontWeight: 900 }}>Liste</Button>
+                                    <Button size="small" variant={directoryView === 'map' ? 'contained' : 'outlined'} startIcon={<MapOutlinedIcon />} onClick={() => setDirectoryView('map')} sx={{ textTransform: 'none', fontWeight: 900 }}>Karte</Button>
+                                    {(isFetchingDirectory || isFetchingMap) && <CircularProgress size={20} />}
+                                </Stack>
                             </Stack>
-                            {publicProviders.length > 0 ? (
+                            {directoryView === 'map' ? (
+                                <Box sx={{ position: 'relative' }}>
+                                    <Box ref={directoryMapContainerRef} sx={{ height: { xs: 420, md: 560 }, borderRadius: 3, overflow: 'hidden', bgcolor: alpha(primaryColor, 0.06), border: `1px solid ${alpha(darkBlue, 0.1)}`, zIndex: 0 }} />
+                                    {!isFetchingMap && mapProviders.every((provider) => !(provider.locations || []).some((providerLocation: any) => Number.isFinite(Number(providerLocation.latitude)) && Number.isFinite(Number(providerLocation.longitude)))) && (
+                                        <Paper elevation={0} sx={{ position: 'absolute', left: 16, right: 16, bottom: 16, p: 2, bgcolor: alpha('#fff', 0.94), borderRadius: 2 }}>
+                                            <Typography fontWeight={900} color={darkBlue}>Für diese Treffer sind noch keine Kartenkoordinaten hinterlegt.</Typography>
+                                            <Typography variant="body2" color="text.secondary">Die Listenansicht enthält weiterhin alle passenden Einträge.</Typography>
+                                        </Paper>
+                                    )}
+                                </Box>
+                            ) : publicProviders.length > 0 ? (
                                 <>
                                     <Grid container spacing={1.5}>
                                         {publicProviders.map((provider: any) => (
-                                            <Grid item xs={12} sm={6} md={4} key={provider.id}>
+                                            <Grid item xs={12} sm={6} key={provider.id}>
                                                 {renderProviderPreviewCard(provider)}
                                             </Grid>
                                         ))}
                                     </Grid>
-                                    <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
-                                        {hasMore ? (
-                                            <Button variant="outlined" onClick={() => setPage(p => p + 1)} disabled={isFetchingDirectory} sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 800, color: primaryColor, borderColor: alpha(primaryColor, 0.5) }}>Weitere laden</Button>
-                                        ) : (
+                                    <Stack direction="row" spacing={1} justifyContent="center" sx={{ mt: 3 }}>
+                                        {hasMore && <Button variant="outlined" onClick={() => setPage(p => p + 1)} disabled={isFetchingDirectory} sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 800, color: primaryColor, borderColor: alpha(primaryColor, 0.5) }}>Weitere laden</Button>}
+                                        {page > 1 && <Button variant="text" onClick={() => setPage(1)} disabled={isFetchingDirectory} sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 800 }}>Weniger</Button>}
+                                        {!hasMore && page === 1 && (
                                             <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.5) }}>Keine weiteren Einträge gefunden.</Typography>
                                         )}
-                                    </Box>
+                                    </Stack>
                                 </>
                             ) : !isFetchingDirectory ? (
                                 <Paper elevation={0} sx={{ p: 3, borderRadius: 3, bgcolor: alpha(primaryColor, 0.06), border: `1px dashed ${alpha(primaryColor, 0.25)}` }}>
@@ -1070,9 +1296,8 @@ const renderProviderPreviewCard = (provider: any) => {
                     <Grid item xs={12} lg={3.4}>
                         <Box sx={{ 
                             height: '100%', 
-                            // Wir fixieren die Höhe auf ca. 600px für ein schönes Layout
-                            maxHeight: 650, 
                             '& > .MuiPaper-root': { 
+                                height: '100%',
                                 borderRadius: 4, 
                                 border: `1px solid ${alpha(darkBlue, 0.1)}`, 
                                 boxShadow: `0 18px 40px ${alpha(darkBlue, 0.06)}`,
@@ -1135,6 +1360,21 @@ const renderProviderPreviewCard = (provider: any) => {
                     </Grid>
                 </Grid>
 
+                <Box id="software-lexikon" sx={{ mt: 3 }}>
+                    <Suspense fallback={<Paper sx={{ p: 4, borderRadius: 4 }}><CircularProgress /></Paper>}>
+                        <SoftwareCatalogWidget
+                            isPublic
+                            widgetId="public-software-catalog"
+                            widgetTypeKey="SoftwareCatalog"
+                            title="Software-Lexikon"
+                            partnerId={partner?.id}
+                            primaryColor={primaryColor}
+                            isRemovable={false}
+                            onDelete={() => {}}
+                        />
+                    </Suspense>
+                </Box>
+
                 {/* --- CTA BANNER --- */}
                 <Paper elevation={0} sx={{ mt: 3, borderRadius: 4, overflow: 'hidden', bgcolor: darkBlue, background: `linear-gradient(90deg, ${darkBlue}, ${secondaryColor})`, color: '#fff', p: { xs: 2.6, md: 3 }, boxShadow: `0 20px 45px ${alpha(darkBlue, 0.18)}` }}>
                     <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ xs: 'stretch', md: 'center' }} justifyContent="space-between" spacing={3}>
@@ -1159,15 +1399,58 @@ const renderProviderPreviewCard = (provider: any) => {
                     </Stack>
                 </Paper>
 
-                {/* --- LOGO STRIP --- */}
-                <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} alignItems="center" justifyContent="center" sx={{ mt: 4.5, color: alpha(darkBlue, 0.62) }}>
-                    <Typography variant="body2" fontWeight={800}>Über {tenantStats.member_companies ? formatNumber(Number(tenantStats.member_companies)) : 'zahlreiche'} Unternehmen im Netzwerk von {partnerName}</Typography>
-                    <Stack direction="row" spacing={4} useFlexGap flexWrap="wrap" justifyContent="center" alignItems="center">
-                        {logoProviders.map((provider: any) => (
-                            <ImageWithFallback key={provider.id} src={getAssetUrl(provider.logo_url)} alt={provider.name} fallbackColor={primaryColor} loading="lazy" sx={{ maxHeight: 26, maxWidth: 112, objectFit: 'contain', filter: 'grayscale(1)', opacity: 0.62 }} />
-                        ))}
-                    </Stack>
-                </Stack>
+                {/* --- NETZWERK-TICKER: vollständig und unabhängig von Verzeichnisfiltern --- */}
+                <Box sx={{ mt: 4.5, display: 'flex', alignItems: 'center', gap: 4, color: alpha(darkBlue, 0.62), whiteSpace: 'nowrap' }}>
+                    <Typography variant="body2" fontWeight={800} whiteSpace="nowrap" sx={{ flexShrink: 0 }}>
+                        Über {tenantStats.member_companies ? formatNumber(Number(tenantStats.member_companies)) : 'zahlreiche'} Unternehmen im Netzwerk von {partnerName}
+                    </Typography>
+                    {logoProviders.length > 0 && (
+                        <Box sx={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                            <Box
+                                sx={{
+                                    display: 'flex',
+                                    width: 'max-content',
+                                    alignItems: 'center',
+                                    animation: 'networkTickerLeft 45s linear infinite',
+                                    '@keyframes networkTickerLeft': {
+                                        from: { transform: 'translateX(0)' },
+                                        to: { transform: 'translateX(-50%)' },
+                                    },
+                                    '@media (prefers-reduced-motion: reduce)': { animation: 'none', transform: 'none' },
+                                    '&:hover': { animationPlayState: 'paused' },
+                                }}
+                            >
+                                {[0, 1].map((cycle) => (
+                                    <Box key={cycle} aria-hidden={cycle === 1 ? true : undefined} sx={{ display: 'flex', alignItems: 'center', gap: 5, pr: 5, flexShrink: 0 }}>
+                                        {logoProviders.map((provider: any) => (
+                                        <Box
+                                            component="button"
+                                            type="button"
+                                            tabIndex={cycle === 1 ? -1 : 0}
+                                            key={`${cycle}-${provider.id}`}
+                                            onClick={() => { setSelectedTeaserProvider(provider); setTeaserTab(0); }}
+                                            aria-label={`${provider.name} im Branchenverzeichnis öffnen`}
+                                            sx={{
+                                                width: 142,
+                                                height: 48,
+                                                flexShrink: 0,
+                                                border: 0,
+                                                bgcolor: 'transparent',
+                                                cursor: 'pointer',
+                                                p: 0.5,
+                                                borderRadius: 2,
+                                                '&:focus-visible': { outline: `3px solid ${alpha(primaryColor, 0.45)}` },
+                                            }}
+                                        >
+                                            <ImageWithFallback src={provider.logo_url ? getAssetUrl(provider.logo_url) : null} alt={provider.name} fallbackColor={primaryColor} loading="lazy" sx={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'grayscale(1)', opacity: 0.68 }} />
+                                        </Box>
+                                        ))}
+                                    </Box>
+                                ))}
+                            </Box>
+                        </Box>
+                    )}
+                </Box>
 
                 {/* --- WIDGET PREVIEW (Glass Cockpit unten) --- */}
                 <Box sx={{ mt: { xs: 6, md: 8 } }}>
@@ -1297,7 +1580,7 @@ const renderProviderPreviewCard = (provider: any) => {
                     </Box>
                 </DialogTitle>
                 <DialogContent sx={{ p: { xs: 3, md: 4 } }}>
-                    <ThemeProvider theme={loginTheme}><LoginForm isRegister={isRegisterMode} /></ThemeProvider>
+                    <ThemeProvider theme={loginTheme}><LoginForm isRegister={isRegisterMode} partnerCodeOverride={canonicalPartnerSlug || String(urlPartnerCode || '')} /></ThemeProvider>
                 </DialogContent>
             </Dialog>
 
@@ -1317,6 +1600,8 @@ const renderProviderPreviewCard = (provider: any) => {
                                         <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.5} alignItems="center" sx={{ mt: 0.5 }}>
                                             {selectedTeaserProvider.category && <Chip label={selectedTeaserProvider.category} size="small" sx={{ bgcolor: alpha(primaryColor, 0.08), color: primaryColor, fontWeight: 900, height: 24 }} />}
                                             {selectedTeaserProvider.is_recommended && <Chip icon={<VerifiedUserIcon fontSize="small" />} label="Offizieller Partner" size="small" sx={{ bgcolor: alpha(primaryColor, 0.14), color: primaryColor, fontWeight: 900, height: 24 }} />}
+                                            {Number(selectedTeaserProvider.software_count) > 0 && <Chip icon={<AppsOutlinedIcon />} label={`Software ${selectedTeaserProvider.software_count}`} size="small" sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900, height: 24 }} />}
+                                            {Number(selectedTeaserProvider.action_count) > 0 && <Chip icon={<LocalOfferOutlinedIcon />} label={`Angebote ${selectedTeaserProvider.action_count}`} size="small" sx={{ bgcolor: alpha(secondaryColor, 0.1), color: secondaryColor, fontWeight: 900, height: 24 }} />}
                                         </Stack>
                                     </Box>
                                 </Box>
