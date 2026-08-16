@@ -121,6 +121,7 @@ exports.getAllProvidersAdmin = async (req, res) => {
                         'business_partner_name', bp.name,
                         'status', dpm.status,
                         'is_recommended', dpm.is_recommended,
+                        'is_tenant_entry', dpm.is_tenant_entry,
                         'primary_color', cs.primary_color,
                         'secondary_color', cs.secondary_color
                     )) FILTER (WHERE dpm.business_partner_id IS NOT NULL), '[]'
@@ -175,6 +176,7 @@ exports.getProviderDetailsAdmin = async (req, res) => {
                     bp.name AS business_partner_name,
                     dpm.status,
                     dpm.is_recommended,
+                    dpm.is_tenant_entry,
                     cs.primary_color,
                     cs.secondary_color
                 FROM directory_provider_mandant_settings dpm
@@ -263,9 +265,16 @@ if (req.file) {
         }
 
         for (const ms of mandantSettings) {
+            const isTenantEntry = ms.status !== 'blacklisted' && ms.is_tenant_entry === true;
+            if (isTenantEntry) {
+                await client.query(
+                    'UPDATE directory_provider_mandant_settings SET is_tenant_entry = FALSE WHERE business_partner_id = $1',
+                    [ms.business_partner_id]
+                );
+            }
             await client.query(
-                `INSERT INTO directory_provider_mandant_settings (provider_id, business_partner_id, status, is_recommended) VALUES ($1, $2, $3, $4)`,
-                [providerId, ms.business_partner_id, ms.status || 'active', ms.is_recommended || false]
+                `INSERT INTO directory_provider_mandant_settings (provider_id, business_partner_id, status, is_recommended, is_tenant_entry) VALUES ($1, $2, $3, $4, $5)`,
+                [providerId, ms.business_partner_id, ms.status || 'active', ms.is_recommended || false, isTenantEntry]
             );
         }
 
@@ -379,9 +388,16 @@ if (req.file) {
 
         await client.query('DELETE FROM directory_provider_mandant_settings WHERE provider_id = $1', [id]);
         for (const ms of mandantSettings) {
+            const isTenantEntry = ms.status !== 'blacklisted' && ms.is_tenant_entry === true;
+            if (isTenantEntry) {
+                await client.query(
+                    'UPDATE directory_provider_mandant_settings SET is_tenant_entry = FALSE WHERE business_partner_id = $1',
+                    [ms.business_partner_id]
+                );
+            }
             await client.query(
-                `INSERT INTO directory_provider_mandant_settings (provider_id, business_partner_id, status, is_recommended) VALUES ($1, $2, $3, $4)`,
-                [id, ms.business_partner_id, ms.status || 'active', ms.is_recommended || false]
+                `INSERT INTO directory_provider_mandant_settings (provider_id, business_partner_id, status, is_recommended, is_tenant_entry) VALUES ($1, $2, $3, $4, $5)`,
+                [id, ms.business_partner_id, ms.status || 'active', ms.is_recommended || false, isTenantEntry]
             );
         }
 

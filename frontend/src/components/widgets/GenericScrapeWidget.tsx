@@ -27,6 +27,7 @@ import WidgetPaper from './WidgetPaper';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
+import { resolveAssetUrl } from '../../utils/assetUrl';
 
 // --- Interfaces ---
 
@@ -61,12 +62,7 @@ interface AiDraftState { open: boolean; loading: boolean; error: string | null; 
 
 // NEU: Hilfsfunktion für Logo-URLs
 const getImageUrl = (url?: string | null) => {
-    if (!url) return '';
-    if (url.startsWith('http')) return url;
-    const baseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5001').replace(/\/$/, '');
-    let cleanPath = url.startsWith('/') ? url : `/${url}`;
-    cleanPath = cleanPath.replace(/^\/public\//, '/');
-    return `${baseUrl}${cleanPath}`;
+    return resolveAssetUrl(url);
 };
 
 const formatDate = (dateString?: string | null) => {

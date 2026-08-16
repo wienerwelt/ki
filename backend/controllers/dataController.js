@@ -3922,16 +3922,23 @@ exports.handleAiQuestion = async (req, res) => {
 
 
 exports.getNotificationCounts = async (req, res) => {
-    const { id: userId, business_partner_id: businessPartnerId } = req.user;
+    const {
+        id: userId,
+        business_partner_id: businessPartnerId,
+        role,
+        last_login_at: previousLoginAt,
+        token_issued_at: tokenIssuedAt
+    } = req.user;
 
     if (!userId) {
         return res.status(401).json({ message: 'Authentifizierung erforderlich.' });
     }
 
     try {
-        const userRes = await db.query('SELECT last_login_at FROM users WHERE id = $1', [userId]);
-        // Wenn du den Login-Verlauf als Fallback für die anderen Module nutzen willst:
-        const lastLogin = userRes.rows[0]?.last_login_at || new Date(0);
+        // Der vorherige Login wird bei der Anmeldung im JWT eingefroren. Alte
+        // Tokens enthalten ihn noch nicht und verwenden daher ihren Ausgabezeitpunkt.
+        const changeSince = previousLoginAt || tokenIssuedAt || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const isAdmin = role === 'admin';
 
         const [scrapedNew, aiNew, actionsNew, communityNew, filesNew, directoryNew, sourcesNew] = await Promise.all([
             // 1. Scraped Content: Zählt die letzten 30 Tage, falls nicht explizit gelesen!
@@ -3954,33 +3961,53 @@ exports.getNotificationCounts = async (req, res) => {
                       WHERE urac.ai_content_id = agc.id AND urac.user_id = $1
                   )`, [userId]),
 
-            // 3. Actions (Bleiben auf lastLogin, da sie keine Lesebestätigung in der DB haben)
-            isValidUUID(businessPartnerId)
-                ? db.query(`SELECT COUNT(id) as cnt FROM business_partner_actions WHERE business_partner_id = $1 AND created_at > $2`, [businessPartnerId, lastLogin])
-                : Promise.resolve({ rows: [{ cnt: 0 }] }),
+            // 3. Actions und Software: neue UND geaenderte Datensaetze.
+            isAdmin
+                ? db.query(`
+                    SELECT (
+                        (SELECT COUNT(*) FROM business_partner_actions WHERE COALESCE(updated_at, created_at) > $1)
+                        +
+                        (SELECT COUNT(*) FROM software_tools WHERE COALESCE(updated_at, created_at) > $1)
+                    )::int AS cnt
+                `, [changeSince])
+                : isValidUUID(businessPartnerId)
+                    ? db.query(`
+                        SELECT (
+                            (SELECT COUNT(*) FROM business_partner_actions WHERE business_partner_id = $1 AND COALESCE(updated_at, created_at) > $2)
+                            +
+                            (SELECT COUNT(*) FROM software_tools WHERE business_partner_id = $1 AND COALESCE(updated_at, created_at) > $2)
+                        )::int AS cnt
+                    `, [businessPartnerId, changeSince])
+                    : Promise.resolve({ rows: [{ cnt: 0 }] }),
 
             // 4. Community Posts
-            isValidUUID(businessPartnerId)
-                ? db.query(`SELECT COUNT(id) as cnt FROM community_posts WHERE business_partner_id = $1 AND created_at > $2`, [businessPartnerId, lastLogin])
-                : Promise.resolve({ rows: [{ cnt: 0 }] }),
+            isAdmin
+                ? db.query(`SELECT COUNT(id) as cnt FROM community_posts WHERE COALESCE(updated_at, created_at) > $1`, [changeSince])
+                : isValidUUID(businessPartnerId)
+                    ? db.query(`SELECT COUNT(id) as cnt FROM community_posts WHERE business_partner_id = $1 AND COALESCE(updated_at, created_at) > $2`, [businessPartnerId, changeSince])
+                    : Promise.resolve({ rows: [{ cnt: 0 }] }),
 
             // 5. Dateien
-            isValidUUID(businessPartnerId)
-                ? db.query(`SELECT COUNT(id) as cnt FROM business_partner_files WHERE business_partner_id = $1 AND created_at > $2`, [businessPartnerId, lastLogin])
-                : Promise.resolve({ rows: [{ cnt: 0 }] }),
+            isAdmin
+                ? db.query(`SELECT COUNT(id) as cnt FROM business_partner_files WHERE COALESCE(updated_at, created_at) > $1`, [changeSince])
+                : isValidUUID(businessPartnerId)
+                    ? db.query(`SELECT COUNT(id) as cnt FROM business_partner_files WHERE business_partner_id = $1 AND COALESCE(updated_at, created_at) > $2`, [businessPartnerId, changeSince])
+                    : Promise.resolve({ rows: [{ cnt: 0 }] }),
 
             // 6. Partner-Netzwerk
-            isValidUUID(businessPartnerId)
+            isAdmin
+                ? db.query(`SELECT COUNT(id) as cnt FROM directory_providers WHERE COALESCE(updated_at, created_at) > $1`, [changeSince])
+                : isValidUUID(businessPartnerId)
                 ? db.query(`
                     SELECT COUNT(p.id) as cnt 
                     FROM directory_providers p
                     INNER JOIN directory_provider_mandant_settings ms ON p.id = ms.provider_id
-                    WHERE ms.business_partner_id = $1 AND ms.status = 'active' AND p.created_at > $2
-                  `, [businessPartnerId, lastLogin])
+                    WHERE ms.business_partner_id = $1 AND ms.status = 'active' AND COALESCE(p.updated_at, p.created_at) > $2
+                  `, [businessPartnerId, changeSince])
                 : Promise.resolve({ rows: [{ cnt: 0 }] }),
 
             // 7. Quellen
-            db.query(`SELECT COUNT(id) as cnt FROM sources WHERE status = 'approved' AND created_at > $1`, [lastLogin])
+            db.query(`SELECT COUNT(id) as cnt FROM sources WHERE status = 'approved' AND COALESCE(updated_at, created_at) > $1`, [changeSince])
         ]);
 
         const counts = {
@@ -3993,7 +4020,7 @@ exports.getNotificationCounts = async (req, res) => {
             sources: parseInt(sourcesNew.rows[0].cnt, 10)
         };
 
-        const totalCount = counts.scraped + counts.ai + counts.actions;
+        const totalCount = Object.values(counts).reduce((sum, value) => sum + value, 0);
 
         res.json({ 
             totalCount: totalCount,

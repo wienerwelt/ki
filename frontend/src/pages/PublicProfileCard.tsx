@@ -289,6 +289,42 @@ const PublicProfileCard: React.FC = () => {
                                     )}
                                 </Box>
 
+                                {(user.email || user.phone) && (
+                                    <Stack
+                                        spacing={0.9}
+                                        alignItems="center"
+                                        sx={{ width: '100%', px: { xs: 0, sm: 1 } }}
+                                    >
+                                        {user.email && (
+                                            <Stack direction="row" spacing={1} alignItems="center" sx={{ maxWidth: '100%' }}>
+                                                <EmailIcon fontSize="small" color="primary" aria-hidden="true" />
+                                                <Link
+                                                    href={`mailto:${user.email}`}
+                                                    color="text.primary"
+                                                    underline="hover"
+                                                    sx={{ fontSize: '0.95rem', fontWeight: 600, overflowWrap: 'anywhere' }}
+                                                >
+                                                    {user.email}
+                                                </Link>
+                                            </Stack>
+                                        )}
+
+                                        {user.phone && (
+                                            <Stack direction="row" spacing={1} alignItems="center" sx={{ maxWidth: '100%' }}>
+                                                <PhoneIcon fontSize="small" color="primary" aria-hidden="true" />
+                                                <Link
+                                                    href={`tel:${user.phone}`}
+                                                    color="text.primary"
+                                                    underline="hover"
+                                                    sx={{ fontSize: '0.95rem', fontWeight: 600, overflowWrap: 'anywhere' }}
+                                                >
+                                                    {user.phone}
+                                                </Link>
+                                            </Stack>
+                                        )}
+                                    </Stack>
+                                )}
+
                                 <Stack direction="row" spacing={1.25} justifyContent="center" flexWrap="wrap">
                                     {user.phone && (
                                         <Tooltip title="Anrufen">

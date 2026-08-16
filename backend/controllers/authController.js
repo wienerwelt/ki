@@ -113,7 +113,10 @@ function issueJwt(user) {
     business_partner_id: user.business_partner_id || null,
     business_partner_category: user.business_partner_category || null,
     contribution_score: user.contribution_score ?? 0,
-    has_completed_onboarding: user.has_completed_onboarding
+    has_completed_onboarding: user.has_completed_onboarding,
+    // Der geladene Benutzerwert entspricht hier dem Login vor der gerade
+    // ausgefuehrten Aktualisierung. Im JWT bleibt er waehrend der Sitzung stabil.
+    last_login_at: user.last_login_at || null
   };
 
   return jwt.sign(payload, secret, { expiresIn: '7d' });

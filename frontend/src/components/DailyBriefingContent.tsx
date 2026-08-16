@@ -130,6 +130,13 @@ const DailyBriefingContent: React.FC = () => {
   
   // DYNAMISCHER TRIGGER: Sales vs. Information
   const dashboardFocus = businessPartner?.dashboard_focus || 'information';
+  const currentDateLabel = new Intl.DateTimeFormat('de-AT', {
+    timeZone: 'Europe/Vienna',
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date());
 
   useEffect(() => setIsSubscribed(!!user?.newsletter_opt_in), [user?.newsletter_opt_in]);
 
@@ -377,7 +384,7 @@ const DailyBriefingContent: React.FC = () => {
                     Guten Morgen, {user?.first_name || 'Team'}.
                 </Typography>
                 <Typography variant="subtitle1" color="text.secondary" sx={{ mt: 0.5 }}>
-                    Hier ist Ihr Wissensvorsprung für heute.
+                    Hier ist Ihr Wissensvorsprung für heute, {currentDateLabel}.
                 </Typography>
             </Box>
             <Chip icon={<AccessTimeIcon />} label={`ca. ${readTime} Min. Lesezeit`} variant="outlined" sx={{ bgcolor: '#fff', fontWeight: 'bold' }} />

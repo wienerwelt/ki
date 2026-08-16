@@ -163,6 +163,42 @@ const normalizeEventCategoryList = (value: any): string[] => {
     return Array.from(new Set(normalizedItems));
 };
 
+const getIndustryDisplayName = (value: any): string => {
+    if (!value) return '';
+    if (typeof value === 'object') {
+        return String(value.name_lang || value.name || value.label || '').trim().slice(0, 80);
+    }
+    return String(value).trim().slice(0, 80);
+};
+
+const formatProviderAddress = (location: any): string => {
+    if (!location) return '';
+    const street = String(location.address || '').trim();
+    const locality = [location.zip_code, location.city]
+        .map((part) => String(part || '').trim())
+        .filter(Boolean)
+        .join(' ');
+    if (!street && !locality) return '';
+
+    const parts = [street, locality, location.country]
+        .map((part) => String(part || '').trim())
+        .filter(Boolean);
+
+    return parts.filter((part, index) =>
+        parts.findIndex((candidate) => candidate.toLocaleLowerCase('de') === part.toLocaleLowerCase('de')) === index
+    ).join(', ');
+};
+
+const hasProviderCoordinates = (location: any): boolean => {
+    if (!location) return false;
+    const latitude = location.latitude;
+    const longitude = location.longitude;
+    if (latitude === null || latitude === undefined || latitude === '' || longitude === null || longitude === undefined || longitude === '') {
+        return false;
+    }
+    return Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
+};
+
 const getEventCalendarWidgetInfo = (widgets: any[]) => {
     return (widgets || []).find((w: any) =>
         w?.type_key === 'EventCalendar' ||
@@ -449,6 +485,18 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         return () => { active = false; };
     }, [partner?.id]);
 
+    const tenantDirectoryProvider = useMemo(
+        () => networkProviders.find((provider: any) => provider.is_tenant_entry === true) || null,
+        [networkProviders]
+    );
+
+    const directoryMapProviders = useMemo(() => {
+        if (!tenantDirectoryProvider || mapProviders.some((provider: any) => provider.id === tenantDirectoryProvider.id)) {
+            return mapProviders;
+        }
+        return [tenantDirectoryProvider, ...mapProviders];
+    }, [mapProviders, tenantDirectoryProvider]);
+
     const categoryOptions = useMemo(() => {
         if (directoryFilters.categories.length > 0) {
             return directoryFilters.categories.map((item: any) => ({
@@ -526,7 +574,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     useEffect(() => {
         if (!selectedTeaserProvider || teaserTab !== 0) return;
         const loc = selectedTeaserProvider?.locations?.[0];
-        if (!loc?.latitude || !loc?.longitude) return;
+        if (!hasProviderCoordinates(loc)) return;
 
         let isMounted = true;
         const initMap = () => { // <--- NEU: async entfernt
@@ -579,7 +627,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
             directoryMapInstanceRef.current = null;
         }
 
-        const map = L.map(directoryMapContainerRef.current, { scrollWheelZoom: false });
+        const map = L.map(directoryMapContainerRef.current, { scrollWheelZoom: true });
         directoryMapInstanceRef.current = map;
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; OpenStreetMap-Mitwirkende',
@@ -587,42 +635,55 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         }).addTo(map);
 
         const bounds: L.LatLngExpression[] = [];
-        mapProviders.forEach((provider) => {
+        directoryMapProviders.forEach((provider) => {
             (provider.locations || []).forEach((providerLocation: any) => {
+                if (!hasProviderCoordinates(providerLocation)) return;
                 const latitude = Number(providerLocation.latitude);
                 const longitude = Number(providerLocation.longitude);
-                if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
 
-                const rawLogoUrl = provider.logo_url ? getAssetUrl(provider.logo_url) : DEFAULT_COMPANY_LOGO;
-                const logoUrl = /^(https?:\/\/|\/)/i.test(rawLogoUrl) ? rawLogoUrl : DEFAULT_COMPANY_LOGO;
+                const rawLogoUrl = provider.logo_url ? getAssetUrl(provider.logo_url) : '';
+                const customLogoUrl = /^(https?:\/\/|\/)/i.test(rawLogoUrl) ? rawLogoUrl : '';
                 const providerName = escapeMapHtml(provider.name || 'Brancheneintrag');
-                const visual = `<img src="${escapeMapHtml(logoUrl)}" alt="" style="width:42px;height:42px;object-fit:contain;display:block" />`;
+                const isTenantEntry = provider.is_tenant_entry === true;
+                const markerSize = isTenantEntry ? 60 : 52;
+                const markerBorderColor = isTenantEntry ? primaryColor : '#061b33';
+                const markerShadowColor = isTenantEntry ? alpha(primaryColor, 0.42) : 'rgba(6,27,51,.24)';
+                const visual = `<span aria-hidden="true" style="position:relative;width:42px;height:42px;display:block;background:#f5f7fa url('${DEFAULT_COMPANY_LOGO}') center/38px 38px no-repeat;border-radius:10px;overflow:hidden">${customLogoUrl ? `<img data-provider-logo="custom" src="${escapeMapHtml(customLogoUrl)}" alt="" style="position:absolute;inset:0;width:42px;height:42px;object-fit:contain;display:block;background:#fff" />` : ''}</span>`;
                 const icon = L.divIcon({
                     className: 'mobiliti-directory-logo-marker',
-                    html: `<a href="#branchenverzeichnis" aria-label="${providerName} öffnen" style="width:52px;height:52px;border-radius:16px;background:#fff;border:2px solid #061b33;box-shadow:0 8px 22px rgba(6,27,51,.24);display:flex;align-items:center;justify-content:center;overflow:hidden;text-decoration:none;padding:4px;box-sizing:border-box">${visual}</a>`,
-                    iconSize: [52, 52],
-                    iconAnchor: [26, 26],
+                    html: `<a href="#branchenverzeichnis" aria-label="${providerName} öffnen" style="width:${markerSize}px;height:${markerSize}px;border-radius:18px;background:#fff;border:${isTenantEntry ? 4 : 2}px solid ${escapeMapHtml(markerBorderColor)};box-shadow:0 8px 24px ${escapeMapHtml(markerShadowColor)};display:flex;align-items:center;justify-content:center;overflow:hidden;text-decoration:none;padding:5px;box-sizing:border-box">${visual}</a>`,
+                    iconSize: [markerSize, markerSize],
+                    iconAnchor: [markerSize / 2, markerSize / 2],
                 });
-                const marker = L.marker([latitude, longitude], { icon }).addTo(map);
-                const markerImage = marker.getElement()?.querySelector('img');
-                markerImage?.addEventListener('error', () => {
-                    markerImage.setAttribute('src', DEFAULT_COMPANY_LOGO);
-                }, { once: true });
-                marker.bindTooltip(providerName, { direction: 'top', offset: [0, -22] });
+                const marker = L.marker([latitude, longitude], { icon });
+                marker.on('add', () => {
+                    window.requestAnimationFrame(() => {
+                        const markerImage = marker.getElement()?.querySelector<HTMLImageElement>('img[data-provider-logo="custom"]');
+                        if (!markerImage) return;
+                        const showDefaultLogo = () => { markerImage.style.display = 'none'; };
+                        markerImage.addEventListener('error', showDefaultLogo, { once: true });
+                        if (markerImage.complete && markerImage.naturalWidth === 0) showDefaultLogo();
+                    });
+                });
+                marker.addTo(map);
+                marker.bindTooltip(isTenantEntry ? `${providerName} · Mandant` : providerName, { direction: 'top', offset: [0, -22] });
                 marker.on('click', () => { setSelectedTeaserProvider(provider); setTeaserTab(0); });
                 bounds.push([latitude, longitude]);
             });
         });
 
-        if (bounds.length > 0) map.fitBounds(bounds, { padding: [48, 48], maxZoom: 12 });
-        else map.setView([47.6, 13.7], 6);
-        window.setTimeout(() => map.invalidateSize(), 0);
+        const fitTimer = window.setTimeout(() => {
+            map.invalidateSize();
+            if (bounds.length > 0) map.fitBounds(bounds, { padding: [48, 48], maxZoom: 12 });
+            else map.setView([47.6, 13.7], 6);
+        }, 0);
 
         return () => {
+            window.clearTimeout(fitTimer);
             map.remove();
             if (directoryMapInstanceRef.current === map) directoryMapInstanceRef.current = null;
         };
-    }, [directoryView, mapProviders, isFetchingMap]);
+    }, [directoryView, directoryMapProviders, isFetchingMap, primaryColor]);
 
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
@@ -690,6 +751,24 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     const logoProviders = networkProviders.length > 0 ? networkProviders : publicProviders;
 
     const eventCalendarWidgetInfo = useMemo(() => getEventCalendarWidgetInfo(allowedWidgets), [allowedWidgets]);
+
+    const tenantIndustryName = useMemo(() => {
+        const industryValues = partner?.industries || partner?.categories || [];
+        const industries = Array.isArray(industryValues) ? industryValues : [industryValues];
+        return industries.map(getIndustryDisplayName).find(Boolean) || '';
+    }, [partner?.industries, partner?.categories]);
+
+    const isFleetTenant = /fleet|fuhrpark|flotte/i.test(tenantIndustryName);
+    const eventCalendarTitle = isFleetTenant
+        ? 'Fleet-Kalender'
+        : tenantIndustryName
+            ? `${tenantIndustryName}-Kalender`
+            : 'Branchenkalender';
+    const eventContributionLabel = isFleetTenant
+        ? 'Fleet-Veranstaltung hinzufügen'
+        : tenantIndustryName
+            ? `${tenantIndustryName}-Veranstaltung hinzufügen`
+            : 'Branchen-Veranstaltung hinzufügen';
 
     const eventCalendarCategory = useMemo(() => {
         const bpCategories = normalizeEventCategoryList(
@@ -1246,15 +1325,22 @@ const renderProviderPreviewCard = (provider: any) => {
                                     )}
                                 </Stack>
                                 <Stack direction="row" spacing={1} alignItems="center">
-                                    <Button size="small" variant={directoryView === 'list' ? 'contained' : 'outlined'} startIcon={<ViewListOutlinedIcon />} onClick={() => setDirectoryView('list')} sx={{ textTransform: 'none', fontWeight: 900 }}>Liste</Button>
-                                    <Button size="small" variant={directoryView === 'map' ? 'contained' : 'outlined'} startIcon={<MapOutlinedIcon />} onClick={() => setDirectoryView('map')} sx={{ textTransform: 'none', fontWeight: 900 }}>Karte</Button>
+                                    <Button size="small" variant={directoryView === 'list' ? 'contained' : 'outlined'} startIcon={<ViewListOutlinedIcon />} onClick={() => setDirectoryView('list')} sx={{ textTransform: 'none', fontWeight: 900, bgcolor: directoryView === 'list' ? primaryColor : 'transparent', color: directoryView === 'list' ? '#fff' : primaryColor, borderColor: primaryColor, '&:hover': { bgcolor: directoryView === 'list' ? primaryColor : alpha(primaryColor, 0.08), borderColor: primaryColor, filter: directoryView === 'list' ? 'brightness(0.94)' : 'none' } }}>Liste</Button>
+                                    <Button size="small" variant={directoryView === 'map' ? 'contained' : 'outlined'} startIcon={<MapOutlinedIcon />} onClick={() => setDirectoryView('map')} sx={{ textTransform: 'none', fontWeight: 900, bgcolor: directoryView === 'map' ? primaryColor : 'transparent', color: directoryView === 'map' ? '#fff' : primaryColor, borderColor: primaryColor, '&:hover': { bgcolor: directoryView === 'map' ? primaryColor : alpha(primaryColor, 0.08), borderColor: primaryColor, filter: directoryView === 'map' ? 'brightness(0.94)' : 'none' } }}>Karte</Button>
                                     {(isFetchingDirectory || isFetchingMap) && <CircularProgress size={20} />}
                                 </Stack>
                             </Stack>
                             {directoryView === 'map' ? (
                                 <Box sx={{ position: 'relative' }}>
                                     <Box ref={directoryMapContainerRef} sx={{ height: { xs: 420, md: 560 }, borderRadius: 3, overflow: 'hidden', bgcolor: alpha(primaryColor, 0.06), border: `1px solid ${alpha(darkBlue, 0.1)}`, zIndex: 0 }} />
-                                    {!isFetchingMap && mapProviders.every((provider) => !(provider.locations || []).some((providerLocation: any) => Number.isFinite(Number(providerLocation.latitude)) && Number.isFinite(Number(providerLocation.longitude)))) && (
+                                    <IconButton
+                                        aria-label="Karte schließen und Listenansicht öffnen"
+                                        onClick={() => setDirectoryView('list')}
+                                        sx={{ position: 'absolute', top: 12, right: 12, zIndex: 1000, bgcolor: alpha('#fff', 0.96), color: primaryColor, border: `1px solid ${alpha(primaryColor, 0.35)}`, boxShadow: `0 8px 24px ${alpha(darkBlue, 0.2)}`, '&:hover': { bgcolor: '#fff' } }}
+                                    >
+                                        <CloseIcon />
+                                    </IconButton>
+                                    {!isFetchingMap && directoryMapProviders.every((provider) => !(provider.locations || []).some(hasProviderCoordinates)) && (
                                         <Paper elevation={0} sx={{ position: 'absolute', left: 16, right: 16, bottom: 16, p: 2, bgcolor: alpha('#fff', 0.94), borderRadius: 2 }}>
                                             <Typography fontWeight={900} color={darkBlue}>Für diese Treffer sind noch keine Kartenkoordinaten hinterlegt.</Typography>
                                             <Typography variant="body2" color="text.secondary">Die Listenansicht enthält weiterhin alle passenden Einträge.</Typography>
@@ -1325,10 +1411,12 @@ const renderProviderPreviewCard = (provider: any) => {
                                     category={eventCalendarCategory} 
                                     partnerId={partner?.id}
                                     defaultRegion={defaultRegion} 
-                                    title="Kalender" 
+                                    title={eventCalendarTitle}
                                     isRemovable={false} 
                                     onDelete={() => {}}
                                     primaryColor={primaryColor}
+                                    publicContributionLabel={eventContributionLabel}
+                                    onPublicLogin={handleLoginCta}
                                 />
                             </Suspense>
                         </Box>
@@ -1599,6 +1687,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                         </Typography>
                                         <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.5} alignItems="center" sx={{ mt: 0.5 }}>
                                             {selectedTeaserProvider.category && <Chip label={selectedTeaserProvider.category} size="small" sx={{ bgcolor: alpha(primaryColor, 0.08), color: primaryColor, fontWeight: 900, height: 24 }} />}
+                                            {selectedTeaserProvider.is_tenant_entry && <Chip label="Mandant" size="small" sx={{ bgcolor: primaryColor, color: '#fff', fontWeight: 900, height: 24 }} />}
                                             {selectedTeaserProvider.is_recommended && <Chip icon={<VerifiedUserIcon fontSize="small" />} label="Offizieller Partner" size="small" sx={{ bgcolor: alpha(primaryColor, 0.14), color: primaryColor, fontWeight: 900, height: 24 }} />}
                                             {Number(selectedTeaserProvider.software_count) > 0 && <Chip icon={<AppsOutlinedIcon />} label={`Software ${selectedTeaserProvider.software_count}`} size="small" sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900, height: 24 }} />}
                                             {Number(selectedTeaserProvider.action_count) > 0 && <Chip icon={<LocalOfferOutlinedIcon />} label={`Angebote ${selectedTeaserProvider.action_count}`} size="small" sx={{ bgcolor: alpha(secondaryColor, 0.1), color: secondaryColor, fontWeight: 900, height: 24 }} />}
@@ -1662,13 +1751,22 @@ const renderProviderPreviewCard = (provider: any) => {
                                                 </Typography>
                                             </Box>
                                         )}
+
+                                        {formatProviderAddress(selectedTeaserProvider.locations?.[0]) && (
+                                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, mt: 1.5, color: alpha(darkBlue, 0.72) }}>
+                                                <PlaceOutlinedIcon fontSize="small" sx={{ mt: 0.2, flexShrink: 0 }} />
+                                                <Typography variant="body2" sx={{ wordBreak: 'break-word', lineHeight: 1.3 }}>
+                                                    {formatProviderAddress(selectedTeaserProvider.locations?.[0])}
+                                                </Typography>
+                                            </Box>
+                                        )}
                                         
-                                        {!selectedTeaserProvider.website_url && !selectedTeaserProvider.contact_email && !selectedTeaserProvider.contact_phone && (
+                                        {!selectedTeaserProvider.website_url && !selectedTeaserProvider.contact_email && !selectedTeaserProvider.contact_phone && !formatProviderAddress(selectedTeaserProvider.locations?.[0]) && (
                                             <Typography variant="body2" color="text.secondary">Kontaktinformationen sind nur für Mitglieder einsehbar oder wurden nicht hinterlegt.</Typography>
                                         )}
                                     </Paper>
                                     
-                                    {selectedTeaserProvider.locations?.[0]?.latitude && (
+                                    {hasProviderCoordinates(selectedTeaserProvider.locations?.[0]) && (
                                         <Box sx={{ mt: 3 }}>
                                             <Typography variant="subtitle2" color={darkBlue} fontWeight={800} mb={1}>Standort</Typography>
                                             <Box ref={mapContainerRef} sx={{ height: 200, borderRadius: 3, bgcolor: alpha(primaryColor, 0.08), overflow: 'hidden', border: `1px solid ${alpha(darkBlue, 0.08)}`, zIndex: 0 }} />

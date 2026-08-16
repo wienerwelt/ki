@@ -26,7 +26,13 @@ exports.getAllScrapedContent = async (req, res) => {
                 sc.summary::text, 
                 sc.published_date, 
                 sc.event_date, 
-                sc.region::text, 
+                COALESCE((
+                    SELECT r.name::text
+                    FROM regions r
+                    WHERE LOWER(r.code::text) = LOWER(sc.region::text)
+                       OR LOWER(r.name::text) = LOWER(sc.region::text)
+                    LIMIT 1
+                ), sc.region::text) AS region,
                 sc.scraped_at, 
                 sc.relevance_score::numeric,
                 sc.created_at,
@@ -49,7 +55,13 @@ exports.getAllScrapedContent = async (req, res) => {
                 NULL::text as summary, 
                 ti.published_at as published_date, 
                 NULL::timestamp as event_date,
-                ti.region::text, 
+                COALESCE((
+                    SELECT r.name::text
+                    FROM regions r
+                    WHERE LOWER(r.code::text) = LOWER(ti.region::text)
+                       OR LOWER(r.name::text) = LOWER(ti.region::text)
+                    LIMIT 1
+                ), ti.region::text) AS region,
                 ti.published_at as scraped_at, 
                 0::numeric as relevance_score,
                 ti.published_at as created_at, -- FIX: Verhindert Absturz, falls ti.created_at nicht existiert
@@ -714,4 +726,3 @@ exports.deleteEventFeedToken = async (req, res) => {
         return res.status(500).json({ message: 'Event-Feed konnte nicht gelöscht werden.' });
     }
 };
-

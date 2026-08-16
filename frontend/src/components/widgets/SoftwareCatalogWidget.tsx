@@ -21,6 +21,7 @@ import { alpha, useTheme } from '@mui/material/styles';
 import apiClient from '../../apiClient';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import WidgetPaper from './WidgetPaper';
+import { resolveAssetUrl } from '../../utils/assetUrl';
 
 interface SoftwareCategory { id: string; slug: string; name: string; }
 interface SoftwareEntry {
@@ -67,7 +68,7 @@ const SoftwareLogo: React.FC<{ src?: string | null; name: string }> = ({ src, na
     return (
         <Box
             component="img"
-            src={!src || hasError ? DEFAULT_SOFTWARE_LOGO : src}
+            src={!src || hasError ? DEFAULT_SOFTWARE_LOGO : resolveAssetUrl(src)}
             alt={`${name} Logo`}
             onError={() => setHasError(true)}
             sx={{ width: '85%', height: '85%', objectFit: 'contain' }}

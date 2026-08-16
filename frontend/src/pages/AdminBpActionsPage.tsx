@@ -32,6 +32,8 @@ import {
     TableHead,
     TableRow,
     TableSortLabel,
+    Tab,
+    Tabs,
     TextField,
     Tooltip,
     Typography,
@@ -165,6 +167,7 @@ const AdminBpActionsPage: React.FC = () => {
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
     const [selectedBusinessPartnerId, setSelectedBusinessPartnerId] = useState('');
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: SortDirection }>({ key: 'created_at', direction: 'desc' });
+    const [activeSection, setActiveSection] = useState<'actions' | 'software'>('actions');
 
     const isAssistant = user?.role === 'assistenz';
 
@@ -482,8 +485,11 @@ const AdminBpActionsPage: React.FC = () => {
     return (
         <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
-                <Typography variant="h4" component="h1">Actions & Software</Typography>
-                <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'stretch', md: 'center' }} sx={{ width: { xs: '100%', md: 'auto' } }}>
+                <Box>
+                    <Typography variant="h4" component="h1">Actions & Software</Typography>
+                    <Typography variant="body2" color="text.secondary">Angebote bewerben und den mandantenspezifischen Software-Katalog pflegen.</Typography>
+                </Box>
+                {activeSection === 'actions' && <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'stretch', md: 'center' }} sx={{ width: { xs: '100%', md: 'auto' } }}>
                     {user?.role === 'admin' && (
                         <FormControl size="small" sx={{ minWidth: { xs: '100%', md: 260 } }}>
                             <InputLabel>Business Partner</InputLabel>
@@ -506,13 +512,20 @@ const AdminBpActionsPage: React.FC = () => {
                         InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon /></InputAdornment>) }}
                     />
                     <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpenDialog()}>Neue Aktion</Button>
-                </Stack>
+                </Stack>}
             </Box>
 
-            {loading && <CircularProgress />}
-            {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+            <Paper variant="outlined" sx={{ mb: 3, borderRadius: 2, overflow: 'hidden' }}>
+                <Tabs value={activeSection} onChange={(_, value) => setActiveSection(value)} variant="fullWidth" aria-label="Actions und Software verwalten">
+                    <Tab value="actions" label="Actions / Promotion" />
+                    <Tab value="software" label="Software-Katalog" />
+                </Tabs>
+            </Paper>
 
-            {!loading && (
+            {activeSection === 'actions' && loading && <CircularProgress />}
+            {activeSection === 'actions' && error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+            {activeSection === 'actions' && !loading && (
                 <Paper><TableContainer><Table>
                     <TableHead><TableRow>
                         <TableCell>Status</TableCell>
@@ -574,7 +587,7 @@ const AdminBpActionsPage: React.FC = () => {
                 </Table></TableContainer></Paper>
             )}
 
-            <SoftwareCatalogAdminPanel />
+            {activeSection === 'software' && <SoftwareCatalogAdminPanel />}
 
             <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
                 <DialogTitle>{editingAction ? 'Aktion bearbeiten' : 'Neue Aktion erstellen'}</DialogTitle>

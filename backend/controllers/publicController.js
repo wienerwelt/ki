@@ -563,7 +563,7 @@ exports.submitContactForm = async (req, res) => {
                     <div style="margin-top:24px;">
                         <a
                             href="mailto:${safeEmail}?subject=${encodeURIComponent(
-                                'Ihre Anfrage bei mobiliti'
+                                'Ihre Anfrage bei Mobiliti'
                             )}"
                             style="
                                 display:inline-block;
@@ -606,12 +606,12 @@ exports.submitContactForm = async (req, res) => {
             // an den Formularabsender.
             replyTo: cleanEmail,
 
-            fromName: 'mobiliti Kontaktformular'
+            fromName: 'Mobiliti Kontaktformular'
         };
 
         // 3. Automatische Bestätigung an den Interessenten
         const confirmationSubject =
-            'Vielen Dank für Ihre Anfrage bei mobiliti';
+            'Vielen Dank für Ihre Anfrage bei Mobiliti';
 
         const confirmationHtml = `
             <div style="
@@ -642,7 +642,7 @@ exports.submitContactForm = async (req, res) => {
                     <p>Guten Tag ${safeName},</p>
 
                     <p>
-                        vielen Dank für Ihr Interesse an mobiliti.
+                        vielen Dank für Ihr Interesse an Mobiliti.
                         Ihre Anfrage ist bei uns eingegangen.
                     </p>
 
@@ -1283,6 +1283,7 @@ exports.getPublicDirectory = async (req, res) => {
                 ROUND(COALESCE(r.avg_rating, 0), 1) AS average_rating,
                 COALESCE(r.rev_count, 0) AS review_count,
                 COALESCE(ms.is_recommended, false) AS is_recommended,
+                COALESCE(ms.is_tenant_entry, false) AS is_tenant_entry,
                 COALESCE(linked_entries.software_count, 0)::int AS software_count,
                 COALESCE(linked_entries.action_count, 0)::int AS action_count,
                 COALESCE(locations.locations, '[]'::json) AS locations
@@ -1351,7 +1352,7 @@ exports.getPublicDirectory = async (req, res) => {
                 WHERE l.provider_id = p.id
             ) locations ON true
             ${whereSql}
-            ORDER BY ms.is_recommended DESC, p.name ASC
+            ORDER BY ms.is_tenant_entry DESC, ms.is_recommended DESC, p.name ASC
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
         `;
 

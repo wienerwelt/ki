@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Box, Paper, Typography, CircularProgress, Alert, Rating, List, Link as MuiLink, Avatar, Chip } from '@mui/material';
 import apiClient from '../apiClient';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import { resolveAssetUrl } from '../utils/assetUrl';
 
 interface PendingSource {
     id: string;
@@ -15,12 +16,7 @@ interface PendingSource {
 
 // Hilfsfunktion zur Bildgenerierung
 const getImageUrl = (url: string | null) => {
-    if (!url) return '';
-    if (url.startsWith('http')) return url;
-    const baseUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-    let cleanPath = url.startsWith('/') ? url : `/${url}`;
-    cleanPath = cleanPath.replace(/^\/public\//, '/');
-    return `${baseUrl}${cleanPath}`;
+    return resolveAssetUrl(url);
 };
 
 // Hilfsfunktion für den Fallback-Avatar
@@ -92,6 +88,10 @@ export const VoteSourcesList: React.FC = () => {
                                             component="img" 
                                             src={getImageUrl(source.logo_url)} 
                                             alt="Logo" 
+                                            onError={(event: React.SyntheticEvent<HTMLImageElement>) => {
+                                                event.currentTarget.onerror = null;
+                                                event.currentTarget.src = '/logos/default-company.svg';
+                                            }}
                                             sx={{ width: 64, height: 64, objectFit: 'contain', bgcolor: 'grey.50', p: 1, borderRadius: 2, border: '1px solid', borderColor: 'divider', flexShrink: 0 }} 
                                         />
                                     ) : (

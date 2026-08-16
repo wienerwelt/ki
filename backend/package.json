@@ -24,6 +24,7 @@
     "smoke:community-profile": "node scripts/smokeCommunityProfile.js",
     "smoke:admin-user-search": "node scripts/smokeAdminUserSearch.js",
     "smoke:event-feed-dedup": "node scripts/smokeEventFeedDedup.js",
+    "smoke:scraper-date": "node scripts/smokeScraperDate.js",
     "sync:fuhrparknews-events": "node scripts/syncFuhrparknewsEvents.js",
     "audit:monthly-report": "node scripts/auditMonthlyReport.js",
     "deploy": "npm --prefix ../frontend ci && npm --prefix ../frontend run build:dashboard",

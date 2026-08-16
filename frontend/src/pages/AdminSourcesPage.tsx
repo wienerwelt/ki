@@ -21,6 +21,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
+import { resolveAssetUrl } from '../utils/assetUrl';
 
 interface Source {
     id: string;
@@ -65,12 +66,7 @@ const AdminSourcesPage: React.FC = () => {
     });
 
     const getImageUrl = (url: string | null) => {
-        if (!url) return '';
-        if (url.startsWith('http')) return url;
-        const baseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/$/, '');
-        let cleanPath = url.startsWith('/') ? url : `/${url}`;
-        cleanPath = cleanPath.replace(/^\/public\//, '/');
-        return `${baseUrl}${cleanPath}`;
+        return resolveAssetUrl(url);
     };
 
     const handleCopyUrl = (url: string) => {

@@ -46,6 +46,8 @@ export interface EventCalendarWidgetProps extends Partial<BaseWidgetProps> {
     defaultRegion?: string;
     primaryColor?: string; // NEU: Für nahtlose Farb-Übergabe aus dem Public Portal
     partnerId?: string;
+    publicContributionLabel?: string;
+    onPublicLogin?: () => void;
 }
 
 interface Region { id?: string; name: string; code: string; }
@@ -214,7 +216,8 @@ const ParticipantsPreview: React.FC<{ yes: Participant[]; maybe: Participant[] }
 };
 
 const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
-  onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey, isPublic = false, partnerName, defaultRegion = 'all', primaryColor, partnerId
+  onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey, isPublic = false, partnerName, defaultRegion = 'all', primaryColor, partnerId,
+  publicContributionLabel = 'Branchen-Veranstaltung hinzufügen', onPublicLogin
 }) => {
   const navigate = useNavigate();
   const theme = useTheme();
@@ -421,6 +424,13 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
       return acc;
     }, {});
   }, [allEvents, availableRegions, searchTerm, selectedRegionCode]);
+
+  const publicContributionAfterEventKey = useMemo(() => {
+    if (!isPublic) return null;
+    const visibleEvents = Object.values(filteredAndGrouped).flat();
+    const seventhEvent = visibleEvents[6];
+    return seventhEvent ? `${seventhEvent.type || 'event'}:${seventhEvent.id}` : null;
+  }, [filteredAndGrouped, isPublic]);
 
   useEffect(() => {
     updateListScrollState();
@@ -683,8 +693,9 @@ title={
                       };
 
 return (
+                        <React.Fragment key={`${e.type || 'event'}:${e.id}`}>
                         <Paper
-                          key={e.id} elevation={0}
+                          elevation={0}
                           sx={{
                             display: 'flex', alignItems: 'center', gap: 1.5, p: 1.5, mb: 1.5, 
                             cursor: isHoliday ? 'default' : 'pointer', borderRadius: 3,
@@ -804,6 +815,53 @@ return (
                              </IconButton> 
                           )}
                         </Paper>
+                        {publicContributionAfterEventKey === `${e.type || 'event'}:${e.id}` && (
+                          <Paper
+                            elevation={0}
+                            sx={{
+                              p: 2,
+                              mb: 1.5,
+                              borderRadius: 3,
+                              border: `1px solid ${alpha(customPrimary, 0.28)}`,
+                              bgcolor: alpha(customPrimary, 0.07),
+                              display: 'flex',
+                              alignItems: { xs: 'flex-start', sm: 'center' },
+                              justifyContent: 'space-between',
+                              flexDirection: { xs: 'column', sm: 'row' },
+                              gap: 1.5,
+                            }}
+                          >
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+                              <CalendarMonthIcon sx={{ color: customPrimary, flexShrink: 0 }} />
+                              <Box>
+                                <Typography variant="subtitle2" sx={{ color: 'text.primary', fontWeight: 900 }}>
+                                  {`Eigene ${publicContributionLabel.replace(/\s+hinzufügen$/i, '')} bekannt machen?`}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  Mitglieder können Termine für die Community einreichen.
+                                </Typography>
+                              </Box>
+                            </Box>
+                            <Button
+                              variant="contained"
+                              size="small"
+                              startIcon={<AddCircleOutlineIcon />}
+                              onClick={() => onPublicLogin ? onPublicLogin() : navigate('/login')}
+                              sx={{
+                                bgcolor: customPrimary,
+                                color: '#fff',
+                                textTransform: 'none',
+                                fontWeight: 900,
+                                whiteSpace: 'normal',
+                                textAlign: 'center',
+                                '&:hover': { bgcolor: customPrimary, filter: 'brightness(0.94)' },
+                              }}
+                            >
+                              {publicContributionLabel}
+                            </Button>
+                          </Paper>
+                        )}
+                        </React.Fragment>
                       );
                     })}
                   </Box>

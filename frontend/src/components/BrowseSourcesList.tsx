@@ -7,6 +7,7 @@ import {
 import apiClient from '../apiClient';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import SearchIcon from '@mui/icons-material/Search';
+import { resolveAssetUrl } from '../utils/assetUrl';
 
 // --- Interfaces ---
 interface ApprovedSource {
@@ -29,13 +30,7 @@ interface Category {
 
 // Hilfsfunktion zur Bildgenerierung (inkl. Fallback-Port)
 const getImageUrl = (url: string | null) => {
-    if (!url) return '';
-    if (url.startsWith('http')) return url;
-    // KORREKTUR: Hier fehlte der Fallback auf deinen Backend-Port!
-    const baseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5001').replace(/\/$/, '');
-    let cleanPath = url.startsWith('/') ? url : `/${url}`;
-    cleanPath = cleanPath.replace(/^\/public\//, '/');
-    return `${baseUrl}${cleanPath}`;
+    return resolveAssetUrl(url);
 };
 
 // Hilfsfunktion für den Fallback-Avatar (Erster Buchstabe der Domain)
@@ -137,6 +132,10 @@ export const BrowseSourcesList: React.FC = () => {
                                         component="img" 
                                         src={getImageUrl(source.logo_url)} 
                                         alt="Logo" 
+                                        onError={(event: React.SyntheticEvent<HTMLImageElement>) => {
+                                            event.currentTarget.onerror = null;
+                                            event.currentTarget.src = '/logos/default-company.svg';
+                                        }}
                                         sx={{ width: 48, height: 48, objectFit: 'contain', bgcolor: 'grey.50', p: 0.5, borderRadius: 1, border: '1px solid', borderColor: 'divider' }} 
                                     />
                                 ) : (

@@ -11,6 +11,7 @@ import { SnackbarProvider } from './context/SnackbarContext';
 // CookieBanner bleibt klein und global. Das DashboardLayout wird lazy geladen,
 // damit öffentliche Seiten nicht die komplette Dashboard-Shell mitladen.
 import CookieBanner from './components/CookieBanner';
+import PwaUpdatePrompt from './components/PwaUpdatePrompt';
 
 const DashboardLayout = lazy(() => import('./components/DashboardLayout'));
 
@@ -217,6 +218,7 @@ function App() {
   return (
     <AnyThemeProvider theme={currentTheme}>
       <CssBaseline />
+      <PwaUpdatePrompt />
       <Router>
         <Routes>
           {/* Öffentliche Routen */}

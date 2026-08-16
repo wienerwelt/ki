@@ -9,7 +9,6 @@ import {
     DialogActions,
     DialogContent,
     DialogTitle,
-    Divider,
     FormControl,
     FormControlLabel,
     Grid,
@@ -31,6 +30,9 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
+import { resolveAssetUrl } from '../utils/assetUrl';
+
+const DEFAULT_SOFTWARE_LOGO = '/logos/default-company.svg';
 
 interface BusinessPartner { id: string; name: string; }
 interface ProviderOption { id: string; name: string; logo_url?: string; }
@@ -41,6 +43,7 @@ interface SoftwareEntry {
     business_partner_id: string;
     provider_id: string;
     provider_name: string;
+    provider_logo_url?: string;
     name: string;
     short_description?: string;
     description?: string;
@@ -224,8 +227,7 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
     };
 
     return (
-        <Box sx={{ mt: 5 }}>
-            <Divider sx={{ mb: 4 }} />
+        <Box sx={{ mt: 1 }}>
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', md: 'center' }} spacing={2} sx={{ mb: 2 }}>
                 <Box>
                     <Typography variant="h5" fontWeight={900}>Software-Lexikon</Typography>
@@ -252,10 +254,22 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                         <Grid item xs={12} md={6} lg={4} key={entry.id}>
                             <Paper variant="outlined" sx={{ p: 2.2, borderRadius: 3, height: '100%' }}>
                                 <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
-                                    <Box sx={{ minWidth: 0 }}>
-                                        <Typography fontWeight={900}>{entry.name}</Typography>
-                                        <Typography variant="caption" color="text.secondary">{entry.provider_name}</Typography>
-                                    </Box>
+                                    <Stack direction="row" spacing={1.2} sx={{ minWidth: 0 }}>
+                                        <Box
+                                            component="img"
+                                            src={resolveAssetUrl(entry.logo_url || entry.provider_logo_url) || DEFAULT_SOFTWARE_LOGO}
+                                            alt={`${entry.name} Logo`}
+                                            onError={(event: React.SyntheticEvent<HTMLImageElement>) => {
+                                                event.currentTarget.onerror = null;
+                                                event.currentTarget.src = DEFAULT_SOFTWARE_LOGO;
+                                            }}
+                                            sx={{ width: 48, height: 48, flexShrink: 0, objectFit: 'contain', border: '1px solid', borderColor: 'divider', borderRadius: 1.5, p: 0.5, bgcolor: 'background.paper' }}
+                                        />
+                                        <Box sx={{ minWidth: 0 }}>
+                                            <Typography fontWeight={900}>{entry.name}</Typography>
+                                            <Typography variant="caption" color="text.secondary">{entry.provider_name}</Typography>
+                                        </Box>
+                                    </Stack>
                                     <Stack direction="row" spacing={0.2}>
                                         <Tooltip title="Bearbeiten"><IconButton size="small" onClick={() => openEdit(entry)}><EditIcon fontSize="small" /></IconButton></Tooltip>
                                         {entry.product_url && <Tooltip title="Produktseite"><IconButton size="small" href={entry.product_url} target="_blank" rel="noopener noreferrer"><OpenInNewIcon fontSize="small" /></IconButton></Tooltip>}
@@ -319,7 +333,7 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                                     <input hidden type="file" accept="image/jpeg,image/png,image/webp,image/avif" onChange={(event) => uploadLogo(event.target.files?.[0])} />
                                 </Button>
                                 <TextField fullWidth size="small" label="Logo-URL (alternativ)" placeholder="https://…" value={form.logo_url || ''} onChange={(event) => setForm((current) => ({ ...current, logo_url: event.target.value }))} />
-                                {form.logo_url && <Box component="img" src={form.logo_url} alt="Logo-Vorschau" sx={{ width: 100, height: 56, objectFit: 'contain', alignSelf: 'flex-start', border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 0.5 }} />}
+                                {form.logo_url && <Box component="img" src={resolveAssetUrl(form.logo_url)} alt="Logo-Vorschau" onError={(event: React.SyntheticEvent<HTMLImageElement>) => { event.currentTarget.onerror = null; event.currentTarget.src = DEFAULT_SOFTWARE_LOGO; }} sx={{ width: 100, height: 56, objectFit: 'contain', alignSelf: 'flex-start', border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 0.5 }} />}
                                 <Typography variant="caption" color="text.secondary">Automatisch max. 320 × 320 px, WebP. SVG wird aus Sicherheitsgründen nicht angenommen.</Typography>
                             </Stack>
                         </Grid>

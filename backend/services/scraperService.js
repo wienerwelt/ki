@@ -5,8 +5,6 @@ const crypto = require('crypto');
 const xml2js = require('xml2js');
 const { JSDOM } = require('jsdom');
 const { Readability } = require('@mozilla/readability');
-const { parse } = require('date-fns');
-const { de } = require('date-fns/locale');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -15,6 +13,7 @@ const { logActivity } = require('./auditLogService');
 const { callOpenAI } = require('./aiService');
 const { scrapeQueue, fundingQueue } = require('./queueService');
 const { searchGoogle } = require('./googleSearchService');
+const { parseDateString: parseDateValue } = require('../utils/dateParser');
 
 const logToDb = async (jobId, level, message) => {
     if (!jobId) return;
@@ -29,17 +28,8 @@ const parseDateString = (dateString, dateFormat, jobId) => {
     if (!dateString) return null;
     const trimmedDate = dateString.trim();
     try {
-        if (dateFormat) {
-            const parsed = parse(trimmedDate, dateFormat, new Date(), { locale: de });
-            if (!isNaN(parsed.getTime())) return parsed;
-        }
-        try {
-            const rssFormat = "EEE, dd MMM yyyy HH:mm:ss xx";
-            const parsedRss = parse(trimmedDate, rssFormat, new Date(), { locale: de });
-            if (!isNaN(parsedRss.getTime())) return parsedRss;
-        } catch (e) {}
-        const fallbackParsed = new Date(trimmedDate);
-        if (!isNaN(fallbackParsed.getTime())) return fallbackParsed;
+        const parsed = parseDateValue(trimmedDate, dateFormat);
+        if (parsed) return parsed;
         logToDb(jobId, 'WARN', `Ungültiges Datumsformat im Feed erkannt: "${trimmedDate}"`);
         return null;
     } catch (error) {
@@ -835,7 +825,13 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
                             const res = await db.query(
                                 `INSERT INTO scraped_content (source_identifier, original_url, title, summary, published_date, category, category_id, region, thumbnail_url, relevance_score)
                                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                                 ON CONFLICT (original_url) DO NOTHING RETURNING id`,
+                                 ON CONFLICT (original_url) DO UPDATE
+                                 SET published_date = EXCLUDED.published_date,
+                                     updated_at = CURRENT_TIMESTAMP
+                                 WHERE scraped_content.source_identifier = EXCLUDED.source_identifier
+                                   AND scraped_content.published_date IS NULL
+                                   AND EXCLUDED.published_date IS NOT NULL
+                                 RETURNING id`,
                                 [rule.source_identifier, link, title, summary, publishedDate, rule.category_default, categoryId, rule.region, thumbnailUrl, relevanceScore]
                             );
                             if (res.rowCount > 0) {
@@ -1695,6 +1691,7 @@ module.exports = {
     processNewsKeywordSearch,
     previewScrapingRule,
     __test: {
+        parseDateString,
         processXmlFeedByRule: _processXmlFeedByRule,
         isEventCategory,
         buildEventFingerprint,

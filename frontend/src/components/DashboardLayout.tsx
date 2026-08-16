@@ -5,7 +5,7 @@ import {
     AppBar, Toolbar, Typography, Box, Drawer, List, ListItem, ListItemText,
     ListItemIcon, IconButton, Divider, Menu, MenuItem, Tooltip, Chip, Switch,
     useTheme, useMediaQuery, Dialog, DialogContent, DialogTitle,
-    Avatar, Badge, Collapse, Button
+    Avatar, Badge, Collapse, Button, ListSubheader
 } from '@mui/material';
 
 import { alpha, keyframes } from '@mui/material/styles';
@@ -348,6 +348,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                    <>
                         <ListItem button component={RouterLink} to="/admin/briefing-editorial"><ListItemIcon><HistoryEduIcon /></ListItemIcon><ListItemText primary="Briefing Redaktion" /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/users"><ListItemIcon><GroupIcon /></ListItemIcon><ListItemText primary={t('layout.userManagement')} /></ListItem>
+                        <ListItem button component={RouterLink} to="/admin/actions">
+                            <ListItemIcon>
+                                <Badge badgeContent={menuBadges.actions} color="primary" max={99}>
+                                    <StarsIcon />
+                                </Badge>
+                            </ListItemIcon>
+                            <ListItemText primary="Actions & Software" />
+                        </ListItem>
                         <ListItem button component={RouterLink} to="/admin/surveys"><ListItemIcon><PollIcon /></ListItemIcon><ListItemText primary={t('layout.surveys')} /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/community"><ListItemIcon><ForumIcon /></ListItemIcon><ListItemText primary="Community Moderation" /></ListItem>
                         <Divider sx={{ my: 1 }} />
@@ -361,6 +369,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItemText primary={t('layout.adminArea')} />
                         </ListItem>
                         <List component="div" disablePadding sx={{ pl: 4 }}>
+                            <ListSubheader
+                                disableSticky
+                                sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                            >
+                                Redaktion & Inhalte
+                            </ListSubheader>
                             <ListItem button component={RouterLink} to="/admin/briefing-editorial">
                                 <ListItemIcon><HistoryEduIcon /></ListItemIcon>
                                 <ListItemText primary="Briefing Redaktion" />
@@ -369,29 +383,40 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 <ListItemIcon><ShareIcon /></ListItemIcon>
                                 <ListItemText primary="Social Media" />
                             </ListItem>
+                            <ListItem button component={RouterLink} to="/admin/actions">
+                                <ListItemIcon>
+                                    <Badge badgeContent={menuBadges.actions} color="primary" max={99}>
+                                        <StarsIcon />
+                                    </Badge>
+                                </ListItemIcon>
+                                <ListItemText primary="Actions & Software" />
+                            </ListItem>
+                            <ListItem button component={RouterLink} to="/admin/advertisements"><ListItemIcon><CampaignIcon /></ListItemIcon><ListItemText primary={t('layout.advertising')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/surveys"><ListItemIcon><PollIcon /></ListItemIcon><ListItemText primary={t('layout.surveys')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/community"><ListItemIcon><ForumIcon /></ListItemIcon><ListItemText primary="Community Moderation" /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/events"><ListItemIcon><CalendarMonthIcon /></ListItemIcon><ListItemText primary={t('layout.events')} /></ListItem>
+
+                            <ListSubheader
+                                disableSticky
+                                sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                            >
+                                Mandanten & Netzwerk
+                            </ListSubheader>
                             <ListItem button component={RouterLink} to="/admin/business-partners"><ListItemIcon><BusinessIcon /></ListItemIcon><ListItemText primary={t('layout.businessPartners')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/users"><ListItemIcon><GroupIcon /></ListItemIcon><ListItemText primary={t('layout.users')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/widget-types"><ListItemIcon><WidgetsIcon /></ListItemIcon><ListItemText primary={t('layout.widgetTypes')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/bp-widget-access"><ListItemIcon><SubscriptionsIcon /></ListItemIcon><ListItemText primary={t('layout.subscriptions')} /></ListItem>
-                            
-                            <ListItem button component={RouterLink} to="/admin/legal-monitor"><ListItemIcon><GavelIcon /></ListItemIcon><ListItemText primary="Monitor-Verwaltung" /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/directory"><ListItemIcon><StorefrontIcon /></ListItemIcon><ListItemText primary={t('layout.directory')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/sources"><ListItemIcon><FactCheckIcon /></ListItemIcon><ListItemText primary={t('layout.sourceManagement')} /></ListItem>
+
+                            <ListSubheader
+                                disableSticky
+                                sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                            >
+                                Daten & KI
+                            </ListSubheader>
                             <ListItem button component={RouterLink} to="/admin/funding"><ListItemIcon><ShoppingCartCheckoutIcon /></ListItemIcon><ListItemText primary={t('layout.funding')} /></ListItem>
-                            
-                            <ListItem button component={RouterLink} to="/admin/actions">
-                                <ListItemIcon>
-                                    <Badge badgeContent={menuBadges.actions} color="primary" variant="dot">
-                                        <StarsIcon />
-                                    </Badge>
-                                </ListItemIcon>
-                                <ListItemText primary={t('layout.manageActions')} />
-                            </ListItem>
-                            
-                            <ListItem button component={RouterLink} to="/admin/advertisements"><ListItemIcon><CampaignIcon /></ListItemIcon><ListItemText primary={t('layout.advertising')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/surveys"><ListItemIcon><PollIcon /></ListItemIcon><ListItemText primary={t('layout.surveys')} /></ListItem>
-                            
-                            <ListItem button component={RouterLink} to="/admin/community"><ListItemIcon><ForumIcon /></ListItemIcon><ListItemText primary="Community Moderation" /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/events"><ListItemIcon><CalendarMonthIcon /></ListItemIcon><ListItemText primary={t('layout.events')} /></ListItem>
-                            
+                            <ListItem button component={RouterLink} to="/admin/legal-monitor"><ListItemIcon><GavelIcon /></ListItemIcon><ListItemText primary="Monitor-Verwaltung" /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/scraped-content">
                                 <ListItemIcon>
                                     <Badge 
@@ -405,9 +430,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 </ListItemIcon>
                                 <ListItemText primary={t('layout.scrapedContent')} />
                             </ListItem>
-                            
                             <ListItem button component={RouterLink} to="/admin/scraping-rules"><ListItemIcon><PolicyIcon /></ListItemIcon><ListItemText primary={t('layout.scrapingRules')} /></ListItem>
-                            
                             <ListItem button component={RouterLink} to="/admin/ai-content">
                                 <ListItemIcon>
                                     <Badge 
@@ -421,14 +444,16 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 </ListItemIcon>
                                 <ListItemText primary={t('layout.aiContent')} />
                             </ListItem>
-                            
                             <ListItem button component={RouterLink} to="/admin/ai-prompt-rules"><ListItemIcon><AutoAwesomeIcon /></ListItemIcon><ListItemText primary={t('layout.aiPromptRules')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/categories"><ListItemIcon><CategoryIcon /></ListItemIcon><ListItemText primary={t('layout.categories')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/tags"><ListItemIcon><TagIcon /></ListItemIcon><ListItemText primary={t('layout.tags')} /></ListItem>
-                            
-                            <ListItem button component={RouterLink} to="/admin/directory"><ListItemIcon><StorefrontIcon /></ListItemIcon><ListItemText primary={t('layout.directory')} /></ListItem>  
-                            <ListItem button component={RouterLink} to="/admin/sources"><ListItemIcon><FactCheckIcon /></ListItemIcon><ListItemText primary={t('layout.sourceManagement')} /></ListItem>
-                            
+
+                            <ListSubheader
+                                disableSticky
+                                sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                            >
+                                Betrieb & Analyse
+                            </ListSubheader>
                             <ListItem button component={RouterLink} to="/admin/cronjobs"><ListItemIcon><ScheduleIcon /></ListItemIcon><ListItemText primary={t('layout.automatedTasks')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/statistics"><ListItemIcon><QueryStatsIcon /></ListItemIcon><ListItemText primary={t('layout.statistics')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/monitor"><ListItemIcon><MonitorIcon /></ListItemIcon><ListItemText primary={t('layout.activityMonitor')} /></ListItem>

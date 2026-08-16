@@ -88,6 +88,7 @@ interface ProviderMandantSetting {
     business_partner_id: string;
     status: 'active' | 'blacklisted';
     is_recommended: boolean;
+    is_tenant_entry?: boolean;
     business_partner_name?: string | null;
     primary_color?: string | null;
     secondary_color?: string | null;
@@ -971,7 +972,7 @@ const AdminDirectoryPage: React.FC = () => {
                             Hier legst du fest, ob ein Anbieter für einen bestimmten Mandant gesperrt oder empfohlen ist.
                         </Typography>
                         
-                        <Button size="small" variant="outlined" startIcon={<AddCircleOutlineIcon />} sx={{ mb: 3 }} onClick={() => setCurrentProvider(p => ({...p, mandant_settings: [...(p.mandant_settings || []), { business_partner_id: '', status: 'active', is_recommended: false }]}))}>
+                        <Button size="small" variant="outlined" startIcon={<AddCircleOutlineIcon />} sx={{ mb: 3 }} onClick={() => setCurrentProvider(p => ({...p, mandant_settings: [...(p.mandant_settings || []), { business_partner_id: '', status: 'active', is_recommended: false, is_tenant_entry: false }]}))}>
                             Spezifische Regel hinzufügen
                         </Button>
                         
@@ -1000,6 +1001,7 @@ const AdminDirectoryPage: React.FC = () => {
                                         <Select value={ms.status || 'active'} label="Status" onChange={e => {
                                             const newMs = [...(currentProvider.mandant_settings || [])];
                                             newMs[idx].status = e.target.value as any;
+                                            if (e.target.value === 'blacklisted') newMs[idx].is_tenant_entry = false;
                                             setCurrentProvider(p => ({...p, mandant_settings: newMs}));
                                         }}>
                                             <MenuItem value="active">Sichtbar (Aktiv)</MenuItem>
@@ -1014,6 +1016,15 @@ const AdminDirectoryPage: React.FC = () => {
                                         }} />} 
                                         label={bpLabel} 
                                         sx={{ whiteSpace: 'nowrap' }} 
+                                    />
+                                    <FormControlLabel
+                                        control={<Switch checked={ms.is_tenant_entry || false} disabled={ms.status === 'blacklisted'} onChange={e => {
+                                            const newMs = [...(currentProvider.mandant_settings || [])];
+                                            newMs[idx].is_tenant_entry = e.target.checked;
+                                            setCurrentProvider(p => ({...p, mandant_settings: newMs}));
+                                        }} />}
+                                        label="Mandant selbst"
+                                        sx={{ whiteSpace: 'nowrap' }}
                                     />
                                     <IconButton color="error" onClick={() => setCurrentProvider(p => ({...p, mandant_settings: (p.mandant_settings || []).filter((_, i) => i !== idx)}))}><DeleteIcon /></IconButton>
                                 </Box>

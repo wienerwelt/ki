@@ -114,7 +114,8 @@ try {
             'smoke:monthly-report-monitor',
             'smoke:community-profile',
             'smoke:admin-user-search',
-            'smoke:event-feed-dedup'
+            'smoke:event-feed-dedup',
+            'smoke:scraper-date'
         )
         foreach ($smokeScript in $smokeScripts) {
             Write-Host "  -> $smokeScript"
