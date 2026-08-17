@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Alert,
+    Autocomplete,
     Box,
     Button,
     Chip,
@@ -37,6 +38,7 @@ const DEFAULT_SOFTWARE_LOGO = '/logos/default-company.svg';
 interface BusinessPartner { id: string; name: string; }
 interface ProviderOption { id: string; name: string; logo_url?: string; }
 interface CategoryOption { id: string; slug: string; name: string; }
+interface RegionOption { id: string; name: string; code: string; }
 
 interface SoftwareEntry {
     id: string;
@@ -66,7 +68,6 @@ interface SoftwareEntry {
 type SoftwareForm = Omit<SoftwareEntry, 'id' | 'provider_name' | 'categories' | 'experience_count' | 'average_rating'> & {
     id?: string;
     category_ids: string[];
-    country_codes_input: string;
 };
 
 const emptyForm = (businessPartnerId = ''): SoftwareForm => ({
@@ -79,7 +80,6 @@ const emptyForm = (businessPartnerId = ''): SoftwareForm => ({
     logo_url: '',
     coverage_scope: 'country',
     country_codes: ['AT'],
-    country_codes_input: 'AT',
     deployment_model: '',
     pricing_model: '',
     target_group: '',
@@ -98,6 +98,7 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
     const [selectedBusinessPartnerId, setSelectedBusinessPartnerId] = useState(isAdmin ? '' : (user?.business_partner_id || ''));
     const [providers, setProviders] = useState<ProviderOption[]>([]);
     const [categories, setCategories] = useState<CategoryOption[]>([]);
+    const [regions, setRegions] = useState<RegionOption[]>([]);
     const [open, setOpen] = useState(false);
     const [form, setForm] = useState<SoftwareForm>(emptyForm(user?.business_partner_id || ''));
     const [loading, setLoading] = useState(false);
@@ -141,6 +142,7 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
             .then((response) => {
                 setProviders(response.data.providers || []);
                 setCategories(response.data.categories || []);
+                setRegions(response.data.regions || []);
             })
             .catch((err) => setError(err.response?.data?.message || 'Katalog-Optionen konnten nicht geladen werden.'));
     }, [open, form.business_partner_id]);
@@ -157,12 +159,19 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
             ...emptyForm(entry.business_partner_id),
             ...entry,
             category_ids: (entry.categories || []).map((category) => category.id),
-            country_codes_input: (entry.country_codes || []).join(', '),
         });
         setOpen(true);
     };
 
     const categoryNames = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
+    const selectedProvider = useMemo(
+        () => providers.find((provider) => provider.id === form.provider_id),
+        [form.provider_id, providers]
+    );
+    const formLogoUrl = resolveAssetUrl(form.logo_url || selectedProvider?.logo_url || form.provider_logo_url) || DEFAULT_SOFTWARE_LOGO;
+    const formLogoLabel = form.logo_url
+        ? 'Software-Logo'
+        : (selectedProvider?.logo_url || form.provider_logo_url) ? 'Anbieterlogo aus dem Branchenverzeichnis' : 'Standardlogo';
 
     const uploadLogo = async (file?: File) => {
         if (!file) return;
@@ -190,17 +199,13 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
         if (!form.name.trim()) return setError('Bitte einen Software-Namen eingeben.');
         if (form.category_ids.length === 0) return setError('Bitte mindestens eine Kategorie auswählen.');
 
-        const countryCodes = form.country_codes_input
-            .split(',')
-            .map((value) => value.trim().toUpperCase())
-            .filter(Boolean);
-        if (form.coverage_scope === 'country' && countryCodes.length === 0) {
-            return setError('Bei landesspezifischer Abdeckung mindestens einen ISO-Code angeben, z. B. AT oder DE.');
+        if (form.coverage_scope === 'country' && form.country_codes.length === 0) {
+            return setError('Bei landesspezifischer Abdeckung mindestens ein Land auswählen.');
         }
 
         setSaving(true);
         setError(null);
-        const payload = { ...form, country_codes: countryCodes };
+        const payload = { ...form, country_codes: form.country_codes };
         try {
             if (form.id) {
                 await apiClient.put(`/api/admin/actions/software/${form.id}`, payload);
@@ -310,7 +315,10 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                         <Grid item xs={12} md={6}>
                             <FormControl fullWidth size="small" required disabled={!form.business_partner_id}>
                                 <InputLabel>Anbieter aus Branchenverzeichnis *</InputLabel>
-                                <Select value={form.provider_id} label="Anbieter aus Branchenverzeichnis *" onChange={(event) => setForm((current) => ({ ...current, provider_id: event.target.value }))}>
+                                <Select value={form.provider_id} label="Anbieter aus Branchenverzeichnis *" onChange={(event) => {
+                                    const provider = providers.find((option) => option.id === event.target.value);
+                                    setForm((current) => ({ ...current, provider_id: event.target.value, provider_logo_url: provider?.logo_url }));
+                                }}>
                                     {providers.map((provider) => <MenuItem key={provider.id} value={provider.id}>{provider.name}</MenuItem>)}
                                 </Select>
                             </FormControl>
@@ -333,7 +341,10 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                                     <input hidden type="file" accept="image/jpeg,image/png,image/webp,image/avif" onChange={(event) => uploadLogo(event.target.files?.[0])} />
                                 </Button>
                                 <TextField fullWidth size="small" label="Logo-URL (alternativ)" placeholder="https://…" value={form.logo_url || ''} onChange={(event) => setForm((current) => ({ ...current, logo_url: event.target.value }))} />
-                                {form.logo_url && <Box component="img" src={resolveAssetUrl(form.logo_url)} alt="Logo-Vorschau" onError={(event: React.SyntheticEvent<HTMLImageElement>) => { event.currentTarget.onerror = null; event.currentTarget.src = DEFAULT_SOFTWARE_LOGO; }} sx={{ width: 100, height: 56, objectFit: 'contain', alignSelf: 'flex-start', border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 0.5 }} />}
+                                <Stack direction="row" spacing={1.25} alignItems="center">
+                                    <Box component="img" src={formLogoUrl} alt="Logo-Vorschau" onError={(event: React.SyntheticEvent<HTMLImageElement>) => { event.currentTarget.onerror = null; event.currentTarget.src = DEFAULT_SOFTWARE_LOGO; }} sx={{ width: 100, height: 56, objectFit: 'contain', flexShrink: 0, border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 0.5, bgcolor: 'background.paper' }} />
+                                    <Typography variant="caption" color="text.secondary">{formLogoLabel}</Typography>
+                                </Stack>
                                 <Typography variant="caption" color="text.secondary">Automatisch max. 320 × 320 px, WebP. SVG wird aus Sicherheitsgründen nicht angenommen.</Typography>
                             </Stack>
                         </Grid>
@@ -361,7 +372,28 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                                 </Select>
                             </FormControl>
                         </Grid>
-                        <Grid item xs={12} md={7}><TextField fullWidth size="small" label="ISO-Ländercodes" placeholder="AT, DE, CH" value={form.country_codes_input} onChange={(event) => setForm((current) => ({ ...current, country_codes_input: event.target.value }))} helperText="Für landesspezifische Einträge Pflicht; bei Europa/Welt optional." /></Grid>
+                        <Grid item xs={12} md={7}>
+                            <Autocomplete
+                                multiple
+                                size="small"
+                                options={regions}
+                                value={regions.filter((region) => form.country_codes.includes(region.code))}
+                                getOptionLabel={(option) => `${option.name} (${option.code})`}
+                                isOptionEqualToValue={(option, value) => option.code === value.code}
+                                onChange={(_, selected) => setForm((current) => ({
+                                    ...current,
+                                    country_codes: selected.map((region) => region.code),
+                                }))}
+                                renderInput={(params) => (
+                                    <TextField
+                                        {...params}
+                                        label="Länder"
+                                        required={form.coverage_scope === 'country'}
+                                        helperText="Aus der hinterlegten ISO-Länderliste auswählen. Bei Europa/Welt optional."
+                                    />
+                                )}
+                            />
+                        </Grid>
                         <Grid item xs={12} md={4}><TextField fullWidth size="small" label="Bereitstellung" placeholder="Cloud / SaaS / On-Premise" value={form.deployment_model || ''} onChange={(event) => setForm((current) => ({ ...current, deployment_model: event.target.value }))} /></Grid>
                         <Grid item xs={12} md={4}><TextField fullWidth size="small" label="Preismodell" placeholder="Abo / pro Fahrzeug / auf Anfrage" value={form.pricing_model || ''} onChange={(event) => setForm((current) => ({ ...current, pricing_model: event.target.value }))} /></Grid>
                         <Grid item xs={12} md={4}><TextField fullWidth size="small" label="Zielgruppe" placeholder="KMU, Großflotten, Kommunen …" value={form.target_group || ''} onChange={(event) => setForm((current) => ({ ...current, target_group: event.target.value }))} /></Grid>

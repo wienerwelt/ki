@@ -38,7 +38,7 @@ export const VoteSourcesList: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const response = await apiClient.get('/api/sources/pending', { headers: { 'x-auth-token': token } });
             setSources(response.data);
         } catch (err: any) {
@@ -55,7 +55,7 @@ export const VoteSourcesList: React.FC = () => {
     const handleVote = async (sourceId: string, rating: number | null) => {
         if (!rating) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.post(`/api/sources/${sourceId}/vote`, { rating }, { headers: { 'x-auth-token': token } });
             setSources(prev => prev.filter(s => s.id !== sourceId));
         } catch (err: any) {

@@ -98,7 +98,7 @@ const fetchFiles = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         // Dieser Endpunkt konnte nur ALLE Dateien des Partners laden, ohne Unterscheidung.
         const response = await apiClient.get(`/api/files`, { headers: { 'x-auth-token': token } });
         setFiles(response.data);
@@ -115,7 +115,7 @@ const fetchFiles = useCallback(async () => {
         if (errorTimeoutRef.current) clearTimeout(errorTimeoutRef.current);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const urlResponse = await apiClient.get(`/api/files/${fileId}/download`, {
                 headers: { 'x-auth-token': token }
             });

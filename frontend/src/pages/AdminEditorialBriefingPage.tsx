@@ -5,7 +5,7 @@ import {
     Stack, IconButton, Card, CircularProgress, AccordionSummary, Accordion, TableCell, Table, AccordionDetails, TableRow, TableBody,
     MenuItem, Select, Chip, useTheme, Dialog, DialogContent,
     DialogTitle, DialogActions, RadioGroup, FormControlLabel, Radio, 
-    Switch, Backdrop, Avatar,
+    Switch, Backdrop, Avatar, Alert,
     // NEU: Diese Imports haben gefehlt
     List, ListItem, ListItemText
 } from '@mui/material';
@@ -213,6 +213,10 @@ const AdminEditorialBriefingPage: React.FC = () => {
     };
 
     const [newsletterFrequency, setNewsletterFrequency] = useState<string>('never');
+    const [newsletterDeliveryMode, setNewsletterDeliveryMode] = useState<'mobiliti' | 'export' | 'external'>('mobiliti');
+    const [newsletterExportEmail, setNewsletterExportEmail] = useState('');
+    const [newsletterExternalSignupUrl, setNewsletterExternalSignupUrl] = useState('');
+    const [newsletterRecipientLimit, setNewsletterRecipientLimit] = useState(250);
 
     useEffect(() => {
         const init = async () => {
@@ -253,6 +257,10 @@ const AdminEditorialBriefingPage: React.FC = () => {
             setDebugInfo(debugRes.data);
             setBriefingFrequency(debugRes.data.briefing_frequency || 'never');
             setNewsletterFrequency(debugRes.data.newsletter_frequency || 'never');
+            setNewsletterDeliveryMode(debugRes.data.newsletter_delivery_mode || 'mobiliti');
+            setNewsletterExportEmail(debugRes.data.newsletter_export_email || '');
+            setNewsletterExternalSignupUrl(debugRes.data.newsletter_external_signup_url || '');
+            setNewsletterRecipientLimit(Number(debugRes.data.newsletter_recipient_limit) || 250);
             setAutoApprove(debugRes.data.auto_approve_briefings || false);
             setIsGenerating(debugRes.data.is_generating || false);
         } catch (e) { showSnackbar('Datenfehler', 'error'); }
@@ -286,12 +294,18 @@ const AdminEditorialBriefingPage: React.FC = () => {
                 bpId: selectedBpId, 
                 frequency: dashFreq, 
                 newsletterFrequency: mailFreq, 
-                autoApprove: auto 
+                autoApprove: auto,
+                newsletterDeliveryMode,
+                newsletterExportEmail: newsletterExportEmail || null,
+                newsletterExternalSignupUrl: newsletterExternalSignupUrl || null,
+                newsletterRecipientLimit
             });
             showSnackbar('Einstellungen gespeichert.', 'success');
             loadData(); 
         } catch (e) { showSnackbar('Fehler beim Speichern.', 'error'); }
     };
+
+    const handleSaveDeliverySettings = () => saveSettings(briefingFrequency, newsletterFrequency, autoApprove);
 
     const handleNewsletterFreqChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -489,6 +503,35 @@ const AdminEditorialBriefingPage: React.FC = () => {
         </Box>
     </Grid>
 </Grid>
+                            <Box sx={{ mt: 3, pt: 3, borderTop: '1px solid #e2e8f0' }}>
+                                <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1 }}>Verteilung des Branchenbriefings</Typography>
+                                <Alert severity="info" sx={{ mb: 2 }}>
+                                    Direkt über Mobiliti ist für kleinere Verteiler gedacht. Ab dem Empfängerlimit wird das fertige Briefing nur an die zentrale Adresse exportiert. Im externen Modus versendet Mobiliti keine Mitglieder-E-Mails.
+                                </Alert>
+                                <Grid container spacing={2}>
+                                    <Grid item xs={12} md={4}>
+                                        <TextField select fullWidth size="small" label="Versandmodus" value={newsletterDeliveryMode} onChange={(e) => setNewsletterDeliveryMode(e.target.value as 'mobiliti' | 'export' | 'external')}>
+                                            <MenuItem value="mobiliti">Direkt über Mobiliti</MenuItem>
+                                            <MenuItem value="export">Export an zentrale Adresse</MenuItem>
+                                            <MenuItem value="external">Externes Newsletter-System</MenuItem>
+                                        </TextField>
+                                    </Grid>
+                                    <Grid item xs={12} md={4}>
+                                        <TextField fullWidth size="small" type="email" label="Zentrale Newsletter-Adresse" value={newsletterExportEmail} onChange={(e) => setNewsletterExportEmail(e.target.value)} helperText="Pflicht für Export bzw. Rückfall oberhalb des Limits." />
+                                    </Grid>
+                                    <Grid item xs={12} md={4}>
+                                        <TextField fullWidth size="small" type="number" label="Max. direkte Empfänger" value={newsletterRecipientLimit} onChange={(e) => setNewsletterRecipientLimit(Math.max(1, Number(e.target.value) || 250))} disabled={newsletterDeliveryMode !== 'mobiliti'} inputProps={{ min: 1, max: 100000 }} helperText="Empfehlung: 250" />
+                                    </Grid>
+                                    {newsletterDeliveryMode === 'external' && <Grid item xs={12} md={8}>
+                                        <TextField fullWidth size="small" type="url" label="Externe Newsletter-Anmeldung" value={newsletterExternalSignupUrl} onChange={(e) => setNewsletterExternalSignupUrl(e.target.value)} required placeholder="https://…" />
+                                    </Grid>}
+                                    <Grid item xs={12} md={newsletterDeliveryMode === 'external' ? 4 : 12} sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start' }}>
+                                        <Button variant="contained" onClick={handleSaveDeliverySettings} disabled={newsletterDeliveryMode === 'external' && !newsletterExternalSignupUrl.trim()}>
+                                            Versandeinstellungen speichern
+                                        </Button>
+                                    </Grid>
+                                </Grid>
+                            </Box>
                         </Paper>
                     </Grid>
                 </Grid>

@@ -155,6 +155,20 @@ const assertCategoriesExist = async (client, categoryIds) => {
     }
 };
 
+const assertCountriesExist = async (client, countryCodes) => {
+    if (countryCodes.length === 0) return;
+
+    const result = await client.query(
+        'SELECT UPPER(code) AS code FROM regions WHERE UPPER(code) = ANY($1::text[])',
+        [countryCodes]
+    );
+    if (result.rows.length !== countryCodes.length) {
+        const error = new Error('Mindestens ein ausgewählter ISO-Ländercode ist ungültig.');
+        error.statusCode = 400;
+        throw error;
+    }
+};
+
 const softwareSelect = `
     SELECT
         st.*,
@@ -205,7 +219,7 @@ const toCatalogEntry = (row) => {
 exports.getManagedOptions = async (req, res) => {
     try {
         const businessPartnerId = resolveManagedBusinessPartnerId(req, req.query.businessPartnerId);
-        const [providers, tools, categories] = await Promise.all([
+        const [providers, tools, categories, regions] = await Promise.all([
             db.query(`
                 SELECT p.id, p.name, p.logo_url
                 FROM directory_providers p
@@ -220,6 +234,7 @@ exports.getManagedOptions = async (req, res) => {
                 ORDER BY name
             `, [businessPartnerId]),
             db.query('SELECT id, slug, name FROM software_categories ORDER BY sort_order, name'),
+            db.query('SELECT id, name, UPPER(code) AS code FROM regions WHERE code IS NOT NULL ORDER BY name'),
         ]);
 
         return res.json({
@@ -227,6 +242,7 @@ exports.getManagedOptions = async (req, res) => {
             providers: providers.rows,
             software: tools.rows,
             categories: categories.rows,
+            regions: regions.rows,
         });
     } catch (error) {
         return res.status(error.statusCode || 500).json({ message: error.statusCode ? error.message : 'Optionen konnten nicht geladen werden.' });
@@ -275,6 +291,7 @@ exports.createSoftware = async (req, res) => {
         await client.query('BEGIN');
         await assertProviderForTenant(client, payload.provider_id, businessPartnerId);
         await assertCategoriesExist(client, payload.category_ids);
+        await assertCountriesExist(client, payload.country_codes);
 
         const inserted = await client.query(`
             INSERT INTO software_tools (
@@ -348,6 +365,7 @@ exports.updateSoftware = async (req, res) => {
         }
         await assertProviderForTenant(client, payload.provider_id, businessPartnerId);
         await assertCategoriesExist(client, payload.category_ids);
+        await assertCountriesExist(client, payload.country_codes);
 
         await client.query(`
             UPDATE software_tools SET

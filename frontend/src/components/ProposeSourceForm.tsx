@@ -22,7 +22,7 @@ export const ProposeSourceForm: React.FC<ProposeSourceFormProps> = ({ onSuccess 
         setSuccess(null);
 
         try {
-            const token = localStorage.getItem('jwt_token'); 
+            const token = 'cookie-session';
             const payload = {
                 url,
                 description,

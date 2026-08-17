@@ -35,6 +35,16 @@ function Assert-NoCriticalVulnerabilities([string]$PackageDirectory, [string]$La
     }
 }
 
+function Assert-NoUnsafeFrontendTokenStorage([string]$FrontendSourceDirectory) {
+    $unsafePattern = 'localStorage\.(getItem|setItem)\(\s*["''](jwt_token|token)["'']|[?&]token=\$?\{'
+    $matches = Get-ChildItem -Path $FrontendSourceDirectory -File -Recurse -Include '*.ts','*.tsx','*.js','*.jsx' |
+        Select-String -Pattern $unsafePattern
+    if ($matches) {
+        $locations = ($matches | ForEach-Object { "$($_.Path):$($_.LineNumber)" }) -join ', '
+        throw "Unsichere JWT-Ablage oder Token-URL im Frontend gefunden: $locations"
+    }
+}
+
 Push-Location $repoRoot
 
 try {
@@ -64,6 +74,7 @@ try {
         & node --check $file.FullName
         Assert-LastExitCode "Syntaxfehler in $($file.FullName)"
     }
+    Assert-NoUnsafeFrontendTokenStorage (Join-Path $repoRoot 'frontend\src')
 
     Write-Host '[5/9] Lokale Datenbankmigrationen prüfen'
     & docker compose exec -T api npm run migrate
@@ -76,7 +87,7 @@ try {
     Write-Host '[7/9] Backend- und Worker-Images bauen und lokale Dienste aktualisieren'
     & docker compose -f docker-compose.yml -f docker-compose.override.yml build
     Assert-LastExitCode 'Der lokale Docker-Image-Build ist fehlgeschlagen.'
-    & docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --force-recreate --no-deps `
+    & docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --force-recreate --renew-anon-volumes --no-deps `
         api worker-ai worker-scrape worker-mail worker-data worker-funding
     Assert-LastExitCode 'Die lokalen API-/Worker-Container konnten nicht aus den neuen Images erstellt werden.'
 
@@ -115,7 +126,10 @@ try {
             'smoke:community-profile',
             'smoke:admin-user-search',
             'smoke:event-feed-dedup',
-            'smoke:scraper-date'
+            'smoke:scraper-date',
+            'smoke:public-file-links',
+            'smoke:newsletter-delivery',
+            'smoke:security-boundaries'
         )
         foreach ($smokeScript in $smokeScripts) {
             Write-Host "  -> $smokeScript"

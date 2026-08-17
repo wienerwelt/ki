@@ -125,7 +125,7 @@ const AdminEventsPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const headers = { headers: { 'x-auth-token': token } };
             
             const [eventsRes, regionsRes, bpRes, catRes, feedsRes] = await Promise.all([
@@ -192,7 +192,7 @@ const AdminEventsPage: React.FC = () => {
         if (!editingEvent) return;
         setDialogError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const dataToSend = {
                 ...editingEvent,
                 event_date: editingEvent.event_date || null
@@ -216,7 +216,7 @@ const AdminEventsPage: React.FC = () => {
     const handleDelete = async () => {
         if (!eventToDelete) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/scraped-content/${eventToDelete.id}?dataType=content`, { headers: { 'x-auth-token': token } });
             handleCloseDeleteConfirm();
             fetchData();
@@ -310,7 +310,7 @@ const AdminEventsPage: React.FC = () => {
         if (!editingFeed) return;
         setFeedDialogError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const payload = {
                 name: editingFeed.name || 'Fuhrpark Event Feed',
                 feed_title: editingFeed.feed_title || editingFeed.name || 'Fuhrpark Event Termine',
@@ -338,7 +338,7 @@ const AdminEventsPage: React.FC = () => {
     const handleRegenerateFeed = async (feed: EventFeedToken) => {
         if (!window.confirm('Den Feed-Link wirklich neu generieren? Der bisherige Link funktioniert danach nicht mehr.')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.post(`/api/admin/scraped-content/event-feeds/${feed.id}/regenerate`, {}, { headers: { 'x-auth-token': token } });
             setEditingFeed(res.data);
             setFeedLinkResult({ rss_url: res.data.rss_url, json_url: res.data.json_url, plain_token: res.data.plain_token });
@@ -363,7 +363,7 @@ const AdminEventsPage: React.FC = () => {
         if (!feedToDelete) return;
 
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/scraped-content/event-feeds/${feedToDelete.id}`, { headers: { 'x-auth-token': token } });
             handleCloseFeedDeleteConfirm();
             fetchData();

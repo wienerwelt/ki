@@ -69,7 +69,7 @@ const AdminCategoriesPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.get('/api/admin/categories', { headers: { 'x-auth-token': token } });
             setCategories(res.data);
         } catch (err: any) {
@@ -112,7 +112,7 @@ const AdminCategoriesPage: React.FC = () => {
     };
 
     const handleSubmit = async () => {
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         const headers = { 'x-auth-token': token };
         const data = { 
             name: formState.name, 
@@ -138,7 +138,7 @@ const AdminCategoriesPage: React.FC = () => {
     const handleDelete = async (id: string) => {
         if (!window.confirm('Sind Sie sicher, dass Sie diese Kategorie löschen möchten?')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/categories/${id}`, { headers: { 'x-auth-token': token } });
             fetchCategories();
         } catch (err: any) {

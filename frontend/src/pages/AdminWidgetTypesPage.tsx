@@ -76,7 +76,7 @@ const AdminWidgetTypesPage: React.FC = () => {
         setLoading(true); 
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const [widgetRes, rolesRes] = await Promise.all([
                 apiClient.get('/api/admin/widget-types', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/admin/roles', { headers: { 'x-auth-token': token } })
@@ -102,7 +102,7 @@ const handleOpenInstallDetails = async (wt: WidgetType, type: 'bp' | 'user') => 
 
         try {
             // Echter API Call an das Backend!
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.get(`/api/admin/widget-types/${wt.id}/installations?type=${type}`, { 
                 headers: { 'x-auth-token': token } 
             });
@@ -126,15 +126,15 @@ const handleOpenInstallDetails = async (wt: WidgetType, type: 'bp' | 'user') => 
     
     const handleSubmit = async () => {
         setDialogError(null); let configObject = null; if (formConfig && formConfig.trim() !== '') { try { configObject = JSON.parse(formConfig); } catch (e) { setDialogError('Das "Config"-Feld enthält ungültiges JSON.'); return; } }
-        const token = localStorage.getItem('jwt_token'); const wtData = { name: formName, type_key: formTypeKey, description: formDescription || null, icon_name: formIconName || null, is_removable: formIsRemovable, is_resizable: formIsResizable, is_draggable: formIsDraggable, default_width: formDefaultWidth, default_height: formDefaultHeight, default_min_width: formDefaultMinWidth, default_min_height: formDefaultMinHeight, allowed_roles: formAllowedRoles.length > 0 ? formAllowedRoles : null, component_key: formComponentKey || null, config: configObject, };
+        const token = 'cookie-session'; const wtData = { name: formName, type_key: formTypeKey, description: formDescription || null, icon_name: formIconName || null, is_removable: formIsRemovable, is_resizable: formIsResizable, is_draggable: formIsDraggable, default_width: formDefaultWidth, default_height: formDefaultHeight, default_min_width: formDefaultMinWidth, default_min_height: formDefaultMinHeight, allowed_roles: formAllowedRoles.length > 0 ? formAllowedRoles : null, component_key: formComponentKey || null, config: configObject, };
         try { if (editingWt) { await apiClient.put(`/api/admin/widget-types/${editingWt.id}`, wtData, { headers: { 'x-auth-token': token } }); } else { await apiClient.post('/api/admin/widget-types', wtData, { headers: { 'x-auth-token': token } }); } handleCloseDialog(); fetchInitialData(); } catch (err: any) { setDialogError(err.response?.data?.message || 'Fehler beim Speichern.'); }
     };
     
-    const handleDelete = async (id: string) => { if (!window.confirm('Sind Sie sicher?')) return; try { const token = localStorage.getItem('jwt_token'); await apiClient.delete(`/api/admin/widget-types/${id}`, { headers: { 'x-auth-token': token } }); fetchInitialData(); } catch (err: any) { alert(err.response?.data?.message || 'Fehler beim Löschen.'); } };
+    const handleDelete = async (id: string) => { if (!window.confirm('Sind Sie sicher?')) return; try { const token = 'cookie-session'; await apiClient.delete(`/api/admin/widget-types/${id}`, { headers: { 'x-auth-token': token } }); fetchInitialData(); } catch (err: any) { alert(err.response?.data?.message || 'Fehler beim Löschen.'); } };
     const handleCopy = async (wt: WidgetType) => {
         if (!window.confirm(`Widget-Typ "${wt.name}" kopieren? Zugriffsrechte und bestehende Installationen werden nicht mitkopiert.`)) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.post(`/api/admin/widget-types/${wt.id}/copy`, {}, { headers: { 'x-auth-token': token } });
             const copiedWidget: WidgetType = {
                 ...res.data,

@@ -67,6 +67,10 @@ interface BusinessPartner {
     account_count: string;
     industries: Category[];
     dashboard_focus: 'information' | 'sales';
+    newsletter_delivery_mode: 'mobiliti' | 'export' | 'external';
+    newsletter_export_email: string | null;
+    newsletter_external_signup_url: string | null;
+    newsletter_recipient_limit: number;
 }
 
 type Order = 'asc' | 'desc';
@@ -151,6 +155,10 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [formLevel3Name, setFormLevel3Name] = useState('');
     const [formStorageTier, setFormStorageTier] = useState<'free' | 'standard' | 'premium'>('free');
     const [formAllowNewsletter, setFormAllowNewsletter] = useState(false);
+    const [formNewsletterDeliveryMode, setFormNewsletterDeliveryMode] = useState<'mobiliti' | 'export' | 'external'>('mobiliti');
+    const [formNewsletterExportEmail, setFormNewsletterExportEmail] = useState('');
+    const [formNewsletterExternalUrl, setFormNewsletterExternalUrl] = useState('');
+    const [formNewsletterRecipientLimit, setFormNewsletterRecipientLimit] = useState(250);
     const [formDashboardFocus, setFormDashboardFocus] = useState<'information' | 'sales'>('information');
     const [formIndustryIds, setFormIndustryIds] = useState<string[]>([]);
 
@@ -172,7 +180,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const fetchData = async () => {
         setLoading(true); setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const [bpRes, csRes, regRes, indRes] = await Promise.all([
                 apiClient.get('/api/admin/business-partners', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/admin/business-partners/colorschemes/all', { headers: { 'x-auth-token': token } }),
@@ -191,6 +199,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setFormSubscriptionStartDate(''); setFormSubscriptionEndDate(''); setFormRegionIds([]); setFormDefaultRegionId(null);
         setFormIsActive(true); setFormUrlBusinessPartner(''); setFormLevel1Name(''); setFormLevel2Name(''); setFormLevel3Name('');
         setFormStorageTier('free'); setFormAllowNewsletter(false); setFormDashboardFocus('information'); setFormIndustryIds([]);
+        setFormNewsletterDeliveryMode('mobiliti'); setFormNewsletterExportEmail(''); setFormNewsletterExternalUrl(''); setFormNewsletterRecipientLimit(250);
         
         // Farben Reset
         setFormColorMode('select');
@@ -208,6 +217,10 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setFormIsActive(bp.is_active); setFormUrlBusinessPartner(bp.url_businesspartner || ''); setFormLevel1Name(bp.level_1_name || '');
         setFormLevel2Name(bp.level_2_name || ''); setFormLevel3Name(bp.level_3_name || ''); setFormStorageTier(bp.storage_tier || 'free');
         setFormAllowNewsletter(bp.allow_automated_newsletter); setFormDashboardFocus(bp.dashboard_focus || 'information'); setFormIndustryIds(bp.industries.map(ind => ind.id));
+        setFormNewsletterDeliveryMode(bp.newsletter_delivery_mode || 'mobiliti');
+        setFormNewsletterExportEmail(bp.newsletter_export_email || '');
+        setFormNewsletterExternalUrl(bp.newsletter_external_signup_url || '');
+        setFormNewsletterRecipientLimit(Number(bp.newsletter_recipient_limit) || 250);
         
         // Farben setzen
         if (bp.color_scheme_id) {
@@ -247,7 +260,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
         const file = event.target.files?.[0]; if (!file) return;
         setIsUploadingLogo(true); setError(null); const formData = new FormData(); formData.append('logo', file);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const response = await apiClient.post('/api/admin/business-partners/logo-upload', formData, { headers: { 'x-auth-token': token } });
             setFormLogoUrl(response.data.url);
         } catch (err: any) { setError(err.response?.data?.message || 'Fehler beim Logo-Upload.'); } 
@@ -255,13 +268,17 @@ const AdminBusinessPartnersPage: React.FC = () => {
     };
 
     const handleSubmit = async () => {
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         const bpData = {
             name: formName, slug: formSlug || null, dashboard_title: formDashboardTitle || null, address: formAddress || null, email: formEmail || null,
             logo_url: formLogoUrl || null, subscription_start_date: formSubscriptionStartDate, subscription_end_date: formSubscriptionEndDate,
             region_ids: formRegionIds, default_region_id: formDefaultRegionId, is_active: formIsActive, url_businesspartner: formUrlBusinessPartner || null,
             level_1_name: formLevel1Name || null, level_2_name: formLevel2Name || null, level_3_name: formLevel3Name || null,
             storage_tier: formStorageTier, allow_automated_newsletter: formAllowNewsletter, category_ids: formIndustryIds, dashboard_focus: formDashboardFocus,
+            newsletter_delivery_mode: formNewsletterDeliveryMode,
+            newsletter_export_email: formNewsletterExportEmail || null,
+            newsletter_external_signup_url: formNewsletterExternalUrl || null,
+            newsletter_recipient_limit: formNewsletterRecipientLimit,
             // NEU: Übermittlung der Farbdaten
             color_mode: formColorMode,
             color_scheme_id: formColorMode === 'select' ? (formColorSchemeId || null) : null,
@@ -278,7 +295,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const handleDelete = async (id: string) => {
         if (!window.confirm('Sind Sie sicher?')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/business-partners/${id}`, { headers: { 'x-auth-token': token } });
             fetchData(); showSnackbar('Partner gelöscht', 'info');
         } catch (err: any) { alert(err.response?.data?.message || 'Fehler beim Löschen.'); }
@@ -453,6 +470,30 @@ const AdminBusinessPartnersPage: React.FC = () => {
                             <Grid item xs={12} sm={6}><TextField label="Abo Enddatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formSubscriptionEndDate} onChange={(e) => setFormSubscriptionEndDate(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={6}><FormControlLabel control={<Switch checked={formIsActive} onChange={(e) => setFormIsActive(e.target.checked)} color="primary" />} label="Partner-Account aktiv" /></Grid>
                             <Grid item xs={12} sm={6}><FormControlLabel control={<Switch checked={formAllowNewsletter} onChange={(e) => setFormAllowNewsletter(e.target.checked)} color="primary" />} label="Automatisierte Newsletter erlaubt" /></Grid>
+
+                            <Grid item xs={12}>
+                                <Divider sx={{ my: 2 }} />
+                                <Typography variant="h6" sx={{ mb: 1 }}>Newsletter-Versand</Typography>
+                                <Alert severity="info" sx={{ mb: 2 }}>
+                                    Mobiliti versendet direkt bis zum festgelegten Limit. Export sendet ein fertiges HTML-Paket nur an die zentrale Adresse. Extern übergibt Anmeldung und Versand vollständig an das Newsletter-System des Mandanten.
+                                </Alert>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField select fullWidth label="Versandmodus" value={formNewsletterDeliveryMode} onChange={(e) => setFormNewsletterDeliveryMode(e.target.value as 'mobiliti' | 'export' | 'external')}>
+                                    <MenuItem value="mobiliti">Direkt über Mobiliti</MenuItem>
+                                    <MenuItem value="export">Export an Mandantenadresse</MenuItem>
+                                    <MenuItem value="external">Externes Newsletter-System</MenuItem>
+                                </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField fullWidth type="number" label="Max. direkte Empfänger" value={formNewsletterRecipientLimit} onChange={(e) => setFormNewsletterRecipientLimit(Math.max(1, Number(e.target.value) || 250))} inputProps={{ min: 1, max: 100000 }} disabled={formNewsletterDeliveryMode !== 'mobiliti'} helperText="Empfehlung: höchstens 250; darüber automatischer Export." />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField fullWidth type="email" label="Zentrale Newsletter-Adresse" value={formNewsletterExportEmail} onChange={(e) => setFormNewsletterExportEmail(e.target.value)} helperText="Für Export und als sichere Rückfalladresse." />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField fullWidth type="url" label="Externe Newsletter-Anmeldung" value={formNewsletterExternalUrl} onChange={(e) => setFormNewsletterExternalUrl(e.target.value)} required={formNewsletterDeliveryMode === 'external'} disabled={formNewsletterDeliveryMode !== 'external'} placeholder="https://…" />
+                            </Grid>
 
                             {/* --- NEUER BEREICH: BRANDING & FARBSCHEMA --- */}
                             <Grid item xs={12}>

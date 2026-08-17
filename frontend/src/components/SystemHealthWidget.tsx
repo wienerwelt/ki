@@ -17,7 +17,7 @@ const SystemHealthWidget: React.FC = () => {
         setDbStatus({ status: 'loading' });
         setRedisStatus({ status: 'loading' });
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             if (!token) throw new Error("Kein Authentifizierungs-Token gefunden.");
             
             const response = await apiClient.get('/api/admin/monitor/status', {

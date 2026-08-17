@@ -13,7 +13,7 @@ const getFileExtension = (originalname) => originalname.split('.').pop();
 const isValidUuid = (value) => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(String(value || ''));
 
 // Helper: Mentions verarbeiten (@username)
-const processMentions = async (content, referenceId, authorId, client) => {
+const processMentions = async (content, referenceId, authorId, businessPartnerId, client) => {
     if (!content) return;
     
     // Regex für @username
@@ -28,8 +28,10 @@ const processMentions = async (content, referenceId, authorId, client) => {
     for (const username of usernames) {
         // User ID finden (Case Insensitive)
         const userRes = await client.query(
-            `SELECT id FROM users WHERE username ILIKE $1 OR first_name ILIKE $1 LIMIT 1`, 
-            [username]
+            `SELECT id FROM users
+             WHERE business_partner_id = $2 AND (username ILIKE $1 OR first_name ILIKE $1)
+             LIMIT 1`,
+            [username, businessPartnerId]
         );
         
         if (userRes.rows.length > 0) {
@@ -283,7 +285,7 @@ exports.createPost = async (req, res) => {
         }
 
         if (content) {
-            await processMentions(content, postId, userId, client);
+            await processMentions(content, postId, userId, business_partner_id, client);
         }
 
         if (parsedOptions && parsedOptions.length > 0) {
@@ -348,12 +350,13 @@ exports.getComments = async (req, res) => {
                 u.membership_level, COALESCE(u.organization_name, bp.name) as organization_name, u.role,
                 u.linkedin_url, u.created_at as member_since, u.contribution_score, u.last_login_at
             FROM community_comments c
+            JOIN community_posts p ON p.id = c.post_id
             JOIN users u ON c.user_id = u.id
             JOIN business_partners bp ON u.business_partner_id = bp.id
-            WHERE c.post_id = $1
+            WHERE c.post_id = $1 AND p.business_partner_id = $2
             ORDER BY c.created_at ASC
         `;
-        const { rows } = await db.query(query, [postId]);
+        const { rows } = await db.query(query, [postId, req.user.business_partner_id]);
         res.json(rows);
     } catch (err) {
         res.status(500).json({ message: 'Fehler beim Laden der Kommentare.' });
@@ -376,19 +379,28 @@ exports.createComment = async (req, res) => {
     try {
         await client.query('BEGIN');
 
+        const accessiblePost = await client.query(
+            'SELECT id FROM community_posts WHERE id = $1 AND business_partner_id = $2',
+            [postId, req.user.business_partner_id]
+        );
+        if (accessiblePost.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Beitrag nicht gefunden.' });
+        }
+
         const insertRes = await client.query(
             `INSERT INTO community_comments (post_id, user_id, content) VALUES ($1, $2, $3) RETURNING id, created_at`,
             [postId, userId, content]
         );
 
-        await processMentions(content, postId, userId, client);
+        await processMentions(content, postId, userId, req.user.business_partner_id, client);
 
         const postRes = await client.query(`
             SELECT p.user_id, p.content, u.email, u.first_name, u.newsletter_opt_in 
             FROM community_posts p
             JOIN users u ON p.user_id = u.id
-            WHERE p.id = $1
-        `, [postId]);
+            WHERE p.id = $1 AND p.business_partner_id = $2
+        `, [postId, req.user.business_partner_id]);
         
         if (postRes.rows.length > 0) {
             const postData = postRes.rows[0];
@@ -460,14 +472,15 @@ exports.deletePost = async (req, res) => {
     }
 
     const { id } = req.params;
-    const { id: userId, role } = req.user;
+    const { id: userId, role, business_partner_id: businessPartnerId } = req.user;
 
     try {
-        const check = await db.query('SELECT user_id, image_url FROM community_posts WHERE id = $1', [id]);
+        const check = await db.query('SELECT user_id, image_url, business_partner_id FROM community_posts WHERE id = $1', [id]);
         if (check.rows.length === 0) return res.status(404).json({message: 'Nicht gefunden'});
         
         const post = check.rows[0];
-        if (post.user_id !== userId && role !== 'admin' && role !== 'assistenz') {
+        const tenantManager = role === 'admin' || (role === 'assistenz' && String(post.business_partner_id) === String(businessPartnerId));
+        if (post.user_id !== userId && !tenantManager) {
             return res.status(403).json({message: 'Verboten'});
         }
          
@@ -519,6 +532,11 @@ exports.toggleLike = async (req, res) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+        const accessiblePost = await client.query('SELECT user_id FROM community_posts WHERE id = $1 AND business_partner_id = $2', [postId, req.user.business_partner_id]);
+        if (accessiblePost.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Beitrag nicht gefunden.' });
+        }
         const checkRes = await client.query('SELECT 1 FROM community_likes WHERE post_id = $1 AND user_id = $2', [postId, userId]);
         let liked = false;
         if (checkRes.rows.length > 0) {
@@ -526,9 +544,8 @@ exports.toggleLike = async (req, res) => {
         } else {
             await client.query('INSERT INTO community_likes (post_id, user_id) VALUES ($1, $2)', [postId, userId]);
             liked = true;
-            const postRes = await client.query('SELECT user_id FROM community_posts WHERE id = $1', [postId]);
-            if (postRes.rows.length > 0) {
-                const authorId = postRes.rows[0].user_id;
+            if (accessiblePost.rows.length > 0) {
+                const authorId = accessiblePost.rows[0].user_id;
                 if (authorId !== userId) {
                     await client.query('UPDATE users SET contribution_score = contribution_score + 1 WHERE id = $1', [authorId]);
                 }
@@ -647,6 +664,16 @@ exports.reportContent = async (req, res) => {
     const { id: userId } = req.user;
     if (!postId && !commentId) return res.status(400).json({ message: 'Ziel fehlt.' });
     try {
+        const target = await db.query(
+            `SELECT 1
+             FROM community_posts p
+             LEFT JOIN community_comments c ON c.post_id = p.id
+             WHERE p.business_partner_id = $1
+               AND (($2::uuid IS NOT NULL AND p.id = $2::uuid) OR ($3::uuid IS NOT NULL AND c.id = $3::uuid))
+             LIMIT 1`,
+            [req.user.business_partner_id, postId || null, commentId || null]
+        );
+        if (target.rowCount === 0) return res.status(404).json({ message: 'Inhalt nicht gefunden.' });
         const check = await db.query('SELECT 1 FROM community_reports WHERE user_id = $1 AND (post_id = $2 OR comment_id = $3)', [userId, postId || null, commentId || null]);
         if (check.rows.length > 0) return res.json({ message: 'Bereits gemeldet.' });
         await db.query('INSERT INTO community_reports (user_id, post_id, comment_id, reason) VALUES ($1, $2, $3, $4)', [userId, postId || null, commentId || null, reason || 'Sonstiges']);
@@ -769,7 +796,12 @@ exports.votePoll = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        const optRes = await client.query('SELECT post_id FROM community_poll_options WHERE id = $1', [optionId]);
+        const optRes = await client.query(
+            `SELECT po.post_id FROM community_poll_options po
+             JOIN community_posts p ON p.id = po.post_id
+             WHERE po.id = $1 AND p.business_partner_id = $2`,
+            [optionId, req.user.business_partner_id]
+        );
         if (optRes.rows.length === 0) throw new Error('Option nicht gefunden');
         const postId = optRes.rows[0].post_id;
 

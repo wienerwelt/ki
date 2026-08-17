@@ -15,12 +15,15 @@ exports.getMonthlyReportDeliveries = async (req, res) => {
     }
 
     try {
-        const [settingsResult, monthlyResult, deliveriesResult] = await Promise.all([
+        const [settingsResult, monthlyResult, deliveriesResult, newsletterTotalsResult, newsletterDeliveriesResult] = await Promise.all([
             db.query(`
                 SELECT
                     bp.id,
                     bp.name,
                     COALESCE(bp.allow_automated_newsletter, FALSE) AS allow_automated_newsletter,
+                    bp.newsletter_frequency,
+                    bp.newsletter_delivery_mode,
+                    bp.newsletter_recipient_limit,
                     COUNT(u.id) FILTER (
                         WHERE u.is_active = TRUE
                           AND u.role IN ('assistenz', 'admin')
@@ -34,10 +37,18 @@ exports.getMonthlyReportDeliveries = async (req, res) => {
                           AND u.email IS NOT NULL
                           AND TRIM(u.email) <> ''
                     )::int AS eligible_recipients
+                    ,COUNT(u.id) FILTER (
+                        WHERE u.is_active = TRUE
+                          AND u.newsletter_opt_in = TRUE
+                          AND u.briefing_email_enabled = TRUE
+                          AND u.email IS NOT NULL
+                          AND TRIM(u.email) <> ''
+                    )::int AS briefing_recipients
                 FROM business_partners bp
                 LEFT JOIN users u ON u.business_partner_id = bp.id
                 WHERE bp.id = $1
-                GROUP BY bp.id, bp.name, bp.allow_automated_newsletter
+                GROUP BY bp.id, bp.name, bp.allow_automated_newsletter,
+                         bp.newsletter_frequency, bp.newsletter_delivery_mode, bp.newsletter_recipient_limit
             `, [businessPartnerId]),
             db.query(`
                 SELECT
@@ -71,6 +82,25 @@ exports.getMonthlyReportDeliveries = async (req, res) => {
                 ORDER BY COALESCE(mrd.sent_at, mrd.failed_at, mrd.created_at) DESC
                 LIMIT 25
             `, [businessPartnerId]),
+            db.query(`
+                SELECT
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE status = 'sent')::int AS sent,
+                    COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+                    COUNT(*) FILTER (WHERE status = 'sending')::int AS sending,
+                    COUNT(*) FILTER (WHERE status = 'skipped')::int AS skipped
+                FROM newsletter_deliveries
+                WHERE business_partner_id = $1
+                  AND created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+            `, [businessPartnerId]),
+            db.query(`
+                SELECT id, recipient_email, delivery_mode, status, campaign_key,
+                       created_at, sent_at, failed_at, error_message
+                FROM newsletter_deliveries
+                WHERE business_partner_id = $1
+                ORDER BY COALESCE(sent_at, failed_at, created_at) DESC
+                LIMIT 50
+            `, [businessPartnerId]),
         ]);
 
         const monthly = monthlyResult.rows;
@@ -86,6 +116,8 @@ exports.getMonthlyReportDeliveries = async (req, res) => {
             totals,
             monthly,
             deliveries: deliveriesResult.rows,
+            newsletterTotals: newsletterTotalsResult.rows[0] || { total: 0, sent: 0, failed: 0, sending: 0, skipped: 0 },
+            newsletterDeliveries: newsletterDeliveriesResult.rows,
         });
     } catch (error) {
         console.error('Fehler beim Laden der Monatsreport-Statistik:', error);

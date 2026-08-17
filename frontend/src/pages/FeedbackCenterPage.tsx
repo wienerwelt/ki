@@ -95,7 +95,7 @@ const FeedbackCenterPage: React.FC = () => {
     const fetchData = React.useCallback(async () => {
         try {
             setError(null);
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const response = await apiClient.get('/api/feedback', { headers: { 'x-auth-token': token } });
             setItems(response.data);
         } catch (err) {
@@ -112,7 +112,7 @@ const FeedbackCenterPage: React.FC = () => {
     const handleVote = async (itemId: string) => {
         if (isDemo) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.post(`/api/feedback/${itemId}/vote`, {}, { headers: { 'x-auth-token': token } });
             fetchData();
         } catch (err) {
@@ -123,7 +123,7 @@ const FeedbackCenterPage: React.FC = () => {
     const handleStatusChange = async (itemId: string, newStatus: FeedbackItem['status']) => {
         if (isDemo) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.put(`/api/feedback/${itemId}/status`, { status: newStatus }, { headers: { 'x-auth-token': token } });
             fetchData();
         } catch (err) {
@@ -139,7 +139,7 @@ const FeedbackCenterPage: React.FC = () => {
         }
         setSubmitLoading(true);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.post('/api/feedback', {
                 type: formType, title: formTitle, description: formDescription, widget_type_key: formWidgetKey
             }, { headers: { 'x-auth-token': token } });

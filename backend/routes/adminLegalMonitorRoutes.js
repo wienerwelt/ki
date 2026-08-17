@@ -1,7 +1,7 @@
 // backend/routes/adminLegalMonitorRoutes.js
 const express = require('express');
 const router = express.Router();
-const adminAuth = require('../middleware/adminAuth');
+const tenantManagerAuth = require('../middleware/tenantManagerAuth');
 const adminLegalMonitorController = require('../controllers/adminLegalMonitorController');
 
 const multer = require('multer');
@@ -20,11 +20,15 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 25 * 1024 * 1024 } // 25MB Limit
+    limits: { fileSize: 15 * 1024 * 1024, files: 1 },
+    fileFilter: (_req, file, cb) => {
+        const isPdf = file.mimetype === 'application/pdf' && /\.pdf$/i.test(String(file.originalname || ''));
+        return isPdf ? cb(null, true) : cb(new Error('Nur PDF-Dateien sind erlaubt.'));
+    },
 });
 
 // Schützt alle Routen hier
-router.use(adminAuth);
+router.use(tenantManagerAuth);
 
 // === Vorlagen-Routen (unverändert) ===
 router.post('/templates', adminLegalMonitorController.createTemplate);

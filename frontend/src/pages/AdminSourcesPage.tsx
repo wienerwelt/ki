@@ -79,7 +79,7 @@ const AdminSourcesPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const [sourcesRes, catRes] = await Promise.all([
                 apiClient.get('/api/admin/sources', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/data/categories', { headers: { 'x-auth-token': token } })
@@ -119,7 +119,7 @@ const AdminSourcesPage: React.FC = () => {
     const handleStatusChange = async (id: string, newStatus: 'approved' | 'rejected') => {
         if (!window.confirm(`Möchten Sie diese Quelle wirklich ${newStatus === 'approved' ? 'genehmigen' : 'ablehnen'}?`)) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.put(`/api/admin/sources/${id}/status`, { status: newStatus }, { headers: { 'x-auth-token': token } });
             fetchAllData();
             showSnackbar('Status erfolgreich geändert.', 'success');
@@ -131,7 +131,7 @@ const AdminSourcesPage: React.FC = () => {
     const handleDelete = async (id: string) => {
         if (!window.confirm('Möchten Sie diese Quelle endgültig löschen? Alle zugehörigen Stimmen werden ebenfalls entfernt.')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/sources/${id}`, { headers: { 'x-auth-token': token } });
             fetchAllData();
             showSnackbar('Quelle erfolgreich gelöscht.', 'success');
@@ -179,7 +179,7 @@ const AdminSourcesPage: React.FC = () => {
             return;
         }
 
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         const headers = { 'x-auth-token': token }; 
 
         const formData = new FormData();

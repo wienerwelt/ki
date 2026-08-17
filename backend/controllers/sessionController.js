@@ -1,6 +1,17 @@
 // backend/controllers/sessionController.js
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
+const { ensureCsrfCookie, setSessionCookies } = require('../services/sessionSecurity');
+
+exports.status = async (req, res) => {
+    // Bestehende Sitzungen aus Releases vor der CSRF-Absicherung erhalten
+    // beim ersten Statusabruf automatisch das Double-Submit-Cookie.
+    ensureCsrfCookie(req, res);
+    return res.json({
+        authenticated: true,
+        expiresAt: req.auth?.expiresAt ? req.auth.expiresAt.toISOString() : null,
+    });
+};
 
 exports.renew = async (req, res) => {
     // Die User-ID wird aus dem bestehenden (aber bald ablaufenden) Token entnommen,
@@ -62,13 +73,19 @@ exports.renew = async (req, res) => {
                 contribution_score: user.contribution_score,
                 membership_level: user.membership_level,
                 has_seen_welcome_widget: user.has_seen_welcome_widget
-            }
+            },
+            av: Number(user.auth_version || 0)
         };
 
         // Ein neues Token mit einer neuen Ablaufzeit signieren
-        const newToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1h' });
+        if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET ist nicht konfiguriert.');
+        const newToken = jwt.sign(payload, process.env.JWT_SECRET, {
+            expiresIn: process.env.JWT_EXPIRES_IN || '8h',
+            algorithm: 'HS256',
+        });
+        const session = setSessionCookies(res, newToken);
 
-        res.json({ token: newToken });
+        res.json({ expiresAt: session.expiresAt });
 
     } catch (err) {
         console.error('Fehler bei der Sitzungserneuerung:', err.message);

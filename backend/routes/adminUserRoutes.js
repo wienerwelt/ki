@@ -1,15 +1,23 @@
 // backend/routes/adminUserRoutes.js
 const express = require('express');
 const router = express.Router();
-const adminAuth = require('../middleware/adminAuth');
+const tenantManagerAuth = require('../middleware/tenantManagerAuth');
 const adminUserController = require('../controllers/adminUserController');
 const multer = require('multer');
 
 const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+const upload = multer({
+    storage,
+    limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+    fileFilter: (_req, file, cb) => {
+        const nameOk = /\.csv$/i.test(String(file.originalname || ''));
+        const typeOk = ['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain'].includes(String(file.mimetype || '').toLowerCase());
+        return nameOk && typeOk ? cb(null, true) : cb(new Error('Nur CSV-Dateien sind erlaubt.'));
+    },
+});
 
 // Standard-Admin-Auth für ALLE Routen in dieser Datei
-router.use(adminAuth);
+router.use(tenantManagerAuth);
 
 // ==========================================
 // 1. STATISCHE ROUTEN (Spezial-Funktionen)

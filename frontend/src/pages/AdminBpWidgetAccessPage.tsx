@@ -94,7 +94,7 @@ const AdminBpWidgetAccessPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const accessUrl = bpId ? `/api/admin/bp-widget-access/${bpId}` : '/api/admin/bp-widget-access';
 
             const [bpRes, wtRes] = await Promise.all([
@@ -127,7 +127,7 @@ const AdminBpWidgetAccessPage: React.FC = () => {
         setInstallLoading(true);
         setInstallData([]);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.get(
                 `/api/admin/bp-widget-access/${access.business_partner_id}/widget/${access.widget_type_id}/installations`, 
                 { headers: { 'x-auth-token': token } }
@@ -183,7 +183,7 @@ const AdminBpWidgetAccessPage: React.FC = () => {
         }
         setLoading(true);
         setError(null);
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         try {
             await apiClient.post('/api/admin/bp-widget-access/grant', {
                 business_partner_id: formBusinessPartnerId,
@@ -200,7 +200,7 @@ const AdminBpWidgetAccessPage: React.FC = () => {
 
     const confirmRevokeAccess = async () => {
         if (!selectedAccess) return;
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         setLoading(true);
         try {
             await apiClient.delete(`/api/admin/bp-widget-access/revoke/${selectedAccess.business_partner_id}/${selectedAccess.widget_type_id}`, {
@@ -219,7 +219,7 @@ const AdminBpWidgetAccessPage: React.FC = () => {
         if (!window.confirm(`Möchten Sie das Widget "${selectedAccess.widget_type_name}" wirklich aus dem Dashboard von ${userName} entfernen?`)) return;
         
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(
                 `/api/admin/users/${userId}/dashboard/widget/${selectedAccess.widget_type_key}`,
                 { headers: { 'x-auth-token': token } }
@@ -240,7 +240,7 @@ const AdminBpWidgetAccessPage: React.FC = () => {
         ));
 
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.put(`/api/admin/bp-widget-access/toggle-public/${access.business_partner_id}/${access.widget_type_id}`, 
                 { is_public: newValue }, 
                 { headers: { 'x-auth-token': token } }
@@ -274,7 +274,7 @@ const AdminBpWidgetAccessPage: React.FC = () => {
         setBpWidgetAccess(updatedFullState);
 
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const payload = updatedList.map(item => ({ widget_type_id: item.widget_type_id, sort_order: item.sort_order }));
             await apiClient.put(`/api/admin/bp-widget-access/update-order/${activeBpId}`, { orderedWidgets: payload }, { headers: { 'x-auth-token': token } });
         } catch (err) {

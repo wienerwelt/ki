@@ -68,7 +68,7 @@ const AdminEmailTab: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.get('/api/admin/cronjobs/emails', { headers: { 'x-auth-token': token } });
             setJobs(res.data);
         } catch (err) {
@@ -95,7 +95,7 @@ const AdminEmailTab: React.FC = () => {
     const handleSave = async () => {
         if (!editingJob) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const headers = { 'x-auth-token': token };
 
             if (editingJob.id) {
@@ -116,7 +116,7 @@ const AdminEmailTab: React.FC = () => {
     const handleTrigger = async (id: string) => {
         if (window.confirm('Möchten Sie diesen Job jetzt manuell ausführen?')) {
             try {
-                const token = localStorage.getItem('jwt_token');
+                const token = 'cookie-session';
                 await apiClient.post(`/api/admin/cronjobs/emails/${id}/trigger`, {}, { headers: { 'x-auth-token': token } });
                 setSnackbar({ open: true, message: 'Job wurde zur Ausführung in die Warteschlange gestellt.', severity: 'success' });
             } catch (err) {

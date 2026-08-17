@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
     Box,
@@ -15,10 +15,6 @@ import {
     Link,
     IconButton,
     Tooltip,
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
     Snackbar
 } from '@mui/material';
 import ContactPhoneIcon from '@mui/icons-material/ContactPhone';
@@ -28,6 +24,7 @@ import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import QrCode2Icon from '@mui/icons-material/QrCode2';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import ShareIcon from '@mui/icons-material/Share';
+import CloseIcon from '@mui/icons-material/Close';
 import { QRCodeSVG } from 'qrcode.react';
 import apiClient from '../apiClient';
 
@@ -55,7 +52,9 @@ const PublicProfileCard: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [qrOpen, setQrOpen] = useState(false);
+    const [isFlipping, setIsFlipping] = useState(false);
     const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
+    const flipTimerRef = useRef<number | null>(null);
     const theme = useTheme();
 
     useEffect(() => {
@@ -101,6 +100,19 @@ const PublicProfileCard: React.FC = () => {
         if (!user) return null;
         return user.organization_name || user.bp_name || null;
     }, [user]);
+
+    useEffect(() => () => {
+        if (flipTimerRef.current !== null) window.clearTimeout(flipTimerRef.current);
+    }, []);
+
+    const flipCard = (showQr: boolean) => {
+        if (isFlipping || showQr === qrOpen) return;
+        setIsFlipping(true);
+        flipTimerRef.current = window.setTimeout(() => {
+            setQrOpen(showQr);
+            window.requestAnimationFrame(() => setIsFlipping(false));
+        }, 220);
+    };
 
     const memberSinceText = useMemo(() => {
         if (!user?.member_since) return null;
@@ -172,7 +184,7 @@ const PublicProfileCard: React.FC = () => {
 
     const nativeShare = async () => {
         if (!navigator.share) {
-            setQrOpen(true);
+            flipCard(true);
             return;
         }
 
@@ -224,15 +236,33 @@ const PublicProfileCard: React.FC = () => {
                     py: { xs: 3, sm: 6 }
                 }}
             >
-                <Card
+                <Box
                     sx={{
                         width: '100%',
                         maxWidth: 430,
+                        perspective: '1400px'
+                    }}
+                >
+                <Box
+                    sx={{
+                        display: 'grid',
+                        transform: isFlipping ? 'rotateY(90deg)' : 'none',
+                        transition: 'transform 220ms ease-in',
+                        '@media (prefers-reduced-motion: reduce)': { transition: 'none' }
+                    }}
+                >
+                <Card
+                    aria-hidden={qrOpen}
+                    sx={{
+                        gridArea: '1 / 1',
+                        width: '100%',
                         borderRadius: 6,
                         overflow: 'hidden',
                         boxShadow: '0 20px 60px rgba(0,0,0,0.10)',
                         border: '1px solid rgba(0,0,0,0.06)',
-                        background: `linear-gradient(180deg, ${theme.palette.primary.main} 0px, ${theme.palette.primary.main} 120px, #ffffff 120px)`
+                        background: `linear-gradient(180deg, ${theme.palette.primary.main} 0px, ${theme.palette.primary.main} 120px, #ffffff 120px)`,
+                        display: qrOpen ? 'none' : 'block',
+                        pointerEvents: qrOpen || isFlipping ? 'none' : 'auto'
                     }}
                 >
                     <CardContent sx={{ p: 0 }}>
@@ -444,7 +474,7 @@ const PublicProfileCard: React.FC = () => {
                                 <Button
                                     variant="outlined"
                                     startIcon={<QrCode2Icon />}
-                                    onClick={() => setQrOpen(true)}
+                                    onClick={() => flipCard(true)}
                                     fullWidth
                                     sx={{
                                         borderRadius: 999,
@@ -521,70 +551,101 @@ const PublicProfileCard: React.FC = () => {
                         </Box>
                     </CardContent>
                 </Card>
+
+                <Card
+                    aria-hidden={!qrOpen}
+                    sx={{
+                        gridArea: '1 / 1',
+                        width: '100%',
+                        height: '100%',
+                        borderRadius: 6,
+                        overflow: 'hidden',
+                        boxShadow: '0 20px 60px rgba(0,0,0,0.10)',
+                        border: '1px solid rgba(0,0,0,0.06)',
+                        bgcolor: 'background.paper',
+                        display: qrOpen ? 'block' : 'none',
+                        pointerEvents: qrOpen && !isFlipping ? 'auto' : 'none'
+                    }}
+                >
+                    <CardContent
+                        sx={{
+                            position: 'relative',
+                            height: '100%',
+                            minHeight: 560,
+                            p: { xs: 3, sm: 4 },
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            textAlign: 'center'
+                        }}
+                    >
+                        <IconButton
+                            aria-label="QR-Code schließen"
+                            onClick={() => flipCard(false)}
+                            sx={{
+                                position: 'absolute',
+                                top: 12,
+                                right: 12,
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                bgcolor: 'background.paper'
+                            }}
+                        >
+                            <CloseIcon />
+                        </IconButton>
+
+                        <Typography variant="h5" sx={{ fontWeight: 900, mb: 1 }}>
+                            Kontakt teilen
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 3, maxWidth: 310 }}>
+                            QR-Code scannen und die Visitenkarte direkt öffnen.
+                        </Typography>
+
+                        <Box
+                            sx={{
+                                display: 'inline-flex',
+                                p: 2,
+                                bgcolor: '#fff',
+                                borderRadius: 3,
+                                boxShadow: theme.shadows[2],
+                                border: '1px solid',
+                                borderColor: 'divider'
+                            }}
+                        >
+                            <QRCodeSVG
+                                value={publicProfileUrl}
+                                size={220}
+                                level="H"
+                                fgColor={theme.palette.primary.main}
+                                bgColor="#FFFFFF"
+                            />
+                        </Box>
+
+                        <Link
+                            href={publicProfileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            underline="hover"
+                            sx={{
+                                mt: 2.5,
+                                display: 'block',
+                                fontSize: '0.78rem',
+                                fontWeight: 600,
+                                wordBreak: 'break-all'
+                            }}
+                        >
+                            {publicProfileUrl}
+                        </Link>
+
+                        <Button onClick={copyProfileLink} startIcon={<ContentCopyIcon />} sx={{ mt: 1.5 }}>
+                            Link kopieren
+                        </Button>
+                    </CardContent>
+                </Card>
+                </Box>
+                </Box>
             </Box>
-
-            <Dialog
-                open={qrOpen}
-                onClose={() => setQrOpen(false)}
-                fullWidth
-                maxWidth="xs"
-                aria-labelledby="qr-dialog-title"
-            >
-                <DialogTitle id="qr-dialog-title" sx={{ fontWeight: 800 }}>
-                    Kontakt teilen
-                </DialogTitle>
-
-                <DialogContent sx={{ textAlign: 'center', pt: 1 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                        Lassen Sie Ihr Gegenüber den QR-Code scannen, um die Visitenkarte direkt zu öffnen.
-                    </Typography>
-
-                    <Box
-                        sx={{
-                            display: 'inline-flex',
-                            p: 2,
-                            bgcolor: '#fff',
-                            borderRadius: 3,
-                            boxShadow: theme.shadows[2],
-                            border: '1px solid',
-                            borderColor: 'divider'
-                        }}
-                    >
-                        <QRCodeSVG
-                            value={publicProfileUrl}
-                            size={220}
-                            level="H"
-                            fgColor={theme.palette.primary.main}
-                            bgColor="#FFFFFF"
-                        />
-                    </Box>
-
-                    <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{
-                            mt: 2.5,
-                            display: 'block',
-                            wordBreak: 'break-all'
-                        }}
-                    >
-                        {publicProfileUrl}
-                    </Typography>
-                </DialogContent>
-
-                <DialogActions sx={{ px: 3, pb: 2.5, pt: 0 }}>
-                    <Button onClick={copyProfileLink} startIcon={<ContentCopyIcon />}>
-                        Link kopieren
-                    </Button>
-                    <Button
-                        onClick={() => setQrOpen(false)}
-                        variant="contained"
-                        sx={{ borderRadius: 999, px: 2.5 }}
-                    >
-                        Schließen
-                    </Button>
-                </DialogActions>
-            </Dialog>
 
             <Snackbar
                 open={Boolean(snackbarMessage)}

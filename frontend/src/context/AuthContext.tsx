@@ -7,7 +7,6 @@ import React, {
   ReactNode,
   useCallback,
 } from 'react';
-import { jwtDecode } from 'jwt-decode';
 import apiClient from '../apiClient';
 import { Region } from '../types/dashboard.types';
 import i18n from 'i18next';
@@ -50,6 +49,7 @@ export interface UserPayload {
   preferred_theme?: 'light' | 'dark';
   preferred_language?: 'de' | 'en';
   newsletter_opt_in?: boolean;
+  briefing_email_enabled?: boolean;
   profile_image_url?: string | null;
   has_completed_onboarding?: boolean;
 }
@@ -69,13 +69,12 @@ export interface BusinessPartnerData {
   color_scheme: ColorScheme | null;
   dashboard_title?: string | null;
   allow_automated_newsletter?: boolean;
+  newsletter_frequency?: 'daily' | 'weekly' | 'monthly' | 'never';
+  newsletter_delivery_mode?: 'mobiliti' | 'export' | 'external';
+  newsletter_external_signup_url?: string | null;
+  newsletter_recipient_limit?: number;
   dashboard_focus?: 'information' | 'sales';
   favicon_url?: string;
-}
-
-interface DecodedTokenAny {
-  [key: string]: any;
-  exp?: number;
 }
 
 interface AuthContextType {
@@ -84,8 +83,8 @@ interface AuthContextType {
   businessPartner: BusinessPartnerData | null;
   isLoading: boolean;
   tokenExp: number | null;
-  login: (token: string, userData: UserPayload) => void;
-  logout: () => string;
+  login: (userData: UserPayload, sessionExpiresAt?: string | null) => void;
+  logout: () => Promise<string>;
   renewSession: () => Promise<void>;
   updateUser: (newUserData: Partial<UserPayload>) => void;
   fetchBusinessPartnerData: () => Promise<void>;
@@ -102,45 +101,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const JWT_TOKEN_KEY = 'jwt_token';
-
-function setStoredToken(token: string | null) {
-  try {
-    if (token) localStorage.setItem(JWT_TOKEN_KEY, token);
-    else localStorage.removeItem(JWT_TOKEN_KEY);
-  } catch {}
-}
-
-function getStoredToken(): string | null {
-  try {
-    return localStorage.getItem(JWT_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function extractUserFromDecoded(decoded: DecodedTokenAny): Partial<UserPayload> | null {
-  if (!decoded || typeof decoded !== 'object') return null;
-  const rawUser = decoded.user && typeof decoded.user === 'object' ? decoded.user : decoded;
-  const id = rawUser.id || rawUser.userId || rawUser.sub || null;
-  if (!id) return null;
-
-  return {
-    id,
-    email: rawUser.email || null,
-    username: rawUser.username || null,
-    role: rawUser.role || 'user',
-    business_partner_id: rawUser.business_partner_id ?? null,
-    business_partner_category: rawUser.business_partner_category ?? null,
-    regions: rawUser.regions ?? [],
-    preferred_theme: rawUser.preferred_theme,
-    preferred_language: rawUser.preferred_language,
-    contribution_score: rawUser.contribution_score ?? 0,
-    has_completed_onboarding: rawUser.has_completed_onboarding ?? false,
-  } as Partial<UserPayload>;
-}
-
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserPayload | null>(null);
@@ -263,27 +223,6 @@ const setPartnerByCode = useCallback(async (code: string) => {
   }
 }, []);
 
-  const initializeFromToken = useCallback(async (token: string) => {
-    try {
-      const decoded: DecodedTokenAny = jwtDecode(token);
-      setTokenExp(decoded.exp ?? null);
-      setStoredToken(token);
-
-      const partialUser = extractUserFromDecoded(decoded);
-      if (partialUser) {
-        setUser(partialUser as UserPayload);
-      } else {
-        throw new Error("Kein gültiger User im Token gefunden.");
-      }
-    } catch (e) {
-      console.error('Token konnte nicht dekodiert werden', e);
-      setStoredToken(null);
-      setUser(null);
-      setTokenExp(null);
-    }
-  }, []);
-
-
 const refreshUser = useCallback(async () => {
     try {
         const { data: refreshedUser } = await apiClient.get<UserPayload>('/api/users/me');
@@ -300,37 +239,34 @@ const refreshUser = useCallback(async () => {
 
 
 useEffect(() => {
-    const bootstrap = async () => {
-      setIsLoading(true);
-      setConfigLoaded(false);
-      setUserTags([]); 
+    const bootstrap = async () => {
+      setIsLoading(true);
+      setConfigLoaded(false);
+      setUserTags([]);
+      try {
+        localStorage.removeItem('jwt_token');
+        localStorage.removeItem('token');
+      } catch {}
+      try {
+        const response = await fetch('/api/users/me', { credentials: 'include' });
+        if (!response.ok) throw new Error('Keine aktive Sitzung');
+        const currentUser = await response.json();
+        setUser(currentUser);
 
-      // === SSO TOKEN CATCHER ===
-      // Prüfen, ob wir gerade von Google/LinkedIn kommen und einen Token in der URL haben
-      const params = new URLSearchParams(window.location.search);
-      const urlToken = params.get('token');
-      if (urlToken) {
-        setStoredToken(urlToken); // Token in den localStorage retten
-        // URL sofort bereinigen (Token aus der Adressleiste des Browsers löschen)
-        window.history.replaceState({}, document.title, window.location.pathname); 
-      }
-      // ==========================
-
-      const token = getStoredToken();
-      if (token) {
-        await initializeFromToken(token);
-        if (getStoredToken()) { 
-             try {
-                 await refreshUser(); 
-             } catch (refreshError) {
-                  console.error("Fehler beim initialen User-Refresh:", refreshError);
-             }
-        }
-      }
-      setIsLoading(false); 
-    };
-    bootstrap();
-  }, [initializeFromToken, refreshUser]);
+        const statusResponse = await fetch('/api/session/status', { credentials: 'include' });
+        if (statusResponse.ok) {
+          const status = await statusResponse.json();
+          setTokenExp(status.expiresAt ? Math.floor(new Date(status.expiresAt).getTime() / 1000) : null);
+        }
+      } catch (_error) {
+        setUser(null);
+        setTokenExp(null);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    bootstrap();
+  }, []);
 
   useEffect(() => {
      if (user && !isLoading && !configLoaded) {
@@ -343,12 +279,8 @@ useEffect(() => {
      }
   }, [user, isLoading, configLoaded, fetchBusinessPartnerData, refreshUserTags]);
 
-  const login = useCallback((token: string, userData: UserPayload) => {
-    setStoredToken(token);
-    try {
-      const d: any = jwtDecode(token);
-      setTokenExp(typeof d.exp === 'number' ? d.exp : null);
-    } catch {}
+  const login = useCallback((userData: UserPayload, sessionExpiresAt?: string | null) => {
+    setTokenExp(sessionExpiresAt ? Math.floor(new Date(sessionExpiresAt).getTime() / 1000) : null);
     setConfigLoaded(false);
     setUser(userData);
     posthog.identify(userData.id, {
@@ -357,19 +289,27 @@ useEffect(() => {
     });
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
     const publicPath = getPartnerPublicPath(businessPartner?.slug);
-    setStoredToken(null);
-    setUser(null);
-    setBusinessPartner(null);
-    setTokenExp(null);
-    setConfigLoaded(false);
-    setUserTags([]);
-    posthog.reset();
+    try {
+      await apiClient.post('/api/auth/logout');
+    } finally {
+      setUser(null);
+      setBusinessPartner(null);
+      setTokenExp(null);
+      setConfigLoaded(false);
+      setUserTags([]);
+      posthog.reset();
+    }
     return publicPath;
   }, [businessPartner?.slug]);
   
-  const renewSession = async () => {};
+  const renewSession = async () => {
+    const { res, data } = await apiClient.post<{ expiresAt?: string }>('/api/session/renew');
+    if (!res.ok) throw new Error('Sitzung konnte nicht verlängert werden.');
+    setTokenExp(data?.expiresAt ? Math.floor(new Date(data.expiresAt).getTime() / 1000) : null);
+    await refreshUser();
+  };
 
   const setThemeMode = (mode: 'light' | 'dark') => {
     updateUser({ preferred_theme: mode });

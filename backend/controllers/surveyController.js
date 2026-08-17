@@ -1,6 +1,14 @@
 // backend/controllers/surveyController.js
 const db = require('../config/db');
 
+const canAccessSurvey = async (req, surveyId) => {
+    const { rows } = await db.query('SELECT id, business_partner_id, status, start_date, end_date FROM surveys WHERE id = $1', [surveyId]);
+    const survey = rows[0];
+    if (!survey) return null;
+    if (req.user.role === 'admin' || String(survey.business_partner_id) === String(req.user.business_partner_id)) return survey;
+    return null;
+};
+
 // --- HILFSFUNKTION: Auto-Close abgelaufener Umfragen ---
 // Diese Funktion stellt sicher, dass die Datenbank immer aktuell ist, ohne Cronjob.
 const autoCloseExpiredSurveys = async () => {
@@ -49,7 +57,7 @@ exports.getSurveysForAdmin = async (req, res) => {
 };
 
 exports.getArchivedSurveysForUser = async (req, res) => {
-    const { id: userId } = req.user;
+    const { id: userId, business_partner_id: businessPartnerId } = req.user;
     try {
         await autoCloseExpiredSurveys(); // Auch hier kurz aufräumen
         
@@ -57,16 +65,17 @@ exports.getArchivedSurveysForUser = async (req, res) => {
             SELECT s.id, s.title, s.description, s.status,
                    (SELECT MAX(sr.created_at) FROM survey_responses sr WHERE sr.survey_id = s.id AND sr.user_id = $1) as completed_at
             FROM surveys s
-            WHERE 
+            WHERE s.business_partner_id = $2 AND (
                 -- Bedingung 1: User hat teilgenommen
                 EXISTS (
                     SELECT 1 FROM survey_responses sr WHERE sr.survey_id = s.id AND sr.user_id = $1
                 )
                 -- ODER Bedingung 2: Umfrage ist offiziell beendet
                 OR s.status = 'closed'
+            )
             ORDER BY COALESCE(completed_at, s.end_date, s.created_at) DESC;
         `;
-        const { rows } = await db.query(query, [userId]);
+        const { rows } = await db.query(query, [userId, businessPartnerId]);
         res.json(rows);
     } catch (err) {
         console.error('Fehler beim Laden des Umfrage-Archivs:', err.message);
@@ -169,7 +178,26 @@ exports.submitSurveyResponse = async (req, res) => {
     try {
         await client.query('BEGIN');
 
+        const surveyAccess = await client.query(
+            `SELECT id FROM surveys
+             WHERE id = $1 AND business_partner_id = $2 AND status = 'active'
+               AND (start_date IS NULL OR start_date <= NOW())
+               AND (end_date IS NULL OR end_date >= NOW())`,
+            [surveyId, req.user.business_partner_id]
+        );
+        if (surveyAccess.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ message: 'Umfrage ist nicht verfügbar.' });
+        }
+
+        const allowedQuestions = await client.query('SELECT id FROM survey_questions WHERE survey_id = $1', [surveyId]);
+        const allowedQuestionIds = new Set(allowedQuestions.rows.map((row) => String(row.id)));
+
         for (const questionId in responses) {
+            if (!allowedQuestionIds.has(String(questionId))) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ message: 'Eine Antwort gehört nicht zu dieser Umfrage.' });
+            }
             let responseText = responses[questionId];
             if (Array.isArray(responseText)) {
                 responseText = JSON.stringify(responseText);
@@ -198,6 +226,7 @@ exports.submitSurveyResponse = async (req, res) => {
 exports.getSurveyResults = async (req, res) => {
     const { id } = req.params;
     try {
+        if (!await canAccessSurvey(req, id)) return res.status(404).json({ message: 'Umfrage nicht gefunden.' });
         const { rows: questions } = await db.query(
             'SELECT id, question_text, question_type, options FROM survey_questions WHERE survey_id = $1 ORDER BY display_order ASC',
             [id]
@@ -250,10 +279,11 @@ exports.getSurveyResults = async (req, res) => {
 exports.getSurveyForEdit = async (req, res) => {
     const { id } = req.params;
     try {
-        const surveyRes = await db.query('SELECT * FROM surveys WHERE id = $1', [id]);
-        if (surveyRes.rows.length === 0) {
+        const accessibleSurvey = await canAccessSurvey(req, id);
+        if (!accessibleSurvey) {
             return res.status(404).json({ message: 'Umfrage nicht gefunden.' });
         }
+        const surveyRes = await db.query('SELECT * FROM surveys WHERE id = $1', [id]);
         const questionsRes = await db.query('SELECT * FROM survey_questions WHERE survey_id = $1 ORDER BY display_order ASC', [id]);
         
         const survey = surveyRes.rows[0];
@@ -272,11 +302,13 @@ exports.updateSurvey = async (req, res) => {
 
     const client = await db.connect();
     try {
+        if (!await canAccessSurvey(req, id)) return res.status(404).json({ message: 'Umfrage nicht gefunden.' });
         await client.query('BEGIN');
         
         await client.query(
-            'UPDATE surveys SET title = $1, description = $2, status = $3, start_date = $4, end_date = $5, updated_at = NOW() WHERE id = $6',
-            [title, description, status, start_date || null, end_date || null, id]
+            `UPDATE surveys SET title = $1, description = $2, status = $3, start_date = $4, end_date = $5, updated_at = NOW()
+             WHERE id = $6 AND ($7::uuid IS NULL OR business_partner_id = $7::uuid)`,
+            [title, description, status, start_date || null, end_date || null, id, req.user.role === 'assistenz' ? req.user.business_partner_id : null]
         );
         
         await client.query('DELETE FROM survey_questions WHERE survey_id = $1', [id]);

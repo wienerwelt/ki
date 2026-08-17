@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Box, IconButton, Typography, LinearProgress } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useAuth } from '../context/AuthContext';
+import DOMPurify from 'dompurify';
 
 interface AdvertisementBannerProps {
     content: string;
@@ -66,7 +67,7 @@ const AdvertisementBanner: React.FC<AdvertisementBannerProps> = ({ content, onCl
             <Typography
                 variant="body2"
                 component="div"
-                dangerouslySetInnerHTML={{ __html: content }}
+                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content, { USE_PROFILES: { html: true } }) }}
                 sx={{
                     color: '#000000',
                     textAlign: 'center',

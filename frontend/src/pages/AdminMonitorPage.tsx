@@ -20,7 +20,6 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 
 import apiClient from '../apiClient';
-import axios from 'axios';
 
 // --- Interfaces & Helper Functions ---
 interface Log {
@@ -59,6 +58,10 @@ interface MonthlyReportMonitoring {
         allow_automated_newsletter: boolean;
         configured_recipients: number;
         eligible_recipients: number;
+        briefing_recipients: number;
+        newsletter_frequency: 'daily' | 'weekly' | 'monthly' | 'never';
+        newsletter_delivery_mode: 'mobiliti' | 'export' | 'external';
+        newsletter_recipient_limit: number;
     } | null;
     totals: { total: number; sent: number; failed: number; sending: number };
     monthly: Array<{ report_month: string; total: number; sent: number; failed: number; sending: number }>;
@@ -72,6 +75,17 @@ interface MonthlyReportMonitoring {
         error_message?: string | null;
         email: string;
         recipient_name?: string | null;
+    }>;
+    newsletterTotals: { total: number; sent: number; failed: number; sending: number; skipped: number };
+    newsletterDeliveries: Array<{
+        id: string;
+        recipient_email: string;
+        delivery_mode: 'mobiliti' | 'export' | 'external';
+        status: 'sending' | 'sent' | 'failed' | 'skipped';
+        created_at: string;
+        sent_at?: string | null;
+        failed_at?: string | null;
+        error_message?: string | null;
     }>;
 }
 
@@ -120,7 +134,7 @@ const AdminMonitorPage: React.FC = () => {
     const fetchArchiveFiles = async () => {
         setIsArchiveLoading(true);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.get('/api/admin/monitor/archive-files', { headers: { 'x-auth-token': token } });
             setArchiveFiles(res.data.files);
         } catch (err) {
@@ -132,7 +146,7 @@ const AdminMonitorPage: React.FC = () => {
 
     const handleDownloadArchiveFile = async (key: string) => {
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.get(`/api/admin/monitor/archive-files/download?key=${encodeURIComponent(key)}`, { headers: { 'x-auth-token': token } });
             if (res.data && res.data.url) {
                 window.open(res.data.url, '_blank');
@@ -150,7 +164,7 @@ const AdminMonitorPage: React.FC = () => {
             if (!healthData && !healthError) setIsHealthLoading(true);
             
             try {
-                const token = localStorage.getItem('jwt_token');
+                const token = 'cookie-session';
                 const response = await apiClient.get('/api/admin/monitor/status', {
                     headers: { 'x-auth-token': token },
                     signal: controller.signal
@@ -180,7 +194,7 @@ const AdminMonitorPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const params = new URLSearchParams({ 
                 page: String(currentPage), 
                 limit: '20',
@@ -252,7 +266,7 @@ const AdminMonitorPage: React.FC = () => {
         }
         setIsDeleting(true);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const response = await apiClient.delete('/api/admin/monitor/logs', { params: { beforeDate: deleteUntilDate }, headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: response.data.message || 'Logs erfolgreich gelöscht.', severity: 'success' });
             handleCloseDeleteDialog();
@@ -269,15 +283,7 @@ const AdminMonitorPage: React.FC = () => {
 
     const handleOpenBullBoard = async () => {
         try {
-            const token = localStorage.getItem('jwt_token'); 
-            if (!token) { alert("Du bist nicht eingeloggt!"); return; }
-            const cleanToken = token.replace(/^"|"$/g, '');
             const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001';
-            
-            await axios.get(`${backendUrl}/api/admin/monitor/jobs-auth`, {
-                headers: { Authorization: `Bearer ${cleanToken}` },
-                withCredentials: true 
-            });
             window.open(`${backendUrl}/api/admin/jobs`, '_blank');
         } catch (error) {
             alert('Zugriff auf das Job-Dashboard verweigert.');
@@ -483,12 +489,14 @@ const AdminMonitorPage: React.FC = () => {
 
         if (!monthlyReportData) return null;
 
-        const { settings, totals, deliveries } = monthlyReportData;
+        const { settings, totals, deliveries, newsletterTotals, newsletterDeliveries } = monthlyReportData;
         const reportStatus = (status: string) => {
             if (status === 'sent') return { label: 'Versendet', color: 'success' as const };
             if (status === 'failed') return { label: 'Fehlgeschlagen', color: 'error' as const };
+            if (status === 'skipped') return { label: 'Übersprungen', color: 'default' as const };
             return { label: 'In Versand', color: 'warning' as const };
         };
+        const deliveryModeLabel = (mode: string) => ({ mobiliti: 'Mobiliti direkt', export: 'Zentraler Export', external: 'Extern' }[mode] || mode);
 
         return (
             <Box sx={{ mb: 4 }}>
@@ -539,6 +547,42 @@ const AdminMonitorPage: React.FC = () => {
                                 );
                             })}
                             {deliveries.length === 0 && <TableRow><TableCell colSpan={5} align="center" sx={{ py: 3 }}>Noch kein Monatsreport-Versand protokolliert.</TableCell></TableRow>}
+                        </TableBody>
+                    </Table>
+                </TableContainer>
+
+                <Box sx={{ mt: 4, mb: 2 }}>
+                    <Typography variant="h5" sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <EmailOutlinedIcon color="primary" /> Mobiliti Branchenbriefing
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                        Modus: {deliveryModeLabel(settings?.newsletter_delivery_mode || 'mobiliti')} · Frequenz: {settings?.newsletter_frequency || 'never'} · Direktlimit: {settings?.newsletter_recipient_limit || 250}
+                    </Typography>
+                </Box>
+
+                <Grid container spacing={2} sx={{ mb: 2 }}>
+                    <Grid item xs={12} sm={6} md={3}><Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}><Typography variant="caption" color="text.secondary">Bestätigte Briefing-Empfänger</Typography><Typography variant="h5" fontWeight="bold">{settings?.briefing_recipients || 0}</Typography></Paper></Grid>
+                    <Grid item xs={12} sm={6} md={3}><Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}><Typography variant="caption" color="text.secondary">Versendet (30 Tage)</Typography><Typography variant="h5" fontWeight="bold" color="success.main">{newsletterTotals?.sent || 0}</Typography></Paper></Grid>
+                    <Grid item xs={12} sm={6} md={3}><Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}><Typography variant="caption" color="text.secondary">Fehlgeschlagen (30 Tage)</Typography><Typography variant="h5" fontWeight="bold" color="error.main">{newsletterTotals?.failed || 0}</Typography></Paper></Grid>
+                    <Grid item xs={12} sm={6} md={3}><Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}><Typography variant="caption" color="text.secondary">Übersprungen / läuft</Typography><Typography variant="h5" fontWeight="bold">{(newsletterTotals?.skipped || 0) + (newsletterTotals?.sending || 0)}</Typography></Paper></Grid>
+                </Grid>
+
+                <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2 }}>
+                    <Table size="small">
+                        <TableHead><TableRow><TableCell>Empfänger</TableCell><TableCell>Modus</TableCell><TableCell>Status</TableCell><TableCell>Zeitpunkt</TableCell><TableCell>Hinweis</TableCell></TableRow></TableHead>
+                        <TableBody>
+                            {(newsletterDeliveries || []).map((delivery) => {
+                                const status = reportStatus(delivery.status);
+                                const timestamp = delivery.sent_at || delivery.failed_at || delivery.created_at;
+                                return <TableRow key={delivery.id} hover>
+                                    <TableCell>{delivery.recipient_email}</TableCell>
+                                    <TableCell>{deliveryModeLabel(delivery.delivery_mode)}</TableCell>
+                                    <TableCell><Chip label={status.label} color={status.color} variant="outlined" size="small" /></TableCell>
+                                    <TableCell>{formatDate(timestamp)}</TableCell>
+                                    <TableCell sx={{ maxWidth: 360 }}><Typography variant="caption" color={delivery.error_message ? 'error' : 'text.secondary'}>{delivery.error_message || '—'}</Typography></TableCell>
+                                </TableRow>;
+                            })}
+                            {(newsletterDeliveries || []).length === 0 && <TableRow><TableCell colSpan={5} align="center" sx={{ py: 3 }}>Noch kein Branchenbriefing-Versand protokolliert.</TableCell></TableRow>}
                         </TableBody>
                     </Table>
                 </TableContainer>

@@ -36,7 +36,7 @@ const AdminFundingStatsTab: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const response = await apiClient.get('/api/admin/funding/usage-stats', {
                 headers: { 'x-auth-token': token },
                 params: { timespan }

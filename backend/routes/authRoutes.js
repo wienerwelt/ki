@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
+const authMiddleware = require('../middleware/authMiddleware');
 
 const rateLimit = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
@@ -147,7 +148,7 @@ router.post('/forgot-password', forgotPasswordLimiter, authController.forgotPass
 router.post('/reset-password/:token', resetPasswordLimiter, authController.resetPassword);
 
 // ---- Newsletter Double-Opt-In ----
-router.post('/newsletter/opt-in', newsletterOptInLimiter, authController.startNewsletterOptIn);
+router.post('/newsletter/opt-in', newsletterOptInLimiter, authMiddleware, authController.startNewsletterOptIn);
 router.get('/newsletter/confirm/:token', authController.confirmNewsletterOptIn);
 
 // ---- Logout ----

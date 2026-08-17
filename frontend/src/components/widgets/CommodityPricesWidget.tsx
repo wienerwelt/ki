@@ -184,7 +184,7 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({
                     }
                     config.params.partnerId = partnerId;
                 } else {
-                    config.headers = { 'x-auth-token': localStorage.getItem('jwt_token') };
+                    config.headers = { 'x-auth-token': 'cookie-session' };
                 }
 
                 const response = await apiClient.get(endpoint, config);
@@ -219,7 +219,7 @@ const CommodityPricesWidget: React.FC<CommodityPricesWidgetProps> = ({
             setIsChartLoading(true);
             setError(null);
             try {
-                const token = localStorage.getItem('jwt_token');
+                const token = 'cookie-session';
                 const response = await apiClient.get(`/api/data/commodities/history?timeframe=${chartTimeframe}`, {
                     headers: { 'x-auth-token': token },
                 });

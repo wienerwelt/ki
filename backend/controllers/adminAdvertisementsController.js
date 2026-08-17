@@ -1,5 +1,6 @@
 // backend/controllers/adminAdvertisementsController.js
 const db = require('../config/db');
+const { sanitizeRichText } = require('../services/htmlSanitizer');
 
 // GET all advertisements
 exports.getAllAdvertisements = async (req, res) => {
@@ -10,7 +11,7 @@ exports.getAllAdvertisements = async (req, res) => {
             LEFT JOIN business_partners bp ON a.business_partner_id = bp.id
             ORDER BY a.created_at DESC
         `);
-        res.json(result.rows);
+        res.json(result.rows.map((row) => ({ ...row, content: sanitizeRichText(row.content) })));
     } catch (err) {
         console.error('Error fetching advertisements:', err.message);
         res.status(500).send('Server error');
@@ -27,7 +28,7 @@ exports.createAdvertisement = async (req, res) => {
         const result = await db.query(
             `INSERT INTO advertisements (business_partner_id, content, is_active, start_date, end_date)
              VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [business_partner_id || null, content, is_active, start_date || null, end_date || null]
+            [business_partner_id || null, sanitizeRichText(content), is_active, start_date || null, end_date || null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -49,7 +50,7 @@ exports.updateAdvertisement = async (req, res) => {
                 business_partner_id = $1, content = $2, is_active = $3, 
                 start_date = $4, end_date = $5 
              WHERE id = $6 RETURNING *`,
-            [business_partner_id || null, content, is_active, start_date || null, end_date || null, id]
+            [business_partner_id || null, sanitizeRichText(content), is_active, start_date || null, end_date || null, id]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Advertisement not found.' });

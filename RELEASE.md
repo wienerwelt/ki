@@ -74,7 +74,21 @@ Keine einzelnen Quellcodedateien mehr per SFTP verteilen. Im normalen Ablauf wer
 
   ```env
   FRONTEND_URL=https://dashboard.mobiliti.at
+  JWT_EXPIRES_IN=8h
+  SESSION_COOKIE_MAX_AGE_MS=28800000
   ```
+
+  `JWT_SECRET` muss ebenfalls vorhanden sein und mindestens 32 zufällige Zeichen haben. Sein Inhalt wird niemals in Git, in diese Anleitung oder in Terminalausgaben kopiert. `SESSION_COOKIE_MAX_AGE_MS=28800000` begrenzt eine Browser-Sitzung auf acht Stunden; eine Verlängerung erfolgt bewusst über den Sitzungsdialog.
+
+- Optional kann ein erreichbarer ClamAV-Dienst für hochgeladene Dokumente aktiviert werden. Erst wenn der Dienst unter dem angegebenen Host tatsächlich läuft, diese Werte lokal und in Produktion ergänzen:
+
+  ```env
+  CLAMAV_HOST=clamav
+  CLAMAV_PORT=3310
+  REQUIRE_MALWARE_SCAN_FOR_PUBLIC_FILES=true
+  ```
+
+  Ohne `CLAMAV_HOST` werden Dateien als „nicht geprüft“ gekennzeichnet. Externe Links funktionieren weiterhin. Mit `REQUIRE_MALWARE_SCAN_FOR_PUBLIC_FILES=true` wird dagegen sicher geschlossen: Upload und externe Freigabe werden abgelehnt, wenn ClamAV nicht erreichbar ist oder keine saubere Prüfung bestätigt.
 
 - PostgreSQL ist nur an `127.0.0.1:5434`, die API nur an `127.0.0.1:5001` gebunden.
 - Plesk leitet API-Aufrufe, `/<mandanten-slug>` und `/sitemap.xml` korrekt weiter.
@@ -161,11 +175,15 @@ Eine Versionsnummer darf nach erfolgreichem Deployment niemals wiederverwendet w
 4. Manuell kontrollieren:
 
    - Login, Logout und Rückkehr zum richtigen Mandanten-Slug
+   - nach dem Login kein `jwt_token` oder `token` in Local Storage; die Anmeldung läuft ausschließlich über ein HttpOnly-Cookie
+   - als Mandantenassistenz keine globalen Adminseiten wie Mandantenverwaltung, Anzeigen, Cronjobs oder Systemmonitor erreichbar
+   - Benutzerverwaltung der Mandantenassistenz zeigt und findet ausschließlich normale Benutzer des eigenen Mandanten
    - Dashboard und geänderte Widgets
    - Community-Profile, Bewertungen und Benutzersuche
    - Actions & Software im Adminbereich
    - Software-Lexikon intern und öffentlich
    - Branchenverzeichnis als Liste und Karte
+   - Datencloud: externen Dokumentlink mit Ablaufdatum erzeugen, ohne Login herunterladen und wieder deaktivieren
    - Public Page, Logos, Kategorien, Kalender und Netzwerkticker
    - Browser-Konsole ohne neue Fehler
    - Kontaktformular nur dann real absenden, wenn ein Testdatensatz und Testmails gewünscht sind
@@ -176,7 +194,7 @@ Eine Versionsnummer darf nach erfolgreichem Deployment niemals wiederverwendet w
    powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\preflight.ps1
    ```
 
-Der Preflight prüft Dev- und Prod-Compose, alle npm-Abhängigkeiten einschließlich Build-/Dev-Werkzeugen auf kritische Sicherheitsmeldungen, `deploy.sh`, Backend-Syntax, Migrationen und Frontend-Build. Danach baut er die Docker-Images neu, erstellt die lokale API und Worker daraus neu und prüft API-Health sowie alle sicheren fachlichen Smoke-Tests. Er versendet keine E-Mails. Nur bei der Meldung `Preflight vollständig erfolgreich.` fortfahren.
+Der Preflight prüft Dev- und Prod-Compose, alle npm-Abhängigkeiten einschließlich Build-/Dev-Werkzeugen auf kritische Sicherheitsmeldungen, `deploy.sh`, Backend-Syntax, unsichere JWT-Ablage im Frontend, Migrationen und Frontend-Build. Danach baut er die Docker-Images neu, erneuert ausschließlich die anonymen Dev-Abhängigkeitsvolumes, erstellt die lokale API und Worker daraus neu und prüft API-Health sowie alle sicheren fachlichen Smoke-Tests. Der Sicherheitstest erwartet insbesondere `403` auf globalen Adminrouten für Assistenzen, `404` auf fremde Mandantendaten und `403` auf Cookie-Schreibzugriffe ohne CSRF-Token. Er versendet keine E-Mails. Nur bei der Meldung `Preflight vollständig erfolgreich.` fortfahren.
 
 6. DEV nach der Arbeit sicher stoppen:
 
@@ -308,6 +326,10 @@ PROJECT_MARKER="$(<.mobiliti-dashboard-root)"
 test "${PROJECT_MARKER%$'\r'}" = "mobiliti-dashboard" && echo "Projektmarker OK"
 test -f .env && echo ".env vorhanden"
 grep -F 'FRONTEND_URL=https://dashboard.mobiliti.at' .env
+grep -F 'SESSION_COOKIE_MAX_AGE_MS=28800000' .env
+JWT_SECRET_VALUE="$(sed -n 's/^JWT_SECRET=//p' .env | tail -n 1)"
+test "${#JWT_SECRET_VALUE}" -ge 32 && echo "JWT_SECRET-Länge OK"
+unset JWT_SECRET_VALUE
 df -h .
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 ```
@@ -316,7 +338,8 @@ Stoppen, wenn:
 
 - `pwd` nicht exakt das Produktions-Projektverzeichnis zeigt;
 - Projektmarker oder `.env` fehlen;
-- `FRONTEND_URL` falsch ist;
+- `FRONTEND_URL` oder `SESSION_COOKIE_MAX_AGE_MS` falsch ist;
+- `JWT_SECRET` fehlt oder kürzer als 32 Zeichen ist;
 - der Datenträger fast voll ist;
 - PostgreSQL nicht läuft oder nicht gesund ist.
 
@@ -385,16 +408,22 @@ In dieser Reihenfolge kontrollieren:
 
 1. Mandantenspezifische Public Page öffnen.
 2. Login durchführen, Dashboard öffnen und wieder ausloggen.
+   Ein einmaliges erneutes Anmelden nach diesem Sicherheitsrelease ist normal, wenn die vorherige Sitzung älter als acht Stunden war.
 3. Prüfen, ob nach Logout wieder der richtige öffentliche Mandanten-Slug sichtbar ist.
 4. Community öffnen, Nutzerprofile und Organisation kontrollieren.
 5. In der Benutzerverwaltung einen Benutzer suchen, der nicht unter den ersten 50 steht.
 6. Als Assistenz sicherstellen, dass keine fremden Mandanten gefunden werden.
+   Zusätzlich prüfen, dass globale Adminseiten mit `403` gesperrt bleiben; Benutzer, Briefing, Actions/Software, Umfragen, Community und Rechtsmonitor des eigenen Mandanten bleiben verfügbar.
 7. Software-Lexikon, Bewertungen und Community-Verknüpfung prüfen.
 8. Branchenverzeichnis als Liste und Karte sowie Software-/Action-Markierungen prüfen.
 9. Adminseite **Actions & Software** laden und einen vorhandenen Eintrag öffnen, aber nicht unnötig verändern.
-10. Admin-Aktivitätsmonitor und Monatsreport-Status öffnen.
-11. Browser-Konsole auf neue Fehler prüfen.
-12. Kontaktformular nur bei gewünschtem Ende-zu-Ende-Test einmal absenden und Eingang von interner Mail sowie Bestätigung kontrollieren.
+10. Unter **Admin → Business Partner → Bearbeiten → Newsletter-Versand** kontrollieren: Versandmodus, zentrale Newsletter-Adresse, externen Anmeldelink und direktes Empfängerlimit. Bestehende Mandanten starten sicher mit `Direkt über Mobiliti` und einem Limit von `250`; bei mehr Empfängern wird nur mit hinterlegter zentraler Adresse ein Export erzeugt.
+11. Unter **Briefing Redaktion** die gewünschte Versandfrequenz prüfen. `Nie` bedeutet: Das Briefing bleibt im Dashboard und es wird keine automatische E-Mail versendet.
+12. Im Daily Cockpit kontrollieren: Mobiliti-Modus zeigt den Opt-in-Schalter, Export-Modus zeigt zentralen Versand, externer Modus verlinkt zur externen Anmeldung. Im Produktionstest keinen echten Massenversand auslösen.
+13. Admin-Aktivitätsmonitor und Monatsreport-Status öffnen.
+14. Browser-Konsole auf neue Fehler prüfen.
+15. Kontaktformular nur bei gewünschtem Ende-zu-Ende-Test einmal absenden und Eingang von interner Mail sowie Bestätigung kontrollieren.
+16. Nach einer Passwortänderung kontrollieren, dass eine vorherige Sitzung dieses Nutzers nicht weiterverwendet werden kann.
 
 Zusätzlich Serverlogs prüfen:
 
@@ -536,7 +565,7 @@ Assert-NativeSuccess 'Git-Status konnte nicht gelesen werden.'
 
 ### B. DEV / PowerShell: Entwicklungsumgebung starten
 
-Zuerst Docker Desktop starten. Dann im ersten VS-Code-PowerShell-Fenster:
+BACKEND starten:
 
 ```powershell
 Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
@@ -558,7 +587,7 @@ Assert-NativeSuccess 'Lokale Migrationen sind fehlgeschlagen.'
 Invoke-RestMethod 'http://127.0.0.1:5001/api/health'
 ```
 
-Im zweiten VS-Code-PowerShell-Fenster das Frontend starten und dieses Fenster geöffnet lassen:
+FRONTEND starten:
 
 ```powershell
 Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
@@ -700,6 +729,10 @@ Den gesamten folgenden Block in PuTTY einfügen. Die Release-Version wird abgefr
 
   test -f .env
   grep -F 'FRONTEND_URL=https://dashboard.mobiliti.at' .env
+  grep -F 'SESSION_COOKIE_MAX_AGE_MS=28800000' .env
+  JWT_SECRET_VALUE="$(sed -n 's/^JWT_SECRET=//p' .env | tail -n 1)"
+  test "${#JWT_SECRET_VALUE}" -ge 32
+  unset JWT_SECRET_VALUE
   test "$(stat -c '%a' .)" = '755'
 
   test -f ".deploy/incoming/mobiliti-dashboard-${RELEASE_VERSION}.tar.gz"

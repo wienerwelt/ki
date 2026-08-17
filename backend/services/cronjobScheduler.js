@@ -60,8 +60,14 @@ const runScheduledJobs = async () => {
                 }
                 else { // Alle anderen gehen an die emailQueue
                     console.log(`[CRON] Enqueueing Email/Notification Job: ${job.name} (ID: ${job.id})`);
-                    emailQueue.add(job.name, { emailJobId: job.id })
-                        .catch(err => console.error(`[CRON] Error enqueueing email job ${job.id}:`, err.message));
+                    const minuteKey = now.toISOString().slice(0, 16).replace(/[^0-9]/g, '');
+                    await emailQueue.add(job.name, { emailJobId: job.id }, {
+                        jobId: `cron-${job.id}-${minuteKey}`,
+                        attempts: 3,
+                        backoff: { type: 'exponential', delay: 30000 },
+                        removeOnComplete: 500,
+                        removeOnFail: 1000,
+                    });
                 }
                 
                 // [FIX] Update timestamp for ALL job types

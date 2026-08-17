@@ -41,6 +41,9 @@ const main = async () => {
     if (!body.totals || !Array.isArray(body.monthly) || !Array.isArray(body.deliveries)) {
         throw new Error('Monitoring-Antwort hat ein ungültiges Format.');
     }
+    if (!body.newsletterTotals || !Array.isArray(body.newsletterDeliveries)) {
+        throw new Error('Branchenbriefing-Monitoring fehlt in der Antwort.');
+    }
     if (!configBody?.businessPartner?.slug) {
         throw new Error('Dashboard-Konfiguration enthält keinen Mandanten-Slug für den Logout.');
     }
@@ -53,6 +56,8 @@ const main = async () => {
         eligibleRecipients: body.settings.eligible_recipients,
         totals: body.totals,
         deliveryCount: body.deliveries.length,
+        newsletterTotals: body.newsletterTotals,
+        newsletterDeliveryCount: body.newsletterDeliveries.length,
     }, null, 2));
 };
 

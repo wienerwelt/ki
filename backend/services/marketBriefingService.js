@@ -316,7 +316,14 @@ function extractSources(related_articles) {
     return [];
 }
 
-const { sendDailyBriefing } = require('./emailService'); // Stelle sicher, dass das oben oder hier importiert ist
+const { dispatchBriefing } = require('./newsletterDeliveryService');
+
+function viennaDateParts(date = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Europe/Vienna', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(date);
+    return Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+}
 
 exports.dispatchAutomatedNewsletters = async () => {
     let client;
@@ -325,13 +332,20 @@ exports.dispatchAutomatedNewsletters = async () => {
         console.log('[Briefing Service] Starte automatischen E-Mail-Versand Check...');
 
         // 1. Hole alle Partner, die einen aktiven E-Mail-Versand haben
-        const bpRes = await client.query(
-            `SELECT id, name, newsletter_frequency FROM business_partners WHERE is_active = TRUE AND newsletter_frequency != 'never'`
-        );
+        const bpRes = await client.query(`
+            SELECT bp.*, row_to_json(cs.*) AS color_scheme
+            FROM business_partners bp
+            LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id
+            WHERE bp.is_active = TRUE
+              AND COALESCE(bp.allow_automated_newsletter, FALSE) = TRUE
+              AND bp.newsletter_frequency != 'never'
+        `);
 
         const now = new Date();
-        const isFriday = now.getDay() === 5;
-        const isFirstOfMonth = now.getDate() === 1;
+        const vienna = viennaDateParts(now);
+        const isFriday = vienna.weekday === 'Fri';
+        const isFirstOfMonth = Number(vienna.day) === 1;
+        const failures = [];
 
         for (const partner of bpRes.rows) {
             const freq = partner.newsletter_frequency;
@@ -360,21 +374,7 @@ exports.dispatchAutomatedNewsletters = async () => {
                 continue;
             }
 
-            // 4. Empfänger holen
-            const userRes = await client.query(
-                `SELECT email, first_name, last_name FROM users WHERE business_partner_id = $1 AND newsletter_opt_in = TRUE AND is_active = TRUE`,
-                [partner.id]
-            );
-            const recipients = userRes.rows;
-
-            if (recipients.length === 0) continue;
-
-            // 5. E-Mail Struktur bauen
-            const partnerDataRes = await client.query(`
-                SELECT bp.*, row_to_json(cs.*) as color_scheme 
-                FROM business_partners bp LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id 
-                WHERE bp.id = $1`, [partner.id]);
-            
+            // 4. E-Mail Struktur bauen
             const briefingForEmail = {
                 top_insights: items.filter(i => i.briefing_type === 'top_insight').map(i => ({ 
                     title: i.headline, what_changed: i.analysis_summary, so_what: i.prognosis, action: i.talking_point, sources: extractSources(i.related_articles)
@@ -394,22 +394,29 @@ exports.dispatchAutomatedNewsletters = async () => {
                 ORDER BY sc.event_date ASC LIMIT 1
             `, [`${partner.id}_events`]);
 
-            // 6. Mails senden
-            recipients.forEach(user => {
-                sendDailyBriefing({ 
-                    to: user.email, 
-                    user, 
-                    partner: partnerDataRes.rows[0], 
-                    briefing: briefingForEmail, 
-                    nextEvent: eventRes.rows[0] || null 
-                }).catch(e => console.error(e));
-            });
+            try {
+                const result = await dispatchBriefing({
+                    partner,
+                    items,
+                    briefing: briefingForEmail,
+                    nextEvent: eventRes.rows[0] || null,
+                    frequency: freq,
+                    now,
+                });
+                console.log(`[Briefing Service] ${partner.name}: Modus ${result.mode}, ${result.sentCount} gesendet, ${result.skippedCount} übersprungen.`);
+            } catch (error) {
+                failures.push(`${partner.name}: ${error.message}`);
+                console.error(`[Briefing Service] Versand für ${partner.name} fehlgeschlagen:`, error);
+            }
+        }
 
-            console.log(`[Briefing Service] ${recipients.length} E-Mails an Partner ${partner.name} versendet.`);
+        if (failures.length > 0) {
+            throw new Error(failures.join(' | '));
         }
 
     } catch (err) {
         console.error('[Briefing Service] Fehler beim automatischen E-Mail-Versand:', err);
+        throw err;
     } finally {
         if (client) client.release();
     }

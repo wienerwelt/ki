@@ -117,7 +117,7 @@ const AdminAITab: React.FC = () => {
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const [jobsRes, regionsRes] = await Promise.all([
                 apiClient.get('/api/admin/cronjobs/ai-subscriptions', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/data/regions', { headers: { 'x-auth-token': token } })
@@ -138,7 +138,7 @@ const AdminAITab: React.FC = () => {
     const handleSaveChanges = async () => {
         if (!editingJob) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const { id, region, keywords, schedule } = editingJob;
             await apiClient.put(`/api/admin/cronjobs/ai-subscriptions/${id}`, { region, keywords, schedule }, { headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: 'Abonnement erfolgreich aktualisiert.' });
@@ -152,7 +152,7 @@ const AdminAITab: React.FC = () => {
 
     const handleToggleActive = async (job: ScheduledAIJob) => {
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.put(`/api/admin/cronjobs/ai-subscriptions/${job.id}`, { is_active: !job.is_active }, { headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: 'Status erfolgreich geändert.' });
             fetchData();
@@ -166,7 +166,7 @@ const AdminAITab: React.FC = () => {
         setHistoryModalOpen(true);
         setHistoryLoading(true);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.get(`/api/admin/cronjobs/ai-subscriptions/${subscriptionId}/history`, { headers: { 'x-auth-token': token } });
             setHistory(res.data);
         } catch (err) {
@@ -180,7 +180,7 @@ const AdminAITab: React.FC = () => {
         if (selectedIds.length === 0 || !window.confirm(`Sind Sie sicher, dass Sie ${selectedIds.length} Abonnement(s) endgültig löschen möchten?`)) return;
         
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/cronjobs/ai-subscriptions`, { 
                 headers: { 'x-auth-token': token },
                 data: { ids: selectedIds }
@@ -197,7 +197,7 @@ const AdminAITab: React.FC = () => {
     const handleTrigger = async (jobId: string) => {
         setSnackbar({ open: true, message: 'Starte Job...' });
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.post(`/api/admin/cronjobs/ai-subscriptions/${jobId}/trigger`, {}, { headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: 'Job wurde manuell zur Warteschlange hinzugefügt.' });
         } catch (err: any) {

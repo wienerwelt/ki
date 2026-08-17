@@ -38,7 +38,7 @@ const TrustedSourcesPage: React.FC = () => {
 
     const refreshUserScore = async () => {
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const response = await apiClient.get('/api/users/me', { headers: { 'x-auth-token': token } });
             setContributionScore(response.data.contribution_score);
         } catch (err) {

@@ -80,6 +80,33 @@ const ProfileTabThemen: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, 
     }
   };
 
+  const handleNewsletterChange = async (enabled: boolean) => {
+    if (isDemoUser) return;
+    try {
+      if (enabled) {
+        const response = await apiClient.post('/api/auth/newsletter/opt-in', {
+          email: user.email,
+          source: 'profile'
+        });
+        if (response.data?.alreadyConfirmed) {
+          setNewsletterOptIn(true);
+          updateUser({ newsletter_opt_in: true, briefing_email_enabled: true });
+          setSnackbar({ open: true, message: 'Newsletter und Branchenbriefing sind aktiviert.' });
+        } else {
+          setNewsletterOptIn(false);
+          setSnackbar({ open: true, message: t('profile.newsletterSubscribeSuccess') });
+        }
+      } else {
+        await apiClient.put('/api/users/me', { newsletter_opt_in: false });
+        setNewsletterOptIn(false);
+        updateUser({ newsletter_opt_in: false, briefing_email_enabled: false });
+        setSnackbar({ open: true, message: t('profile.newsletterUnsubscribeSuccess') });
+      }
+    } catch (_) {
+      setSnackbar({ open: true, message: t('profile.newsletterActionError') });
+    }
+  };
+
   return (
     <Box>
       <Grid container spacing={4}>
@@ -140,7 +167,13 @@ const ProfileTabThemen: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, 
         <Grid item xs={12}>
           <Typography variant="h6">{t('profile.newsletterTitle')}</Typography>
           <FormControlLabel 
-            control={<Switch checked={newsletterOptIn} onChange={(e) => { setNewsletterOptIn(e.target.checked); autoSaveProfilePref('newsletter_opt_in', e.target.checked); }} disabled={isDemoUser}/>} 
+            control={(
+              <Switch
+                checked={newsletterOptIn}
+                onChange={(e) => handleNewsletterChange(e.target.checked)}
+                disabled={isDemoUser}
+              />
+            )}
             label={newsletterOptIn ? t('profile.newsletterOn') : t('profile.newsletterOff')}
           />
         </Grid>

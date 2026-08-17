@@ -56,17 +56,25 @@ const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = ({
   
   const [data, setData] = useState<CockpitData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in);
+  const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in && !!user?.briefing_email_enabled);
 
   const widgetTitle = title || 'Tägliches Cockpit';
   
   // Im public Modus gibt es keinen echten User/BP, daher Newsletter immer als "erlaubt" (optisch),
   // aber der Klick führt zum Login.
-  const isNewsletterAllowed = isPublic ? true : businessPartner?.allow_automated_newsletter !== false;
+  const deliveryMode = businessPartner?.newsletter_delivery_mode || 'mobiliti';
+  const newsletterFrequency = businessPartner?.newsletter_frequency || 'never';
+  const externalSignupUrl = /^https?:\/\//i.test(businessPartner?.newsletter_external_signup_url || '')
+    ? businessPartner?.newsletter_external_signup_url || undefined
+    : undefined;
+  const isNewsletterAllowed = isPublic ? true : (
+    businessPartner?.allow_automated_newsletter !== false && newsletterFrequency !== 'never'
+  );
+  const frequencyLabel = ({ daily: 'Tägliches', weekly: 'Wöchentliches', monthly: 'Monatliches' } as const)[newsletterFrequency as 'daily' | 'weekly' | 'monthly'] || 'E-Mail';
 
   useEffect(() => { 
-    if (!isPublic) setIsSubscribed(!!user?.newsletter_opt_in); 
-  }, [user?.newsletter_opt_in, isPublic]);
+    if (!isPublic) setIsSubscribed(!!user?.newsletter_opt_in && !!user?.briefing_email_enabled);
+  }, [user?.newsletter_opt_in, user?.briefing_email_enabled, isPublic]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -204,16 +212,29 @@ const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = ({
     }
     if (!isNewsletterAllowed) return showSnackbar('Der E-Mail-Versand ist für Ihr Unternehmen systemseitig deaktiviert.', 'warning');
     
+    if (deliveryMode !== 'mobiliti') return;
     const isChecked = event.target.checked;
-    setIsSubscribed(isChecked);
-    updateUser({ newsletter_opt_in: isChecked });
-    
     try {
-      await apiClient.put('/api/users/me', { newsletter_opt_in: isChecked });
-      showSnackbar(`E-Mail Briefing ${isChecked ? 'aktiviert' : 'deaktiviert'}.`, 'success');
+      if (isChecked) {
+        const response = await apiClient.post('/api/auth/newsletter/opt-in', {
+          email: user?.email,
+          source: 'daily_cockpit'
+        });
+        if (response.data?.alreadyConfirmed) {
+          setIsSubscribed(true);
+          updateUser({ newsletter_opt_in: true, briefing_email_enabled: true });
+          showSnackbar('E-Mail-Briefing aktiviert.', 'success');
+        } else {
+          setIsSubscribed(false);
+          showSnackbar('Bitte bestätigen Sie die Anmeldung über die zugesandte E-Mail.', 'info');
+        }
+      } else {
+        await apiClient.put('/api/users/me', { briefing_email_enabled: false });
+        setIsSubscribed(false);
+        updateUser({ briefing_email_enabled: false });
+        showSnackbar('E-Mail-Briefing deaktiviert. Ihre allgemeine Newsletter-Einwilligung bleibt bestehen.', 'success');
+      }
     } catch {
-      setIsSubscribed(!isChecked);
-      updateUser({ newsletter_opt_in: !isChecked });
       showSnackbar('Fehler beim Speichern der Einstellung.', 'error');
     }
   };
@@ -371,12 +392,23 @@ const items = data?.items || [];
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <EmailIcon fontSize="small" sx={{ color: isNewsletterAllowed ? (isSubscribed ? 'primary.main' : 'text.secondary') : 'text.disabled' }} />
-                <Typography variant="body2" sx={{ fontWeight: 600, color: !isNewsletterAllowed ? 'text.disabled' : 'text.primary' }}>
-                    Tägliches E-Mail Briefing
-                </Typography>
+                <Box>
+                  <Typography variant="body2" sx={{ fontWeight: 600, color: !isNewsletterAllowed ? 'text.disabled' : 'text.primary' }}>
+                      {frequencyLabel} Branchenbriefing
+                  </Typography>
+                  {!isPublic && deliveryMode === 'export' && <Typography variant="caption" color="text.secondary">Versand erfolgt zentral über Ihre Organisation.</Typography>}
+                  {!isPublic && deliveryMode === 'external' && <Typography variant="caption" color="text.secondary">Anmeldung und Versand erfolgen im Newsletter-System Ihrer Organisation.</Typography>}
+                  {!isPublic && !isNewsletterAllowed && <Typography variant="caption" color="text.secondary">Derzeit nur im Dashboard verfügbar.</Typography>}
+                </Box>
             </Box>
-            
-            <Tooltip 
+
+            {(!isPublic && deliveryMode === 'external' && isNewsletterAllowed) ? (
+              <Button size="small" variant="outlined" component="a" href={externalSignupUrl} target="_blank" rel="noopener noreferrer" disabled={!externalSignupUrl}>
+                Extern anmelden
+              </Button>
+            ) : (!isPublic && deliveryMode === 'export') ? (
+              <Chip size="small" label="Zentraler Versand" variant="outlined" />
+            ) : <Tooltip
                 title={
                     isPublic ? "Login erforderlich, um Briefings zu abonnieren" : 
                     !isNewsletterAllowed ? "E-Mail-Versand ist für Ihr Unternehmen durch den Administrator deaktiviert." : 
@@ -405,7 +437,7 @@ const items = data?.items || [];
                     }
                     sx={{ m: 0 }}
                 />
-            </Tooltip>
+            </Tooltip>}
         </Box>
       </Box>
     </WidgetPaper>

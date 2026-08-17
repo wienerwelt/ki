@@ -47,7 +47,7 @@ const TrafficInfoWidget: React.FC<TrafficInfoWidgetProps> = ({ onDelete, widgetI
         setIsLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const response = await apiClient.get('/api/data/traffic-info', {
                 headers: { 'x-auth-token': token },
             });

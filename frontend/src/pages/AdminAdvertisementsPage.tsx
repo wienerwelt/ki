@@ -44,7 +44,7 @@ const AdminAdvertisementsPage: React.FC = () => {
     const fetchInitialData = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const [adsRes, bpRes] = await Promise.all([
                 apiClient.get('/api/admin/advertisements', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/admin/business-partners', { headers: { 'x-auth-token': token } })
@@ -80,7 +80,7 @@ const AdminAdvertisementsPage: React.FC = () => {
     };
 
     const handleSubmit = async () => {
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         const data = {
             ...formState,
             business_partner_id: formState.business_partner_id || null,
@@ -103,7 +103,7 @@ const AdminAdvertisementsPage: React.FC = () => {
     const handleDelete = async (id: string) => {
         if (!window.confirm('Sind Sie sicher?')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/advertisements/${id}`, { headers: { 'x-auth-token': token } });
             fetchInitialData();
         } catch (err: any) {

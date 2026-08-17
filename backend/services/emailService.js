@@ -49,13 +49,14 @@ function resolveLogoAttachment() {
 }
 
 /** Niedrig-Level Versand, unterstützt nun partner-Objekt für Reply-To */
-async function sendEmail({ to, subject, html, text, fromName, replyTo, partner }) {
+async function sendEmail({ to, subject, html, text, fromName, replyTo, partner, attachments = [], headers }) {
   const mailOptions = {
     from: resolveFrom(fromName || partner?.name),
     to,
     subject,
     html,
     text,
+    headers,
   };
   
   if (replyTo) {
@@ -65,17 +66,22 @@ async function sendEmail({ to, subject, html, text, fromName, replyTo, partner }
   }
 
   const logoAttachment = resolveLogoAttachment();
-  if (logoAttachment) {
-    mailOptions.attachments = [logoAttachment];
+  const allAttachments = [...attachments];
+  if (logoAttachment && !allAttachments.some((attachment) => attachment.cid === logoAttachment.cid)) {
+    allAttachments.push(logoAttachment);
+  }
+  if (allAttachments.length > 0) {
+    mailOptions.attachments = allAttachments;
   }
 
-  await transporter.sendMail(mailOptions);
+  const info = await transporter.sendMail(mailOptions);
   console.log(`[mail] ✔ gesendet an: ${Array.isArray(to) ? to.join(', ') : to} (Im Namen von: ${partner?.name || fromName || 'System'})`);
+  return info;
 }
 
 function buildVerifyUrl(token) { return `${getBaseUrl()}/verify-email/${token}`; }
 function buildResetUrl(token) { return `${getBaseUrl()}/reset-password/${token}`; }
-function buildNewsletterConfirmUrl(token) { return `${getBaseUrl()}/newsletter/confirm/${token}`; }
+function buildNewsletterConfirmUrl(token) { return `${getBaseUrl()}/api/auth/newsletter/confirm/${token}`; }
 function buildSearchUrl(searchCriteria) {
     const params = new URLSearchParams();
     if (searchCriteria.q) params.append('q', searchCriteria.q);
@@ -148,7 +154,7 @@ async function sendCommunityReplyNotification({ to, recipientName, commenterName
 async function sendDailyBriefing({ to, user, partner, briefing, nextEvent, pdfUrl }) {
   const html = renderFleetDailyBriefingEmail({ briefing, partner, nextEvent, pdfUrl });
   const subject = `${partner?.dashboard_title || 'Markt-Briefing'}: ${briefing.top_insights?.[0]?.title || 'Ihre aktuellen Insights'}`;
-  await sendEmail({ to, subject, html, partner });
+  return sendEmail({ to, subject, html, partner });
 }
 
 module.exports = {

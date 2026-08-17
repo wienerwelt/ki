@@ -24,6 +24,10 @@ async function resolvePartnerIdByCode(code) {
                 bp.dashboard_title,
                 bp.color_scheme_id,
                 bp.url_businesspartner,
+                bp.allow_automated_newsletter,
+                bp.newsletter_frequency,
+                bp.newsletter_delivery_mode,
+                bp.newsletter_external_signup_url,
                 COALESCE((
                     SELECT json_agg(
                         jsonb_build_object(

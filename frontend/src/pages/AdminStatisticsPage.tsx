@@ -234,7 +234,7 @@ const AdminStatisticsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem('jwt_token');
+      const token = 'cookie-session';
 
       const params = new URLSearchParams({ timespan, compare: String(compare) });
       if (modelFilter) params.append('model', modelFilter);

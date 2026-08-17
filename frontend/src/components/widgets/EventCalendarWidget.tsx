@@ -818,47 +818,71 @@ return (
                         {publicContributionAfterEventKey === `${e.type || 'event'}:${e.id}` && (
                           <Paper
                             elevation={0}
+                            role="link"
+                            tabIndex={0}
+                            onClick={() => onPublicLogin ? onPublicLogin() : navigate('/login')}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                onPublicLogin ? onPublicLogin() : navigate('/login');
+                              }
+                            }}
                             sx={{
-                              p: 2,
+                              p: 1.5,
                               mb: 1.5,
                               borderRadius: 3,
                               border: `1px solid ${alpha(customPrimary, 0.28)}`,
                               bgcolor: alpha(customPrimary, 0.07),
                               display: 'flex',
-                              alignItems: { xs: 'flex-start', sm: 'center' },
-                              justifyContent: 'space-between',
-                              flexDirection: { xs: 'column', sm: 'row' },
+                              alignItems: 'center',
                               gap: 1.5,
+                              cursor: 'pointer',
+                              transition: 'transform 160ms ease, box-shadow 160ms ease',
+                              '&:hover': {
+                                transform: 'translateY(-1px)',
+                                boxShadow: `0 5px 16px ${alpha(customPrimary, 0.14)}`,
+                              },
+                              '&:focus-visible': {
+                                outline: `2px solid ${customPrimary}`,
+                                outlineOffset: 2,
+                              },
                             }}
                           >
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
-                              <CalendarMonthIcon sx={{ color: customPrimary, flexShrink: 0 }} />
-                              <Box>
-                                <Typography variant="subtitle2" sx={{ color: 'text.primary', fontWeight: 900 }}>
-                                  {`Eigene ${publicContributionLabel.replace(/\s+hinzufügen$/i, '')} bekannt machen?`}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  Mitglieder können Termine für die Community einreichen.
-                                </Typography>
-                              </Box>
-                            </Box>
-                            <Button
-                              variant="contained"
-                              size="small"
-                              startIcon={<AddCircleOutlineIcon />}
-                              onClick={() => onPublicLogin ? onPublicLogin() : navigate('/login')}
+                            <Box
                               sx={{
-                                bgcolor: customPrimary,
-                                color: '#fff',
-                                textTransform: 'none',
-                                fontWeight: 900,
-                                whiteSpace: 'normal',
-                                textAlign: 'center',
-                                '&:hover': { bgcolor: customPrimary, filter: 'brightness(0.94)' },
+                                width: 56,
+                                minWidth: 56,
+                                height: 56,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                borderRadius: 2,
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                bgcolor: 'background.paper',
                               }}
                             >
-                              {publicContributionLabel}
-                            </Button>
+                              <CalendarMonthIcon sx={{ color: customPrimary }} />
+                            </Box>
+                            <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                              <Typography variant="subtitle2" noWrap sx={{ color: 'text.primary', fontWeight: 900 }}>
+                                {publicContributionLabel.replace(/\s+hinzufügen$/i, ' einreichen')}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
+                                Termin für die Community melden.
+                              </Typography>
+                            </Box>
+                            <IconButton
+                              size="small"
+                              aria-label={publicContributionLabel.replace(/\s+hinzufügen$/i, ' einreichen')}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onPublicLogin ? onPublicLogin() : navigate('/login');
+                              }}
+                              sx={{ color: customPrimary, flexShrink: 0 }}
+                            >
+                              <AddCircleOutlineIcon />
+                            </IconButton>
                           </Paper>
                         )}
                         </React.Fragment>

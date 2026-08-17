@@ -65,7 +65,7 @@ function toQueryString(params?: QueryParams): string {
  * - akzeptiert { key: string | null | undefined }
  * - entfernt null/undefined
  * - mappt x-auth-token -> Authorization: Bearer <token>
- * - setzt optional Authorization aus localStorage, falls nichts geliefert wurde
+ * - nutzt für Browser-Sitzungen ausschließlich das HttpOnly-Cookie
  * - setzt bei Nicht-FormData „Content-Type: application/json“, falls nicht überschrieben
  */
 function normalizeHeaders(init?: LooseInit): HeadersInit {
@@ -85,17 +85,19 @@ function normalizeHeaders(init?: LooseInit): HeadersInit {
 
   // Legacy-Mapping: x-auth-token -> Authorization
   const xAuth = out['x-auth-token'] ?? out['X-Auth-Token'] ?? out['X-auth-token'];
-  if (xAuth) {
+  if (xAuth && xAuth !== 'cookie-session') {
     out['Authorization'] = `Bearer ${xAuth}`;
-    delete out['x-auth-token'];
-    delete out['X-Auth-Token'];
-    delete out['X-auth-token'];
   }
+  delete out['x-auth-token'];
+  delete out['X-Auth-Token'];
+  delete out['X-auth-token'];
 
-  // Optional: aus localStorage ziehen, wenn nichts gesetzt ist
-  if (!out['Authorization'] && typeof window !== 'undefined') {
-    const lsToken = window.localStorage?.getItem('token') || window.localStorage?.getItem('jwt_token');
-    if (lsToken) out['Authorization'] = `Bearer ${lsToken}`;
+  const method = String(init?.method || 'GET').toUpperCase();
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && typeof document !== 'undefined') {
+    const csrfCookie = document.cookie
+      .split('; ')
+      .find((entry) => entry.startsWith('csrf_token='));
+    if (csrfCookie) out['X-CSRF-Token'] = decodeURIComponent(csrfCookie.slice('csrf_token='.length));
   }
 
   // Content-Type nur setzen, wenn NICHT FormData
@@ -127,9 +129,9 @@ export async function apiRequest<T = any>(path: string, init: LooseInit = {}): P
 
   try {
     const res = await fetch(url, {
+      ...init,
       signal: controller.signal,
       credentials: 'include',
-      ...init,
       headers: normalizeHeaders(init),
     });
 
@@ -142,10 +144,6 @@ export async function apiRequest<T = any>(path: string, init: LooseInit = {}): P
     if (res.status === 401) {
       console.warn(`🔒 [API 401] [${reqId}] Token abgelaufen oder ungültig. Führe Logout durch.`);
       if (typeof window !== 'undefined') {
-        // Token löschen
-        window.localStorage.removeItem('jwt_token');
-        window.localStorage.removeItem('token');
-        
         // Abgelaufene Sitzungen bleiben im zuletzt verwendeten Mandantenkontext.
         const publicPath = getPartnerPublicPath();
         if (window.location.pathname !== publicPath) {

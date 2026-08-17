@@ -69,12 +69,12 @@ exports.completeOnboarding = async (req, res) => {
             UPDATE users 
             SET first_name = $1, 
                 last_name = $2, 
-                newsletter_opt_in = $3, 
+                newsletter_opt_in = FALSE,
                 has_completed_onboarding = true, 
-                organization_name = $5,
+                organization_name = $3,
                 updated_at = NOW()
             WHERE id = $4
-        `, [first_name, last_name, newsletter_opt_in, userId, organization_name]);
+        `, [first_name, last_name, organization_name, userId]);
 
         // B) Gewählte Themen (Tags) speichern
         if (tags && tags.length > 0) {

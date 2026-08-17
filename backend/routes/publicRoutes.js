@@ -25,6 +25,17 @@ const publicSearchLimiter = rateLimit({
     message: { message: 'Zu viele Suchanfragen. Bitte kurz warten.' },
 });
 
+const publicFileDownloadLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    handler: (_req, res) => res
+        .status(429)
+        .type('text/plain')
+        .send('Zu viele Download-Anfragen. Bitte versuchen Sie es später erneut.'),
+});
+
 // --- 1. BRANDING & KONTEXT ---
 router.get('/context', publicController.getPublicContext);
 
@@ -40,7 +51,7 @@ router.get('/v1/event-feed/:token.json', publicController.getPublicEventFeedJson
 
 
 // --- 5. PUBLIC DATEI-DOWNLOADS (geheime Direktlinks, keine öffentliche Liste) ---
-router.get('/files/:id/:token/download', fileController.getPublicDownloadUrl);
+router.get('/files/:id/:token/download', publicFileDownloadLimiter, fileController.getPublicDownloadUrl);
 
 // --- 6. DER NEUE GENERIC WIDGET HUB (Für alle zukünftigen Widgets) ---
 router.get('/widget-data/:widgetKey', publicController.getGenericWidgetData);

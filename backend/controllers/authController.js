@@ -8,6 +8,7 @@ const axios = require('axios');
 
 const db = require('../config/db');
 const { logActivity } = require('../services/auditLogService');
+const { setSessionCookies, clearSessionCookies } = require('../services/sessionSecurity');
 const {
   sendVerificationEmail,
   sendPasswordResetEmail,
@@ -104,7 +105,8 @@ async function resolveBusinessPartnerId(voucher) {
 }
 
 function issueJwt(user) {
-  const secret = process.env.JWT_SECRET || 'dev-secret';
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET ist nicht konfiguriert.');
   const payload = {
     sub: user.id,
     username: user.username,
@@ -114,12 +116,59 @@ function issueJwt(user) {
     business_partner_category: user.business_partner_category || null,
     contribution_score: user.contribution_score ?? 0,
     has_completed_onboarding: user.has_completed_onboarding,
+    av: Number(user.auth_version || 0),
     // Der geladene Benutzerwert entspricht hier dem Login vor der gerade
     // ausgefuehrten Aktualisierung. Im JWT bleibt er waehrend der Sitzung stabil.
     last_login_at: user.last_login_at || null
   };
 
-  return jwt.sign(payload, secret, { expiresIn: '7d' });
+  return jwt.sign(payload, secret, {
+    expiresIn: process.env.JWT_EXPIRES_IN || '8h',
+    algorithm: 'HS256',
+  });
+}
+
+const oauthCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax',
+  path: '/api/auth',
+  maxAge: 10 * 60 * 1000,
+});
+
+function createOAuthState(res, partnerCode) {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET ist nicht konfiguriert.');
+  const nonce = crypto.randomBytes(32).toString('base64url');
+  const state = jwt.sign({ nonce, partner: String(partnerCode || '').slice(0, 120) }, secret, {
+    expiresIn: '10m',
+    algorithm: 'HS256',
+  });
+  res.cookie('oauth_state', nonce, oauthCookieOptions());
+  return state;
+}
+
+function consumeOAuthState(req, res) {
+  const secret = process.env.JWT_SECRET;
+  const state = String(req.query?.state || '');
+  const cookieNonce = String(req.cookies?.oauth_state || '');
+  const { maxAge: _maxAge, ...clearOptions } = oauthCookieOptions();
+  res.clearCookie('oauth_state', clearOptions);
+  if (!secret || !state || !cookieNonce) throw new Error('OAuth-Status fehlt.');
+  const decoded = jwt.verify(state, secret, { algorithms: ['HS256'] });
+  const stateNonce = String(decoded?.nonce || '');
+  const left = Buffer.from(stateNonce, 'utf8');
+  const right = Buffer.from(cookieNonce, 'utf8');
+  if (!left.length || left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
+    throw new Error('OAuth-Status ist ungültig.');
+  }
+  return String(decoded?.partner || '');
+}
+
+function getAuthCallbackOrigin(req) {
+  const configured = String(process.env.AUTH_CALLBACK_BASE_URL || process.env.FRONTEND_URL || '').replace(/\/$/, '');
+  if (configured) return configured;
+  return `${req.protocol}://${req.get('host')}`;
 }
 
 function safeFrontendRedirect(res, path, qs = {}) {
@@ -370,7 +419,7 @@ exports.login = async (req, res) => {
           u.id, u.username, u.email, u.role, u.password_hash,
           u.is_email_verified, u.contribution_score, u.profile_image_url,
           u.business_partner_id, u.has_completed_onboarding,
-          u.is_active, u.active_until, 
+          u.is_active, u.active_until, u.auth_version,
           bp.name as business_partner_name,
           bp.dashboard_title,
           bp.is_active as business_partner_is_active,
@@ -486,15 +535,10 @@ exports.login = async (req, res) => {
       ipAddress: req.ip,
     });
 
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    const session = setSessionCookies(res, token);
 
     return res.status(200).json({
-      token,
+      session_expires_at: session.expiresAt,
       user: {
         id: user.id,
         username: user.username,
@@ -523,11 +567,7 @@ exports.login = async (req, res) => {
 };
 
 exports.logout = async (req, res) => {
-  res.clearCookie('token', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-  });
+  clearSessionCookies(res);
   return res.json({ message: 'Abgemeldet.' });
 };
 
@@ -747,7 +787,8 @@ exports.resetPassword = async (req, res) => {
       `UPDATE users
           SET password_hash = $1,
               password_reset_token = NULL,
-              password_reset_expires = NULL
+              password_reset_expires = NULL,
+              auth_version = auth_version + 1
         WHERE id = $2`,
       [password_hash, r.rows[0].id]
     );
@@ -794,6 +835,10 @@ exports.confirmNewsletterOptIn = async (req, res) => {
     await db.query(
       `UPDATE users
           SET newsletter_opt_in = TRUE,
+              briefing_email_enabled = TRUE,
+              newsletter_opt_in_confirmed_at = CURRENT_TIMESTAMP,
+              newsletter_consent_version = COALESCE(newsletter_consent_version, '2026-08'),
+              newsletter_unsubscribed_at = NULL,
               newsletter_opt_in_token = NULL,
               newsletter_opt_in_expires = NULL
         WHERE id = $1`,
@@ -808,16 +853,22 @@ exports.confirmNewsletterOptIn = async (req, res) => {
 };
 
 exports.startNewsletterOptIn = async (req, res) => {
-  const normalizedEmail = normalizeEmail(req.body?.email);
+  const normalizedEmail = normalizeEmail(req.user?.email);
+  const requestedSource = String(req.body?.source || 'profile').trim().toLowerCase();
+  const allowedSources = new Set(['profile', 'daily_cockpit', 'onboarding', 'registration']);
+  const source = allowedSources.has(requestedSource) ? requestedSource : 'profile';
 
   if (!normalizedEmail || !isValidEmail(normalizedEmail)) {
-    return res.status(400).json({ message: 'Bitte eine gültige E-Mail-Adresse angeben.' });
+    return res.status(400).json({ message: 'Im Benutzerkonto ist keine gültige E-Mail-Adresse hinterlegt.' });
+  }
+  if (req.body?.email && normalizeEmail(req.body.email) !== normalizedEmail) {
+    return res.status(403).json({ message: 'Die Newsletter-Anmeldung ist nur für das eigene Konto möglich.' });
   }
 
   try {
     const r = await db.query(
-      'SELECT id, username, newsletter_opt_in FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
-      [normalizedEmail]
+      'SELECT id, username, newsletter_opt_in FROM users WHERE id = $1 LIMIT 1',
+      [req.user.id]
     );
 
     if (r.rows.length === 0) {
@@ -826,7 +877,16 @@ exports.startNewsletterOptIn = async (req, res) => {
 
     const user = r.rows[0];
     if (user.newsletter_opt_in) {
-      return res.json({ message: 'Sie sind bereits für den Newsletter angemeldet.' });
+      await db.query(
+        `UPDATE users
+         SET briefing_email_enabled = TRUE,
+             newsletter_opt_in_source = COALESCE(newsletter_opt_in_source, $1),
+             newsletter_opt_in_confirmed_at = COALESCE(newsletter_opt_in_confirmed_at, CURRENT_TIMESTAMP),
+             newsletter_consent_version = COALESCE(newsletter_consent_version, '2026-08')
+         WHERE id = $2`,
+        [source, user.id]
+      );
+      return res.json({ message: 'Sie sind bereits angemeldet.', alreadyConfirmed: true });
     }
 
     const token = crypto.randomBytes(32).toString('hex');
@@ -835,9 +895,11 @@ exports.startNewsletterOptIn = async (req, res) => {
     await db.query(
       `UPDATE users
           SET newsletter_opt_in_token = $1,
-              newsletter_opt_in_expires = $2
-        WHERE id = $3`,
-      [token, expires, user.id]
+              newsletter_opt_in_expires = $2,
+              newsletter_opt_in_source = $3,
+              newsletter_consent_version = '2026-08'
+        WHERE id = $4`,
+      [token, expires, source, user.id]
     );
 
     const confirmUrl = buildNewsletterConfirmUrl(token);
@@ -948,17 +1010,12 @@ async function handleSSOLoginOrRegister(res, profile, partnerCode) {
 
         const token = issueJwt(user);
 
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-        });
+        setSessionCookies(res, token);
 
         if (isNewUser) {
-            return safeFrontendRedirect(res, `/onboarding?token=${token}`);
+            return safeFrontendRedirect(res, '/dashboard');
         } else {
-            return safeFrontendRedirect(res, `/dashboard?token=${token}`);
+            return safeFrontendRedirect(res, '/dashboard');
         }
 
     } catch (err) {
@@ -969,7 +1026,7 @@ async function handleSSOLoginOrRegister(res, profile, partnerCode) {
 
 // 1. Hilfsfunktion: Baut den Client dynamisch für jeden Request
 const getDynamicGoogleClient = (req) => {
-    const dynamicRedirectUri = `${req.protocol}://${req.get('host')}/api/auth/google/callback`;
+    const dynamicRedirectUri = `${getAuthCallbackOrigin(req)}/api/auth/google/callback`;
     
     // Wichtig: 'OAuth2Client' muss natürlich oben in deiner Datei require/importiert sein
     return new OAuth2Client(
@@ -988,18 +1045,19 @@ exports.googleAuth = (req, res) => {
     const authorizeUrl = googleClient.generateAuthUrl({
         access_type: 'offline',
         scope: ['https://www.googleapis.com/auth/userinfo.profile', 'https://www.googleapis.com/auth/userinfo.email'],
-        state: partnerCode
+        state: createOAuthState(res, partnerCode)
     });
     res.redirect(authorizeUrl);
 };
 
 exports.googleCallback = async (req, res) => {
-    const { code, state: partnerCode } = req.query;
+    const { code } = req.query;
     
     // 3. Auch hier den dynamischen Client nutzen, damit der Token-Exchange die gleiche URL benutzt
     const googleClient = getDynamicGoogleClient(req);
 
     try {
+        const partnerCode = consumeOAuthState(req, res);
         const { tokens } = await googleClient.getToken(code);
         const ticket = await googleClient.verifyIdToken({
             idToken: tokens.id_token,
@@ -1019,22 +1077,24 @@ exports.linkedinAuth = (req, res) => {
     const partnerCode = req.query.partner || '';
     
     // 1. Dynamische URL aus dem Request zusammenbauen
-    const dynamicRedirectUri = `${req.protocol}://${req.get('host')}/api/auth/linkedin/callback`;
+    const dynamicRedirectUri = `${getAuthCallbackOrigin(req)}/api/auth/linkedin/callback`;
     const redirectUri = encodeURIComponent(dynamicRedirectUri);
     
     const scope = encodeURIComponent('openid profile email');
-    const url = `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${process.env.LINKEDIN_CLIENT_ID}&redirect_uri=${redirectUri}&state=${partnerCode}&scope=${scope}`;
+    const state = encodeURIComponent(createOAuthState(res, partnerCode));
+    const url = `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${process.env.LINKEDIN_CLIENT_ID}&redirect_uri=${redirectUri}&state=${state}&scope=${scope}`;
     res.redirect(url);
 };
 
 exports.linkedinCallback = async (req, res) => {
-    const { code, state: partnerCode } = req.query;
+    const { code } = req.query;
     
     // 2. Auch hier die dynamische URL für den Token-Austausch generieren
     // (Muss für LinkedIn zwingend mit der URL aus Schritt 1 übereinstimmen)
-    const dynamicRedirectUri = `${req.protocol}://${req.get('host')}/api/auth/linkedin/callback`;
+    const dynamicRedirectUri = `${getAuthCallbackOrigin(req)}/api/auth/linkedin/callback`;
 
     try {
+        const partnerCode = consumeOAuthState(req, res);
         const tokenRes = await axios.post('https://www.linkedin.com/oauth/v2/accessToken', null, {
             params: {
                 grant_type: 'authorization_code',

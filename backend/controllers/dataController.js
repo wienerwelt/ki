@@ -5,6 +5,7 @@ const { sendEmail } = require('../services/emailService');
 const { renderLayout } = require('../services/emailTemplates');
 const { generateAIContent } = require('../services/aiExecutionService');
 const { logToDb } = require('../services/aiExecutionService'); 
+const { sanitizeRichText } = require('../services/htmlSanitizer');
 const TANKERKOENIG_API_KEY = process.env.TANKERKOENIG_API_KEY;
 const ECONTROL_API_KEY     = process.env.ECONTROL_API_KEY;
 const ECONTROL_BASE_URL    = process.env.ECONTROL_BASE_URL;
@@ -2710,7 +2711,7 @@ exports.getActiveAdvertisement = async (req, res) => {
         const result = await db.query(query, [business_partner_id]);
 
         if (result.rows.length > 0) {
-            res.json(result.rows[0]);
+            res.json({ ...result.rows[0], content: sanitizeRichText(result.rows[0].content) });
         } else {
             res.json(null);
         }
@@ -3144,6 +3145,10 @@ exports.getDashboardConfig = async (req, res) => {
         
         -- NEU HINZUGEFÜGT:
         bp.allow_automated_newsletter,
+        bp.newsletter_frequency,
+        bp.newsletter_delivery_mode,
+        bp.newsletter_external_signup_url,
+        bp.newsletter_recipient_limit,
         bp.dashboard_focus,
         
         cs.id as cs_id, cs.name as cs_name,
@@ -3214,6 +3219,10 @@ exports.getDashboardConfig = async (req, res) => {
         level_2_name: r.level_2_name,
         level_3_name: r.level_3_name,
         allow_automated_newsletter: r.allow_automated_newsletter,
+        newsletter_frequency: r.newsletter_frequency,
+        newsletter_delivery_mode: r.newsletter_delivery_mode,
+        newsletter_external_signup_url: r.newsletter_external_signup_url,
+        newsletter_recipient_limit: r.newsletter_recipient_limit,
         dashboard_focus: r.dashboard_focus,
         
         color_scheme,

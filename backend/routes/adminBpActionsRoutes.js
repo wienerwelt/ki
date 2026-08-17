@@ -16,7 +16,7 @@ const {
     uploadActionImage
 } = require('../controllers/adminBpActionsController');
 
-const authMiddleware = require('../middleware/authMiddleware');
+const tenantManagerAuth = require('../middleware/tenantManagerAuth');
 const softwareController = require('../controllers/softwareController');
 
 // --- Multer-Setup für den Datei-Upload ---
@@ -56,15 +56,7 @@ const receiveSoftwareLogo = (req, res, next) => {
     });
 };
 
-const isBpManager = (req, res, next) => {
-    if (req.user && (req.user.role === 'admin' || req.user.role === 'assistenz')) {
-        next();
-    } else {
-        res.status(403).json({ message: 'Zugriff verweigert.' });
-    }
-};
-
-router.use(authMiddleware, isBpManager);
+router.use(tenantManagerAuth);
 
 router.get('/catalog/options', softwareController.getManagedOptions);
 router.post('/software-logo/upload', receiveSoftwareLogo, softwareController.uploadSoftwareLogo);

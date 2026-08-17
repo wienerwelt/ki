@@ -41,7 +41,13 @@ interface PartnerFile {
   public_link_enabled?: boolean;
   public_token_preview?: string | null;
   public_download_count?: number;
+  public_link_download_count?: number;
   public_link_created_at?: string | null;
+  public_link_expires_at?: string | null;
+  public_max_downloads?: number | null;
+  public_last_downloaded_at?: string | null;
+  malware_scan_status?: 'not_scanned' | 'clean' | 'infected' | 'scan_error';
+  malware_scanned_at?: string | null;
 }
 interface BusinessPartner {
   id: string;
@@ -61,7 +67,8 @@ const formatFileSize = (bytes: number | null | undefined, decimals = 2) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 };
 
-const PUBLIC_DIRECT_LINK_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'odf']);
+const PUBLIC_DIRECT_LINK_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'odf', 'odt', 'ods', 'odp']);
+const PUBLIC_DIRECT_LINK_FILE_LABEL = 'PDF, DOCX, XLSX, PPTX, DOC, XLS, PPT, ODF, ODT, ODS und ODP';
 
 const getFileExtension = (filename: string | null | undefined) => {
   const clean = String(filename || '').trim().toLowerCase();
@@ -71,6 +78,37 @@ const getFileExtension = (filename: string | null | undefined) => {
 
 const canFilenameHavePublicDirectLink = (filename: string | null | undefined) => PUBLIC_DIRECT_LINK_EXTENSIONS.has(getFileExtension(filename));
 const canHavePublicDirectLink = (file: Pick<PartnerFile, 'filename'>) => canFilenameHavePublicDirectLink(file.filename);
+
+const getPublicLinkStatus = (file: PartnerFile): {
+  label: string;
+  color: 'default' | 'success' | 'warning' | 'error';
+} => {
+  if (!file.public_link_enabled) return { label: 'Extern inaktiv', color: 'default' };
+
+  const linkDownloads = Number(file.public_link_download_count || 0);
+  const maxDownloads = file.public_max_downloads ? Number(file.public_max_downloads) : null;
+  const expired = !!file.public_link_expires_at && new Date(file.public_link_expires_at).getTime() <= Date.now();
+  const limitReached = !!maxDownloads && linkDownloads >= maxDownloads;
+
+  if (expired) return { label: 'Extern abgelaufen', color: 'warning' };
+  if (limitReached) return { label: `Downloadlimit erreicht · ${linkDownloads}/${maxDownloads}`, color: 'warning' };
+
+  const countLabel = maxDownloads ? `${linkDownloads}/${maxDownloads} DL` : `${linkDownloads} DL`;
+  const expiryLabel = file.public_link_expires_at
+    ? ` · bis ${new Date(file.public_link_expires_at).toLocaleDateString('de-DE')}`
+    : ' · unbegrenzt';
+  return { label: `Extern aktiv · ${countLabel}${expiryLabel}`, color: 'success' };
+};
+
+const getMalwareScanStatus = (file: PartnerFile): {
+  label: string;
+  color: 'default' | 'success' | 'warning' | 'error';
+} => {
+  if (file.malware_scan_status === 'clean') return { label: 'Sicherheitsprüfung: sauber', color: 'success' };
+  if (file.malware_scan_status === 'infected') return { label: 'Sicherheitsprüfung: gesperrt', color: 'error' };
+  if (file.malware_scan_status === 'scan_error') return { label: 'Sicherheitsprüfung: Fehler', color: 'warning' };
+  return { label: 'Sicherheitsprüfung: noch nicht geprüft', color: 'default' };
+};
 
 const copyToClipboardWithFallback = async (value: string) => {
   try {
@@ -123,6 +161,8 @@ const FileManagementPage: React.FC = () => {
   const [fileDescription, setFileDescription] = useState('');
   const [fileTags, setFileTags] = useState('');
   const [createPublicLinkAfterUpload, setCreatePublicLinkAfterUpload] = useState(false);
+  const [publicLinkExpiryDays, setPublicLinkExpiryDays] = useState('30');
+  const [publicLinkMaxDownloads, setPublicLinkMaxDownloads] = useState('');
 
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>(''); 
@@ -201,6 +241,8 @@ const FileManagementPage: React.FC = () => {
     setFileDescription('');
     setFileTags('');
     setCreatePublicLinkAfterUpload(false);
+    setPublicLinkExpiryDays('30');
+    setPublicLinkMaxDownloads('');
     setSelectedPartnerId('');
   };
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -250,6 +292,8 @@ const FileManagementPage: React.FC = () => {
           skipConfirm: true,
           refresh: false,
           quiet: true,
+          expiresInDays: publicLinkExpiryDays === '0' ? null : Number(publicLinkExpiryDays),
+          maxDownloads: publicLinkMaxDownloads.trim() ? Number(publicLinkMaxDownloads) : null,
         });
         publicLinkCreated = !!createdUrl;
       }
@@ -276,6 +320,8 @@ const FileManagementPage: React.FC = () => {
       setEditFilename(file.filename);
       setEditDescription(file.description || '');
       setEditTags(file.tags ? file.tags.join(', ') : '');
+      setPublicLinkExpiryDays('30');
+      setPublicLinkMaxDownloads('');
       setOpenEditDialog(true);
   };
   const handleCloseEditDialog = () => {
@@ -327,24 +373,38 @@ const FileManagementPage: React.FC = () => {
 
   const handleCreatePublicLink = async (
     file: PartnerFile,
-    options: { skipConfirm?: boolean; refresh?: boolean; quiet?: boolean } = {}
+    options: {
+      skipConfirm?: boolean;
+      refresh?: boolean;
+      quiet?: boolean;
+      expiresInDays?: number | null;
+      maxDownloads?: number | null;
+    } = {}
   ): Promise<string | null> => {
     if (!canHavePublicDirectLink(file)) {
       if (!options.quiet) {
-        showSnackbar('Externe Direktlinks sind nur für PDF, DOCX, XLSX, PPTX, DOC, XLS, PPT und ODF erlaubt.', 'warning');
+        showSnackbar(`Externe Direktlinks sind nur für ${PUBLIC_DIRECT_LINK_FILE_LABEL} erlaubt.`, 'warning');
       }
       return null;
     }
 
+    const expiresInDays = options.expiresInDays === undefined ? 30 : options.expiresInDays;
+    const maxDownloads = options.maxDownloads === undefined ? null : options.maxDownloads;
+    const validityText = expiresInDays ? `${expiresInDays} Tage` : 'unbegrenzt';
+    const downloadLimitText = maxDownloads ? `, maximal ${maxDownloads} Downloads` : '';
+
     const confirmText = file.public_link_enabled
-      ? 'Einen neuen geheimen Direktlink erstellen? Der bisherige Link wird dadurch sofort ungültig.'
-      : 'Einen geheimen externen Direktlink für diese Datei erstellen? Jeder mit diesem Link kann die Datei ohne Login herunterladen.';
+      ? `Einen neuen geheimen Direktlink erstellen (${validityText}${downloadLimitText})? Der bisherige Link wird dadurch sofort ungültig.`
+      : `Einen geheimen externen Direktlink erstellen (${validityText}${downloadLimitText})? Jeder mit diesem Link kann die Datei ohne Login herunterladen.`;
 
     if (!options.skipConfirm && !window.confirm(confirmText)) return null;
 
     setPublicLinkBusyFileId(file.id);
     try {
-      const response = await apiClient.post(`/api/files/${file.id}/public-link`);
+      const response = await apiClient.post(`/api/files/${file.id}/public-link`, {
+        expiresInDays,
+        maxDownloads,
+      });
       const { url, file: updatedFile } = response.data || {};
       if (!url) throw new Error('Direktlink fehlt.');
 
@@ -388,6 +448,9 @@ const FileManagementPage: React.FC = () => {
         public_link_enabled: false,
         public_token_preview: null,
         public_link_created_at: null,
+        public_link_expires_at: null,
+        public_max_downloads: null,
+        public_link_download_count: 0,
       };
 
       setFiles(prev => prev.map(item => item.id === file.id ? { ...item, ...mergedFile } : item));
@@ -593,8 +656,35 @@ const FileManagementPage: React.FC = () => {
                 <Typography variant="caption" color="text.secondary" display="block">
                   {canFilenameHavePublicDirectLink(fileToUpload.name)
                     ? 'Der Link ist nicht öffentlich gelistet. Jeder mit dem geheimen Link kann die Datei ohne Login herunterladen.'
-                    : 'Externe Direktlinks sind nur für PDF, DOCX, XLSX, PPTX, DOC, XLS, PPT und ODF erlaubt.'}
+                    : `Externe Direktlinks sind nur für ${PUBLIC_DIRECT_LINK_FILE_LABEL} erlaubt.`}
                 </Typography>
+                {createPublicLinkAfterUpload && canFilenameHavePublicDirectLink(fileToUpload.name) && (
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 2 }}>
+                    <FormControl size="small" fullWidth>
+                      <InputLabel>Gültigkeit</InputLabel>
+                      <Select
+                        value={publicLinkExpiryDays}
+                        label="Gültigkeit"
+                        onChange={(event) => setPublicLinkExpiryDays(String(event.target.value))}
+                      >
+                        <MenuItem value="7">7 Tage</MenuItem>
+                        <MenuItem value="30">30 Tage</MenuItem>
+                        <MenuItem value="90">90 Tage</MenuItem>
+                        <MenuItem value="365">1 Jahr</MenuItem>
+                        <MenuItem value="0">Unbegrenzt</MenuItem>
+                      </Select>
+                    </FormControl>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      type="number"
+                      label="Max. Downloads (optional)"
+                      value={publicLinkMaxDownloads}
+                      onChange={(event) => setPublicLinkMaxDownloads(event.target.value)}
+                      inputProps={{ min: 1, max: 1000000 }}
+                    />
+                  </Stack>
+                )}
               </Paper>
             )}
 
@@ -625,12 +715,19 @@ const FileManagementPage: React.FC = () => {
                         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
                           <Typography variant="subtitle2">Externer geheimer Direktlink</Typography>
                           <Chip
-                            label={fileToEdit.public_link_enabled ? `Aktiv${fileToEdit.public_download_count ? ` · ${fileToEdit.public_download_count} DL` : ''}` : 'Inaktiv'}
-                            color={fileToEdit.public_link_enabled ? 'success' : 'default'}
+                            label={getPublicLinkStatus(fileToEdit).label}
+                            color={getPublicLinkStatus(fileToEdit).color}
                             size="small"
                             variant="outlined"
                           />
                         </Box>
+                        <Chip
+                          label={getMalwareScanStatus(fileToEdit).label}
+                          color={getMalwareScanStatus(fileToEdit).color}
+                          size="small"
+                          variant="outlined"
+                          sx={{ alignSelf: 'flex-start' }}
+                        />
 
                         {canHavePublicDirectLink(fileToEdit) ? (
                           <Typography variant="caption" color="text.secondary">
@@ -638,15 +735,46 @@ const FileManagementPage: React.FC = () => {
                           </Typography>
                         ) : (
                           <Alert severity="warning">
-                            Für diese Datei sind externe Direktlinks nicht erlaubt. Erlaubt sind nur PDF, DOCX, XLSX, PPTX, DOC, XLS, PPT und ODF.
+                            Für diese Datei sind externe Direktlinks nicht erlaubt. Erlaubt sind nur {PUBLIC_DIRECT_LINK_FILE_LABEL}.
                           </Alert>
+                        )}
+
+                        {canHavePublicDirectLink(fileToEdit) && (
+                          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                            <FormControl size="small" fullWidth>
+                              <InputLabel>Neue Gültigkeit</InputLabel>
+                              <Select
+                                value={publicLinkExpiryDays}
+                                label="Neue Gültigkeit"
+                                onChange={(event) => setPublicLinkExpiryDays(String(event.target.value))}
+                              >
+                                <MenuItem value="7">7 Tage</MenuItem>
+                                <MenuItem value="30">30 Tage</MenuItem>
+                                <MenuItem value="90">90 Tage</MenuItem>
+                                <MenuItem value="365">1 Jahr</MenuItem>
+                                <MenuItem value="0">Unbegrenzt</MenuItem>
+                              </Select>
+                            </FormControl>
+                            <TextField
+                              size="small"
+                              fullWidth
+                              type="number"
+                              label="Max. Downloads (optional)"
+                              value={publicLinkMaxDownloads}
+                              onChange={(event) => setPublicLinkMaxDownloads(event.target.value)}
+                              inputProps={{ min: 1, max: 1000000 }}
+                            />
+                          </Stack>
                         )}
 
                         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                           <Button
                             variant={fileToEdit.public_link_enabled ? 'outlined' : 'contained'}
                             startIcon={<LinkIcon />}
-                            onClick={() => handleCreatePublicLink(fileToEdit)}
+                            onClick={() => handleCreatePublicLink(fileToEdit, {
+                              expiresInDays: publicLinkExpiryDays === '0' ? null : Number(publicLinkExpiryDays),
+                              maxDownloads: publicLinkMaxDownloads.trim() ? Number(publicLinkMaxDownloads) : null,
+                            })}
                             disabled={publicLinkBusyFileId === fileToEdit.id || !canHavePublicDirectLink(fileToEdit)}
                           >
                             {fileToEdit.public_link_enabled ? 'Neuen Link erzeugen & kopieren' : 'Externen Link erzeugen & kopieren'}
@@ -743,7 +871,7 @@ const FileManagementPage: React.FC = () => {
                                 <Box sx={{ minWidth: 0 }}>
                                     <Typography variant="body2" noWrap>{file.filename}</Typography>
                                     {file.public_link_enabled && (
-                                        <Chip label={`Extern aktiv${file.public_download_count ? ` · ${file.public_download_count} DL` : ''}`} size="small" color="success" variant="outlined" sx={{ mt: 0.5, height: 20 }} />
+                                        <Chip label={getPublicLinkStatus(file).label} size="small" color={getPublicLinkStatus(file).color} variant="outlined" sx={{ mt: 0.5, height: 20 }} />
                                     )}
                                 </Box>
                             </Box>
@@ -783,7 +911,7 @@ const FileManagementPage: React.FC = () => {
                                 </Tooltip>
                             )}
                             {isUploader && (
-                                <Tooltip title={canHavePublicDirectLink(file) ? (file.public_link_enabled ? 'Neuen geheimen Direktlink erstellen und kopieren' : 'Geheimen externen Direktlink erstellen') : 'Externe Direktlinks nur für PDF, DOCX, XLSX, PPTX, DOC, XLS, PPT, ODF'}>
+                                <Tooltip title={canHavePublicDirectLink(file) ? (file.public_link_enabled ? 'Neuen geheimen Direktlink erstellen und kopieren (Standard: 30 Tage)' : 'Geheimen externen Direktlink erstellen (Standard: 30 Tage)') : `Externe Direktlinks nur für ${PUBLIC_DIRECT_LINK_FILE_LABEL}`}>
                                     <span>
                                         <IconButton color={file.public_link_enabled ? 'success' : 'primary'} onClick={() => handleCreatePublicLink(file)} size="small" disabled={publicLinkBusyFileId === file.id || !canHavePublicDirectLink(file)}>
                                             <LinkIcon fontSize="small" />
@@ -850,7 +978,7 @@ const FileManagementPage: React.FC = () => {
                                     </Box>
                                 )}
                                 {file.public_link_enabled && (
-                                    <Chip label={`Extern aktiv${file.public_download_count ? ` · ${file.public_download_count} DL` : ''}`} size="small" color="success" variant="outlined" sx={{ mt: 1 }} />
+                                    <Chip label={getPublicLinkStatus(file).label} size="small" color={getPublicLinkStatus(file).color} variant="outlined" sx={{ mt: 1 }} />
                                 )}
                             </CardContent>
                             <Divider />

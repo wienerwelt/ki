@@ -71,7 +71,7 @@ const FleetNewsWidget: React.FC<FleetNewsWidgetProps> = ({ onDelete, widgetId, i
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const params = new URLSearchParams({
                 category,
                 limit: '5',

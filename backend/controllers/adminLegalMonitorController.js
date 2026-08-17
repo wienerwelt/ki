@@ -2,11 +2,22 @@
 const db = require('../config/db');
 const fs = require('fs/promises'); 
 const path = require('path');
-const { PutObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner"); 
 const s3Client = require('../config/s3Client.js');
 const { v4: uuidv4 } = require('uuid');
 const { PdfReader } = require("pdfreader"); 
+
+function managedBusinessPartnerId(req, requestedId) {
+    if (req.user.role === 'admin') return requestedId || null;
+    const ownId = req.user.business_partner_id;
+    if (!ownId || (requestedId && String(requestedId) !== String(ownId))) return null;
+    return ownId;
+}
+
+function denyForeignTenant(res) {
+    return res.status(403).json({ message: 'Zugriff auf einen fremden Mandanten verweigert.' });
+}
 
 // ... (parsePdfLayout und processParsedItems Funktionen bleiben unverändert) ...
 function parsePdfLayout(dataBuffer) {
@@ -148,11 +159,14 @@ function processParsedItems(items) {
 
 exports.parseAndStorePdfArticles = async (req, res) => {
     const { template_id, business_partner_id } = req.body;
+    const targetBusinessPartnerId = managedBusinessPartnerId(req, business_partner_id);
 
     if (!req.file) {
         return res.status(400).json({ message: 'Keine PDF-Datei hochgeladen.' });
     }
-    if (!template_id || !business_partner_id) {
+    if (!template_id || !targetBusinessPartnerId) {
+        await fs.unlink(req.file.path).catch(() => {});
+        if (business_partner_id && req.user.role === 'assistenz') return denyForeignTenant(res);
         return res.status(400).json({ message: 'Template-ID oder Business-Partner-ID fehlt.' });
     }
 
@@ -165,7 +179,8 @@ exports.parseAndStorePdfArticles = async (req, res) => {
         await client.query('BEGIN');
         const dataBuffer = await fs.readFile(pdfPath);
         
-        const fileKey = `legal-monitor-sources/${business_partner_id}/${uuidv4()}-${path.basename(req.file.originalname)}`;
+        const safeOriginalName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-180);
+        const fileKey = `legal-monitor-sources/${targetBusinessPartnerId}/${uuidv4()}-${safeOriginalName}`;
         const command = new PutObjectCommand({
             Bucket: process.env.AWS_S3_BUCKET_NAME,
             Key: fileKey,
@@ -177,8 +192,8 @@ exports.parseAndStorePdfArticles = async (req, res) => {
         console.log(`[S3] PDF erfolgreich nach ${storagePath} hochgeladen.`);
 
         const templateRes = await client.query(
-            'SELECT fields_definition FROM monitor_templates WHERE id = $1', 
-            [template_id]
+            'SELECT fields_definition FROM monitor_templates WHERE id = $1 AND business_partner_id = $2',
+            [template_id, targetBusinessPartnerId]
         );
         if (templateRes.rows.length === 0) {
             throw new Error('Das ausgewählte Template wurde nicht gefunden.');
@@ -214,7 +229,7 @@ exports.parseAndStorePdfArticles = async (req, res) => {
 
             await client.query(insertQuery, [
                 template_id,
-                business_partner_id,
+                targetBusinessPartnerId,
                 JSON.stringify(content_data), // Hier JSON.stringify verwenden
                 true, 
                 storagePath
@@ -229,6 +244,12 @@ exports.parseAndStorePdfArticles = async (req, res) => {
 
     } catch (err) {
         await client.query('ROLLBACK');
+        if (storagePath) {
+            await s3Client.send(new DeleteObjectCommand({
+                Bucket: process.env.AWS_S3_BUCKET_NAME,
+                Key: storagePath,
+            })).catch((cleanupError) => console.error('Fehler beim Entfernen des abgebrochenen PDF-Uploads:', cleanupError.message));
+        }
         console.error("Fehler beim Parsen und Speichern des Rechtsmonitors:", err.message);
         res.status(500).json({ message: err.message || 'Ein interner Serverfehler ist aufgetreten.' });
     } finally {
@@ -242,8 +263,9 @@ exports.parseAndStorePdfArticles = async (req, res) => {
 exports.getTemplates = async (req, res) => {
     console.log('[AdminController] getTemplates: Wird von Admin aufgerufen.'); 
     try {
-        const query = "SELECT * FROM monitor_templates ORDER BY template_name ASC";
-        const result = await db.query(query);
+        const scoped = req.user.role === 'assistenz';
+        const query = `SELECT * FROM monitor_templates ${scoped ? 'WHERE business_partner_id = $1' : ''} ORDER BY template_name ASC`;
+        const result = await db.query(query, scoped ? [req.user.business_partner_id] : []);
         console.log(`[AdminController] getTemplates: Sende ${result.rows.length} Templates (als Array).`); 
         res.json({ data: result.rows });
     } catch (err) {
@@ -266,9 +288,11 @@ exports.getEntries = async (req, res) => {
         const queryParams = [];
         let paramIndex = 1;
 
-        if (bpId) {
+        const scopedBpId = managedBusinessPartnerId(req, bpId);
+        if (req.user.role === 'assistenz' && !scopedBpId) return denyForeignTenant(res);
+        if (scopedBpId) {
             whereClauses.push(`me.business_partner_id = $${paramIndex++}`);
-            queryParams.push(bpId);
+            queryParams.push(scopedBpId);
         }
         if (templateId) {
             whereClauses.push(`me.template_id = $${paramIndex++}`);
@@ -308,8 +332,9 @@ exports.getEntries = async (req, res) => {
 exports.getBusinessPartnersList = async (req, res) => {
     console.log(`[AdminController] getBusinessPartnersList: Wird von Admin aufgerufen.`);
     try {
-        const query = `SELECT id, name FROM business_partners ORDER BY name ASC`;
-        const result = await db.query(query);
+        const scoped = req.user.role === 'assistenz';
+        const query = `SELECT id, name FROM business_partners ${scoped ? 'WHERE id = $1' : ''} ORDER BY name ASC`;
+        const result = await db.query(query, scoped ? [req.user.business_partner_id] : []);
         console.log(`[AdminController] getBusinessPartnersList: Sende ${result.rows.length} Partner.`);
         res.json({ data: result.rows });
     } catch (err) {
@@ -320,8 +345,10 @@ exports.getBusinessPartnersList = async (req, res) => {
 
 exports.createTemplate = async (req, res) => {
     const { business_partner_id, template_name, industry, fields_definition } = req.body;
+    const targetBusinessPartnerId = managedBusinessPartnerId(req, business_partner_id);
 
-    if (!business_partner_id) {
+    if (!targetBusinessPartnerId) {
+         if (business_partner_id && req.user.role === 'assistenz') return denyForeignTenant(res);
          return res.status(400).json({ message: 'Business Partner ID ist erforderlich.' });
     }
 
@@ -332,7 +359,7 @@ exports.createTemplate = async (req, res) => {
             `INSERT INTO monitor_templates (business_partner_id, template_name, industry, fields_definition)
              VALUES ($1, $2, $3, $4) RETURNING *`,
             [
-                business_partner_id, 
+                targetBusinessPartnerId,
                 template_name, 
                 industry || null, 
                 JSON.stringify(fields_definition) // <--- HIER KORRIGIERT
@@ -351,8 +378,10 @@ exports.createTemplate = async (req, res) => {
 exports.updateTemplate = async (req, res) => {
     const { id } = req.params;
     const { business_partner_id, template_name, industry, fields_definition } = req.body;
+    const targetBusinessPartnerId = managedBusinessPartnerId(req, business_partner_id);
 
-    if (!business_partner_id || !template_name || !fields_definition) {
+    if (!targetBusinessPartnerId || !template_name || !fields_definition) {
+         if (business_partner_id && req.user.role === 'assistenz') return denyForeignTenant(res);
          return res.status(400).json({ message: 'Business Partner ID, Name und Felddefinition sind erforderlich.' });
     }
 
@@ -366,14 +395,15 @@ exports.updateTemplate = async (req, res) => {
                 industry = $3, 
                 fields_definition = $4,
                 updated_at = NOW()
-             WHERE id = $5 
+             WHERE id = $5 AND ($6::uuid IS NULL OR business_partner_id = $6::uuid)
              RETURNING *`,
             [
-                business_partner_id, 
+                targetBusinessPartnerId,
                 template_name, 
                 industry || null, 
                 JSON.stringify(fields_definition), // <--- HIER KORRIGIERT
-                id
+                id,
+                req.user.role === 'assistenz' ? req.user.business_partner_id : null
             ]
         );
         
@@ -397,6 +427,12 @@ exports.deleteTemplate = async (req, res) => {
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+        const scopeId = req.user.role === 'assistenz' ? req.user.business_partner_id : null;
+        const owned = await client.query('SELECT id FROM monitor_templates WHERE id = $1 AND ($2::uuid IS NULL OR business_partner_id = $2::uuid) FOR UPDATE', [id, scopeId]);
+        if (owned.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Vorlage nicht gefunden oder Zugriff verweigert.' });
+        }
         await client.query('DELETE FROM monitor_entries WHERE template_id = $1', [id]);
         await client.query('DELETE FROM monitor_templates WHERE id = $1', [id]);
         await client.query('COMMIT');
@@ -412,12 +448,16 @@ exports.deleteTemplate = async (req, res) => {
 
 exports.createEntry = async (req, res) => {
     const { template_id, business_partner_id, content_data, is_published, source_document_url } = req.body;
+    const targetBusinessPartnerId = managedBusinessPartnerId(req, business_partner_id);
+    if (!targetBusinessPartnerId) return denyForeignTenant(res);
 
     try {
+        const template = await db.query('SELECT id FROM monitor_templates WHERE id = $1 AND business_partner_id = $2', [template_id, targetBusinessPartnerId]);
+        if (template.rowCount === 0) return res.status(400).json({ message: 'Vorlage gehört nicht zum ausgewählten Mandanten.' });
         const result = await db.query(
             `INSERT INTO monitor_entries (template_id, business_partner_id, content_data, is_published, source_document_url)
              VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [template_id, business_partner_id, content_data, is_published, source_document_url || null]
+            [template_id, targetBusinessPartnerId, content_data, is_published, source_document_url || null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -431,8 +471,8 @@ exports.updateEntry = async (req, res) => {
     const { content_data, is_published } = req.body;
     
     try {
-        const query = `UPDATE monitor_entries SET content_data = $1, is_published = $2, updated_at = NOW() WHERE id = $3 RETURNING *`;
-        const queryParams = [content_data, is_published, id];
+        const query = `UPDATE monitor_entries SET content_data = $1, is_published = $2, updated_at = NOW() WHERE id = $3 AND ($4::uuid IS NULL OR business_partner_id = $4::uuid) RETURNING *`;
+        const queryParams = [content_data, is_published, id, req.user.role === 'assistenz' ? req.user.business_partner_id : null];
 
         const result = await db.query(query, queryParams);
         if (result.rows.length === 0) {
@@ -449,8 +489,8 @@ exports.deleteEntry = async (req, res) => {
     const { id } = req.params;
 
     try {
-        const query = `DELETE FROM monitor_entries WHERE id = $1`;
-        const queryParams = [id];
+        const query = `DELETE FROM monitor_entries WHERE id = $1 AND ($2::uuid IS NULL OR business_partner_id = $2::uuid)`;
+        const queryParams = [id, req.user.role === 'assistenz' ? req.user.business_partner_id : null];
 
         const result = await db.query(query, queryParams);
         if (result.rowCount === 0) {
@@ -467,8 +507,8 @@ exports.getSignedUrlForSourceDocument = async (req, res) => {
     const { id: entryId } = req.params;
 
     try {
-        const query = `SELECT source_document_url FROM monitor_entries WHERE id = $1;`;
-        const queryParams = [entryId];
+        const query = `SELECT source_document_url FROM monitor_entries WHERE id = $1 AND ($2::uuid IS NULL OR business_partner_id = $2::uuid);`;
+        const queryParams = [entryId, req.user.role === 'assistenz' ? req.user.business_partner_id : null];
 
         const result = await db.query(query, queryParams);
         if (result.rows.length === 0) {

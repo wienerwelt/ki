@@ -59,6 +59,7 @@ const scopeLabel: Record<string, string> = {
 };
 
 const DEFAULT_SOFTWARE_LOGO = '/logos/default-company.svg';
+const PUBLIC_SOFTWARE_INITIAL_LIMIT = 8;
 
 const SoftwareLogo: React.FC<{ src?: string | null; name: string }> = ({ src, name }) => {
     const [hasError, setHasError] = useState(false);
@@ -95,6 +96,7 @@ const SoftwareCatalogWidget: React.FC<SoftwareCatalogWidgetProps> = ({
     const [category, setCategory] = useState('all');
     const [coverage, setCoverage] = useState('all');
     const [ratingSavingId, setRatingSavingId] = useState<string | null>(null);
+    const [showAllPublicEntries, setShowAllPublicEntries] = useState(false);
 
     const load = useCallback(async () => {
         if (isPublic && !partnerId) {
@@ -142,6 +144,27 @@ const SoftwareCatalogWidget: React.FC<SoftwareCatalogWidgetProps> = ({
             return matchesSearch && matchesCategory && matchesCoverage;
         });
     }, [entries, search, category, coverage]);
+
+    const visibleEntries = useMemo(() => (
+        isPublic && !showAllPublicEntries
+            ? filtered.slice(0, PUBLIC_SOFTWARE_INITIAL_LIMIT)
+            : filtered
+    ), [filtered, isPublic, showAllPublicEntries]);
+
+    useEffect(() => {
+        setShowAllPublicEntries(false);
+    }, [search, category, coverage, partnerId]);
+
+    const handleTogglePublicEntries = () => {
+        if (showAllPublicEntries) {
+            setShowAllPublicEntries(false);
+            window.requestAnimationFrame(() => {
+                document.getElementById('software-lexikon')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+            return;
+        }
+        setShowAllPublicEntries(true);
+    };
 
     const handleRating = async (entry: SoftwareEntry, value: number | null) => {
         if (isPublic || !value || ratingSavingId) return;
@@ -206,8 +229,9 @@ const SoftwareCatalogWidget: React.FC<SoftwareCatalogWidgetProps> = ({
                 </Box>
 
                 {error ? <Alert severity="error">{error}</Alert> : (
+                    <Stack spacing={2}>
                     <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: 1.8 }}>
-                        {filtered.map((entry) => (
+                        {visibleEntries.map((entry) => (
                             <Box key={entry.id} sx={{ minWidth: 0 }}>
                                 <Box sx={{ p: 2, minWidth: 0, height: '100%', borderRadius: 3, border: `1px solid ${alpha(accent, 0.2)}`, borderTop: `4px solid ${entry.is_featured ? accent : alpha(accent, 0.38)}`, bgcolor: 'background.paper', boxShadow: `0 12px 28px ${alpha(accent, 0.08)}`, display: 'flex', flexDirection: 'column' }}>
                                     <Stack direction="row" justifyContent="space-between" spacing={1.2} alignItems="flex-start">
@@ -270,6 +294,30 @@ const SoftwareCatalogWidget: React.FC<SoftwareCatalogWidgetProps> = ({
                         ))}
                         {filtered.length === 0 && <Alert severity="info">Keine passende Software gefunden.</Alert>}
                     </Box>
+                    {isPublic && filtered.length > PUBLIC_SOFTWARE_INITIAL_LIMIT && (
+                        <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                            <Button
+                                variant={showAllPublicEntries ? 'outlined' : 'contained'}
+                                onClick={handleTogglePublicEntries}
+                                sx={{
+                                    minWidth: 180,
+                                    borderRadius: 999,
+                                    textTransform: 'none',
+                                    fontWeight: 900,
+                                    bgcolor: showAllPublicEntries ? 'transparent' : accent,
+                                    borderColor: accent,
+                                    color: showAllPublicEntries ? accent : theme.palette.getContrastText(accent),
+                                    '&:hover': {
+                                        bgcolor: showAllPublicEntries ? alpha(accent, 0.08) : alpha(accent, 0.88),
+                                        borderColor: accent,
+                                    },
+                                }}
+                            >
+                                {showAllPublicEntries ? 'Weniger' : 'Weiter laden'}
+                            </Button>
+                        </Box>
+                    )}
+                    </Stack>
                 )}
             </Stack>
         </WidgetPaper>

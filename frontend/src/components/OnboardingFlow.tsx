@@ -119,6 +119,13 @@ useEffect(() => {
                 newsletter_opt_in: optIn,
                 selected_widget_keys: selectedWidgets
             });
+
+            if (optIn && user?.email) {
+                await apiClient.post('/api/auth/newsletter/opt-in', {
+                    email: user.email,
+                    source: 'onboarding'
+                });
+            }
             
             updateUser({ 
                 has_completed_onboarding: true, 

@@ -79,7 +79,7 @@ const AdminAISystemTab: React.FC = () => {
     const fetchJobs = useCallback(async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.get('/api/admin/cronjobs/system-subscriptions', { headers: { 'x-auth-token': token } });
             setJobs(res.data);
         } catch (err: any) {
@@ -94,7 +94,7 @@ const AdminAISystemTab: React.FC = () => {
     const handleSaveSchedule = async () => {
         if (!editingJob) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             // Annahme: Es gibt einen PUT-Endpunkt zum Aktualisieren des Zeitplans
             await apiClient.put(`/api/admin/ai-prompt-rules/${editingJob.id}`, { schedule: editingJob.schedule }, { headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: 'Zeitplan erfolgreich gespeichert.' });

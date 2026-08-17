@@ -10,5 +10,6 @@ const sessionController = require('../controllers/sessionController');
 // KORREKTUR: Der Funktionsname wurde von 'renewToken' auf 'renew' geändert, 
 // damit er mit dem Export im sessionController übereinstimmt.
 router.post('/renew', authMiddleware, sessionController.renew);
+router.get('/status', authMiddleware, sessionController.status);
 
 module.exports = router;

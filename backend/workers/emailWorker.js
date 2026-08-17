@@ -14,10 +14,9 @@ const {
 
 const {
   generateAndSendDailyReport,
-  generateAndSendWeeklyReport,
-  generateAndSendMonthlyReport,
-  generateAndSendBriefingNewsletters
+  generateAndSendMonthlyReport
 } = require('../services/reportingService');
+const { dispatchAutomatedNewsletters } = require('../services/marketBriefingService');
 
 const { processSavedSearchNotifications } = require('../services/notificationService');
 
@@ -45,18 +44,13 @@ async function startWorker() {
       try {
         switch (job.name) {
           case 'daily-briefing':
-            console.log('[mail] Starte generateAndSendBriefingNewsletters...');
-            await generateAndSendBriefingNewsletters();
+            console.log('[mail] Starte zentralen Branchenbriefing-Versand...');
+            await dispatchAutomatedNewsletters();
             break;
 
           case 'daily-report':
             console.log('[mail] Starte generateAndSendDailyReport...');
             await generateAndSendDailyReport();
-            break;
-
-          case 'weekly-report':
-            console.log('[mail] Starte generateAndSendWeeklyReport...');
-            await generateAndSendWeeklyReport();
             break;
 
           case 'monthly-report':

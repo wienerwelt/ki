@@ -71,7 +71,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const [rulesRes, regionsRes, providersRes, categoriesRes] = await Promise.all([
                 apiClient.get('/api/admin/ai-prompt-rules', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/data/regions', { headers: { 'x-auth-token': token } }),
@@ -93,7 +93,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
         if (!currentJobId || !logModalOpen || (jobStatus !== 'running' && jobStatus !== 'pending')) return;
         const interval = setInterval(async () => {
              try {
-                const token = localStorage.getItem('jwt_token');
+                const token = 'cookie-session';
                 const res = await apiClient.get(`/api/admin/ai/logs/${currentJobId}`, { headers: { 'x-auth-token': token } });
                 setJobLogs(res.data.logs);
                 setJobStatus(res.data.status);
@@ -157,7 +157,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
             category_id: rest.category_id || null
         };
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const method = editingRule?.id ? 'put' : 'post';
             const url = editingRule?.id ? `/api/admin/ai-prompt-rules/${editingRule.id}` : '/api/admin/ai-prompt-rules';
             
@@ -180,7 +180,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
         setLogModalOpen(true);
 
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.post(`/api/admin/ai-prompt-rules/${rule.id}/trigger`, {}, { headers: { 'x-auth-token': token } });
             
             if (res.data.jobId) {
@@ -206,7 +206,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
         setLogModalOpen(true);
         setJobStatus('pending');
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const [prompt_persona, prompt_task, prompt_format] = editingRule.prompt_template.split(PROMPT_SEPARATOR);
             const payload = {
                 ruleId: editingRule.id,
@@ -232,7 +232,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
     const handleDuplicateRule = async (ruleId: string) => {
         if (!window.confirm('Möchten Sie diese Regel wirklich duplizieren?')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.post(`/api/admin/ai-prompt-rules/${ruleId}/duplicate`, {}, { headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: 'Regel erfolgreich dupliziert.' });
             fetchData();
@@ -245,7 +245,7 @@ const AdminAIPromptRulesPage: React.FC = () => {
     const handleDeleteRule = async (ruleId: string) => {
         if (!window.confirm('Sind Sie sicher, dass Sie diese Regel endgültig löschen möchten?')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/ai-prompt-rules/${ruleId}`, { headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: 'Regel erfolgreich gelöscht.' });
             fetchData();

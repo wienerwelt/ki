@@ -124,8 +124,11 @@ const DailyBriefingContent: React.FC = () => {
   const { showSnackbar } = useSnackbar();
   
   // --- NEWSLETTER HIERARCHIE-LOGIK ---
-  const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in);
-  const isNewsletterAllowed = businessPartner?.allow_automated_newsletter !== false;
+  const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in && !!user?.briefing_email_enabled);
+  const isNewsletterAllowed = businessPartner?.allow_automated_newsletter !== false
+    && businessPartner?.newsletter_delivery_mode !== 'external'
+    && businessPartner?.newsletter_delivery_mode !== 'export'
+    && businessPartner?.newsletter_frequency !== 'never';
   const effectiveSubscription = isNewsletterAllowed && isSubscribed;
   
   // DYNAMISCHER TRIGGER: Sales vs. Information
@@ -138,7 +141,7 @@ const DailyBriefingContent: React.FC = () => {
     year: 'numeric',
   }).format(new Date());
 
-  useEffect(() => setIsSubscribed(!!user?.newsletter_opt_in), [user?.newsletter_opt_in]);
+  useEffect(() => setIsSubscribed(!!user?.newsletter_opt_in && !!user?.briefing_email_enabled), [user?.newsletter_opt_in, user?.briefing_email_enabled]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -158,15 +161,23 @@ const DailyBriefingContent: React.FC = () => {
     if (!isNewsletterAllowed) return showSnackbar('Der E-Mail-Versand ist für Ihr Unternehmen systemseitig deaktiviert.', 'warning');
     
     const isChecked = event.target.checked;
-    setIsSubscribed(isChecked);
-    updateUser({ newsletter_opt_in: isChecked });
-    
     try {
-      await apiClient.put('/api/users/me', { newsletter_opt_in: isChecked });
-      showSnackbar(`E-Mail Briefing ${isChecked ? 'aktiviert' : 'deaktiviert'}.`, 'success');
+      if (isChecked) {
+        const response = await apiClient.post('/api/auth/newsletter/opt-in', { email: user?.email, source: 'daily_cockpit' });
+        if (response.data?.alreadyConfirmed) {
+          setIsSubscribed(true);
+          updateUser({ newsletter_opt_in: true, briefing_email_enabled: true });
+          showSnackbar('E-Mail-Briefing aktiviert.', 'success');
+        } else {
+          showSnackbar('Bitte bestätigen Sie die Anmeldung über die zugesandte E-Mail.', 'info');
+        }
+      } else {
+        await apiClient.put('/api/users/me', { briefing_email_enabled: false });
+        setIsSubscribed(false);
+        updateUser({ briefing_email_enabled: false });
+        showSnackbar('E-Mail-Briefing deaktiviert.', 'success');
+      }
     } catch (err) {
-      setIsSubscribed(!isChecked);
-      updateUser({ newsletter_opt_in: !isChecked });
       showSnackbar('Fehler beim Speichern der Einstellung.', 'error');
     }
   };

@@ -63,7 +63,7 @@ const AdminFundingPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const [oppsRes, catsRes, regionsRes, sourcesRes, statsRes] = await Promise.all([
                 apiClient.get('/api/admin/funding', { 
                     headers: { 'x-auth-token': token },
@@ -110,7 +110,7 @@ const AdminFundingPage: React.FC = () => {
     const handleSaveChanges = async () => {
         if (!editingOpp) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const selectedCategories = allCategories.filter(cat => editingOpp.categories?.includes(cat.name));
             const payload = {
                 title: editingOpp.title,
@@ -152,7 +152,7 @@ const AdminFundingPage: React.FC = () => {
     const handleDelete = async (id: string) => {
         if (!window.confirm('Sind Sie sicher, dass Sie diese Förderung löschen möchten?')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/funding/${id}`, { headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: 'Förderung gelöscht.' });
             fetchData();
@@ -164,7 +164,7 @@ const AdminFundingPage: React.FC = () => {
     const handleBulkDelete = async () => {
         if (!window.confirm(`Sind Sie sicher, dass Sie ${selected.length} Förderungen löschen möchten?`)) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             
             // @ts-ignore - Wir ignorieren diesen Typ-Fehler, da die Syntax für Axios korrekt ist.
             await apiClient.delete('/api/admin/funding', { 

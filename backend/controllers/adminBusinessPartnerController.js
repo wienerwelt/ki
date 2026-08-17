@@ -16,7 +16,9 @@ exports.getAllBusinessPartners = async (req, res) => {
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 bp.storage_tier, bp.storage_usage_bytes, bp.storage_limit_bytes,
                 bp.allow_automated_newsletter, bp.dashboard_focus,
-                bp.briefing_frequency,
+                bp.briefing_frequency, bp.newsletter_frequency,
+                bp.newsletter_delivery_mode, bp.newsletter_export_email,
+                bp.newsletter_external_signup_url, bp.newsletter_recipient_limit,
                 cs.name AS color_scheme_name,
                 (SELECT COUNT(*)::int FROM users u WHERE u.business_partner_id = bp.id) AS user_count,
                 (SELECT COUNT(*)::int FROM business_partner_widget_access wa WHERE wa.business_partner_id = bp.id) AS widget_count,
@@ -65,7 +67,9 @@ exports.getBusinessPartnerById = async (req, res) => {
                 bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 bp.briefing_frequency,
-                bp.allow_automated_newsletter, bp.dashboard_focus,
+                bp.newsletter_frequency, bp.allow_automated_newsletter, bp.dashboard_focus,
+                bp.newsletter_delivery_mode, bp.newsletter_export_email,
+                bp.newsletter_external_signup_url, bp.newsletter_recipient_limit,
                 cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
                 
                 -- KORREKTUR: Gleiche Struktur für Regions wie in getMyBusinessPartner
@@ -99,11 +103,17 @@ exports.createBusinessPartner = async (req, res) => {
         color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
         default_region_id, email, briefing_frequency, allow_automated_newsletter,
-        category_ids = [], dashboard_focus,
+        category_ids = [], dashboard_focus, newsletter_delivery_mode = 'mobiliti',
+        newsletter_export_email, newsletter_external_signup_url, newsletter_recipient_limit = 250,
         color_mode, custom_colors 
     } = req.body;
 
     if (!name) return res.status(400).json({ message: 'Name is required.' });
+
+    const newsletterError = validateNewsletterDelivery({
+        newsletter_delivery_mode, newsletter_export_email, newsletter_external_signup_url, newsletter_recipient_limit, email
+    });
+    if (newsletterError) return res.status(400).json({ message: newsletterError });
 
     const client = await db.connect();
     try {
@@ -141,14 +151,17 @@ exports.createBusinessPartner = async (req, res) => {
                 name, slug, address, logo_url, subscription_start_date, subscription_end_date,
                 color_scheme_id, is_active, url_businesspartner, dashboard_title,
                 level_1_name, level_2_name, level_3_name, email, allow_automated_newsletter, briefing_frequency,
-                dashboard_focus
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
+                dashboard_focus, newsletter_delivery_mode, newsletter_export_email,
+                newsletter_external_signup_url, newsletter_recipient_limit
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING *`,
             [
                 name, slug || null, address || null, logo_url || null, subscription_start_date || null,
                 subscription_end_date || null, finalColorSchemeId || null, is_active,
                 url_businesspartner || null, dashboard_title || null, level_1_name || null,
                 level_2_name || null, level_3_name || null, email || null,
-                !!allow_automated_newsletter, briefing_frequency || 'never', dashboard_focus || 'information'
+                !!allow_automated_newsletter, briefing_frequency || 'never', dashboard_focus || 'information',
+                newsletter_delivery_mode, newsletter_export_email || null,
+                newsletter_external_signup_url || null, Number(newsletter_recipient_limit) || 250
             ]
         );
         const newBp = bpResult.rows[0];
@@ -200,7 +213,8 @@ exports.updateBusinessPartner = async (req, res) => {
         dashboard_title, level_1_name, level_2_name, level_3_name,
         default_region_id, email, storage_tier, 
         allow_automated_newsletter, briefing_frequency, 
-        category_ids, dashboard_focus,
+        category_ids, dashboard_focus, newsletter_delivery_mode = 'mobiliti',
+        newsletter_export_email, newsletter_external_signup_url, newsletter_recipient_limit = 250,
         color_mode, custom_colors 
     } = req.body;
 
@@ -214,6 +228,10 @@ exports.updateBusinessPartner = async (req, res) => {
     if (storage_tier && !validTiers.hasOwnProperty(storage_tier)) {
         return res.status(400).json({ message: 'Ungültiger Tier-Name.' });
     }
+    const newsletterError = validateNewsletterDelivery({
+        newsletter_delivery_mode, newsletter_export_email, newsletter_external_signup_url, newsletter_recipient_limit, email
+    });
+    if (newsletterError) return res.status(400).json({ message: newsletterError });
     const newLimit = storage_tier ? validTiers[storage_tier] : undefined;
 
     const client = await db.connect();
@@ -265,11 +283,15 @@ exports.updateBusinessPartner = async (req, res) => {
                 storage_tier = COALESCE($14, storage_tier), 
                 storage_limit_bytes = COALESCE($15, storage_limit_bytes), 
                 allow_automated_newsletter = $16,
-                briefing_frequency = $17, 
+                briefing_frequency = COALESCE($17, briefing_frequency),
                 dashboard_focus = $18, 
                 slug = $19,
+                newsletter_delivery_mode = $20,
+                newsletter_export_email = $21,
+                newsletter_external_signup_url = $22,
+                newsletter_recipient_limit = $23,
                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = $20 RETURNING *`,
+             WHERE id = $24 RETURNING *`,
             [
                 name, 
                 address || null, 
@@ -287,9 +309,13 @@ exports.updateBusinessPartner = async (req, res) => {
                 storage_tier || null, 
                 newLimit || null, 
                 !!allow_automated_newsletter,
-                briefing_frequency || 'never', 
+                briefing_frequency || null,
                 dashboard_focus || 'information',
                 slug || null,
+                newsletter_delivery_mode,
+                newsletter_export_email || null,
+                newsletter_external_signup_url || null,
+                Number(newsletter_recipient_limit) || 250,
                 id 
             ]
         );
@@ -507,3 +533,32 @@ exports.uploadBusinessPartnerLogo = async (req, res) => {
         return res.status(500).json({ message: "Fehler beim Server während des Logo-Uploads." });
     }
 };
+
+function validateNewsletterDelivery({ newsletter_delivery_mode, newsletter_export_email, newsletter_external_signup_url, newsletter_recipient_limit, email }) {
+    if (!['mobiliti', 'export', 'external'].includes(newsletter_delivery_mode)) {
+        return 'Ungültiger Newsletter-Versandmodus.';
+    }
+    const limit = Number(newsletter_recipient_limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100000) {
+        return 'Das Empfängerlimit muss zwischen 1 und 100.000 liegen.';
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (newsletter_export_email && !emailRegex.test(String(newsletter_export_email).trim())) {
+        return 'Die zentrale Newsletter-E-Mail-Adresse ist ungültig.';
+    }
+    if (newsletter_delivery_mode === 'export' && !newsletter_export_email && !email) {
+        return 'Für den Exportmodus ist eine zentrale Mandantenadresse erforderlich.';
+    }
+    if (newsletter_external_signup_url) {
+        try {
+            const url = new URL(newsletter_external_signup_url);
+            if (!['http:', 'https:'].includes(url.protocol)) throw new Error('protocol');
+        } catch (_) {
+            return 'Die externe Newsletter-Anmelde-URL ist ungültig.';
+        }
+    }
+    if (newsletter_delivery_mode === 'external' && !newsletter_external_signup_url) {
+        return 'Für externen Versand ist die Newsletter-Anmelde-URL erforderlich.';
+    }
+    return null;
+}

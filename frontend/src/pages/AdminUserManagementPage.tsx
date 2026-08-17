@@ -148,12 +148,10 @@ const AdminUserManagementPage: React.FC = () => {
 
   const handleDownloadTemplate = async () => {
     try {
-      const token = localStorage.getItem('jwt_token');
-      if (!token) throw new Error('Authentifizierungs-Token nicht gefunden.');
       const apiBase = (import.meta as any).env?.VITE_API_URL || '';
       
       const res = await fetch(`${apiBase}/api/admin/users/import/template`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include',
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
@@ -288,7 +286,7 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
   };
 
   const filteredRoleOptions = useMemo(() => {
-    return isAssistant ? roleOptions.filter((role) => role.name !== 'admin') : roleOptions;
+    return isAssistant ? roleOptions.filter((role) => !['admin', 'assistenz'].includes(role.name)) : roleOptions;
   }, [roleOptions, isAssistant]);
 
   const handleOpenAddDialog = () => {
@@ -348,8 +346,6 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 
   const handleExport = async () => {
     try {
-      const token = localStorage.getItem('jwt_token');
-      if (!token) throw new Error('Authentifizierungs-Token nicht gefunden.');
       const apiBase = (import.meta as any).env?.VITE_API_URL || '';
       
       let filter = (isAdmin && selectedBpFilter !== 'all') ? `?business_partner_id=${selectedBpFilter}` : '';
@@ -357,7 +353,7 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
           filter += filter ? `&search=${encodeURIComponent(debouncedSearch)}` : `?search=${encodeURIComponent(debouncedSearch)}`;
       }
       
-      const res = await fetch(`${apiBase}/api/admin/users/export/csv${filter}`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const res = await fetch(`${apiBase}/api/admin/users/export/csv${filter}`, { credentials: 'include' });
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
 
       const blob = await res.blob();

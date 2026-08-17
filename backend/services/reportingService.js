@@ -2,7 +2,7 @@
 const db = require('../config/db');
 const { sendEmail } = require('./emailService');
 const { renderMonthlyPartnerReportEmail } = require('./emailTemplates');
-const { connection: redisClient } = require('./queueService');
+const { connection: redisClient, heartbeatRedisClient } = require('./queueService');
 
 /**
  * Hilfsfunktion zur Berechnung und Formatierung des Vortags-Trends
@@ -483,98 +483,10 @@ emailHtml += `</ul>
  * =========================
  */
 
-function isPartnerDueToday(frequency) {
-    const today = new Date();
-    const dayOfWeek = today.getDay(); // 0 = Sonntag, 5 = Freitag
-    const dateOfMonth = today.getDate();
-
-    switch (frequency) {
-        case 'daily': return true;
-        case 'weekly': return dayOfWeek === 5; // Jeden Freitag
-        case 'biweekly': 
-            // Jeden zweiten Freitag (gerade Kalenderwoche)
-            const weekNumber = Math.ceil((((today.getTime() - new Date(today.getFullYear(), 0, 1).getTime()) / 86400000) + 1) / 7);
-            return dayOfWeek === 5 && weekNumber % 2 === 0;
-        case 'monthly': return dateOfMonth === 1; // Am 1. des Monats
-        case 'never':
-        default: return false;
-    }
-}
-
 exports.generateAndSendBriefingNewsletters = async () => {
-    console.log('[mail] Starte automatischen Briefing-Versand (Auto-Publishing)...');
-    const client = await db.connect();
-
-    try {
-        const { rows: partners } = await client.query(`
-            SELECT bp.*, row_to_json(cs.*) as color_scheme 
-            FROM business_partners bp
-            LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id
-            WHERE bp.is_active = TRUE AND bp.briefing_frequency != 'never'
-        `);
-
-        for (const partner of partners) {
-            if (!isPartnerDueToday(partner.briefing_frequency)) continue;
-
-            console.log(`[mail] Verarbeite Versand für ${partner.name} (${partner.briefing_frequency})...`);
-
-            const { rows: items } = await client.query(`
-                SELECT * FROM business_partner_intelligence_briefings
-                WHERE business_partner_id = $1 
-                AND DATE(created_at) = CURRENT_DATE
-                AND status IN ('draft', 'published')
-                ORDER BY id ASC
-            `, [partner.id]);
-
-            if (items.length === 0) {
-                console.log(`[mail] Keine Inhalte für ${partner.name} gefunden. Überspringe.`);
-                continue;
-            }
-
-            const briefing = {
-                top_insights: items.filter(i => i.briefing_type === 'top_insight').map(i => ({
-                    title: i.headline,
-                    what_changed: i.analysis_summary,
-                    so_what: i.prognosis,
-                    action: i.talking_point,
-                    sources: i.related_articles ? JSON.parse(i.related_articles) : []
-                })),
-                regulation_and_funding: items.filter(i => i.briefing_type === 'regulation').map(i => ({
-                    title: i.headline,
-                    summary: i.analysis_summary,
-                    action: i.talking_point
-                })),
-                recommended_actions: items.filter(i => i.briefing_type === 'action_plan').map(i => i.headline)
-            };
-
-            const { rows: recipients } = await client.query(`
-                SELECT email, first_name, last_name FROM users 
-                WHERE business_partner_id = $1 AND newsletter_opt_in = TRUE AND is_active = TRUE
-            `, [partner.id]);
-
-            if (recipients.length > 0) {
-                for (const user of recipients) {
-                    try {
-                        await sendDailyBriefing({ to: user.email, user, partner, briefing });
-                    } catch (err) {
-                        console.error(`[mail] Fehler beim Senden an ${user.email}:`, err.message);
-                    }
-                }
-                
-                await client.query(`
-                    UPDATE business_partner_intelligence_briefings 
-                    SET status = 'published' 
-                    WHERE business_partner_id = $1 AND DATE(created_at) = CURRENT_DATE
-                `, [partner.id]);
-
-                console.log(`[mail] ${recipients.length} Mails für ${partner.name} versendet.`);
-            }
-        }
-    } catch (err) {
-        console.error('[mail] Kritischer Fehler beim Briefing-Versand:', err);
-    } finally {
-        client.release();
-    }
+    console.warn('[mail] Veralteter Briefing-Einstieg verwendet; delegiere an den zentralen Dispatcher.');
+    const { dispatchAutomatedNewsletters } = require('./marketBriefingService');
+    return dispatchAutomatedNewsletters();
 };
 
 

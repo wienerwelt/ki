@@ -196,7 +196,7 @@ const AdminScrapingRulesPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const [rulesRes, categoriesRes, bpRes, queueRes] = await Promise.allSettled([
                 apiClient.get('/api/admin/scraping-rules', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/admin/categories', { headers: { 'x-auth-token': token } }),
@@ -223,7 +223,7 @@ const AdminScrapingRulesPage: React.FC = () => {
         if (!currentJobId || !logModalOpen || (jobStatus !== 'running' && jobStatus !== 'pending')) return;
         const interval = setInterval(async () => {
             try {
-                const token = localStorage.getItem('jwt_token');
+                const token = 'cookie-session';
                 const res = await apiClient.get(`/api/admin/scraping-rules/logs/${currentJobId}`, { headers: { 'x-auth-token': token } });
                 setJobLogs(res.data.logs);
                 setJobStatus(res.data.status);
@@ -320,7 +320,7 @@ const AdminScrapingRulesPage: React.FC = () => {
 
     const handleSubmit = async () => {
         setError(null);
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         try {
             const ruleData = buildRuleData();
             const method = editingRule?.id ? 'put' : 'post';
@@ -339,7 +339,7 @@ const AdminScrapingRulesPage: React.FC = () => {
     const handleDelete = async (id: string) => {
         if (!window.confirm('Diese Regel wird deaktiviert/archiviert. Fortfahren?')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/scraping-rules/${id}`, { headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: 'Regel wurde deaktiviert/archiviert.' });
             fetchInitialData();
@@ -354,7 +354,7 @@ const AdminScrapingRulesPage: React.FC = () => {
         setCurrentJobId(null);
         setLogModalOpen(true);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.post(`/api/admin/scraping-rules/${rule.id}/trigger-scrape`, {}, { headers: { 'x-auth-token': token } });
             setCurrentJobId(res.data.jobId);
             setJobStatus('running');
@@ -370,7 +370,7 @@ const AdminScrapingRulesPage: React.FC = () => {
         setError(null);
         setTestResult(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const res = await apiClient.post('/api/admin/scraping-rules/test-rule', buildRuleData(), { headers: { 'x-auth-token': token } });
             setTestResult(res.data);
         } catch (err: any) {
@@ -403,7 +403,7 @@ const AdminScrapingRulesPage: React.FC = () => {
         setError(null);
         setSuggestionAlert(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const response = await apiClient.post('/api/admin/scraping-rules/suggest', { url: formState.url_pattern }, { headers: { 'x-auth-token': token } });
             const data = response.data;
             if (data?.format === 'html') {

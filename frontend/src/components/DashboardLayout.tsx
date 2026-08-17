@@ -98,10 +98,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-    const token = localStorage.getItem('jwt_token');
+    const token = 'cookie-session';
     
-    const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in);
-    const isNewsletterAllowed = businessPartner?.allow_automated_newsletter !== false;
+    const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in && !!user?.briefing_email_enabled);
+    const isNewsletterAllowed = businessPartner?.allow_automated_newsletter !== false
+        && businessPartner?.newsletter_delivery_mode === 'mobiliti'
+        && businessPartner?.newsletter_frequency !== 'never';
     const effectiveSubscription = isNewsletterAllowed && isSubscribed;
 
     const [menuBadges, setMenuBadges] = useState({
@@ -134,8 +136,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     }, [fetchMenuBadges]);
 
     useEffect(() => {
-        setIsSubscribed(!!user?.newsletter_opt_in);
-    }, [user?.newsletter_opt_in]);
+        setIsSubscribed(!!user?.newsletter_opt_in && !!user?.briefing_email_enabled);
+    }, [user?.newsletter_opt_in, user?.briefing_email_enabled]);
 
     useEffect(() => {
         const handleHeaderActionsChange = (event: Event) => {
@@ -161,15 +163,23 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             return;
         }
         const newValue = !isSubscribed;
-        setIsSubscribed(newValue);
-        updateUser({ newsletter_opt_in: newValue }); 
-
         try {
-            await apiClient.put('/api/users/me', { newsletter_opt_in: newValue });
-            showSnackbar(`E-Mail Briefing ${newValue ? 'aktiviert' : 'deaktiviert'}.`, 'success');
+            if (newValue) {
+                const response = await apiClient.post('/api/auth/newsletter/opt-in', { email: user?.email, source: 'daily_cockpit' });
+                if (response.data?.alreadyConfirmed) {
+                    setIsSubscribed(true);
+                    updateUser({ newsletter_opt_in: true, briefing_email_enabled: true });
+                    showSnackbar('E-Mail-Briefing aktiviert.', 'success');
+                } else {
+                    showSnackbar('Bitte bestätigen Sie die Anmeldung über die zugesandte E-Mail.', 'info');
+                }
+            } else {
+                await apiClient.put('/api/users/me', { briefing_email_enabled: false });
+                setIsSubscribed(false);
+                updateUser({ briefing_email_enabled: false });
+                showSnackbar('E-Mail-Briefing deaktiviert.', 'success');
+            }
         } catch {
-            setIsSubscribed(!newValue);
-            updateUser({ newsletter_opt_in: !newValue });
             showSnackbar('Fehler beim Speichern der Einstellung.', 'error');
         }
     };
@@ -266,13 +276,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         setDrawerOpen(open);
     };
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
         posthog.capture('user_logged_out', {
             business_partner_id: businessPartner?.id || user?.business_partner_id || null,
             business_partner_name: businessPartner?.name || user?.business_partner_name || null,
             business_partner_slug: businessPartner?.slug || null,
         });
-        const targetUrl = logout();
+        const targetUrl = await logout();
         navigate(targetUrl, { 
           state: { 
             snackbarMessage: 'Sie wurden erfolgreich abgemeldet.',

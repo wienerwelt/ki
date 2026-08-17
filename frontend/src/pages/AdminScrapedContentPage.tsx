@@ -111,7 +111,7 @@ const AdminScrapedContentPage: React.FC = () => {
 
     const fetchStaticData = useCallback(async () => {
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const [rulesRes, categoriesRes, tagsRes, regionsRes] = await Promise.all([
                 apiClient.get('/api/admin/scraping-rules', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/admin/categories', { headers: { 'x-auth-token': token } }),
@@ -138,7 +138,7 @@ const AdminScrapedContentPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const params = new URLSearchParams({
                 limit: String(PAGE_SIZE),
                 offset: String((currentPage - 1) * PAGE_SIZE)
@@ -234,7 +234,7 @@ const AdminScrapedContentPage: React.FC = () => {
     const handleSubmit = async () => {
         setLoading(true);
         setError(null);
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         const contentData = {
             ...formState,
             tags: formState.tags.map(t => t.id),
@@ -266,7 +266,7 @@ const AdminScrapedContentPage: React.FC = () => {
     const handleDelete = async (id: string, dataType: 'content' | 'traffic') => {
         if (!window.confirm('Sind Sie sicher, dass Sie diesen Inhalt löschen möchten?')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/scraped-content/${id}?dataType=${dataType}`, { headers: { 'x-auth-token': token } });
             handleApplyFilter();
         } catch (err: any) {
@@ -277,7 +277,7 @@ const AdminScrapedContentPage: React.FC = () => {
     const handleBulkDelete = async () => {
         if (!window.confirm(`Sind Sie sicher, dass Sie ${selected.length} Einträge löschen möchten?`)) return;
         setLoading(true);
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         try {
             for (const id of selected) {
                 const item = content.find(c => c.id === id);
@@ -350,7 +350,7 @@ const AdminScrapedContentPage: React.FC = () => {
     const handleDeepDive = async (contentId: string) => {
         if (!window.confirm('Möchten Sie diesen Inhalt als potenzielle Förderung analysieren? Dies verbraucht KI-Tokens.')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.post(`/api/admin/scraped-content/${contentId}/deep-dive`, {}, { headers: { 'x-auth-token': token } });
             showSnackbar('Deep Dive gestartet. Das Ergebnis erscheint in Kürze im Funding Cockpit.', 'success');
         } catch (err) {

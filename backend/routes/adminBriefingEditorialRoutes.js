@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const authMiddleware = require('../middleware/authMiddleware');
+const tenantManagerAuth = require('../middleware/tenantManagerAuth');
 
 const { 
     getBriefingDraft, 
@@ -17,16 +17,7 @@ const {
     getRecipients
 } = require('../controllers/adminBriefingEditorialController');
 
-const isEditorialManager = (req, res, next) => {
-    if (req.user && (req.user.role === 'admin' || req.user.role === 'assistenz')) {
-        next();
-    } else {
-        res.status(403).json({ message: 'Zugriff verweigert.' });
-    }
-};
-
-// Diese Zeile schützt bereits ALLE folgenden Routen mit authMiddleware & Rollen-Check
-router.use(authMiddleware, isEditorialManager);
+router.use(tenantManagerAuth);
 
 router.get('/draft', getBriefingDraft);
 router.get('/partners', getAllPartners);

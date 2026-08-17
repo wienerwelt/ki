@@ -174,7 +174,7 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
     setError(null);
 
     try {
-      const token = localStorage.getItem('jwt_token');
+      const token = 'cookie-session';
       const params = new URLSearchParams({
         category,
         limit: '5',
@@ -199,7 +199,7 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
     
     // 2. Counts separat laden (Non-Blocking)
     try {
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         
         const countParams = new URLSearchParams({
             category, 
@@ -249,7 +249,7 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
 
   const markAsRead = async (itemId: string) => {
     try {
-      const token = localStorage.getItem('jwt_token');
+      const token = 'cookie-session';
       await apiClient.post(`/api/data/scraped-content/${itemId}/mark-as-read`, {}, { headers: { 'x-auth-token': token } });
       setItems(prev => prev.map(n => n.id === itemId ? { ...n, is_read: true } : n));
       setCounts(prev => ({ ...prev, unread: Math.max(0, prev.unread - 1) }));
@@ -257,7 +257,7 @@ const PodcastWidget: React.FC<PodcastWidgetProps> = ({ onDelete, widgetId, isRem
   };
 
   const handleVote = async (contentId: string, vote: 1 | -1) => {
-    const token = localStorage.getItem('jwt_token');
+    const token = 'cookie-session';
     const currentItem = items.find(item => item.id === contentId);
     if (!currentItem) return;
 

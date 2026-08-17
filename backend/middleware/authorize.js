@@ -1,78 +1,12 @@
 // backend/middleware/authorize.js
-const jwt = require('jsonwebtoken');
+const authMiddleware = require('./authMiddleware');
 
-function getTokenFromRequest(req) {
-  // 1) x-auth-token
-  let token = req.header('x-auth-token');
-
-  // 2) Authorization: Bearer <jwt>
-  if (!token) {
-    const auth = req.headers.authorization || '';
-    if (auth.startsWith('Bearer ')) token = auth.slice(7);
-  }
-
-  // 3) Cookie "token"
-  if (!token && req.cookies && req.cookies.token) {
-    token = req.cookies.token;
-  }
-
-  return token;
-}
-
-// backend/middleware/authorize.js
-
-function extractUserFromPayload(decoded) {
-  if (decoded && typeof decoded === 'object') {
-    if (decoded.user && typeof decoded.user === 'object') return decoded.user;
-    
-    // Korrekte Version
-    return {
-      id: decoded.id || decoded.userId || decoded.sub,
-      role: decoded.role,
-      email: decoded.email,
-      username: decoded.username,
-      business_partner_id: decoded.business_partner_id || null,
-      contribution_score: decoded.contribution_score ?? 0,
-    };
-  }
-  return null;
-}
-
-/**
- * Autorisierung nach Rollen.
- * @param {string[]} allowedRoles
- */
-const authorize = (allowedRoles = []) => {
-  const allowed = (allowedRoles || []).map((r) => String(r).toLowerCase());
-  return (req, res, next) => {
-    const token = getTokenFromRequest(req);
-    if (!token) {
-      return res.status(401).json({ message: 'Kein Token, Autorisierung verweigert' });
+module.exports = (allowedRoles = []) => {
+  const allowed = allowedRoles.map((role) => String(role).toLowerCase());
+  return (req, res, next) => authMiddleware(req, res, () => {
+    if (allowed.length > 0 && !allowed.includes(req.user?.role)) {
+      return res.status(403).json({ message: 'Zugriff verweigert. Rolle nicht ausreichend.' });
     }
-
-    try {
-      const secret = process.env.JWT_SECRET;
-      if (!secret) {
-        return res.status(500).json({ message: 'Serverfehler: JWT_SECRET fehlt' });
-      }
-
-      const decoded = jwt.verify(token, secret);
-      const user = extractUserFromPayload(decoded);
-      if (!user || !user.role) {
-        return res.status(401).json({ message: 'Token ist nicht gültig (keine Benutzer-/Rolleninfo)' });
-      }
-
-      const role = String(user.role).toLowerCase();
-      if (allowed.length && !allowed.includes(role)) {
-        return res.status(403).json({ message: 'Zugriff verweigert. Rolle nicht ausreichend.' });
-      }
-
-      req.user = user;
-      return next();
-    } catch (err) {
-      return res.status(401).json({ message: 'Token ist nicht gültig' });
-    }
-  };
+    return next();
+  });
 };
-
-module.exports = authorize;

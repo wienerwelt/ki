@@ -6,6 +6,13 @@ const { Readable } = require('stream');
 const { logActivity } = require('../services/auditLogService');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
+const ASSISTANT_ALLOWED_TARGET_ROLES = new Set(['user', 'demo']);
+
+const assistantCanManageUser = (requester, user) =>
+    requester.role !== 'assistenz' || (
+        String(user.business_partner_id || '') === String(requester.business_partner_id || '')
+        && ASSISTANT_ALLOWED_TARGET_ROLES.has(String(user.role || '').toLowerCase())
+    );
 
 const sanitizeFilename = (name) => {
     if (!name) return '';
@@ -68,7 +75,7 @@ exports.getAllUsers = async (req, res) => {
             whereClauses.push(`u.business_partner_id = $${paramIndex}`);
             queryParams.push(requesterBpId);
             paramIndex++;
-            whereClauses.push(`u.role != 'admin'`);
+            whereClauses.push(`u.role NOT IN ('admin', 'assistenz')`);
         } else if (requesterRole === 'admin') {
             // Admins können nach einem bestimmten Mandanten filtern oder 'all' wählen
             if (business_partner_id && business_partner_id !== 'all') {
@@ -177,7 +184,7 @@ exports.getUserById = async (req, res) => {
              WHERE u.id = $1`,
             [id]
         );
-        if (result.rows.length === 0) {
+        if (result.rows.length === 0 || !assistantCanManageUser(req.user, result.rows[0])) {
             return res.status(404).json({ message: 'User not found.' });
         }
         res.json(result.rows[0]);
@@ -197,9 +204,9 @@ exports.createUser = async (req, res) => {
     const { user: requester } = req;
 
     try {
-        if (requester.role === 'assistenz' && role === 'admin') {
+        if (requester.role === 'assistenz' && !ASSISTANT_ALLOWED_TARGET_ROLES.has(String(role).toLowerCase())) {
             await logActivity({ userId: requester.id, username: requester.username, actionType: 'USER_CREATE_DENIED', status: 'failure', details: { reason: 'Assistant tried to create admin', attemptedRole: role }, ipAddress: req.ip });
-            return res.status(403).json({ message: 'Permission denied: Assistants cannot create admin users.' });
+            return res.status(403).json({ message: 'Mandantenassistenzen dürfen keine privilegierten Benutzerrollen vergeben.' });
         }
         
         const finalBpId = requester.role === 'assistenz' ? requester.business_partner_id : business_partner_id;
@@ -276,13 +283,11 @@ exports.updateUser = async (req, res) => {
         }
         const beforeUpdate = targetUserResult.rows[0];
 
-        if (requester.role === 'assistenz') {
-            if (beforeUpdate.role === 'admin' || updateData.role === 'admin') {
-                return res.status(403).json({ message: 'Permission denied to edit admin users or assign admin role.' });
-            }
-            if (beforeUpdate.business_partner_id !== requester.business_partner_id) {
-                return res.status(403).json({ message: 'Permission denied: You can only edit users within your own business partner.' });
-            }
+        if (!assistantCanManageUser(requester, beforeUpdate)) {
+            return res.status(403).json({ message: 'Sie dürfen diesen Benutzer nicht bearbeiten.' });
+        }
+        if (requester.role === 'assistenz' && !ASSISTANT_ALLOWED_TARGET_ROLES.has(String(updateData.role || '').toLowerCase())) {
+            return res.status(403).json({ message: 'Mandantenassistenzen dürfen keine privilegierten Benutzerrollen vergeben.' });
         }
 
         let password_hash = beforeUpdate.password_hash;
@@ -298,6 +303,7 @@ exports.updateUser = async (req, res) => {
                 username = $1, email = $2, password_hash = $3, first_name = $4, last_name = $5,
                 organization_name = $6, linkedin_url = $7, membership_level = $8, role = $9, 
                 business_partner_id = $10, is_active = $11, active_until = $12, profile_image_url = $13,
+                auth_version = auth_version + CASE WHEN $15::boolean THEN 1 ELSE 0 END,
                 updated_at = CURRENT_TIMESTAMP
              WHERE id = $14`,
             [
@@ -305,7 +311,8 @@ exports.updateUser = async (req, res) => {
                 updateData.last_name, updateData.organization_name, updateData.linkedin_url,
                 updateData.membership_level, updateData.role, finalBpId || null,
                 updateData.is_active, updateData.active_until || null, updateData.profile_image_url || null,
-                targetUserId
+                targetUserId,
+                Boolean(updateData.password && updateData.password.trim() !== '')
             ]
         );
 
@@ -355,8 +362,7 @@ exports.deleteUser = async (req, res) => {
         const targetUserResult = await db.query('SELECT * FROM users WHERE id = $1', [targetUserId]);
         if (targetUserResult.rows.length === 0) return res.status(404).json({ message: 'User not found.' });
         const targetUser = targetUserResult.rows[0];
-        if (requester.role === 'assistenz' && targetUser.role === 'admin') return res.status(403).json({ message: 'Permission denied to delete admin users.' });
-        if (requester.role === 'assistenz' && targetUser.business_partner_id !== requester.business_partner_id) return res.status(403).json({ message: 'Permission denied: You can only delete users within your own business partner.' });
+        if (!assistantCanManageUser(requester, targetUser)) return res.status(403).json({ message: 'Sie dürfen diesen Benutzer nicht löschen.' });
         const businessPartnerName = await getBusinessPartnerName(targetUser.business_partner_id);
         await db.query('DELETE FROM users WHERE id = $1', [targetUserId]);
         await logActivity({
@@ -407,9 +413,9 @@ exports.importUsersFromCSV = async (req, res) => {
                         continue;
                     }
 
-                    if (requester.role === 'assistenz' && role === 'admin') {
+                    if (requester.role === 'assistenz' && !ASSISTANT_ALLOWED_TARGET_ROLES.has(String(role).toLowerCase())) {
                         report.errorCount++;
-                        report.errors.push(`Zeile ${index + 2} (${email}): Assistenten dürfen keine Admin-Benutzer erstellen.`);
+                        report.errors.push(`Zeile ${index + 2} (${email}): Mandantenassistenzen dürfen keine privilegierten Rollen vergeben.`);
                         continue;
                     }
 
@@ -442,10 +448,15 @@ exports.importUsersFromCSV = async (req, res) => {
                     if (parsedActiveUntil && isNaN(parsedActiveUntil.getTime())) parsedActiveUntil = null; // Basic Validation
 
                     try {
-                        const userCheck = await db.query('SELECT id, password_hash FROM users WHERE email = $1', [email]);
+                        const userCheck = await db.query('SELECT id, password_hash, role, business_partner_id FROM users WHERE email = $1', [email]);
                         
                         if (userCheck.rows.length > 0) {
                             const existingUser = userCheck.rows[0];
+                            if (!assistantCanManageUser(requester, existingUser)) {
+                                report.errorCount++;
+                                report.errors.push(`Zeile ${index + 2} (${email}): Fremder oder privilegierter Benutzer darf nicht geändert werden.`);
+                                continue;
+                            }
                             let newPasswordHash = existingUser.password_hash;
                             if (password && password.trim() !== '') {
                                 newPasswordHash = await bcrypt.hash(password, salt);
@@ -463,9 +474,10 @@ exports.importUsersFromCSV = async (req, res) => {
                                     password_hash = $8,
                                     is_active = $9,
                                     active_until = $10,
+                                    auth_version = auth_version + CASE WHEN $12::boolean THEN 1 ELSE 0 END,
                                     updated_at = CURRENT_TIMESTAMP
                                  WHERE id = $11`,
-                                [first_name, last_name, organization_name, linkedin_url, membership_level, role, business_partner_id, newPasswordHash, parsedIsActive, parsedActiveUntil, existingUser.id]
+                                [first_name, last_name, organization_name, linkedin_url, membership_level, role, business_partner_id, newPasswordHash, parsedIsActive, parsedActiveUntil, existingUser.id, Boolean(password && password.trim() !== '')]
                             );
                             report.successCount++;
                             continue;
@@ -550,7 +562,7 @@ exports.exportUsersToCSV = async (req, res) => {
         let businessPartnerIdForFilename = null;
         
         if (requesterRole === 'assistenz') {
-            finalQuery += ` WHERE u.business_partner_id = $1 AND u.role != 'admin'`;
+            finalQuery += ` WHERE u.business_partner_id = $1 AND u.role NOT IN ('admin', 'assistenz')`;
             queryParams.push(requesterBpId);
             businessPartnerIdForFilename = requesterBpId;
         } else if (requesterRole === 'admin' && adminFilterBpId && isValidUUID(adminFilterBpId)) {
@@ -715,7 +727,7 @@ exports.getUserStatistics = async (req, res) => {
     try {
         // 1. Basis-User-Daten holen (Punkte, Datum, etc.)
         const userResult = await db.query(`
-            SELECT created_at, last_login_at, contribution_score, linkedin_url
+            SELECT created_at, last_login_at, contribution_score, linkedin_url, role, business_partner_id
             FROM users WHERE id = $1
         `, [id]);
 
@@ -723,6 +735,9 @@ exports.getUserStatistics = async (req, res) => {
             return res.status(404).json({ message: 'User nicht gefunden.' });
         }
         const userData = userResult.rows[0];
+        if (!assistantCanManageUser(req.user, userData)) {
+            return res.status(404).json({ message: 'User nicht gefunden.' });
+        }
 
         // 2. Installierte Widgets aus ALLEN Dashboards des Nutzers extrahieren
         const widgetQuery = `
@@ -764,6 +779,10 @@ exports.removeWidgetFromUserDashboard = async (req, res) => {
     const { id, widgetKey } = req.params;
 
     try {
+        const targetResult = await db.query('SELECT role, business_partner_id FROM users WHERE id = $1', [id]);
+        if (targetResult.rows.length === 0 || !assistantCanManageUser(req.user, targetResult.rows[0])) {
+            return res.status(404).json({ message: 'Benutzer nicht gefunden oder Zugriff verweigert.' });
+        }
         // 1. Hole die aktuelle Konfiguration
         const configRes = await db.query('SELECT config FROM dashboard_configurations WHERE user_id = $1', [id]);
         if (configRes.rows.length === 0) {

@@ -18,9 +18,12 @@ app.set('trust proxy', 1);
 const PORT = process.env.PORT || 5000;
 const cron = require('node-cron');
 const cors = require('cors');
+const helmet = require('helmet');
 const path = require('path');
 const fs = require('fs');
 const cookieParser = require('cookie-parser');
+const adminAuth = require('./middleware/adminAuth');
+const csrfProtection = require('./middleware/csrfProtection');
 
 const db = require('./config/db');
 const healthController = require('./controllers/healthController');
@@ -31,7 +34,6 @@ const jobManager = require('./services/jobManagerService');
 // Scheduler
 const { runScheduledJobs } = require('./services/cronjobScheduler');
 
-const { dispatchAutomatedNewsletters } = require('./services/marketBriefingService');
 
 // Bull Board & Queue
 const { createBullBoard } = require('@bull-board/api');
@@ -115,6 +117,13 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function assertSecurityConfig() {
+  const jwtSecret = String(process.env.JWT_SECRET || '');
+  if (jwtSecret.length < 32) {
+    throw new Error('JWT_SECRET fehlt oder ist zu kurz. Mindestens 32 zufällige Zeichen sind erforderlich.');
+  }
+}
+
 // Globale Prozessfehler sichtbar machen
 process.on('unhandledRejection', (reason) => {
   console.error('[PROCESS] Unhandled Rejection:', reason);
@@ -140,6 +149,28 @@ createBullBoard({
 });
 
 // --- 3. MIDDLEWARE ---
+app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", 'https://accounts.google.com'],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      connectSrc: ["'self'", 'https:', 'ws:', 'wss:'],
+      fontSrc: ["'self'", 'data:'],
+      frameSrc: ["'self'", 'https://accounts.google.com', 'https://www.youtube.com', 'https://player.vimeo.com'],
+      mediaSrc: ["'self'", 'blob:', 'https:'],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'self'"],
+      upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
+    },
+  },
+}));
+
 const allowedOrigins = [
   'http://localhost:5173', 
   'https://dashboard.mobiliti.at',
@@ -158,13 +189,21 @@ app.use(cors({
     }
   },
   credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Auth-Token'],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 }));
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
+const defaultJsonParser = express.json({ limit: '1mb' });
+const socialMediaJsonParser = express.json({ limit: '12mb' });
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/admin/social-media/')) {
+    return adminAuth(req, res, () => socialMediaJsonParser(req, res, next));
+  }
+  return defaultJsonParser(req, res, next);
+});
+app.use(express.urlencoded({ limit: '1mb', extended: true }));
+app.use(csrfProtection);
 
 app.use('/logos', express.static(path.join(__dirname, 'public', 'logos')));
 app.use('/api/logos', express.static(path.join(__dirname, 'public', 'logos')));
@@ -327,16 +366,20 @@ app.get('*', async (req, res, next) => {
 
 app.use((err, req, res, next) => {
   console.error('[EXPRESS] UNHANDLED ERROR:', err);
+  if (err?.type === 'entity.too.large' || err?.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ message: 'Die Anfrage ist größer als das erlaubte Limit.' });
+  }
   res.status(500).json({
-    message: err.message,
+    message: process.env.NODE_ENV === 'production' ? 'Interner Serverfehler.' : err.message,
     stack: process.env.NODE_ENV === 'production' ? undefined : err.stack,
     error: process.env.NODE_ENV === 'production' ? undefined : err
   });
 });
 
-// --- QUEUE CLEANUP ---
-async function clearAllQueuesOnStartup() {
-  console.log('[JobManager] Bereinige Queues beim Start...');
+// Entfernt nur alte Repeatable-Konfigurationen. Wartende und fehlgeschlagene
+// Jobs bleiben bei Deployments erhalten und können vom Worker wiederaufgenommen werden.
+async function clearLegacyRepeatableJobsOnStartup() {
+  console.log('[JobManager] Entferne nur veraltete Repeatable-Jobs...');
 
   const allQueues = [
     aiContentQueue,
@@ -357,12 +400,9 @@ async function clearAllQueuesOnStartup() {
         await queue.removeRepeatableByKey(job.key);
         console.log(`[JobManager] Repeatable entfernt: ${job.name} (Key: ${job.key}) aus ${queue.name}`);
       }
-
-      await queue.obliterate({ force: true });
-      console.log(`[JobManager] Queue geleert: ${queue.name}`);
     }
 
-    console.log('[JobManager] Alle Queues erfolgreich bereinigt.');
+    console.log('[JobManager] Repeatable-Jobs bereinigt; Queue-Inhalte wurden erhalten.');
   } catch (err) {
     console.error('[JobManager] Fehler beim Bereinigen der Queues:', err);
     throw err;
@@ -373,6 +413,7 @@ async function clearAllQueuesOnStartup() {
 async function startServer() {
   try {
     logBootConfig();
+    assertSecurityConfig();
 
     console.log('[BOOT] Prüfe PostgreSQL-Verbindung...');
     const dbCheckResult = await db.query('SELECT current_database(), version();');
@@ -384,8 +425,8 @@ async function startServer() {
     await connectRedisClients();
     console.log('[BOOT] Redis-Verbindungen sind bereit.');
 
-    console.log('[BOOT] Starte Queue-Bereinigung...');
-    await clearAllQueuesOnStartup();
+    console.log('[BOOT] Prüfe veraltete Queue-Zeitpläne...');
+    await clearLegacyRepeatableJobsOnStartup();
 
     console.log('[Scheduler] Starte Cron-Ticker (Minutentakt)...');
     cron.schedule('* * * * *', async () => {
@@ -397,16 +438,6 @@ async function startServer() {
       }
     });
     
-    console.log('[Scheduler] Starte Cron für täglichen E-Mail-Newsletter Check (08:30 Uhr)...');
-    cron.schedule('30 8 * * *', async () => {
-      try {
-        console.log(`[Scheduler ${nowIso()}] Führe dispatchAutomatedNewsletters aus`);
-        await dispatchAutomatedNewsletters();
-      } catch (err) {
-        console.error('[Scheduler] Fehler beim automatischen Newsletter-Versand:', err);
-      }
-    });
-
     app.listen(PORT, () => {
       console.log('==================================================');
       console.log(`[BOOT] Server läuft auf http://localhost:${PORT}`);

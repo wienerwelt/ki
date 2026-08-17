@@ -262,7 +262,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
 
     useEffect(() => {
         if (!category) return;
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         apiClient.get(`/api/data/tags?category=${category}`, { headers: { 'x-auth-token': token } })
             .then(tagsRes => setAvailableTags(tagsRes.data || []))
             .catch(e => console.error("Could not load tags", e));
@@ -273,7 +273,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
         if (loadMore) setIsLoadingMore(true); else setIsLoading(true);
         setError(null);
 
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         const regionObj = user?.regions?.find(r => r.id === regionId);
         
         const itemParams = new URLSearchParams({ 
@@ -323,7 +323,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
         setSelectedArticle(article);
         if (!article.is_read) {
             try {
-                const token = localStorage.getItem('jwt_token');
+                const token = 'cookie-session';
                 await apiClient.post(`/api/data/scraped-content/${article.id}/mark-as-read`, {}, { headers: { 'x-auth-token': token } });
                 setItems(prev => prev.map(n => n.id === article.id ? { ...n, is_read: true } : n));
                 setCounts(prev => ({ ...prev, unread: Math.max(0, prev.unread - 1) }));
@@ -332,7 +332,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
     }, []);
 
     const handleVote = useCallback(async (contentId: string, vote: 1 | -1) => {
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         setItems(prev => prev.map(item => item.id === contentId ? { ...item, user_vote: item.user_vote === vote ? 0 : vote } : item));
         try {
             const res = await apiClient.post(`/api/data/content/${contentId}/vote`, { vote: vote, contentType: 'scraped_content' }, { headers: { 'x-auth-token': token } });
@@ -349,7 +349,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
         if (!selectedArticle || !shareState.recipientEmail) return;
         setShareState(prev => ({ ...prev, loading: true }));
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const response = await apiClient.post('/api/data/share-content-by-email', { title: selectedArticle.title, summary: selectedArticle.summary, source: selectedArticle.original_url, recipientEmail: shareState.recipientEmail }, { headers: { 'x-auth-token': token } });
             setShareState(prev => ({ ...prev, loading: false, success: response.data.message }));
         } catch (err: any) { setShareState(prev => ({ ...prev, loading: false, error: err.response?.data?.message })); }
@@ -359,7 +359,7 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
         if (!selectedArticle) return;
         setAiDraftState({ ...aiDraftState, open: true, loading: true, error: null, content: '' });
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const response = await apiClient.post('/api/data/generate-draft-from-content', { contentId: selectedArticle.id }, { headers: { 'x-auth-token': token } });
             setAiDraftState({ open: true, loading: false, error: null, content: response.data.draft });
         } catch (err: any) { setAiDraftState({ open: true, loading: false, error: err.response?.data?.message || 'Fehler.', content: '' }); }

@@ -24,7 +24,7 @@ const TrustedSourcesWidget: React.FC<TrustedSourcesWidgetProps> = ({ onDelete, w
             setLoading(true);
             setError(null);
             try {
-                const token = localStorage.getItem('jwt_token');
+                const token = 'cookie-session';
                 const response = await apiClient.get('/api/sources/pending', { headers: { 'x-auth-token': token } });
                 setPendingCount(response.data.length);
             } catch (err: any) {

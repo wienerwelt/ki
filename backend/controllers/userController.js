@@ -15,7 +15,8 @@ exports.getProfile = async (req, res) => {
                 u.id, u.username, u.email, u.first_name, u.last_name, u.organization_name,
                 u.linkedin_url, u.membership_level, u.role, u.business_partner_id,
                 u.article_score_min, u.article_score_max,
-                u.contribution_score, u.newsletter_opt_in,
+                u.contribution_score, u.newsletter_opt_in, u.briefing_email_enabled,
+                u.newsletter_opt_in_confirmed_at,
                 u.profile_image_url,
                 u.last_login_at,
                 u.phone,
@@ -47,12 +48,8 @@ exports.getProfile = async (req, res) => {
 exports.updateProfile = async (req, res) => {
     try {
         const userId = req.user.id;
-        const {
-            first_name, last_name, organization_name, linkedin_url, password,
-            article_score_min, article_score_max, preferred_theme, preferred_language,
-            newsletter_opt_in,
-            phone
-        } = req.body;
+        const body = req.body || {};
+        const phone = body.phone;
 
         // 1. Telefonnummer Validierung (Einfach & Sinnvoll)
         if (phone) {
@@ -67,33 +64,61 @@ exports.updateProfile = async (req, res) => {
             }
         }
 
-        const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+        const { rows } = await db.query(
+            'SELECT password_hash, newsletter_opt_in FROM users WHERE id = $1',
+            [userId]
+        );
         if (rows.length === 0) return res.status(404).json({ message: 'Benutzer nicht gefunden.' });
 
-        let password_hash = rows[0].password_hash;
-        if (password && password.trim() !== '') {
-            const salt = await bcrypt.genSalt(10);
-            password_hash = await bcrypt.hash(password, salt);
+        if (body.newsletter_opt_in === true && rows[0].newsletter_opt_in !== true) {
+            return res.status(400).json({
+                message: 'Die Newsletter-Anmeldung muss über den Bestätigungslink (Double-Opt-In) erfolgen.'
+            });
+        }
+        if (body.briefing_email_enabled === true && rows[0].newsletter_opt_in !== true) {
+            return res.status(400).json({
+                message: 'Bitte bestätigen Sie zuerst die Newsletter-Anmeldung per E-Mail.'
+            });
         }
 
-        // 2. Update Query mit phone
-        // ACHTUNG: Hier hat der Parameter im Array gefehlt!
-        await db.query(
-            `UPDATE users SET
-                first_name = $1, last_name = $2, organization_name = $3, linkedin_url = $4, password_hash = $5,
-                article_score_min = $6, article_score_max = $7, preferred_theme = $8, preferred_language = $9,
-                newsletter_opt_in = $10,
-                phone = $11,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $12 RETURNING *`,
-            [
-                first_name, last_name, organization_name, linkedin_url, password_hash,
-                article_score_min, article_score_max, preferred_theme, preferred_language,
-                newsletter_opt_in,
-                phone ? phone.trim() : null, // <--- HIER KORRIGIERT: phone als 11. Parameter
-                userId // <--- userId ist der 12. Parameter
-            ]
-        );
+        const allowedFields = [
+            'first_name', 'last_name', 'organization_name', 'linkedin_url',
+            'article_score_min', 'article_score_max', 'preferred_theme',
+            'preferred_language', 'newsletter_opt_in', 'briefing_email_enabled', 'phone'
+        ];
+        const assignments = [];
+        const values = [];
+        const addValue = (column, value) => {
+            values.push(value);
+            assignments.push(`${column} = $${values.length}`);
+        };
+
+        for (const field of allowedFields) {
+            if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
+            let value = body[field];
+            if (field === 'phone') value = value ? String(value).trim() : null;
+            addValue(field, value);
+        }
+
+        if (body.newsletter_opt_in === false) {
+            addValue('briefing_email_enabled', false);
+            assignments.push('newsletter_unsubscribed_at = CURRENT_TIMESTAMP');
+        }
+
+        if (body.password && String(body.password).trim() !== '') {
+            const salt = await bcrypt.genSalt(10);
+            addValue('password_hash', await bcrypt.hash(String(body.password), salt));
+            assignments.push('auth_version = auth_version + 1');
+        }
+
+        if (assignments.length > 0) {
+            values.push(userId);
+            await db.query(
+                `UPDATE users SET ${assignments.join(', ')}, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = $${values.length}`,
+                values
+            );
+        }
         
         // 3. Profil zurückgeben
         const profileResult = await db.query(
@@ -101,8 +126,9 @@ exports.updateProfile = async (req, res) => {
                 u.id, u.username, u.email, u.first_name, u.last_name, u.organization_name,
                 u.linkedin_url, u.membership_level, u.role, u.business_partner_id,
                 u.article_score_min, u.article_score_max,
-                u.contribution_score, u.newsletter_opt_in,
-                u.phone, -- <--- WICHTIG: Damit das Frontend die neue Nummer sofort sieht
+                u.contribution_score, u.newsletter_opt_in, u.briefing_email_enabled,
+                u.newsletter_opt_in_confirmed_at,
+                u.phone,
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
                     ORDER BY bpr.is_default DESC, r.name ASC

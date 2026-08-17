@@ -106,7 +106,7 @@ const AdminTagsPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const [tagsRes, categoriesRes] = await Promise.all([
                 apiClient.get('/api/admin/tags', { headers: { 'x-auth-token': token } }),
                 apiClient.get('/api/data/categories', { headers: { 'x-auth-token': token } })
@@ -156,7 +156,7 @@ const AdminTagsPage: React.FC = () => {
     };
 
     const handleSubmit = async () => {
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         const headers = { 'x-auth-token': token }; 
 
         const formData = new FormData();
@@ -183,7 +183,7 @@ const AdminTagsPage: React.FC = () => {
     const handleDelete = async (id: string) => {
         if (!window.confirm('Sind Sie sicher, dass Sie diesen Tag löschen möchten? Alle Zuordnungen zu Inhalten werden ebenfalls entfernt.')) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.delete(`/api/admin/tags/${id}`, { headers: { 'x-auth-token': token } });
             fetchAllData();
         } catch (err: any) {

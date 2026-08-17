@@ -19,6 +19,7 @@ import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
 import { format, isValid } from 'date-fns';
 import { de } from 'date-fns/locale';
+import DOMPurify from 'dompurify';
 
 // --- Interfaces ---
 
@@ -177,7 +178,7 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
         setError(null);
         
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const params = new URLSearchParams({
                 category,
                 limit: '10',
@@ -207,7 +208,7 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
     // --- Actions ---
 
     const handleVote = async (itemId: string, vote: 1 | -1) => {
-        const token = localStorage.getItem('jwt_token');
+        const token = 'cookie-session';
         // Optimistic Update
         setItems(prev => prev.map(i => i.id === itemId ? { ...i, user_vote: i.user_vote === vote ? 0 : vote } : i));
 
@@ -230,7 +231,7 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
 
     const markAsRead = async (itemId: string) => {
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.post(`/api/data/content/${itemId}/mark-as-read`, { contentType: 'ai_content' }, { headers: { 'x-auth-token': token } });
             setItems(prev => prev.map(i => i.id === itemId ? { ...i, is_read: true } : i));
         } catch (e) { /* ignore */ }
@@ -247,7 +248,7 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
         if (!selectedArticle || !shareState.recipientEmail) return;
         setShareState(prev => ({ ...prev, loading: true }));
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const response = await apiClient.post('/api/data/share-content-by-email', { 
                 title: selectedArticle.title, 
                 summary: selectedArticle.summary, // oder content snippet
@@ -371,7 +372,7 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
                                         </Stack>
                                     </AccordionSummary>
                                     <AccordionDetails sx={{ bgcolor: 'action.hover', p: 2 }}>
-                                        <Typography variant="body2" component="div" dangerouslySetInnerHTML={{ __html: item.content || item.summary || '' }} sx={{ mb: 2 }} />
+                                        <Typography variant="body2" component="div" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(item.content || item.summary || '', { USE_PROFILES: { html: true } }) }} sx={{ mb: 2 }} />
                                         
                                         <Stack direction="row" justifyContent="space-between" alignItems="center">
                                             {item.original_url && (

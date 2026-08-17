@@ -75,7 +75,7 @@ const AdminScrapingTab: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             const headers = { 'x-auth-token': token };
 
             const [rulesRes, cronjobsRes] = await Promise.all([
@@ -118,7 +118,7 @@ const AdminScrapingTab: React.FC = () => {
     const handleSaveSchedule = async () => {
         if (!editingRule) return;
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             let endpoint = '';
             let payload = { schedule: editingRule.schedule, is_active: true }; // Annahme für is_active
 
@@ -145,7 +145,7 @@ const AdminScrapingTab: React.FC = () => {
         if (ruleIdsToDelete.length === 0 || !window.confirm(`Sind Sie sicher, dass Sie ${ruleIdsToDelete.length} geplante Regel(n) deaktivieren möchten? (Der Zeitplan wird entfernt)`)) return;
         
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await Promise.all(ruleIdsToDelete.map(id => 
                 apiClient.put(`/api/admin/scraping-rules/${id}/schedule`, { schedule: null }, { headers: { 'x-auth-token': token } })
             ));
@@ -194,7 +194,7 @@ const AdminScrapingTab: React.FC = () => {
 
         setSnackbar({ open: true, message: `Job '${job.name}' wird gestartet...` });
         try {
-            const token = localStorage.getItem('jwt_token');
+            const token = 'cookie-session';
             await apiClient.post(endpoint, {}, { headers: { 'x-auth-token': token } });
             setSnackbar({ open: true, message: 'Job wurde erfolgreich zur Warteschlange hinzugefügt.' });
         } catch (err) {

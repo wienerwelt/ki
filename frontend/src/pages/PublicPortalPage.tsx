@@ -67,6 +67,7 @@ import MapOutlinedIcon from '@mui/icons-material/MapOutlined';
 import ViewListOutlinedIcon from '@mui/icons-material/ViewListOutlined';
 import AppsOutlinedIcon from '@mui/icons-material/AppsOutlined';
 import LocalOfferOutlinedIcon from '@mui/icons-material/LocalOfferOutlined';
+import ShareOutlinedIcon from '@mui/icons-material/ShareOutlined';
 
 // --- WIDGETS (lazy) ---
 const EVStationWidget = lazy(() => import('../components/widgets/EVStationWidget'));
@@ -108,6 +109,18 @@ const escapeMapHtml = (value: unknown) => String(value ?? '')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+
+const getExternalUrl = (value: unknown): string => {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) return '';
+
+    try {
+        const parsed = new URL(/^https?:\/\//i.test(rawValue) ? rawValue : `https://${rawValue}`);
+        return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : '';
+    } catch {
+        return '';
+    }
+};
 
 
 const getEventCategoryToken = (item: any): string => {
@@ -188,6 +201,12 @@ const formatProviderAddress = (location: any): string => {
         parts.findIndex((candidate) => candidate.toLocaleLowerCase('de') === part.toLocaleLowerCase('de')) === index
     ).join(', ');
 };
+
+const getProviderAddressLocations = (provider: any): any[] => (
+    Array.isArray(provider?.locations)
+        ? provider.locations.filter((location: any) => Boolean(formatProviderAddress(location)))
+        : []
+);
 
 const hasProviderCoordinates = (location: any): boolean => {
     if (!location) return false;
@@ -300,12 +319,14 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     const partnerName = partner?.name || 'IHRE ORGANISATION';
     const partnerClaim = partner?.claim || 'Gemeinsam. Stärker. Zukunft.';
     const partnerWebsite = partner?.url_businesspartner || '';
+    const partnerWebsiteUrl = getExternalUrl(partnerWebsite);
     const dashboardTitle = partner?.dashboard_title || 'Ihr Branchen-Dashboard';
     const defaultRegion = publicContext?.defaultRegion || 'AT';
     const allowedWidgets = publicContext?.allowedWidgets || [];
     const tenantStats = publicContext?.stats || { total_directory_entries: 0, total_software_entries: 0, community_members: 0, community_activity: 0 };
     const canonicalPartnerSlug = partner?.slug || (partnerSlug ? String(partnerSlug) : '');
     const canonicalPartnerPath = canonicalPartnerSlug ? `/${encodeURIComponent(canonicalPartnerSlug)}` : '/';
+    const canonicalPartnerHomePath = canonicalPartnerPath === '/' ? '/' : `${canonicalPartnerPath}/`;
     const loginRoute = `${canonicalPartnerPath}${canonicalPartnerPath.includes('?') ? '&' : '?'}login=1`;
 
     useEffect(() => {
@@ -484,6 +505,18 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
 
         return () => { active = false; };
     }, [partner?.id]);
+
+    useEffect(() => {
+        const sharedProviderId = searchParams.get('provider');
+        if (!sharedProviderId || networkProviders.length === 0) return;
+        if (selectedTeaserProvider?.id === sharedProviderId) return;
+
+        const sharedProvider = networkProviders.find((provider: any) => provider.id === sharedProviderId);
+        if (sharedProvider) {
+            setSelectedTeaserProvider(sharedProvider);
+            setTeaserTab(0);
+        }
+    }, [networkProviders, searchParams, selectedTeaserProvider?.id]);
 
     const tenantDirectoryProvider = useMemo(
         () => networkProviders.find((provider: any) => provider.is_tenant_entry === true) || null,
@@ -700,6 +733,45 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
     };
 
+    const handleCloseProviderDetail = () => {
+        setSelectedTeaserProvider(null);
+        if (!searchParams.has('provider')) return;
+
+        const nextSearchParams = new URLSearchParams(searchParams);
+        nextSearchParams.delete('provider');
+        setSearchParams(nextSearchParams, { replace: true });
+    };
+
+    const handleShareProvider = async (provider: any) => {
+        const shareUrl = new URL(`${window.location.origin}${canonicalPartnerPath}`);
+        shareUrl.searchParams.set('provider', String(provider.id));
+        shareUrl.hash = 'branchenverzeichnis';
+
+        const address = formatProviderAddress(getProviderAddressLocations(provider)[0]);
+        const shareData = {
+            title: `${provider.name} | Branchenverzeichnis`,
+            text: `${provider.name}${address ? ` – ${address}` : ''} im Branchenverzeichnis von ${partnerName}`,
+            url: shareUrl.toString(),
+        };
+
+        try {
+            if (navigator.share) {
+                await navigator.share(shareData);
+                return;
+            }
+            await navigator.clipboard.writeText(shareData.url);
+            showSnackbar('Link zum Brancheneintrag kopiert.', 'success');
+        } catch (error: any) {
+            if (error?.name === 'AbortError') return;
+            try {
+                await navigator.clipboard.writeText(shareData.url);
+                showSnackbar('Link zum Brancheneintrag kopiert.', 'success');
+            } catch {
+                showSnackbar('Der Brancheneintrag konnte nicht geteilt werden.', 'error');
+            }
+        }
+    };
+
     const navItems = ['Für Mitglieder', 'Branchenverzeichnis', 'Software', 'News & Insights', 'Community', 'Über uns'];
 
     const handleNavItemClick = (item: string) => {
@@ -716,8 +788,8 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
             return;
         }
 
-        if (isExternal && partnerWebsite) {
-            window.open(partnerWebsite.startsWith('http') ? partnerWebsite : `https://${partnerWebsite}`, '_blank', 'noopener,noreferrer');
+        if (isExternal && partnerWebsiteUrl) {
+            window.open(partnerWebsiteUrl, '_blank', 'noopener,noreferrer');
             return;
         }
 
@@ -851,6 +923,21 @@ const getProviderCategoryLabel = (provider: any): string => {
     return provider?.category || 'Netzwerkpartner';
 };
 
+const renderPartnerLogo = (imageSx: any) => {
+    const logo = <ImageWithFallback src={logoUrl} alt={partnerName} fallbackColor={primaryColor} loading="lazy" sx={imageSx} />;
+
+    return (
+        <Link
+            href={canonicalPartnerHomePath}
+            underline="none"
+            aria-label={`${partnerName} Portal-Startseite öffnen`}
+            sx={{ display: 'inline-flex', flexShrink: 0, borderRadius: 1, '&:focus-visible': { outline: `3px solid ${alpha(primaryColor, 0.4)}`, outlineOffset: 2 } }}
+        >
+            {logo}
+        </Link>
+    );
+};
+
 const renderProviderPreviewCard = (provider: any) => {
     const loc = provider.locations?.[0];
     return (
@@ -971,7 +1058,7 @@ const renderProviderPreviewCard = (provider: any) => {
                         
                         <Stack direction="row" alignItems="center" spacing={1.5} sx={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                             <Box sx={{ flexShrink: 0 }}>
-                                <ImageWithFallback src={logoUrl} alt={partnerName} fallbackColor={primaryColor} loading="lazy" sx={{ width: { xs: 40, md: 52 }, height: { xs: 34, md: 42 }, objectFit: 'contain' }} />
+                                {renderPartnerLogo({ width: { xs: 40, md: 52 }, height: { xs: 34, md: 42 }, objectFit: 'contain' })}
                             </Box>
                             <Box sx={{ minWidth: 0 }}>
                                 <Typography variant="subtitle1" fontWeight={950} color={darkBlue} lineHeight={1.1} noWrap>{partnerName}</Typography>
@@ -1085,7 +1172,7 @@ const renderProviderPreviewCard = (provider: any) => {
                 <Stack spacing={2.5} sx={{ height: '100%' }}>
                     <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
                         <Stack direction="row" alignItems="center" spacing={1.5} sx={{ minWidth: 0 }}>
-                            <ImageWithFallback src={logoUrl} alt={partnerName} fallbackColor={primaryColor} loading="lazy" sx={{ width: 46, height: 38, objectFit: 'contain' }} />
+                            {renderPartnerLogo({ width: 46, height: 38, objectFit: 'contain' })}
                             <Box sx={{ minWidth: 0 }}>
                                 <Typography variant="subtitle1" fontWeight={950} color={darkBlue} noWrap>{partnerName}</Typography>
                                 <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.62), fontWeight: 700 }} noWrap>{dashboardTitle}</Typography>
@@ -1657,7 +1744,7 @@ const renderProviderPreviewCard = (provider: any) => {
                     <Box sx={{ p: 3, bgcolor: softBg, borderBottom: `1px solid ${alpha(darkBlue, 0.08)}` }}>
                         <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={2}>
                             <Stack direction="row" alignItems="center" spacing={1.5}>
-                                <ImageWithFallback src={logoUrl} alt={partnerName} fallbackColor={primaryColor} loading="lazy" sx={{ width: 48, height: 40, objectFit: 'contain' }} />
+                                {renderPartnerLogo({ width: 48, height: 40, objectFit: 'contain' })}
                                 <Box>
                                     <Typography variant="h5" fontWeight={950} color={darkBlue}>{isRegisterMode ? 'Konto erstellen' : 'Mitglieder-Login'}</Typography>
                                     <Typography variant="body2" sx={{ color: alpha(darkBlue, 0.65) }}>{partnerName} Mitgliederbereich</Typography>
@@ -1672,15 +1759,33 @@ const renderProviderPreviewCard = (provider: any) => {
                 </DialogContent>
             </Dialog>
 
-            <Dialog open={!!selectedTeaserProvider} onClose={() => setSelectedTeaserProvider(null)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.08)}`, m: { xs: 2, sm: 3 } } }}>
+            <Dialog open={!!selectedTeaserProvider} onClose={handleCloseProviderDetail} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.08)}`, m: { xs: 2, sm: 3 } } }}>
                 {selectedTeaserProvider && (
                     <>
                         <DialogTitle sx={{ p: { xs: 2, sm: 3 }, pb: 0 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
                                 <Box sx={{ display: 'flex', gap: { xs: 1.5, sm: 2 }, alignItems: 'flex-start', minWidth: 0 }}>
-                                    <Avatar sx={{ width: { xs: 48, sm: 64 }, height: { xs: 48, sm: 64 }, bgcolor: 'transparent', flexShrink: 0 }}>
-                                        <ImageWithFallback src={selectedTeaserProvider.logo_url ? getAssetUrl(selectedTeaserProvider.logo_url) : null} alt={selectedTeaserProvider.name} fallbackColor={primaryColor} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                                    </Avatar>
+                                    {(() => {
+                                        const providerWebsiteUrl = getExternalUrl(selectedTeaserProvider.website_url);
+                                        const providerLogo = (
+                                            <Avatar sx={{ width: { xs: 48, sm: 64 }, height: { xs: 48, sm: 64 }, bgcolor: 'transparent', flexShrink: 0 }}>
+                                                <ImageWithFallback src={selectedTeaserProvider.logo_url ? getAssetUrl(selectedTeaserProvider.logo_url) : null} alt={selectedTeaserProvider.name} fallbackColor={primaryColor} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                                            </Avatar>
+                                        );
+
+                                        return providerWebsiteUrl ? (
+                                            <Link
+                                                href={providerWebsiteUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                underline="none"
+                                                aria-label={`${selectedTeaserProvider.name} Website öffnen`}
+                                                sx={{ display: 'inline-flex', flexShrink: 0, borderRadius: 1.5, '&:focus-visible': { outline: `3px solid ${alpha(primaryColor, 0.4)}`, outlineOffset: 2 } }}
+                                            >
+                                                {providerLogo}
+                                            </Link>
+                                        ) : providerLogo;
+                                    })()}
                                     <Box sx={{ minWidth: 0 }}>
                                         <Typography variant="h5" color={darkBlue} fontWeight={950} sx={{ fontSize: { xs: '1.3rem', sm: '1.5rem' }, lineHeight: 1.2, mb: 0.5 }}>
                                             {selectedTeaserProvider.name}
@@ -1694,7 +1799,17 @@ const renderProviderPreviewCard = (provider: any) => {
                                         </Stack>
                                     </Box>
                                 </Box>
-                                <IconButton onClick={() => setSelectedTeaserProvider(null)} sx={{ flexShrink: 0, m: -1 }}><CloseIcon /></IconButton>
+                                <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexShrink: 0 }}>
+                                    <Button
+                                        size="small"
+                                        startIcon={<ShareOutlinedIcon />}
+                                        onClick={() => handleShareProvider(selectedTeaserProvider)}
+                                        sx={{ color: primaryColor, fontWeight: 900, textTransform: 'none', minWidth: 0 }}
+                                    >
+                                        Teilen
+                                    </Button>
+                                    <IconButton aria-label="Detailansicht schließen" onClick={handleCloseProviderDetail} sx={{ m: -0.5 }}><CloseIcon /></IconButton>
+                                </Stack>
                             </Box>
                             
                             <Tabs value={teaserTab} onChange={(_, val) => setTeaserTab(val)} variant="fullWidth" sx={{ mt: 3, '& .MuiTab-root': { color: alpha(darkBlue, 0.56), fontWeight: 900, px: 1 }, '& .Mui-selected': { color: primaryColor } }} TabIndicatorProps={{ style: { backgroundColor: primaryColor } }}>
@@ -1711,10 +1826,10 @@ const renderProviderPreviewCard = (provider: any) => {
                                     </Typography>
                                     
                                     <Paper sx={{ p: { xs: 1.5, sm: 2 }, bgcolor: alpha(primaryColor, 0.04), borderRadius: 3, border: `1px solid ${alpha(primaryColor, 0.12)}` }} elevation={0}>
-                                        {selectedTeaserProvider.website_url && (
+                                        {getExternalUrl(selectedTeaserProvider.website_url) && (
                                             <Box 
                                                 component="a" 
-                                                href={selectedTeaserProvider.website_url.startsWith('http') ? selectedTeaserProvider.website_url : `https://${selectedTeaserProvider.website_url}`} 
+                                                href={getExternalUrl(selectedTeaserProvider.website_url)}
                                                 target="_blank" 
                                                 rel="noopener noreferrer"
                                                 sx={{ 
@@ -1752,16 +1867,21 @@ const renderProviderPreviewCard = (provider: any) => {
                                             </Box>
                                         )}
 
-                                        {formatProviderAddress(selectedTeaserProvider.locations?.[0]) && (
-                                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, mt: 1.5, color: alpha(darkBlue, 0.72) }}>
+                                        {getProviderAddressLocations(selectedTeaserProvider).map((providerLocation: any, index: number, locations: any[]) => (
+                                            <Box key={providerLocation.id || `${formatProviderAddress(providerLocation)}-${index}`} sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, mt: 1.5, color: alpha(darkBlue, 0.72) }}>
                                                 <PlaceOutlinedIcon fontSize="small" sx={{ mt: 0.2, flexShrink: 0 }} />
-                                                <Typography variant="body2" sx={{ wordBreak: 'break-word', lineHeight: 1.3 }}>
-                                                    {formatProviderAddress(selectedTeaserProvider.locations?.[0])}
-                                                </Typography>
+                                                <Box sx={{ minWidth: 0 }}>
+                                                    <Typography variant="caption" sx={{ display: 'block', color: alpha(darkBlue, 0.55), fontWeight: 900, lineHeight: 1.2 }}>
+                                                        {providerLocation.is_headquarter ? 'Hauptsitz' : locations.length > 1 ? `Standort ${index + 1}` : 'Standort'}
+                                                    </Typography>
+                                                    <Typography variant="body2" sx={{ wordBreak: 'break-word', lineHeight: 1.35 }}>
+                                                        {formatProviderAddress(providerLocation)}
+                                                    </Typography>
+                                                </Box>
                                             </Box>
-                                        )}
+                                        ))}
                                         
-                                        {!selectedTeaserProvider.website_url && !selectedTeaserProvider.contact_email && !selectedTeaserProvider.contact_phone && !formatProviderAddress(selectedTeaserProvider.locations?.[0]) && (
+                                        {!selectedTeaserProvider.website_url && !selectedTeaserProvider.contact_email && !selectedTeaserProvider.contact_phone && getProviderAddressLocations(selectedTeaserProvider).length === 0 && (
                                             <Typography variant="body2" color="text.secondary">Kontaktinformationen sind nur für Mitglieder einsehbar oder wurden nicht hinterlegt.</Typography>
                                         )}
                                     </Paper>
@@ -1788,7 +1908,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                             <LockIcon sx={{ fontSize: 40, color: primaryColor, mb: 1.5 }} />
                                             <Typography variant="h6" color={darkBlue} fontWeight={950} gutterBottom>Exklusive Insights</Typography>
                                             <Typography variant="body2" sx={{ color: alpha(darkBlue, 0.72), mb: 3, maxWidth: 330 }}>Melden Sie sich an, um echte Community-Erfahrungen, interne Konditionen und erweiterte Kontaktdaten zu lesen.</Typography>
-                                            <Button variant="contained" onClick={() => { setSelectedTeaserProvider(null); handleLoginCta(); }} sx={{ bgcolor: primaryColor, color: '#fff', fontWeight: 950, borderRadius: 2, px: 4, py: 1.2, textTransform: 'none' }}>
+                                            <Button variant="contained" onClick={() => { handleCloseProviderDetail(); handleLoginCta(); }} sx={{ bgcolor: primaryColor, color: '#fff', fontWeight: 950, borderRadius: 2, px: 4, py: 1.2, textTransform: 'none' }}>
                                                 Jetzt einloggen
                                             </Button>
                                         </Box>

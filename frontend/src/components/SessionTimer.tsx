@@ -29,7 +29,7 @@ const SessionTimer: React.FC = () => {
             if (remaining <= 0) {
                 clearInterval(interval);
                 alert("Ihre Sitzung ist abgelaufen. Sie werden nun ausgeloggt.");
-                navigate(logout(), { replace: true });
+                void logout().then((targetUrl) => navigate(targetUrl, { replace: true }));
             }
         }, 1000);
 

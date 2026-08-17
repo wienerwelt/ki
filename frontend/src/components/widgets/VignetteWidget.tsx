@@ -53,7 +53,7 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
     useEffect(() => {
         const fetchCountries = async () => {
             try {
-                const token = localStorage.getItem('jwt_token');
+                const token = 'cookie-session';
                 const response = await apiClient.get('/api/data/vignette-countries', { headers: { 'x-auth-token': token } });
                 setAvailableCountries(response.data);
             } catch (err) {
@@ -70,7 +70,7 @@ const VignetteWidget: React.FC<VignetteWidgetProps> = ({ onDelete, widgetId, isR
             setIsLoading(true);
             setError(null);
             try {
-                const token = localStorage.getItem('jwt_token');
+                const token = 'cookie-session';
                 const response = await apiClient.get(`/api/data/vignettes?country=${selectedCountry}`, { headers: { 'x-auth-token': token } });
                 
                 const data = response.data.chart_data || [];

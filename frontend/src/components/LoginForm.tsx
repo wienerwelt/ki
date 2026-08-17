@@ -218,10 +218,10 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
         showSnackbar(data?.message || 'Registrierung erfolgreich! Bitte E-Mail bestätigen.', 'success');
         navigate(partnerCode ? `/${encodeURIComponent(partnerCode)}?login=1` : '/login');
       } else {
-        if (!data?.token || !data?.user) {
+        if (!data?.user) {
           throw new Error('Ungültige Serverantwort');
         }
-        login(data.token, data.user as UserPayload);
+        login(data.user as UserPayload, data.session_expires_at || null);
         showSnackbar('Erfolgreich angemeldet.', 'success');
         navigate('/dashboard');
       }

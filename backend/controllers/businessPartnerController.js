@@ -30,6 +30,10 @@ exports.getMyBusinessPartner = async (req, res) => {
                 
                 -- HIER SIND DIE WICHTIGEN NEUEN FELDER:
                 bp.allow_automated_newsletter,
+                bp.newsletter_frequency,
+                bp.newsletter_delivery_mode,
+                bp.newsletter_external_signup_url,
+                bp.newsletter_recipient_limit,
                 bp.dashboard_focus,
                 
                 bp.level_1_name,
