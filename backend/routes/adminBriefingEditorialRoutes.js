@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const tenantManagerAuth = require('../middleware/tenantManagerAuth');
+const memberNewsletter = require('../controllers/adminMemberNewsletterController');
 
 const { 
     getBriefingDraft, 
@@ -29,6 +30,10 @@ router.post('/test-email', sendTestEmail);
 
 router.get('/raw-data', getRawData);
 router.get('/recipients', getRecipients);
+router.get('/member-newsletters/recipients', memberNewsletter.previewRecipients);
+router.get('/member-newsletters/history', memberNewsletter.history);
+router.post('/member-newsletters/test', memberNewsletter.sendTest);
+router.post('/member-newsletters/send', memberNewsletter.enqueue);
 
 router.delete('/:id', deleteBriefingItem);
 router.put('/:id', updateBriefingDraft);

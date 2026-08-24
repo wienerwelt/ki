@@ -7,5 +7,8 @@ const newsletter = require('../controllers/newsletterController');
 router.post('/subscribe', auth, newsletter.subscribe);
 router.post('/unsubscribe', auth, newsletter.unsubscribe);
 router.get('/confirm/:token', newsletter.confirm);
+router.get('/preferences/:token', newsletter.getPreferences);
+router.post('/preferences/:token', newsletter.updatePreferences);
+router.post('/unsubscribe/:token', newsletter.unsubscribeByToken);
 
 module.exports = router;

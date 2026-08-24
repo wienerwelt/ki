@@ -11,6 +11,7 @@ router.use(adminAuth);
 // --- Bestehende Monitor/Status-Routen ---
 router.get('/activity', adminMonitorController.getActivityLogs);
 router.get('/monthly-report-deliveries', adminMonitorController.getMonthlyReportDeliveries);
+router.post('/monthly-report-preview', adminMonitorController.previewMonthlyReport);
 router.delete('/logs', adminMonitorController.deleteLogs);
 router.get('/status', adminStatusController.getSystemHealth);
 

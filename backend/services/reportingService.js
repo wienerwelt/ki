@@ -1,5 +1,6 @@
 // backend/services/reportingService.js
 const db = require('../config/db');
+const { ACTIVE_MEMBERSHIP_SQL } = require('../utils/membershipExpiry');
 const { sendEmail } = require('./emailService');
 const { renderMonthlyPartnerReportEmail } = require('./emailTemplates');
 const { connection: redisClient, heartbeatRedisClient } = require('./queueService');
@@ -501,6 +502,7 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
     const dryRun = Boolean(options.dryRun);
     const targetBusinessPartnerId = options.targetBusinessPartnerId || null;
     const includeUnsubscribedRecipients = dryRun && Boolean(options.includeUnsubscribedRecipients);
+    const collectPreviewDetails = dryRun && Boolean(options.collectPreviewDetails);
     console.log(
         '[Reporting] Starte Generierung der monatlichen Mandanten-Reports...'
     );
@@ -588,10 +590,10 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
         );
 
         const partnerParams = [];
-        let partnerWhere = `
-            bp.is_active = TRUE
-            AND COALESCE(bp.allow_automated_newsletter, FALSE) = TRUE
-        `;
+        let partnerWhere = 'bp.is_active = TRUE';
+        if (!(collectPreviewDetails && targetBusinessPartnerId)) {
+            partnerWhere += ' AND COALESCE(bp.allow_automated_newsletter, FALSE) = TRUE';
+        }
         if (targetBusinessPartnerId) {
             partnerParams.push(targetBusinessPartnerId);
             partnerWhere += ` AND bp.id = $1::uuid`;
@@ -617,6 +619,7 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
         let skippedPartnerCount = 0;
         let skippedAlreadySentCount = 0;
         let failedCount = 0;
+        const previews = [];
         const reportMonth = lastMonthStart.toISOString().slice(0, 10);
 
         for (const partner of partners) {
@@ -628,11 +631,12 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                     first_name,
                     last_name,
                     role
-                FROM users
+                FROM users u
                 WHERE business_partner_id = $1
                   AND role IN ('assistenz', 'admin')
                   ${optInCondition}
                   AND is_active = TRUE
+                  AND ${ACTIVE_MEMBERSHIP_SQL}
                   AND email IS NOT NULL
                   AND TRIM(email) <> ''
                 ORDER BY email ASC
@@ -645,7 +649,7 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                     `[Reporting] Keine aktiven Empfänger mit Opt-in für Partner "${partner.name}".`
                 );
 
-                continue;
+                if (!collectPreviewDetails) continue;
             }
 
             console.log(
@@ -750,13 +754,13 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                 `, queryParams)
             ]);
 
-            const storageLimit = Number(
+            const storageLimit = Math.max(0, Number(
                 partner.storage_limit_bytes || 0
-            );
+            ));
 
-            const storageUsed = Number(
+            const storageUsed = Math.max(0, Number(
                 partner.storage_usage_bytes || 0
-            );
+            ));
 
             const storagePercent = storageLimit > 0
                 ? Math.round((storageUsed / storageLimit) * 100)
@@ -824,6 +828,32 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                 `[Reporting] Kennzahlen für "${partner.name}":`,
                 stats
             );
+
+            if (collectPreviewDetails) {
+                previews.push({
+                    partner: {
+                        id: partner.id,
+                        name: partner.name,
+                        allowAutomatedNewsletter: Boolean(partner.allow_automated_newsletter),
+                    },
+                    subject: `Ihre monatliche Plattform-Auswertung: ${stats.monthName}`,
+                    reportMonth,
+                    period: {
+                        reportFrom: lastMonthStart.toISOString(),
+                        reportToExclusive: currentMonthStart.toISOString(),
+                        comparisonFrom: prevMonthStart.toISOString(),
+                        comparisonToExclusive: lastMonthStart.toISOString(),
+                    },
+                    stats,
+                    recipients: recipients.map((recipient) => ({
+                        id: recipient.id,
+                        email: recipient.email,
+                        firstName: recipient.first_name || '',
+                        lastName: recipient.last_name || '',
+                        role: recipient.role,
+                    })),
+                });
+            }
 
             for (const user of recipients) {
                 if (dryRun) {
@@ -944,7 +974,8 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
             skippedAlreadySentCount,
             failedCount,
             dryRun,
-            includeUnsubscribedRecipients
+            includeUnsubscribedRecipients,
+            previews
         };
 
     } catch (err) {

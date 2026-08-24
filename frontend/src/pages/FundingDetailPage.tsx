@@ -15,6 +15,7 @@ import BookmarkIcon from '@mui/icons-material/Bookmark';
 
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
+import AiContentLabel from '../components/AiContentLabel';
 
 // --- Interfaces & Typen ---
 type UserFundingStatus = 'favorited' | 'applied' | 'hidden';
@@ -115,6 +116,7 @@ const FundingDetailPage: React.FC = () => {
                     <Grid item xs={12} md={8}>
                         {/* ... (Titel, Zusammenfassung, etc. bleiben gleich) ... */}
                         <Typography variant="h4" component="h1" gutterBottom>{funding.title}</Typography>
+                        <Box sx={{ mb: 1 }}><AiContentLabel kind="generated" size={17} /></Box>
                         <Typography variant="body1" paragraph sx={{ whiteSpace: 'pre-wrap' }}>
                             {funding.summary_ai}
                         </Typography>
@@ -204,9 +206,12 @@ const FundingDetailPage: React.FC = () => {
                         width: { xs: '90%', sm: 600 }, bgcolor: 'background.paper',
                         boxShadow: 24, p: 4, borderRadius: 2
                     }}>
-                        <Typography variant="h6" component="h2" gutterBottom>
-                            KI-generierter Entwurf
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                            <Typography variant="h6" component="h2">
+                                KI-generierter Entwurf
+                            </Typography>
+                            <AiContentLabel kind="generated" size={17} />
+                        </Box>
                         {isDraftLoading && <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}><CircularProgress /></Box>}
                         {draftError && <Alert severity="error">{draftError}</Alert>}
                         {draftContent && (

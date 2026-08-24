@@ -20,6 +20,7 @@ import { useAuth } from '../../context/AuthContext';
 import { format, isValid } from 'date-fns';
 import { de } from 'date-fns/locale';
 import DOMPurify from 'dompurify';
+import AiContentLabel from '../AiContentLabel';
 
 // --- Interfaces ---
 
@@ -267,6 +268,7 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
             <Tooltip title={description || title}><span>{icon}</span></Tooltip>
             <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>{title}</Typography>
+            <AiContentLabel kind="generated" size={15} />
             
             {/* Regionen Auswahl */}
             {user?.regions && user.regions.length > 1 && (
@@ -372,6 +374,9 @@ const GenericAIWidget: React.FC<GenericAIWidgetProps> = ({ onDelete, widgetId, i
                                         </Stack>
                                     </AccordionSummary>
                                     <AccordionDetails sx={{ bgcolor: 'action.hover', p: 2 }}>
+                                        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+                                            <AiContentLabel kind="generated" size={14} />
+                                        </Box>
                                         <Typography variant="body2" component="div" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(item.content || item.summary || '', { USE_PROFILES: { html: true } }) }} sx={{ mb: 2 }} />
                                         
                                         <Stack direction="row" justifyContent="space-between" alignItems="center">

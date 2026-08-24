@@ -32,6 +32,11 @@ try {
         throw 'Der Arbeitsbaum enthält ungespeicherte Änderungen. Bitte zuerst vollständig committen.'
     }
 
+    $frozenHeadCommit = (& git rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Der Commit des eingefrorenen Release-Kandidaten konnte nicht ermittelt werden.'
+    }
+
     $requiredTrackedFiles = @(
         '.mobiliti-dashboard-root',
         'RELEASE.md',
@@ -60,6 +65,16 @@ try {
         -File (Join-Path $repoRoot 'scripts\preflight.ps1')
     if ($LASTEXITCODE -ne 0) {
         throw 'Preflight fehlgeschlagen; es wurde kein Release erstellt.'
+    }
+
+    $branchAfterPreflight = (& git branch --show-current).Trim()
+    $headAfterPreflight = (& git rev-parse HEAD).Trim()
+    $changesAfterPreflight = & git status --porcelain
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Der Git-Stand konnte nach dem Preflight nicht geprüft werden.'
+    }
+    if ($branchAfterPreflight -ne 'main' -or $headAfterPreflight -ne $frozenHeadCommit -or $changesAfterPreflight) {
+        throw 'Der eingefrorene Release-Kandidat wurde während des Preflights verändert. Vollständig neu prüfen.'
     }
 
     $headCommit = (& git rev-parse HEAD).Trim()
@@ -128,6 +143,7 @@ try {
     Write-Host "  Commit:    $headCommit"
     Write-Host "  Archiv:    $archivePath"
     Write-Host "  Prüfsumme: $checksumPath"
+    Write-Host '  Freeze:    Git-Stand während des vollständigen Preflights unverändert'
     Write-Host 'Nur diese beiden Dateien nach .deploy/incoming/ hochladen.'
 } catch {
     if ($createdArtifacts) {

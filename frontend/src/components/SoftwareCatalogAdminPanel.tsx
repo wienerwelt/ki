@@ -14,6 +14,7 @@ import {
     FormControlLabel,
     Grid,
     IconButton,
+    InputAdornment,
     InputLabel,
     MenuItem,
     Paper,
@@ -29,6 +30,8 @@ import ArchiveOutlinedIcon from '@mui/icons-material/ArchiveOutlined';
 import EditIcon from '@mui/icons-material/Edit';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import PhotoLibraryOutlinedIcon from '@mui/icons-material/PhotoLibraryOutlined';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 import { resolveAssetUrl } from '../utils/assetUrl';
@@ -39,6 +42,7 @@ interface BusinessPartner { id: string; name: string; }
 interface ProviderOption { id: string; name: string; logo_url?: string; }
 interface CategoryOption { id: string; slug: string; name: string; }
 interface RegionOption { id: string; name: string; code: string; }
+interface LogoLibraryItem { url: string; label: string; source: string; }
 
 interface SoftwareEntry {
     id: string;
@@ -104,6 +108,11 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [uploadingLogo, setUploadingLogo] = useState(false);
+    const [logoLibraryOpen, setLogoLibraryOpen] = useState(false);
+    const [logoLibrary, setLogoLibrary] = useState<LogoLibraryItem[]>([]);
+    const [logoLibrarySearch, setLogoLibrarySearch] = useState('');
+    const [logoLibraryLoading, setLogoLibraryLoading] = useState(false);
+    const [logoLibraryError, setLogoLibraryError] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     const loadEntries = useCallback(async () => {
@@ -172,6 +181,41 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
     const formLogoLabel = form.logo_url
         ? 'Software-Logo'
         : (selectedProvider?.logo_url || form.provider_logo_url) ? 'Anbieterlogo aus dem Branchenverzeichnis' : 'Standardlogo';
+    const formProductUrl = useMemo(() => {
+        try {
+            const parsed = new URL(form.product_url || '');
+            return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : '';
+        } catch {
+            return '';
+        }
+    }, [form.product_url]);
+    const filteredLogoLibrary = useMemo(() => {
+        const needle = logoLibrarySearch.trim().toLowerCase();
+        if (!needle) return logoLibrary;
+        return logoLibrary.filter((item) => `${item.label} ${item.source} ${item.url}`.toLowerCase().includes(needle));
+    }, [logoLibrary, logoLibrarySearch]);
+
+    const openLogoLibrary = async () => {
+        if (!form.business_partner_id) {
+            setError('Bitte zuerst einen Business Partner auswählen.');
+            return;
+        }
+
+        setLogoLibraryOpen(true);
+        setLogoLibrarySearch('');
+        setLogoLibraryLoading(true);
+        setLogoLibraryError(null);
+        try {
+            const response = await apiClient.get('/api/admin/actions/software-logo/library', {
+                params: { businessPartnerId: form.business_partner_id },
+            });
+            setLogoLibrary(response.data?.items || []);
+        } catch (err: any) {
+            setLogoLibraryError(err.response?.data?.message || 'Bestehende Logos konnten nicht geladen werden.');
+        } finally {
+            setLogoLibraryLoading(false);
+        }
+    };
 
     const uploadLogo = async (file?: File) => {
         if (!file) return;
@@ -327,7 +371,30 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                         {form.business_partner_id && providers.length === 0 && <Grid item xs={12}><Alert severity="warning">Zuerst einen Anbieter im Branchenverzeichnis anlegen und diesem Mandanten aktiv zuordnen.</Alert></Grid>}
                         <Grid item xs={12}><TextField fullWidth size="small" label="Kurzbeschreibung" inputProps={{ maxLength: 500 }} helperText={`${form.short_description?.length || 0}/500`} value={form.short_description || ''} onChange={(event) => setForm((current) => ({ ...current, short_description: event.target.value }))} /></Grid>
                         <Grid item xs={12}><TextField fullWidth size="small" multiline rows={4} label="Ausführliche Beschreibung" value={form.description || ''} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} /></Grid>
-                        <Grid item xs={12} md={7}><TextField fullWidth required size="small" label="Produkt-URL" placeholder="https://…" value={form.product_url || ''} onChange={(event) => setForm((current) => ({ ...current, product_url: event.target.value }))} /></Grid>
+                        <Grid item xs={12} md={7}>
+                            <TextField
+                                fullWidth
+                                required
+                                size="small"
+                                label="Produkt-URL"
+                                placeholder="https://…"
+                                value={form.product_url || ''}
+                                onChange={(event) => setForm((current) => ({ ...current, product_url: event.target.value }))}
+                                InputProps={{
+                                    endAdornment: (
+                                        <InputAdornment position="end">
+                                            <Tooltip title={formProductUrl ? 'Produkt-URL öffnen' : 'Gültige http(s)-URL eingeben'}>
+                                                <span>
+                                                    <IconButton component="a" href={formProductUrl || undefined} target="_blank" rel="noopener noreferrer" size="small" disabled={!formProductUrl} aria-label="Produkt-URL öffnen">
+                                                        <OpenInNewIcon fontSize="small" />
+                                                    </IconButton>
+                                                </span>
+                                            </Tooltip>
+                                        </InputAdornment>
+                                    ),
+                                }}
+                            />
+                        </Grid>
                         <Grid item xs={12} md={5}>
                             <Stack spacing={1}>
                                 <Button
@@ -340,11 +407,31 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                                     {uploadingLogo ? 'Logo wird optimiert …' : 'Logo hochladen & verkleinern'}
                                     <input hidden type="file" accept="image/jpeg,image/png,image/webp,image/avif" onChange={(event) => uploadLogo(event.target.files?.[0])} />
                                 </Button>
+                                <Button
+                                    variant="outlined"
+                                    startIcon={<PhotoLibraryOutlinedIcon />}
+                                    disabled={!form.business_partner_id}
+                                    onClick={openLogoLibrary}
+                                    sx={{ textTransform: 'none', justifyContent: 'flex-start' }}
+                                >
+                                    Bestehende Logos durchsuchen
+                                </Button>
                                 <TextField fullWidth size="small" label="Logo-URL (alternativ)" placeholder="https://…" value={form.logo_url || ''} onChange={(event) => setForm((current) => ({ ...current, logo_url: event.target.value }))} />
                                 <Stack direction="row" spacing={1.25} alignItems="center">
                                     <Box component="img" src={formLogoUrl} alt="Logo-Vorschau" onError={(event: React.SyntheticEvent<HTMLImageElement>) => { event.currentTarget.onerror = null; event.currentTarget.src = DEFAULT_SOFTWARE_LOGO; }} sx={{ width: 100, height: 56, objectFit: 'contain', flexShrink: 0, border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 0.5, bgcolor: 'background.paper' }} />
                                     <Typography variant="caption" color="text.secondary">{formLogoLabel}</Typography>
                                 </Stack>
+                                {form.logo_url && (
+                                    <Button
+                                        color="error"
+                                        size="small"
+                                        startIcon={<DeleteOutlineIcon />}
+                                        onClick={() => setForm((current) => ({ ...current, logo_url: '' }))}
+                                        sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
+                                    >
+                                        Software-Logo entfernen
+                                    </Button>
+                                )}
                                 <Typography variant="caption" color="text.secondary">Automatisch max. 320 × 320 px, WebP. SVG wird aus Sicherheitsgründen nicht angenommen.</Typography>
                             </Stack>
                         </Grid>
@@ -420,6 +507,58 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                     <Button onClick={() => setOpen(false)}>Abbrechen</Button>
                     <Button variant="contained" onClick={save} disabled={saving}>{saving ? 'Speichert …' : 'Speichern'}</Button>
                 </DialogActions>
+            </Dialog>
+
+            <Dialog open={logoLibraryOpen} onClose={() => setLogoLibraryOpen(false)} fullWidth maxWidth="md">
+                <DialogTitle>Bestehendes Logo auswählen</DialogTitle>
+                <DialogContent dividers>
+                    <TextField
+                        fullWidth
+                        autoFocus
+                        size="small"
+                        label="Logos durchsuchen"
+                        placeholder="Name, Herkunft oder URL"
+                        value={logoLibrarySearch}
+                        onChange={(event) => setLogoLibrarySearch(event.target.value)}
+                        sx={{ mb: 2 }}
+                    />
+                    {logoLibraryError && <Alert severity="error" sx={{ mb: 2 }}>{logoLibraryError}</Alert>}
+                    {logoLibraryLoading ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 5 }}><CircularProgress /></Box>
+                    ) : (
+                        <Grid container spacing={1.5}>
+                            {filteredLogoLibrary.map((item) => (
+                                <Grid item xs={6} sm={4} md={3} key={item.url}>
+                                    <Button
+                                        variant="outlined"
+                                        onClick={() => {
+                                            setForm((current) => ({ ...current, logo_url: item.url }));
+                                            setLogoLibraryOpen(false);
+                                        }}
+                                        sx={{ width: '100%', height: '100%', minHeight: 132, p: 1.2, textTransform: 'none', display: 'flex', flexDirection: 'column', gap: 0.8, alignItems: 'stretch' }}
+                                    >
+                                        <Box
+                                            component="img"
+                                            src={resolveAssetUrl(item.url) || DEFAULT_SOFTWARE_LOGO}
+                                            alt={`${item.label} Logo`}
+                                            onError={(event: React.SyntheticEvent<HTMLImageElement>) => {
+                                                event.currentTarget.onerror = null;
+                                                event.currentTarget.src = DEFAULT_SOFTWARE_LOGO;
+                                            }}
+                                            sx={{ width: '100%', height: 64, objectFit: 'contain', bgcolor: 'background.paper', borderRadius: 1 }}
+                                        />
+                                        <Typography variant="caption" fontWeight={800} noWrap title={item.label}>{item.label}</Typography>
+                                        <Typography variant="caption" color="text.secondary" noWrap title={item.source}>{item.source}</Typography>
+                                    </Button>
+                                </Grid>
+                            ))}
+                            {filteredLogoLibrary.length === 0 && (
+                                <Grid item xs={12}><Alert severity="info">Keine passenden bestehenden Logos gefunden.</Alert></Grid>
+                            )}
+                        </Grid>
+                    )}
+                </DialogContent>
+                <DialogActions><Button onClick={() => setLogoLibraryOpen(false)}>Schließen</Button></DialogActions>
             </Dialog>
         </Box>
     );

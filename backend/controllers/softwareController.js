@@ -1,5 +1,5 @@
 const db = require('../config/db');
-const { PutObjectCommand } = require('@aws-sdk/client-s3');
+const { ListObjectsV2Command, PutObjectCommand } = require('@aws-sdk/client-s3');
 const s3Client = require('../config/s3Client.js');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
@@ -39,6 +39,23 @@ const cleanUrl = (value) => {
     }
 };
 
+const cleanLogoUrl = (value) => {
+    const normalized = cleanText(value, 2048);
+    if (!normalized) return null;
+
+    if (normalized.startsWith('/')) {
+        const isSafeLocalAsset = /^\/(?:directory_logos|images|logos|static)\/[a-zA-Z0-9._~!$&'()+,;=@%/-]+$/.test(normalized);
+        if (!isSafeLocalAsset || normalized.includes('..') || normalized.includes('\\')) {
+            const error = new Error('Der lokale Logo-Pfad ist ungültig.');
+            error.statusCode = 400;
+            throw error;
+        }
+        return normalized;
+    }
+
+    return cleanUrl(normalized);
+};
+
 const normalizeCountries = (value) => {
     const source = Array.isArray(value) ? value : String(value || '').split(',');
     return Array.from(new Set(
@@ -71,7 +88,7 @@ const normalizeSoftwarePayload = (body, businessPartnerId) => {
         short_description: cleanText(body.short_description, 500),
         description: cleanText(body.description, 10000),
         product_url: cleanUrl(body.product_url),
-        logo_url: cleanUrl(body.logo_url),
+        logo_url: cleanLogoUrl(body.logo_url),
         coverage_scope: coverageScope,
         country_codes: countries,
         deployment_model: cleanText(body.deployment_model, 100),
@@ -276,6 +293,108 @@ exports.getManagedSoftware = async (req, res) => {
     } catch (error) {
         console.error('[Software] managed list:', error.message);
         return res.status(error.statusCode || 500).json({ message: error.statusCode ? error.message : 'Software konnte nicht geladen werden.' });
+    }
+};
+
+exports.getManagedLogoLibrary = async (req, res) => {
+    try {
+        const businessPartnerId = resolveManagedBusinessPartnerId(req, req.query.businessPartnerId);
+        const search = cleanSearchText(req.query.search, 120)?.toLowerCase() || '';
+
+        const knownLogos = await db.query(`
+            SELECT DISTINCT ON (logo_url)
+                logo_url AS url,
+                label,
+                source_type
+            FROM (
+                SELECT st.logo_url, st.name AS label, 'Software'::text AS source_type
+                FROM software_tools st
+                WHERE st.business_partner_id = $1 AND st.logo_url IS NOT NULL
+
+                UNION ALL
+
+                SELECT p.logo_url, p.name AS label, 'Branchenverzeichnis'::text AS source_type
+                FROM directory_providers p
+                JOIN directory_provider_mandant_settings ms
+                  ON ms.provider_id = p.id
+                 AND ms.business_partner_id = $1
+                WHERE ms.status = 'active' AND p.logo_url IS NOT NULL
+
+                UNION ALL
+
+                SELECT bp.logo_url, bp.name AS label, 'Mandantenlogo'::text AS source_type
+                FROM business_partners bp
+                WHERE bp.id = $1 AND bp.logo_url IS NOT NULL
+
+                UNION ALL
+
+                SELECT s.logo_url, COALESCE(NULLIF(s.description, ''), s.url) AS label, 'Quelle'::text AS source_type
+                FROM sources s
+                WHERE s.logo_url IS NOT NULL
+
+                UNION ALL
+
+                SELECT t.logo_url, t.name AS label, 'Logo-Bibliothek'::text AS source_type
+                FROM tags t
+                WHERE t.logo_url IS NOT NULL
+            ) logo_candidates
+            WHERE NULLIF(TRIM(logo_url), '') IS NOT NULL
+            ORDER BY logo_url, source_type, label
+        `, [businessPartnerId]);
+
+        const library = knownLogos.rows.map((item) => ({
+            url: item.url,
+            label: item.label || 'Bestehendes Logo',
+            source: item.source_type,
+        }));
+
+        const bucket = String(process.env.AWS_S3_BUCKET_NAME || '').trim();
+        const region = String(process.env.AWS_S3_REGION || '').trim();
+        if (bucket && region) {
+            try {
+                let continuationToken;
+                let pageCount = 0;
+                do {
+                    const page = await s3Client.send(new ListObjectsV2Command({
+                        Bucket: bucket,
+                        Prefix: `software-logos/${businessPartnerId}/`,
+                        MaxKeys: 200,
+                        ContinuationToken: continuationToken,
+                    }));
+
+                    (page.Contents || [])
+                        .filter((object) => /\.(?:avif|gif|jpe?g|png|webp)$/i.test(String(object.Key || '')))
+                        .forEach((object) => {
+                            const key = String(object.Key);
+                            const encodedKey = key.split('/').map(encodeURIComponent).join('/');
+                            library.push({
+                                url: `https://${bucket}.s3.${region}.amazonaws.com/${encodedKey}`,
+                                label: object.LastModified
+                                    ? `Software-Upload vom ${new Date(object.LastModified).toLocaleDateString('de-DE')}`
+                                    : 'Software-Upload',
+                                source: 'Eigenes AWS-Upload-Archiv',
+                            });
+                        });
+
+                    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+                    pageCount += 1;
+                } while (continuationToken && pageCount < 3);
+            } catch (s3Error) {
+                console.warn('[Software] AWS logo archive unavailable:', s3Error.message);
+            }
+        }
+
+        const unique = Array.from(new Map(library.map((item) => [item.url, item])).values())
+            .filter((item) => !search || `${item.label} ${item.source} ${item.url}`.toLowerCase().includes(search))
+            .sort((a, b) => a.source.localeCompare(b.source, 'de') || a.label.localeCompare(b.label, 'de'))
+            .slice(0, 600);
+
+        return res.json({ items: unique });
+    } catch (error) {
+        console.error('[Software] logo library:', error.message);
+        return res.status(error.statusCode || 500).json({
+            message: error.statusCode ? error.message : 'Bestehende Logos konnten nicht geladen werden.',
+        });
     }
 };
 

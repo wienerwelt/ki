@@ -51,6 +51,9 @@ const LEGAL_VERSIONS = {
 
 const COOKIE_SETTINGS_URL = '/cookie-settings';
 const IMPRINT_URL = 'https://www.mobiliti.at/impressum.html';
+const AUTH_API_BASE = import.meta.env.DEV
+  ? ''
+  : (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '');
 
 const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUsername = '', partnerCodeOverride = '' }) => {
   const [searchParams] = useSearchParams();
@@ -638,8 +641,8 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
             variant="outlined"
             size="large"
             onClick={() => {
-              const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-              window.location.href = `${baseUrl}/api/auth/google${partnerCode ? `?partner=${partnerCode}` : ''}`;
+              const query = partnerCode ? `?partner=${encodeURIComponent(partnerCode)}` : '';
+              window.location.href = `${AUTH_API_BASE}/api/auth/google${query}`;
             }}
             sx={{
               color: '#757575',
@@ -663,8 +666,8 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
             variant="outlined"
             size="large"
             onClick={() => {
-              const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-              window.location.href = `${baseUrl}/api/auth/linkedin${partnerCode ? `?partner=${partnerCode}` : ''}`;
+              const query = partnerCode ? `?partner=${encodeURIComponent(partnerCode)}` : '';
+              window.location.href = `${AUTH_API_BASE}/api/auth/linkedin${query}`;
             }}
             sx={{
               color: '#0077b5',

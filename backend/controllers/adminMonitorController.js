@@ -1,11 +1,70 @@
 // backend/controllers/adminMonitorController.js
 const db = require('../config/db');
 const geoip = require('geoip-lite');
-const { ListObjectsV2Command, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { GetObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const s3Client = require("../config/s3Client.js");
+const { ARCHIVE_PREFIX, getArchiveStorage } = require('../services/archiveStorageService');
+const { generateAndSendMonthlyReport } = require('../services/reportingService');
+const { logActivity } = require('../services/auditLogService');
 
 const isValidUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+
+exports.previewMonthlyReport = async (req, res) => {
+    const businessPartnerId = req.user?.business_partner_id;
+
+    if (!isValidUuid(businessPartnerId)) {
+        return res.status(400).json({ message: 'Dem Benutzer ist kein gültiger Business Partner zugeordnet.' });
+    }
+
+    try {
+        const result = await generateAndSendMonthlyReport({
+            dryRun: true,
+            targetBusinessPartnerId: businessPartnerId,
+            includeUnsubscribedRecipients: false,
+            collectPreviewDetails: true,
+        });
+        const preview = result.previews?.[0];
+
+        if (!preview) {
+            return res.status(404).json({ message: 'Für diesen Mandanten konnte keine Monatsreport-Vorschau erstellt werden.' });
+        }
+
+        await logActivity({
+            userId: req.user.id,
+            username: req.user.username || req.user.email,
+            actionType: 'MONTHLY_REPORT_PREVIEW',
+            status: 'success',
+            targetId: businessPartnerId,
+            targetType: 'business_partner',
+            details: {
+                reportMonth: preview.reportMonth,
+                recipientCount: preview.recipients.length,
+                sendsEmails: false,
+            },
+            ipAddress: req.ip,
+        });
+
+        return res.json({
+            simulation: true,
+            sendsEmails: false,
+            ...preview,
+        });
+    } catch (error) {
+        await logActivity({
+            userId: req.user?.id,
+            username: req.user?.username || req.user?.email,
+            actionType: 'MONTHLY_REPORT_PREVIEW',
+            status: 'failure',
+            targetId: businessPartnerId,
+            targetType: 'business_partner',
+            details: { error: String(error?.message || 'Unbekannter Fehler').slice(0, 500) },
+            ipAddress: req.ip,
+        });
+        console.error('Fehler bei der Monatsreport-Simulation:', error);
+        return res.status(500).json({ message: 'Monatsreport-Simulation konnte nicht erstellt werden.' });
+    }
+};
 
 exports.getMonthlyReportDeliveries = async (req, res) => {
     const businessPartnerId = req.user?.business_partner_id;
@@ -26,12 +85,14 @@ exports.getMonthlyReportDeliveries = async (req, res) => {
                     bp.newsletter_recipient_limit,
                     COUNT(u.id) FILTER (
                         WHERE u.is_active = TRUE
+                          AND (u.active_until IS NULL OR (u.active_until AT TIME ZONE 'Europe/Vienna')::date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Vienna')::date)
                           AND u.role IN ('assistenz', 'admin')
                           AND u.email IS NOT NULL
                           AND TRIM(u.email) <> ''
                     )::int AS configured_recipients,
                     COUNT(u.id) FILTER (
                         WHERE u.is_active = TRUE
+                          AND (u.active_until IS NULL OR (u.active_until AT TIME ZONE 'Europe/Vienna')::date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Vienna')::date)
                           AND u.role IN ('assistenz', 'admin')
                           AND u.newsletter_opt_in = TRUE
                           AND u.email IS NOT NULL
@@ -39,6 +100,7 @@ exports.getMonthlyReportDeliveries = async (req, res) => {
                     )::int AS eligible_recipients
                     ,COUNT(u.id) FILTER (
                         WHERE u.is_active = TRUE
+                          AND (u.active_until IS NULL OR (u.active_until AT TIME ZONE 'Europe/Vienna')::date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Vienna')::date)
                           AND u.newsletter_opt_in = TRUE
                           AND u.briefing_email_enabled = TRUE
                           AND u.email IS NOT NULL
@@ -246,30 +308,8 @@ exports.deleteLogs = async (req, res) => {
 
 exports.getArchiveFiles = async (req, res) => {
     try {
-        const bucketName = process.env.AWS_S3_BUCKET_NAME;
-        if (!bucketName) {
-            return res.status(500).json({ message: "S3 Bucket Name ist nicht konfiguriert." });
-        }
-
-        const command = new ListObjectsV2Command({
-            Bucket: bucketName,
-            Prefix: 'system-archive/'
-        });
-
-        const s3Response = await s3Client.send(command);
-        
-        // Map auf ein sauberes JSON-Array für das Frontend
-        const files = (s3Response.Contents || []).map(file => ({
-            key: file.Key,
-            filename: file.Key.split('/').pop(),
-            sizeMb: (file.Size / 1024 / 1024).toFixed(2),
-            lastModified: file.LastModified
-        }));
-
-        // Neueste zuerst sortieren
-        files.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
-
-        res.status(200).json({ files });
+        const archive = await getArchiveStorage();
+        res.status(200).json(archive);
     } catch (error) {
         console.error("Fehler beim Abrufen der S3 Archivdateien:", error);
         res.status(500).json({ message: "Fehler beim Laden der Archivdateien." });
@@ -280,7 +320,12 @@ exports.getArchiveFiles = async (req, res) => {
 exports.getArchiveDownloadUrl = async (req, res) => {
     try {
         const { key } = req.query; // Der S3 Path, z.B. "system-archive/..."
-        if (!key) return res.status(400).json({ message: "Kein Dateischlüssel angegeben." });
+        if (!key || typeof key !== 'string') {
+            return res.status(400).json({ message: "Kein Dateischlüssel angegeben." });
+        }
+        if (!key.startsWith(ARCHIVE_PREFIX) || key.endsWith('/')) {
+            return res.status(400).json({ message: "Ungültiger Archiv-Dateischlüssel." });
+        }
 
         const command = new GetObjectCommand({
             Bucket: process.env.AWS_S3_BUCKET_NAME,

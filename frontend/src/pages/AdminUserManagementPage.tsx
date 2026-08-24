@@ -436,12 +436,14 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
   const getStatusInfo = (u: User) => {
     if (!u.is_active) return { color: 'error.main', title: 'Inaktiv' };
     if (u.active_until) {
-        const expiryDate = new Date(u.active_until);
-        const now = new Date();
-        const daysLeft = (expiryDate.getTime() - now.getTime()) / (1000 * 3600 * 24);
+        const expiryKey = u.active_until.slice(0, 10);
+        const todayKey = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Europe/Vienna', year: 'numeric', month: '2-digit', day: '2-digit'
+        }).format(new Date());
+        const daysLeft = (Date.parse(`${expiryKey}T00:00:00Z`) - Date.parse(`${todayKey}T00:00:00Z`)) / 86400000;
         
         if (daysLeft < 0) return { color: 'error.main', title: 'Abgelaufen' };
-        if (daysLeft <= 30) return { color: 'warning.main', title: 'Läuft in weniger als 30 Tagen ab' };
+        if (daysLeft <= 30) return { color: 'warning.main', title: `Läuft in ${Math.round(daysLeft)} Tag(en) ab` };
     }
     return { color: 'success.main', title: 'Aktiv' };
   };
@@ -635,7 +637,7 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                             <Tooltip title={statusInfo.title}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                     <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: statusInfo.color, flexShrink: 0 }} />
-                                    <Typography variant="body2">{u.active_until ? new Date(u.active_until).toLocaleDateString('de-AT') : 'Unbegrenzt'}</Typography>
+                                    <Typography variant="body2">{u.active_until ? new Date(`${u.active_until.slice(0, 10)}T12:00:00`).toLocaleDateString('de-AT') : 'Unbegrenzt'}</Typography>
                                 </Box>
                             </Tooltip>
                         </TableCell>
@@ -743,10 +745,11 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
               
               <Grid item xs={12} sm={6}>
                   <TextField 
-                      label="Aktiv bis (Optional)" 
+                      label="Aktiv bis einschließlich (optional)"
                       type="date" 
                       fullWidth 
-                      InputLabelProps={{ shrink: true }} 
+                      InputLabelProps={{ shrink: true }}
+                      helperText="Das gewählte Datum ist der letzte vollständige Nutzungstag (Zeitzone Wien)."
                       value={formActiveUntil} 
                       onChange={(e) => setFormActiveUntil(e.target.value)} 
                   />

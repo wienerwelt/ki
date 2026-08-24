@@ -2,6 +2,7 @@
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { SESSION_MAX_AGE_MS } = require('../services/sessionSecurity');
+const { getMembershipExpiry, isMembershipExpired } = require('../utils/membershipExpiry');
 
 function getTokenFromRequest(req) {
   const candidates = [
@@ -57,15 +58,15 @@ const authMiddleware = async (req, res, next) => {
     if (!userId) return res.status(401).json({ message: 'Sitzung ist ungültig.' });
 
     const user = await loadCurrentUser(userId);
-    const activeUntil = user?.active_until ? new Date(user.active_until) : null;
     const partnerEnd = user?.business_partner_subscription_end_date ? new Date(user.business_partner_subscription_end_date) : null;
-    if (!user || user.is_active !== true || user.business_partner_is_active !== true || (activeUntil && activeUntil <= new Date()) || (partnerEnd && partnerEnd < new Date(new Date().setHours(0, 0, 0, 0)))) {
+    if (!user || user.is_active !== true || user.business_partner_is_active !== true || isMembershipExpired(user.active_until) || (partnerEnd && partnerEnd < new Date(new Date().setHours(0, 0, 0, 0)))) {
       return res.status(401).json({ message: 'Sitzung ist nicht mehr aktiv.' });
     }
     if (Number(decoded.av || 0) !== Number(user.auth_version || 0)) {
       return res.status(401).json({ message: 'Sitzung wurde widerrufen. Bitte erneut anmelden.' });
     }
 
+    const membershipExpiry = getMembershipExpiry(user.active_until);
     req.user = {
       id: user.id,
       username: user.username,
@@ -79,6 +80,9 @@ const authMiddleware = async (req, res, next) => {
       organization_name: user.organization_name,
       profile_image_url: user.profile_image_url,
       membership_level: user.membership_level,
+      active_until: user.active_until,
+      membership_expires_on: membershipExpiry.expiresOn,
+      membership_days_remaining: membershipExpiry.daysRemaining,
       token_issued_at: decoded.iat ? new Date(decoded.iat * 1000) : null,
     };
     const tokenExpiresAt = decoded.exp ? decoded.exp * 1000 : Number.POSITIVE_INFINITY;

@@ -2,6 +2,7 @@
 const db = require('../config/db');
 const { connection: redisClient, heartbeatRedisClient } = require('../services/queueService');
 const packageJson = require('../package.json'); 
+const { getArchiveStorage } = require('../services/archiveStorageService');
 
 exports.getSystemHealth = async (req, res) => {
     // 1. DB Check
@@ -72,25 +73,18 @@ exports.getSystemHealth = async (req, res) => {
         }
     })();
 
-    // --- NEU: 4. S3 Speicherplatz-Check über die eigene Datenbank ---
+    // 4. Archivspeicher direkt aus demselben S3-Prefix wie die Archivliste lesen.
     const s3Promise = (async () => {
         try {
-            const s3StatsResult = await db.query(`
-                SELECT 
-                    COUNT(*) as file_count, 
-                    COALESCE(SUM(file_size), 0) as total_size_bytes 
-                FROM business_partner_files
-            `);
-            
-            const count = parseInt(s3StatsResult.rows[0].file_count, 10);
-            const totalSizeBytes = parseInt(s3StatsResult.rows[0].total_size_bytes, 10);
-            const sizeMb = totalSizeBytes / (1024 * 1024); // Umrechnung in MB
-            
-            return { count, sizeMb };
+            const archive = await getArchiveStorage();
+            return {
+                count: archive.fileCount,
+                totalSizeBytes: archive.totalSizeBytes,
+                sizeMb: archive.sizeMb,
+            };
         } catch (err) {
             console.error('[StatusCheck] Fehler beim Abrufen der S3 Statistiken:', err.message);
-            // Fallback, damit das Dashboard nicht abstürzt, wenn die DB-Tabelle fehlt
-            return { count: 0, sizeMb: 0 }; 
+            return { count: 0, totalSizeBytes: 0, sizeMb: 0 };
         }
     })();
     
@@ -114,6 +108,7 @@ exports.getSystemHealth = async (req, res) => {
             // --- NEU: Das Objekt für das Frontend einfügen ---
             s3Storage: {
                 sizeMb: s3Result.sizeMb,
+                totalSizeBytes: s3Result.totalSizeBytes,
                 count: s3Result.count
             }
         }

@@ -115,8 +115,17 @@ const getRequestBaseUrl = (req) => {
   return `${proto}://${host}`.replace(/\/$/, '');
 };
 
+const getPublicFrontendBaseUrl = (req) => {
+  const configuredUrl = String(process.env.FRONTEND_URL || '').trim().replace(/\/+$/, '');
+  const requestOrigin = String(req.get('origin') || '').trim().replace(/\/+$/, '');
+  const isLoopbackOrigin = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i.test(requestOrigin);
+
+  if (process.env.NODE_ENV !== 'production' && isLoopbackOrigin) return requestOrigin;
+  return configuredUrl || getRequestBaseUrl(req);
+};
+
 const buildPublicFileUrl = (req, fileId, token) =>
-  `${getRequestBaseUrl(req)}/api/public/files/${encodeURIComponent(fileId)}/${encodeURIComponent(token)}/download`;
+  `${getPublicFrontendBaseUrl(req)}/f/${encodeURIComponent(fileId)}/${encodeURIComponent(token)}`;
 
 const encodeDownloadFilename = (filename) => {
   const safeFallback = String(filename || 'download')
@@ -507,6 +516,71 @@ exports.disablePublicLink = async (req, res) => {
   }
 };
 
+// === Metadaten fuer die oeffentliche, gebrandete Downloadseite ===
+exports.getPublicFileInfo = async (req, res) => {
+  const { id: fileId, token } = req.params;
+
+  if (!isValidUUID(fileId) || !token || String(token).length < 32 || String(token).length > 256) {
+    return res.status(404).json({ message: 'Datei nicht gefunden.' });
+  }
+
+  try {
+    const tokenHash = hashPublicToken(token);
+    const { rows } = await db.query(
+      `SELECT bpf.id, bpf.filename, bpf.file_type, bpf.file_size, bpf.description,
+              bpf.public_link_enabled, bpf.public_link_expires_at, bpf.public_max_downloads,
+              COALESCE(bpf.public_link_download_count, 0) AS public_link_download_count,
+              bp.id AS business_partner_id, bp.name AS business_partner_name,
+              bp.slug AS business_partner_slug, bp.logo_url AS business_partner_logo_url,
+              cs.primary_color
+       FROM public.business_partner_files bpf
+       JOIN public.business_partners bp ON bp.id = bpf.business_partner_id
+       LEFT JOIN public.color_schemes cs ON cs.id = bp.color_scheme_id
+       WHERE bpf.id = $1
+         AND bpf.public_token_hash = $2
+         AND bp.is_active = TRUE
+         AND (bp.subscription_end_date IS NULL OR bp.subscription_end_date >= CURRENT_DATE)
+       LIMIT 1`,
+      [fileId, tokenHash]
+    );
+
+    const file = rows[0];
+    if (!file || !file.public_link_enabled || !isAllowedPublicDownloadFile(file.filename, file.file_type)) {
+      return res.status(404).json({ message: 'Datei nicht gefunden.' });
+    }
+    if (file.public_link_expires_at && new Date(file.public_link_expires_at).getTime() <= Date.now()) {
+      return res.status(410).json({ message: 'Dieser Download-Link ist abgelaufen.' });
+    }
+    if (file.public_max_downloads && file.public_link_download_count >= file.public_max_downloads) {
+      return res.status(410).json({ message: 'Das Downloadlimit dieses Links ist erreicht.' });
+    }
+
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      file: {
+        id: file.id,
+        filename: file.filename,
+        fileType: file.file_type,
+        fileSize: Number(file.file_size || 0),
+        description: file.description || null,
+        expiresAt: file.public_link_expires_at,
+        maxDownloads: file.public_max_downloads,
+        downloadCount: file.public_link_download_count,
+      },
+      partner: {
+        id: file.business_partner_id,
+        name: file.business_partner_name,
+        slug: file.business_partner_slug,
+        logoUrl: file.business_partner_logo_url,
+        primaryColor: file.primary_color,
+      },
+    });
+  } catch (error) {
+    console.error('Fehler beim Laden der oeffentlichen Datei-Metadaten:', error);
+    return res.status(500).json({ message: 'Dateiinformationen konnten nicht geladen werden.' });
+  }
+};
+
 // === Öffentlicher Download über geheimen Token ===
 exports.getPublicDownloadUrl = async (req, res) => {
   const { id: fileId, token } = req.params;
@@ -518,12 +592,15 @@ exports.getPublicDownloadUrl = async (req, res) => {
   try {
     const tokenHash = hashPublicToken(token);
     const { rows: linkRows } = await db.query(
-      `SELECT id, filename, storage_path, file_type, business_partner_id,
-              public_link_enabled, public_link_expires_at, public_max_downloads,
-              COALESCE(public_link_download_count, 0) AS public_link_download_count
-       FROM public.business_partner_files
-       WHERE id = $1
-         AND public_token_hash = $2
+      `SELECT bpf.id, bpf.filename, bpf.storage_path, bpf.file_type, bpf.business_partner_id,
+              bpf.public_link_enabled, bpf.public_link_expires_at, bpf.public_max_downloads,
+              COALESCE(bpf.public_link_download_count, 0) AS public_link_download_count
+       FROM public.business_partner_files bpf
+       JOIN public.business_partners bp ON bp.id = bpf.business_partner_id
+       WHERE bpf.id = $1
+         AND bpf.public_token_hash = $2
+         AND bp.is_active = TRUE
+         AND (bp.subscription_end_date IS NULL OR bp.subscription_end_date >= CURRENT_DATE)
        LIMIT 1`,
       [fileId, tokenHash]
     );

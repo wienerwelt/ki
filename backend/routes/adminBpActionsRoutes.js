@@ -59,6 +59,7 @@ const receiveSoftwareLogo = (req, res, next) => {
 router.use(tenantManagerAuth);
 
 router.get('/catalog/options', softwareController.getManagedOptions);
+router.get('/software-logo/library', softwareController.getManagedLogoLibrary);
 router.post('/software-logo/upload', receiveSoftwareLogo, softwareController.uploadSoftwareLogo);
 router.route('/software')
     .get(softwareController.getManagedSoftware)

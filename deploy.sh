@@ -39,7 +39,7 @@ if [[ "$PROJECT_MARKER" != 'mobiliti-dashboard' ]]; then
   exit 2
 fi
 
-for command_name in npm docker curl tar sha256sum rsync realpath mktemp grep date chmod; do
+for command_name in npm docker curl tar sha256sum rsync realpath mktemp grep sed tail date chmod; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Fehlendes Programm auf dem Server: $command_name"
     exit 2
@@ -50,6 +50,37 @@ if [[ ! -f "$ROOT_DIR/.env" ]]; then
   echo "Abbruch: Die produktive .env fehlt im Projekt-Root."
   exit 2
 fi
+
+read_env_value() {
+  local key="$1"
+  local value=''
+  value="$(sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$ROOT_DIR/.env" | tail -n 1)"
+  value="${value%$'\r'}"
+  if [[ ${#value} -ge 2 ]]; then
+    if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+  fi
+  printf '%s' "$value"
+}
+
+JWT_SECRET_VALUE="$(read_env_value JWT_SECRET)"
+NEWSLETTER_TOKEN_SECRET_VALUE="$(read_env_value NEWSLETTER_TOKEN_SECRET)"
+if [[ ${#JWT_SECRET_VALUE} -lt 32 ]]; then
+  echo "Abbruch: JWT_SECRET fehlt in .env oder ist kürzer als 32 Zeichen."
+  exit 2
+fi
+if [[ ${#NEWSLETTER_TOKEN_SECRET_VALUE} -lt 32 ]]; then
+  echo "Abbruch: NEWSLETTER_TOKEN_SECRET fehlt in .env oder ist kürzer als 32 Zeichen."
+  exit 2
+fi
+if [[ "$NEWSLETTER_TOKEN_SECRET_VALUE" == "$JWT_SECRET_VALUE" ]]; then
+  echo "Abbruch: NEWSLETTER_TOKEN_SECRET und JWT_SECRET müssen unterschiedlich sein."
+  exit 2
+fi
+unset JWT_SECRET_VALUE NEWSLETTER_TOKEN_SECRET_VALUE
 
 if [[ ! -f "$ARCHIVE_INPUT" ]]; then
   echo "Release-Archiv nicht gefunden: $ARCHIVE_INPUT"

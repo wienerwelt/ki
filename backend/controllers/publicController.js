@@ -74,6 +74,55 @@ function normalizeOptionalField(value, maxLength = 500) {
     return String(value).trim().slice(0, maxLength);
 }
 
+// Kontaktformular: serverseitiger Spam-Schutz.
+// Bewusst nur für /api/public/contact verwendet, damit andere Funktionen unverändert bleiben.
+const CONTACT_ALLOWED_TYPES = new Set(['contact', 'demo_request', 'callback_request']);
+const CONTACT_ALLOWED_ORIGINS = new Set([
+    'https://mobiliti.at',
+    'https://www.mobiliti.at',
+    'https://dashboard.mobiliti.at',
+    'http://localhost:5173',
+    'http://localhost:5500',
+]);
+const CONTACT_MIN_COMPLETION_MS = 3500;
+const CONTACT_MAX_FORM_AGE_MS = 6 * 60 * 60 * 1000;
+const CONTACT_MAX_LINKS = 2;
+
+function countContactLinks(value) {
+    return (String(value || '').match(/https?:\/\/|www\./gi) || []).length;
+}
+
+function isPlausibleContactToken(value) {
+    const token = normalizeOptionalField(value, 200);
+    if (!token) return false;
+
+    // Standardpfad aus forms.js: 4 x Uint32, mit Bindestrich getrennt.
+    if (/^(?:\d{1,10}-){3}\d{1,10}$/.test(token)) return true;
+
+    // Fallbackpfad aus forms.js: <timestamp>-<zufälliger base36-String>.
+    return /^\d{13}-[a-z0-9]{6,}$/i.test(token);
+}
+
+function getContactClientIp(req) {
+    return String(
+        req.ip ||
+        req.socket?.remoteAddress ||
+        ''
+    )
+        .split(',')[0]
+        .trim()
+        .slice(0, 100);
+}
+
+function isAllowedContactOrigin(req) {
+    const origin = normalizeOptionalField(req.headers.origin, 300).toLowerCase();
+
+    // Der produktive Formular-Submit läuft per fetch und sendet immer Origin.
+    // In Entwicklung sind die oben definierten localhost-Ursprünge erlaubt.
+    if (!origin) return false;
+    return CONTACT_ALLOWED_ORIGINS.has(origin);
+}
+
 function normalizePublicFilter(value, maxLength = 120) {
     return normalizeOptionalField(value, maxLength)
         .replace(/[\u0000-\u001f\u007f]/g, ' ')
@@ -327,6 +376,8 @@ exports.submitContactForm = async (req, res) => {
         audience,
         message,
         website,
+        form_started_at,
+        form_token,
         type = 'contact'
     } = req.body || {};
 
@@ -334,8 +385,41 @@ exports.submitContactForm = async (req, res) => {
     // Bots bekommen absichtlich eine Erfolgsmeldung, ohne dass etwas gespeichert
     // oder verschickt wird.
     if (website) {
-        console.warn(`[Spam-Schutz] Bot geblockt. IP: ${req.ip}`);
+        console.warn(`[Spam-Schutz] Honeypot geblockt. IP: ${req.ip}`);
         return res.status(200).json({
+            success: true,
+            message: 'Anfrage erfolgreich gesendet.'
+        });
+    }
+
+    // Nur Requests vom tatsächlichen Mobiliti-Formular akzeptieren.
+    // Direkte Bot-POSTs ohne Browser-Origin werden verworfen.
+    if (!isAllowedContactOrigin(req)) {
+        console.warn(
+            `[Spam-Schutz] Ungültiger Origin geblockt. IP: ${req.ip}, ` +
+            `Origin: ${req.headers.origin || 'nicht gesetzt'}`
+        );
+        return res.status(200).json({
+            success: true,
+            message: 'Anfrage erfolgreich gesendet.'
+        });
+    }
+
+    // Die beiden Felder werden beim Laden des Formulars durch forms.js gesetzt.
+    // Bots, die den API-Endpunkt direkt aufrufen, besitzen sie typischerweise nicht.
+    const startedAt = Number(form_started_at);
+    const completionTime = Date.now() - startedAt;
+
+    if (
+        !Number.isFinite(startedAt) ||
+        completionTime < CONTACT_MIN_COMPLETION_MS ||
+        completionTime > CONTACT_MAX_FORM_AGE_MS ||
+        startedAt > Date.now() + 30_000 ||
+        !isPlausibleContactToken(form_token)
+    ) {
+        console.warn(`[Spam-Schutz] Ungültige Formular-Signale geblockt. IP: ${req.ip}`);
+        return res.status(200).json({
+            success: true,
             message: 'Anfrage erfolgreich gesendet.'
         });
     }
@@ -346,6 +430,22 @@ exports.submitContactForm = async (req, res) => {
     const cleanAudience = normalizeOptionalField(audience, 200);
     const cleanMessage = normalizeOptionalField(message, 5000);
     const cleanType = normalizeOptionalField(type, 100) || 'contact';
+
+    if (!CONTACT_ALLOWED_TYPES.has(cleanType)) {
+        console.warn(`[Spam-Schutz] Ungültiger Formular-Typ geblockt: ${cleanType}`);
+        return res.status(200).json({
+            success: true,
+            message: 'Anfrage erfolgreich gesendet.'
+        });
+    }
+
+    if (countContactLinks(cleanMessage) > CONTACT_MAX_LINKS) {
+        console.warn(`[Spam-Schutz] Zu viele Links geblockt. IP: ${req.ip}`);
+        return res.status(200).json({
+            success: true,
+            message: 'Anfrage erfolgreich gesendet.'
+        });
+    }
 
     // Pflichtfelder
     if (!cleanName || !cleanEmail || !cleanMessage) {
@@ -375,19 +475,9 @@ exports.submitContactForm = async (req, res) => {
         });
     }
 
-    const rawForwardedFor = req.headers['x-forwarded-for'];
-
-    const ipAddress = Array.isArray(rawForwardedFor)
-        ? rawForwardedFor[0]
-        : String(
-            rawForwardedFor ||
-            req.socket?.remoteAddress ||
-            req.ip ||
-            ''
-        )
-            .split(',')[0]
-            .trim();
-
+    // Express ist in server.js mit trust proxy = 1 konfiguriert.
+    // Deshalb req.ip verwenden und X-Forwarded-For nicht ungeprüft direkt vertrauen.
+    const ipAddress = getContactClientIp(req);
     const userAgent = String(req.headers['user-agent'] || '').slice(0, 1000);
 
     const title = `Landingpage-Anfrage (${cleanType})`;
@@ -406,6 +496,58 @@ exports.submitContactForm = async (req, res) => {
     }
 
     try {
+        // Persistenter Spam-Schutz zusätzlich zum Route-Limiter:
+        // - gleiche E-Mail + gleiche Nachricht innerhalb 24 h nicht doppelt versenden
+        // - max. 3 tatsächlich gespeicherte Kontaktanfragen je IP innerhalb 60 Minuten
+        // Dadurch bleibt der Schutz auch nach einem Backend-Neustart wirksam.
+        const spamCheckResult = await db.query(
+            `
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE COALESCE(ip_address::text, '') = $1
+                          AND created_at >= NOW() - INTERVAL '60 minutes'
+                    )::int AS ip_count,
+                    COUNT(*) FILTER (
+                        WHERE LOWER(COALESCE(email, '')) = LOWER($2)
+                          AND description = $3
+                          AND created_at >= NOW() - INTERVAL '24 hours'
+                    )::int AS duplicate_count
+                FROM feedback_items
+                WHERE created_at >= NOW() - INTERVAL '24 hours'
+                  AND type = ANY($4::text[])
+            `,
+            [
+                ipAddress || '',
+                cleanEmail,
+                cleanMessage,
+                Array.from(CONTACT_ALLOWED_TYPES)
+            ]
+        );
+
+        const spamCheck = spamCheckResult.rows[0] || {};
+
+        if (Number(spamCheck.duplicate_count || 0) > 0) {
+            console.warn(
+                `[Spam-Schutz] Doppelte Kontaktanfrage unterdrückt. ` +
+                `IP: ${ipAddress || 'unbekannt'}, E-Mail: ${cleanEmail}`
+            );
+            return res.status(200).json({
+                success: true,
+                message: 'Anfrage erfolgreich gesendet.'
+            });
+        }
+
+        if (Number(spamCheck.ip_count || 0) >= 3) {
+            console.warn(
+                `[Spam-Schutz] Persistentes IP-Limit erreicht. ` +
+                `IP: ${ipAddress || 'unbekannt'}`
+            );
+            return res.status(429).json({
+                success: false,
+                message: 'Zu viele Anfragen. Bitte versuchen Sie es später erneut.'
+            });
+        }
+
         // 1. Anfrage in Datenbank speichern
         const insertQuery = `
             INSERT INTO feedback_items
@@ -919,7 +1061,6 @@ exports.getPublicActions = async (req, res) => {
     if (!isValidUUID(partnerId)) {
         return res.status(400).json({ message: 'Ungültige oder fehlende Partner-ID.' });
     }
-
     try {
         const hasAccess = await hasPublicWidgetAccess(partnerId, 'BusinessPartnerAktionen');
 
@@ -1178,10 +1319,13 @@ exports.getPublicEventFeedJson = async (req, res) => {
 // 5. PUBLIC DIRECTORY (Für das Schaufenster / Landingpage)
 // ==============================================================================
 exports.getPublicDirectory = async (req, res) => {
-    const { partnerId, search, category, region, page = 1, limit = 12 } = req.query;
+    const { partnerId, providerId, search, category, region, page = 1, limit = 12 } = req.query;
 
     if (!isValidUUID(partnerId)) {
         return res.status(400).json({ message: 'Ungültige oder fehlende Partner-ID.' });
+    }
+    if (providerId && !isValidUUID(providerId)) {
+        return res.status(400).json({ message: 'Ungültige Anbieter-ID.' });
     }
 
     const safePage = toPositiveInt(page, 1, 1000);
@@ -1196,6 +1340,12 @@ exports.getPublicDirectory = async (req, res) => {
               AND ms.status = 'active'
               AND p.is_public = true
         `;
+
+        if (providerId) {
+            whereSql += ` AND p.id = $${paramIndex}`;
+            values.push(providerId);
+            paramIndex++;
+        }
 
         const searchTerm = normalizePublicFilter(search, 120);
         if (searchTerm) {

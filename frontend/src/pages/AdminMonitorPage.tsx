@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, TextField, Button, Grid, Pagination, Chip,
     Dialog, DialogTitle, DialogContent, DialogActions, IconButton, TableSortLabel,
-    Snackbar, Tooltip, Select, MenuItem, FormControl, InputLabel, Card, CardContent, Divider
+    Snackbar, Tooltip, Select, MenuItem, FormControl, InputLabel, Card, CardContent, Divider,
+    Avatar, Link
 } from '@mui/material';
 import { AlertProps } from '@mui/material/Alert';
 import CloseIcon from '@mui/icons-material/Close';
@@ -17,17 +18,65 @@ import SettingsApplicationsIcon from '@mui/icons-material/SettingsApplications';
 import CloudQueueIcon from '@mui/icons-material/CloudQueue'; // NEU: Icon für S3
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 
 import apiClient from '../apiClient';
+import { resolveAssetUrl } from '../utils/assetUrl';
 
 // --- Interfaces & Helper Functions ---
 interface Log {
     id: string; timestamp: string; user_id: string; username: string; action_type: string; status: string;
     target_id: string; target_type: string; details: any; ip_address: string;
 }
+interface LogUserProfile {
+    id: string;
+    username: string;
+    first_name?: string | null;
+    last_name?: string | null;
+    organization_name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    linkedin_url?: string | null;
+    login_count?: number | null;
+    contribution_score?: number | null;
+    membership_level?: string | null;
+    role?: string | null;
+    is_active?: boolean;
+    active_until?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+    last_login_at?: string | null;
+    profile_image_url?: string | null;
+    newsletter_opt_in?: boolean;
+    business_partner_name?: string | null;
+    business_partner_id?: string | null;
+    tags?: string[];
+}
 interface SnackbarState { open: boolean; message: string; severity: AlertProps['severity']; }
 type Order = 'asc' | 'desc';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const safeExternalUrl = (value?: string | null) => {
+    const trimmed = String(value || '').trim();
+    if (!trimmed) return '';
+
+    try {
+        const parsed = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+        return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : '';
+    } catch {
+        return '';
+    }
+};
+
+interface ArchiveFile {
+    key: string;
+    filename: string;
+    sizeBytes: number;
+    lastModified: string;
+}
 
 interface ServiceStatus {
     status: 'online' | 'offline';
@@ -45,6 +94,7 @@ interface HealthStatus {
         version?: string;
         s3Storage?: {          // NEU: S3 Storage Interface
             sizeMb: number;
+            totalSizeBytes?: number;
             count: number;
         };
     };
@@ -89,9 +139,42 @@ interface MonthlyReportMonitoring {
     }>;
 }
 
+interface MonthlyReportPreview {
+    simulation: true;
+    sendsEmails: false;
+    partner: {
+        id: string;
+        name: string;
+        allowAutomatedNewsletter: boolean;
+    };
+    subject: string;
+    reportMonth: string;
+    period: {
+        reportFrom: string;
+        reportToExclusive: string;
+        comparisonFrom: string;
+        comparisonToExclusive: string;
+    };
+    stats: {
+        monthName: string;
+        logins: { current: number; prev: number };
+        reads: { current: number; prev: number };
+        community: { current: number; prev: number };
+        downloads: { current: number; prev: number };
+        storage: { percent: number; usedMb: string; limitMb: string };
+    };
+    recipients: Array<{
+        id: string;
+        email: string;
+        firstName: string;
+        lastName: string;
+        role: 'admin' | 'assistenz';
+    }>;
+}
+
 const COMMON_ACTION_TYPES = [
     'LOGIN', 'LOGOUT', 'FAILED_LOGIN', 'USER_CREATED', 'USER_UPDATED', 
-    'USER_DELETED', 'PASSWORD_CHANGED', 'DATA_EXPORT', 'SETTINGS_CHANGED'
+    'USER_DELETED', 'PASSWORD_CHANGED', 'DATA_EXPORT', 'SETTINGS_CHANGED', 'MONTHLY_REPORT_PREVIEW'
 ];
 
 const AdminMonitorPage: React.FC = () => {
@@ -103,6 +186,10 @@ const AdminMonitorPage: React.FC = () => {
     const [totalPages, setTotalPages] = useState(0);
     const [totalLogs, setTotalLogs] = useState(0); 
     const [selectedLog, setSelectedLog] = useState<Log | null>(null);
+    const [selectedLogUser, setSelectedLogUser] = useState<LogUserProfile | null>(null);
+    const [selectedLogUserLoading, setSelectedLogUserLoading] = useState(false);
+    const [selectedLogUserMessage, setSelectedLogUserMessage] = useState<string | null>(null);
+    const selectedLogUserRequest = useRef(0);
     
     const [filterUsername, setFilterUsername] = useState('');
     const [filterActionType, setFilterActionType] = useState('all'); 
@@ -119,6 +206,10 @@ const AdminMonitorPage: React.FC = () => {
     const [monthlyReportData, setMonthlyReportData] = useState<MonthlyReportMonitoring | null>(null);
     const [monthlyReportLoading, setMonthlyReportLoading] = useState(true);
     const [monthlyReportError, setMonthlyReportError] = useState<string | null>(null);
+    const [monthlyPreviewOpen, setMonthlyPreviewOpen] = useState(false);
+    const [monthlyPreviewLoading, setMonthlyPreviewLoading] = useState(false);
+    const [monthlyPreviewError, setMonthlyPreviewError] = useState<string | null>(null);
+    const [monthlyPreview, setMonthlyPreview] = useState<MonthlyReportPreview | null>(null);
 
     // --- HEALTH WIDGET LOGIK ---
     const [healthData, setHealthData] = useState<HealthStatus | null>(null);
@@ -127,8 +218,24 @@ const AdminMonitorPage: React.FC = () => {
 
     // --- STATE FÜR S3 ARCHIV ---
     const [showArchiveList, setShowArchiveList] = useState(false);
-    const [archiveFiles, setArchiveFiles] = useState<any[]>([]);
+    const [archiveFiles, setArchiveFiles] = useState<ArchiveFile[]>([]);
     const [isArchiveLoading, setIsArchiveLoading] = useState(false);
+    const [archiveSizeOrder, setArchiveSizeOrder] = useState<Order>('desc');
+
+    const sortedArchiveFiles = useMemo(() => (
+        [...archiveFiles].sort((a, b) => {
+            const difference = Number(a.sizeBytes || 0) - Number(b.sizeBytes || 0);
+            return archiveSizeOrder === 'asc' ? difference : -difference;
+        })
+    ), [archiveFiles, archiveSizeOrder]);
+
+    const formatBytes = (value: number) => {
+        const bytes = Number(value || 0);
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+        if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(2)} MB`;
+        return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+    };
 
     // --- FUNKTIONEN FÜR S3 ARCHIV ---
     const fetchArchiveFiles = async () => {
@@ -136,7 +243,18 @@ const AdminMonitorPage: React.FC = () => {
         try {
             const token = 'cookie-session';
             const res = await apiClient.get('/api/admin/monitor/archive-files', { headers: { 'x-auth-token': token } });
-            setArchiveFiles(res.data.files);
+            setArchiveFiles(res.data.files || []);
+            setHealthData((current) => current ? {
+                ...current,
+                server: {
+                    ...current.server,
+                    s3Storage: {
+                        sizeMb: Number(res.data.sizeMb || 0),
+                        totalSizeBytes: Number(res.data.totalSizeBytes || 0),
+                        count: Number(res.data.fileCount || 0),
+                    },
+                },
+            } : current);
         } catch (err) {
             setSnackbar({ open: true, message: 'Fehler beim Laden des Archivs', severity: 'error' });
         } finally {
@@ -245,6 +363,38 @@ const AdminMonitorPage: React.FC = () => {
         fetchMonthlyReportData();
     }, [fetchMonthlyReportData]);
 
+    const handlePreviewMonthlyReport = async () => {
+        setMonthlyPreviewOpen(true);
+        setMonthlyPreviewLoading(true);
+        setMonthlyPreviewError(null);
+        setMonthlyPreview(null);
+        try {
+            const response = await apiClient.post<MonthlyReportPreview>('/api/admin/monitor/monthly-report-preview');
+            const payload = response.data as MonthlyReportPreview | { message?: string } | null;
+            if (!response.res.ok) {
+                throw new Error(payload && 'message' in payload && payload.message
+                    ? payload.message
+                    : `Monatsreport-Simulation fehlgeschlagen (HTTP ${response.res.status}).`);
+            }
+            if (
+                !payload
+                || !('simulation' in payload)
+                || payload.simulation !== true
+                || !payload.partner?.id
+                || !payload.stats
+                || !Array.isArray(payload.recipients)
+            ) {
+                throw new Error('Die Monatsreport-Vorschau hat ein ungültiges Antwortformat.');
+            }
+            setMonthlyPreview(payload);
+            fetchLogs(1);
+        } catch (err: any) {
+            setMonthlyPreviewError(err?.message || 'Monatsreport-Simulation konnte nicht erstellt werden.');
+        } finally {
+            setMonthlyPreviewLoading(false);
+        }
+    };
+
     const handleFilter = () => { setPage(1); fetchLogs(1); };
     const handleClearFilters = () => {
         setFilterUsername(''); setFilterActionType('all'); setFilterStartDate(''); setFilterEndDate(''); setPage(1); fetchLogs(1);
@@ -280,6 +430,52 @@ const AdminMonitorPage: React.FC = () => {
 
     const handleCloseSnackbar = () => setSnackbar({ ...snackbar, open: false });
     const formatDate = (dateString: string) => new Date(dateString).toLocaleString('de-AT', { dateStyle: 'short', timeStyle: 'medium' });
+
+    const handleSelectLog = async (log: Log) => {
+        const requestId = ++selectedLogUserRequest.current;
+        setSelectedLog(log);
+        setSelectedLogUser(null);
+        setSelectedLogUserMessage(null);
+
+        if (!UUID_PATTERN.test(String(log.user_id || ''))) {
+            setSelectedLogUserLoading(false);
+            setSelectedLogUserMessage('Für diesen Systemeintrag ist kein Benutzerprofil verknüpft.');
+            return;
+        }
+
+        setSelectedLogUserLoading(true);
+        try {
+            const response = await apiClient.get<LogUserProfile>(`/api/admin/users/${encodeURIComponent(log.user_id)}`);
+            if (requestId !== selectedLogUserRequest.current) return;
+
+            if (!response.res.ok || !response.data?.id) {
+                setSelectedLogUserMessage(
+                    response.res.status === 404
+                        ? 'Das Benutzerprofil ist nicht mehr verfügbar. Der Protokolleintrag bleibt weiterhin lesbar.'
+                        : (response.data as any)?.message || 'Das Benutzerprofil konnte nicht geladen werden.'
+                );
+                return;
+            }
+
+            setSelectedLogUser(response.data);
+        } catch (err: any) {
+            if (requestId === selectedLogUserRequest.current) {
+                setSelectedLogUserMessage(err?.message || 'Das Benutzerprofil konnte nicht geladen werden.');
+            }
+        } finally {
+            if (requestId === selectedLogUserRequest.current) {
+                setSelectedLogUserLoading(false);
+            }
+        }
+    };
+
+    const handleCloseLogDetails = () => {
+        selectedLogUserRequest.current += 1;
+        setSelectedLog(null);
+        setSelectedLogUser(null);
+        setSelectedLogUserMessage(null);
+        setSelectedLogUserLoading(false);
+    };
 
     const handleOpenBullBoard = async () => {
         try {
@@ -367,16 +563,16 @@ const AdminMonitorPage: React.FC = () => {
                                                     <CloudQueueIcon fontSize="small" color="primary" /> AWS Speicher
                                                 </Typography>
                                                 <Typography variant="body2" fontWeight="bold">
-                                                    {healthData.server.s3Storage.sizeMb.toFixed(2)} MB
+                                                    {formatBytes(
+                                                        healthData.server.s3Storage.totalSizeBytes
+                                                        ?? healthData.server.s3Storage.sizeMb * 1024 * 1024
+                                                    )}
                                                 </Typography>
                                             </Box>
                                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
-                                                <Typography variant="body2" color="text.secondary">Business Partner</Typography>
-                                                <Typography variant="body2" fontWeight="bold">{healthData.server.s3Storage.count}</Typography>
-                                            </Box>
-                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
-                                                <Typography variant="body2" color="text.secondary">Archiv Dateien</Typography>
-                                                <Typography variant="body2" fontWeight="bold"></Typography>
+                                                <Typography variant="body2" color="text.secondary">
+                                                    Archiv-Dateien ({healthData.server.s3Storage.count})
+                                                </Typography>
                                             </Box>
 
                                             {/* LAZY LOADING ARCHIV LISTE */}
@@ -404,12 +600,20 @@ const AdminMonitorPage: React.FC = () => {
                                                                 <TableHead>
                                                                     <TableRow>
                                                                         <TableCell>Datei</TableCell>
-                                                                        <TableCell align="right">Größe</TableCell>
+                                                                        <TableCell align="right" sortDirection={archiveSizeOrder}>
+                                                                            <TableSortLabel
+                                                                                active
+                                                                                direction={archiveSizeOrder}
+                                                                                onClick={() => setArchiveSizeOrder((current) => current === 'asc' ? 'desc' : 'asc')}
+                                                                            >
+                                                                                Größe
+                                                                            </TableSortLabel>
+                                                                        </TableCell>
                                                                         <TableCell align="center">Aktionen</TableCell>
                                                                     </TableRow>
                                                                 </TableHead>
                                                                 <TableBody>
-                                                                    {(archiveFiles || []).map((file: any) => (
+                                                                    {sortedArchiveFiles.map((file) => (
                                                                         <TableRow key={file.key} hover>
                                                                             <TableCell sx={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                                                 <Tooltip title={file.filename}>
@@ -420,7 +624,7 @@ const AdminMonitorPage: React.FC = () => {
                                                                                     {new Date(file.lastModified).toLocaleDateString('de-DE')}
                                                                                 </Typography>
                                                                             </TableCell>
-                                                                            <TableCell align="right"><Typography variant="caption">{file.sizeMb} MB</Typography></TableCell>
+                                                                            <TableCell align="right"><Typography variant="caption">{formatBytes(file.sizeBytes)}</Typography></TableCell>
                                                                             <TableCell align="center">
                                                                                 <Tooltip title="Herunterladen">
                                                                                     <IconButton size="small" onClick={() => handleDownloadArchiveFile(file.key)}><CloudQueueIcon fontSize="small" /></IconButton>
@@ -497,6 +701,21 @@ const AdminMonitorPage: React.FC = () => {
             return { label: 'In Versand', color: 'warning' as const };
         };
         const deliveryModeLabel = (mode: string) => ({ mobiliti: 'Mobiliti direkt', export: 'Zentraler Export', external: 'Extern' }[mode] || mode);
+        const formatPeriod = (from: string, toExclusive: string) => {
+            const end = new Date(toExclusive);
+            end.setUTCDate(end.getUTCDate() - 1);
+            const formatter = new Intl.DateTimeFormat('de-AT', { dateStyle: 'medium', timeZone: 'Europe/Vienna' });
+            return `${formatter.format(new Date(from))} – ${formatter.format(end)}`;
+        };
+        const metricDelta = (current: number, previous: number) => {
+            const difference = current - previous;
+            if (difference === 0) return { label: '±0', color: 'default' as const };
+            return {
+                label: `${difference > 0 ? '+' : ''}${difference}`,
+                color: difference > 0 ? 'success' as const : 'error' as const,
+            };
+        };
+        const roleLabel = (role: string) => role === 'assistenz' ? 'Assistenz' : 'Admin';
 
         return (
             <Box sx={{ mb: 4 }}>
@@ -504,7 +723,18 @@ const AdminMonitorPage: React.FC = () => {
                     <Typography variant="h5" sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
                         <EmailOutlinedIcon color="primary" /> Monatlicher E-Mail-Report
                     </Typography>
-                    <Button size="small" startIcon={<RefreshIcon />} onClick={fetchMonthlyReportData} disabled={monthlyReportLoading}>Aktualisieren</Button>
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        <Button
+                            size="small"
+                            variant="contained"
+                            startIcon={monthlyPreviewLoading ? <CircularProgress size={16} color="inherit" /> : <VisibilityOutlinedIcon />}
+                            onClick={handlePreviewMonthlyReport}
+                            disabled={monthlyPreviewLoading}
+                        >
+                            Report simulieren
+                        </Button>
+                        <Button size="small" startIcon={<RefreshIcon />} onClick={fetchMonthlyReportData} disabled={monthlyReportLoading}>Aktualisieren</Button>
+                    </Box>
                 </Box>
 
                 {settings && !settings.allow_automated_newsletter && (
@@ -586,6 +816,127 @@ const AdminMonitorPage: React.FC = () => {
                         </TableBody>
                     </Table>
                 </TableContainer>
+
+                <Dialog
+                    open={monthlyPreviewOpen}
+                    onClose={() => !monthlyPreviewLoading && setMonthlyPreviewOpen(false)}
+                    fullWidth
+                    maxWidth="md"
+                >
+                    <DialogTitle sx={{ pr: 7 }}>
+                        Monatsreport simulieren
+                        <IconButton
+                            aria-label="Vorschau schließen"
+                            onClick={() => setMonthlyPreviewOpen(false)}
+                            disabled={monthlyPreviewLoading}
+                            sx={{ position: 'absolute', right: 8, top: 8 }}
+                        >
+                            <CloseIcon />
+                        </IconButton>
+                    </DialogTitle>
+                    <DialogContent dividers>
+                        {monthlyPreviewLoading && (
+                            <Box sx={{ py: 6, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                                <CircularProgress />
+                                <Typography color="text.secondary">Kennzahlen und berechtigte Empfänger werden ermittelt …</Typography>
+                            </Box>
+                        )}
+                        {monthlyPreviewError && <Alert severity="error">{monthlyPreviewError}</Alert>}
+                        {monthlyPreview?.partner && monthlyPreview?.stats && !monthlyPreviewLoading && (
+                            <Box>
+                                <Alert severity="info" sx={{ mb: 3 }}>
+                                    Reine Simulation: Es wurde keine E-Mail versendet und kein Versandauftrag angelegt.
+                                </Alert>
+
+                                <Typography variant="h6" fontWeight="bold">{monthlyPreview.partner.name}</Typography>
+                                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{monthlyPreview.subject}</Typography>
+
+                                {!monthlyPreview.partner.allowAutomatedNewsletter && (
+                                    <Alert severity="warning" sx={{ mb: 2 }}>
+                                        Der automatische Monatsreport ist für diesen Mandanten deaktiviert. Die Vorschau ist trotzdem verfügbar.
+                                    </Alert>
+                                )}
+
+                                <Grid container spacing={2} sx={{ mb: 3 }}>
+                                    <Grid item xs={12} md={6}>
+                                        <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
+                                            <Typography variant="caption" color="text.secondary">Berichtszeitraum</Typography>
+                                            <Typography fontWeight="bold">{formatPeriod(monthlyPreview.period.reportFrom, monthlyPreview.period.reportToExclusive)}</Typography>
+                                        </Paper>
+                                    </Grid>
+                                    <Grid item xs={12} md={6}>
+                                        <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
+                                            <Typography variant="caption" color="text.secondary">Vergleichszeitraum</Typography>
+                                            <Typography fontWeight="bold">{formatPeriod(monthlyPreview.period.comparisonFrom, monthlyPreview.period.comparisonToExclusive)}</Typography>
+                                        </Paper>
+                                    </Grid>
+                                </Grid>
+
+                                <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1.5 }}>Kennzahlen</Typography>
+                                <Grid container spacing={2} sx={{ mb: 3 }}>
+                                    {([
+                                        ['Logins', monthlyPreview.stats.logins],
+                                        ['Gelesene Inhalte', monthlyPreview.stats.reads],
+                                        ['Community-Beiträge', monthlyPreview.stats.community],
+                                        ['Downloads', monthlyPreview.stats.downloads],
+                                    ] as Array<[string, { current: number; prev: number }]>).map(([label, metric]) => {
+                                        const delta = metricDelta(metric.current, metric.prev);
+                                        return (
+                                            <Grid item xs={12} sm={6} md={3} key={label}>
+                                                <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
+                                                    <Typography variant="caption" color="text.secondary">{label}</Typography>
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, my: 0.5 }}>
+                                                        <Typography variant="h5" fontWeight="bold">{metric.current}</Typography>
+                                                        <Chip label={delta.label} color={delta.color} size="small" variant="outlined" />
+                                                    </Box>
+                                                    <Typography variant="caption" color="text.secondary">Vergleich: {metric.prev}</Typography>
+                                                </Paper>
+                                            </Grid>
+                                        );
+                                    })}
+                                    <Grid item xs={12}>
+                                        <Paper variant="outlined" sx={{ p: 2 }}>
+                                            <Typography variant="caption" color="text.secondary">Mandantenspeicher</Typography>
+                                            <Typography fontWeight="bold">
+                                                {monthlyPreview.stats.storage.usedMb} MB von {monthlyPreview.stats.storage.limitMb} MB ({monthlyPreview.stats.storage.percent} %)
+                                            </Typography>
+                                        </Paper>
+                                    </Grid>
+                                </Grid>
+
+                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, mb: 1.5 }}>
+                                    <Typography variant="subtitle1" fontWeight="bold">Tatsächliche Opt-in-Empfänger</Typography>
+                                    <Chip label={`${monthlyPreview.recipients.length} Empfänger`} color={monthlyPreview.recipients.length ? 'success' : 'default'} variant="outlined" />
+                                </Box>
+
+                                {monthlyPreview.recipients.length === 0 ? (
+                                    <Alert severity="warning">Kein aktiver Admin oder Assistent ist derzeit für den Monatsreport angemeldet.</Alert>
+                                ) : (
+                                    <TableContainer component={Paper} variant="outlined">
+                                        <Table size="small">
+                                            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>E-Mail</TableCell><TableCell>Rolle</TableCell></TableRow></TableHead>
+                                            <TableBody>
+                                                {monthlyPreview.recipients.map((recipient) => {
+                                                    const name = `${recipient.firstName} ${recipient.lastName}`.trim();
+                                                    return (
+                                                        <TableRow key={recipient.id}>
+                                                            <TableCell>{name || '—'}</TableCell>
+                                                            <TableCell>{recipient.email}</TableCell>
+                                                            <TableCell><Chip label={roleLabel(recipient.role)} size="small" variant="outlined" /></TableCell>
+                                                        </TableRow>
+                                                    );
+                                                })}
+                                            </TableBody>
+                                        </Table>
+                                    </TableContainer>
+                                )}
+                            </Box>
+                        )}
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={() => setMonthlyPreviewOpen(false)} disabled={monthlyPreviewLoading}>Schließen</Button>
+                    </DialogActions>
+                </Dialog>
             </Box>
         );
     };
@@ -696,7 +1047,7 @@ const AdminMonitorPage: React.FC = () => {
                             </TableHead>
                             <TableBody>
                                 {logs.map((log) => (
-                                    <TableRow key={log.id} hover sx={{ cursor: 'pointer' }} onClick={() => setSelectedLog(log)}>
+                                    <TableRow key={log.id} hover sx={{ cursor: 'pointer' }} onClick={() => handleSelectLog(log)}>
                                         <TableCell>{formatDate(log.timestamp)}</TableCell>
                                         <TableCell>{log.username}</TableCell>
                                         <TableCell><Chip label={log.action_type} size="small" sx={{ bgcolor: 'action.hover', fontWeight: 'medium' }} /></TableCell>
@@ -720,10 +1071,10 @@ const AdminMonitorPage: React.FC = () => {
             )}
             
             {/* --- DIALOGE --- */}
-            <Dialog open={!!selectedLog} onClose={() => setSelectedLog(null)} fullWidth maxWidth="md">
+            <Dialog open={!!selectedLog} onClose={handleCloseLogDetails} fullWidth maxWidth="md">
                 <DialogTitle>
                     Log-Details
-                    <IconButton aria-label="close" onClick={() => setSelectedLog(null)} sx={{ position: 'absolute', right: 8, top: 8 }}><CloseIcon /></IconButton>
+                    <IconButton aria-label="close" onClick={handleCloseLogDetails} sx={{ position: 'absolute', right: 8, top: 8 }}><CloseIcon /></IconButton>
                 </DialogTitle>
                 <DialogContent dividers>
                     {selectedLog && (
@@ -742,6 +1093,124 @@ const AdminMonitorPage: React.FC = () => {
                             {selectedLog.target_type && <Grid item xs={6}><Typography variant="body2"><strong>Ziel-Typ:</strong> {selectedLog.target_type}</Typography></Grid>}
                             {selectedLog.details?.businessPartnerName && <Grid item xs={12}><Typography variant="body2"><strong>Business Partner:</strong> {selectedLog.details.businessPartnerName}</Typography></Grid>}
                             <Grid item xs={12}>
+                                <Divider sx={{ my: 1 }} />
+                                <Typography variant="subtitle1" sx={{ mb: 1.5, fontWeight: 'bold' }}>Benutzerprofil</Typography>
+
+                                {selectedLogUserLoading && (
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 2 }}>
+                                        <CircularProgress size={22} />
+                                        <Typography variant="body2" color="text.secondary">Profildaten werden geladen …</Typography>
+                                    </Box>
+                                )}
+
+                                {!selectedLogUserLoading && selectedLogUserMessage && (
+                                    <Alert severity="info">{selectedLogUserMessage}</Alert>
+                                )}
+
+                                {!selectedLogUserLoading && selectedLogUser && (
+                                    <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+                                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
+                                            <Avatar
+                                                src={resolveAssetUrl(selectedLogUser.profile_image_url)}
+                                                alt={`${selectedLogUser.first_name || ''} ${selectedLogUser.last_name || ''}`.trim() || selectedLogUser.username}
+                                                sx={{ width: 64, height: 64 }}
+                                            >
+                                                {(selectedLogUser.first_name?.[0] || selectedLogUser.username?.[0] || '?').toUpperCase()}
+                                            </Avatar>
+                                            <Box sx={{ minWidth: 0, flex: 1 }}>
+                                                <Typography variant="h6" sx={{ lineHeight: 1.25 }}>
+                                                    {[selectedLogUser.first_name, selectedLogUser.last_name].filter(Boolean).join(' ') || selectedLogUser.username}
+                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary">@{selectedLogUser.username}</Typography>
+                                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1 }}>
+                                                    {selectedLogUser.role && <Chip label={`Rolle: ${selectedLogUser.role}`} size="small" />}
+                                                    <Chip
+                                                        label={selectedLogUser.is_active ? 'Aktiv' : 'Inaktiv'}
+                                                        color={selectedLogUser.is_active ? 'success' : 'default'}
+                                                        size="small"
+                                                        variant="outlined"
+                                                    />
+                                                    {selectedLogUser.membership_level && <Chip label={selectedLogUser.membership_level} size="small" variant="outlined" />}
+                                                </Box>
+                                            </Box>
+                                        </Box>
+
+                                        <Grid container spacing={1.5}>
+                                            {selectedLogUser.organization_name && (
+                                                <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Organisation:</strong> {selectedLogUser.organization_name}</Typography></Grid>
+                                            )}
+                                            {selectedLogUser.business_partner_name && (
+                                                <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Mandant:</strong> {selectedLogUser.business_partner_name}</Typography></Grid>
+                                            )}
+                                            {selectedLogUser.email && (
+                                                <Grid item xs={12} sm={6}>
+                                                    <Typography variant="body2"><strong>E-Mail:</strong> <Link href={`mailto:${selectedLogUser.email}`}>{selectedLogUser.email}</Link></Typography>
+                                                </Grid>
+                                            )}
+                                            {selectedLogUser.phone && (
+                                                <Grid item xs={12} sm={6}>
+                                                    <Typography variant="body2"><strong>Telefon:</strong> <Link href={`tel:${selectedLogUser.phone}`}>{selectedLogUser.phone}</Link></Typography>
+                                                </Grid>
+                                            )}
+                                            {selectedLogUser.created_at && (
+                                                <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Registriert seit:</strong> {formatDate(selectedLogUser.created_at)}</Typography></Grid>
+                                            )}
+                                            {selectedLogUser.last_login_at && (
+                                                <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Letzter Login:</strong> {formatDate(selectedLogUser.last_login_at)}</Typography></Grid>
+                                            )}
+                                            {selectedLogUser.active_until && (
+                                                <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Aktiv bis:</strong> {formatDate(selectedLogUser.active_until)}</Typography></Grid>
+                                            )}
+                                            {selectedLogUser.login_count != null && (
+                                                <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Logins:</strong> {selectedLogUser.login_count}</Typography></Grid>
+                                            )}
+                                            {selectedLogUser.contribution_score != null && (
+                                                <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Community-Punkte:</strong> {selectedLogUser.contribution_score}</Typography></Grid>
+                                            )}
+                                            <Grid item xs={12} sm={6}>
+                                                <Typography variant="body2"><strong>Newsletter:</strong> {selectedLogUser.newsletter_opt_in ? 'angemeldet' : 'nicht angemeldet'}</Typography>
+                                            </Grid>
+                                        </Grid>
+
+                                        {!!selectedLogUser.tags?.length && (
+                                            <Box sx={{ mt: 2 }}>
+                                                <Typography variant="body2" sx={{ mb: 0.75 }}><strong>Experte für:</strong></Typography>
+                                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                                                    {selectedLogUser.tags.map((tag) => <Chip key={tag} label={tag} size="small" color="primary" variant="outlined" />)}
+                                                </Box>
+                                            </Box>
+                                        )}
+
+                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 2 }}>
+                                            <Button
+                                                component="a"
+                                                href={`/p/${selectedLogUser.id}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                size="small"
+                                                variant="outlined"
+                                                endIcon={<OpenInNewIcon />}
+                                            >
+                                                Visitenkarte öffnen
+                                            </Button>
+                                            {safeExternalUrl(selectedLogUser.linkedin_url) && (
+                                                <Button
+                                                    component="a"
+                                                    href={safeExternalUrl(selectedLogUser.linkedin_url)}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    size="small"
+                                                    variant="text"
+                                                    endIcon={<OpenInNewIcon />}
+                                                >
+                                                    LinkedIn
+                                                </Button>
+                                            )}
+                                        </Box>
+                                    </Paper>
+                                )}
+                            </Grid>
+                            <Grid item xs={12}>
                                 <Typography variant="subtitle1" sx={{ mt: 2, fontWeight: 'bold' }}>Details (JSON):</Typography>
                                 <Paper sx={{ p: 2, background: '#f8fafc', mt: 1, maxHeight: 400, overflowY: 'auto', border: '1px solid #e2e8f0' }}>
                                     <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, fontSize: '0.85rem' }}>
@@ -752,7 +1221,7 @@ const AdminMonitorPage: React.FC = () => {
                         </Grid>
                     )}
                 </DialogContent>
-                <DialogActions><Button onClick={() => setSelectedLog(null)}>Schließen</Button></DialogActions>
+                <DialogActions><Button onClick={handleCloseLogDetails}>Schließen</Button></DialogActions>
             </Dialog>
 
             <Dialog open={deleteDialogOpen} onClose={handleCloseDeleteDialog}>

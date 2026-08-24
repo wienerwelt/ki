@@ -84,6 +84,10 @@ interface PublicPortalPageProps {
 }
 
 const DEFAULT_COMPANY_LOGO = '/logos/default-company.svg';
+const formatSoftwareSolutionCount = (value: unknown) => {
+    const count = Number(value) || 0;
+    return `${count} ${count === 1 ? 'Softwarelösung' : 'Softwarelösungen'}`;
+};
 
 // --- HILFSKOMPONENTE FÜR FEHLENDE BILDER ---
 const ImageWithFallback = ({ src, alt, fallbackColor, sx, ...props }: any) => {
@@ -742,6 +746,34 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         setSearchParams(nextSearchParams, { replace: true });
     };
 
+    const handleOpenProviderDetailById = async (providerId: string) => {
+        if (!providerId || !partner?.id) return;
+
+        let provider = networkProviders.find((item: any) => item.id === providerId);
+        if (!provider) {
+            try {
+                const response = await apiClient.get('/api/public/directory', {
+                    params: { partnerId: partner.id, providerId, page: 1, limit: 1 },
+                });
+                provider = response.data?.data?.[0];
+            } catch {
+                showSnackbar('Der Brancheneintrag konnte nicht geöffnet werden.', 'error');
+                return;
+            }
+        }
+
+        if (!provider) {
+            showSnackbar('Der Anbieter ist im öffentlichen Branchenverzeichnis nicht verfügbar.', 'warning');
+            return;
+        }
+
+        setSelectedTeaserProvider(provider);
+        setTeaserTab(0);
+        const nextSearchParams = new URLSearchParams(searchParams);
+        nextSearchParams.set('provider', providerId);
+        setSearchParams(nextSearchParams, { replace: true });
+    };
+
     const handleShareProvider = async (provider: any) => {
         const shareUrl = new URL(`${window.location.origin}${canonicalPartnerPath}`);
         shareUrl.searchParams.set('provider', String(provider.id));
@@ -892,7 +924,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
             case 'sentiment_widget': content = <SentimentWidget {...props} />; break;
             case 'daily_cockpit': content = <DailyCockpitWidget {...props} />; break;
             case 'business-partner-actions': case 'BusinessPartnerAktionen': case 'BusinessPartnerActionsWidget': content = <BpActionsWidget {...props} />; break;
-            case 'SoftwareCatalog': content = <SoftwareCatalogWidget {...props} />; break;
+            case 'SoftwareCatalog': content = <SoftwareCatalogWidget {...props} onProviderOpen={handleOpenProviderDetailById} />; break;
             case 'funding_widget': case 'Funding': case 'FundingWidget': content = <FundingWidget {...props} />; break;
             default: content = <Paper sx={{ p: 4, borderRadius: 3, bgcolor: 'rgba(255,255,255, 0.1)', border: '1px dashed rgba(255,255,255,0.3)' }}><Typography sx={{ color: '#fff' }} align="center">Widget "{widgetInfo.name}" ist noch nicht konfiguriert.</Typography></Paper>;
         }
@@ -981,7 +1013,7 @@ const renderProviderPreviewCard = (provider: any) => {
 
             {(Number(provider.software_count) > 0 || Number(provider.action_count) > 0) && (
                 <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap" sx={{ mb: 1.2 }}>
-                    {Number(provider.software_count) > 0 && <Chip icon={<AppsOutlinedIcon />} size="small" label={`Software ${provider.software_count}`} sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900 }} />}
+                    {Number(provider.software_count) > 0 && <Chip icon={<AppsOutlinedIcon />} size="small" label={formatSoftwareSolutionCount(provider.software_count)} sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900 }} />}
                     {Number(provider.action_count) > 0 && <Chip icon={<LocalOfferOutlinedIcon />} size="small" label={`Angebote ${provider.action_count}`} sx={{ bgcolor: alpha(secondaryColor, 0.1), color: secondaryColor, fontWeight: 900 }} />}
                 </Stack>
             )}
@@ -1544,6 +1576,7 @@ const renderProviderPreviewCard = (provider: any) => {
                             title="Software-Lexikon"
                             partnerId={partner?.id}
                             primaryColor={primaryColor}
+                            onProviderOpen={handleOpenProviderDetailById}
                             isRemovable={false}
                             onDelete={() => {}}
                         />
@@ -1794,7 +1827,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                             {selectedTeaserProvider.category && <Chip label={selectedTeaserProvider.category} size="small" sx={{ bgcolor: alpha(primaryColor, 0.08), color: primaryColor, fontWeight: 900, height: 24 }} />}
                                             {selectedTeaserProvider.is_tenant_entry && <Chip label="Mandant" size="small" sx={{ bgcolor: primaryColor, color: '#fff', fontWeight: 900, height: 24 }} />}
                                             {selectedTeaserProvider.is_recommended && <Chip icon={<VerifiedUserIcon fontSize="small" />} label="Offizieller Partner" size="small" sx={{ bgcolor: alpha(primaryColor, 0.14), color: primaryColor, fontWeight: 900, height: 24 }} />}
-                                            {Number(selectedTeaserProvider.software_count) > 0 && <Chip icon={<AppsOutlinedIcon />} label={`Software ${selectedTeaserProvider.software_count}`} size="small" sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900, height: 24 }} />}
+                                            {Number(selectedTeaserProvider.software_count) > 0 && <Chip icon={<AppsOutlinedIcon />} label={formatSoftwareSolutionCount(selectedTeaserProvider.software_count)} size="small" sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900, height: 24 }} />}
                                             {Number(selectedTeaserProvider.action_count) > 0 && <Chip icon={<LocalOfferOutlinedIcon />} label={`Angebote ${selectedTeaserProvider.action_count}`} size="small" sx={{ bgcolor: alpha(secondaryColor, 0.1), color: secondaryColor, fontWeight: 900, height: 24 }} />}
                                         </Stack>
                                     </Box>

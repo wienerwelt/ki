@@ -17,6 +17,7 @@ import SendIcon from '@mui/icons-material/Send';
 import { useAiChat } from './useAiChat';
 import { AI_CONFIG } from './aiConfig';
 import { useAuth } from '../context/AuthContext';
+import AiContentLabel from './AiContentLabel';
 
 export const AiChatWidget: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -136,9 +137,12 @@ export const AiChatWidget: React.FC = () => {
                 src={AI_CONFIG.avatarUrl}
                 sx={{ width: { xs: 38, sm: 40 }, height: { xs: 38, sm: 40 }, flexShrink: 0 }}
               />
-              <Typography variant="subtitle1" fontWeight="bold" noWrap>
-                Hallo, ich bin {AI_CONFIG.name}
-              </Typography>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="subtitle1" fontWeight="bold" noWrap>
+                  Hallo, ich bin {AI_CONFIG.name}
+                </Typography>
+                <AiContentLabel kind="ai" size={14} />
+              </Box>
             </Box>
 
             <IconButton
@@ -194,6 +198,7 @@ export const AiChatWidget: React.FC = () => {
                   <Typography variant="caption" display="block">
                     {m.role === 'user' ? 'Ich' : AI_CONFIG.name}
                   </Typography>
+                  {m.role === 'assistant' && <AiContentLabel kind="ai" size={12} />}
                 </Box>
 
                 <Paper

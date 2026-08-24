@@ -22,6 +22,14 @@ const ProfileTabThemen: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, 
   const initialScore = user.article_score_min === 1 ? 'positive' : user.article_score_min === 0 ? 'balanced' : 'all';
   const [scoreFilter, setScoreFilter] = useState<'all'|'balanced'|'positive'>(initialScore);
   const [newsletterOptIn, setNewsletterOptIn] = useState(Boolean(user.newsletter_opt_in));
+  const [briefingEnabled, setBriefingEnabled] = useState(Boolean(user.briefing_email_enabled));
+  const [memberNewsletterEnabled, setMemberNewsletterEnabled] = useState(Boolean(user.member_newsletter_enabled));
+
+  useEffect(() => {
+    setNewsletterOptIn(Boolean(user.newsletter_opt_in));
+    setBriefingEnabled(Boolean(user.briefing_email_enabled));
+    setMemberNewsletterEnabled(Boolean(user.member_newsletter_enabled));
+  }, [user.newsletter_opt_in, user.briefing_email_enabled, user.member_newsletter_enabled]);
 
   useEffect(() => {
     const fetchSelectData = async () => {
@@ -90,7 +98,9 @@ const ProfileTabThemen: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, 
         });
         if (response.data?.alreadyConfirmed) {
           setNewsletterOptIn(true);
-          updateUser({ newsletter_opt_in: true, briefing_email_enabled: true });
+          setBriefingEnabled(true);
+          setMemberNewsletterEnabled(true);
+          updateUser({ newsletter_opt_in: true, briefing_email_enabled: true, member_newsletter_enabled: true });
           setSnackbar({ open: true, message: 'Newsletter und Branchenbriefing sind aktiviert.' });
         } else {
           setNewsletterOptIn(false);
@@ -99,7 +109,9 @@ const ProfileTabThemen: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, 
       } else {
         await apiClient.put('/api/users/me', { newsletter_opt_in: false });
         setNewsletterOptIn(false);
-        updateUser({ newsletter_opt_in: false, briefing_email_enabled: false });
+        setBriefingEnabled(false);
+        setMemberNewsletterEnabled(false);
+        updateUser({ newsletter_opt_in: false, briefing_email_enabled: false, member_newsletter_enabled: false });
         setSnackbar({ open: true, message: t('profile.newsletterUnsubscribeSuccess') });
       }
     } catch (_) {
@@ -176,6 +188,24 @@ const ProfileTabThemen: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, 
             )}
             label={newsletterOptIn ? t('profile.newsletterOn') : t('profile.newsletterOff')}
           />
+          {newsletterOptIn && (
+            <Box sx={{ pl: { xs: 0, sm: 4 }, mt: 1 }}>
+              <FormControlLabel
+                control={<Switch checked={briefingEnabled} disabled={isDemoUser} onChange={(event) => {
+                  setBriefingEnabled(event.target.checked);
+                  autoSaveProfilePref('briefing_email_enabled', event.target.checked);
+                }} />}
+                label="Branchenbriefing erhalten"
+              />
+              <FormControlLabel
+                control={<Switch checked={memberNewsletterEnabled} disabled={isDemoUser} onChange={(event) => {
+                  setMemberNewsletterEnabled(event.target.checked);
+                  autoSaveProfilePref('member_newsletter_enabled', event.target.checked);
+                }} />}
+                label="Manuelle Mitglieder-Mail erhalten"
+              />
+            </Box>
+          )}
         </Grid>
       </Grid>
       <Snackbar open={snackbar.open} autoHideDuration={3000} onClose={() => setSnackbar({ ...snackbar, open: false })} message={snackbar.message} />

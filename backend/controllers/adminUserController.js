@@ -175,9 +175,15 @@ exports.getUserById = async (req, res) => {
         const result = await db.query(
             `SELECT
                 u.id, u.username, u.first_name, u.last_name, u.organization_name, u.email, 
-                u.linkedin_url, u.login_count, u.membership_level,
+                u.phone, u.linkedin_url, u.login_count, u.contribution_score, u.membership_level,
                 u.role, u.is_active, u.active_until, u.created_at, u.updated_at, u.last_login_at,
                 u.profile_image_url, u.newsletter_opt_in,
+                ARRAY(
+                    SELECT ust.tag_name
+                    FROM user_saved_tags ust
+                    WHERE ust.user_id = u.id
+                    ORDER BY ust.tag_name ASC
+                ) AS tags,
                 bp.name AS business_partner_name, bp.id AS business_partner_id
              FROM users u
              LEFT JOIN business_partners bp ON u.business_partner_id = bp.id

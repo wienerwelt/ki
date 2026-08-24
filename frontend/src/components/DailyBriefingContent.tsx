@@ -25,6 +25,7 @@ import FormatQuoteIcon from '@mui/icons-material/FormatQuote';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 import { useSnackbar } from '../context/SnackbarContext';
+import AiContentLabel from './AiContentLabel';
 
 // --- Interfaces ---
 interface BriefingItem {
@@ -166,7 +167,7 @@ const DailyBriefingContent: React.FC = () => {
         const response = await apiClient.post('/api/auth/newsletter/opt-in', { email: user?.email, source: 'daily_cockpit' });
         if (response.data?.alreadyConfirmed) {
           setIsSubscribed(true);
-          updateUser({ newsletter_opt_in: true, briefing_email_enabled: true });
+          updateUser({ newsletter_opt_in: true, briefing_email_enabled: true, member_newsletter_enabled: true });
           showSnackbar('E-Mail-Briefing aktiviert.', 'success');
         } else {
           showSnackbar('Bitte bestätigen Sie die Anmeldung über die zugesandte E-Mail.', 'info');
@@ -398,7 +399,10 @@ const DailyBriefingContent: React.FC = () => {
                     Hier ist Ihr Wissensvorsprung für heute, {currentDateLabel}.
                 </Typography>
             </Box>
-            <Chip icon={<AccessTimeIcon />} label={`ca. ${readTime} Min. Lesezeit`} variant="outlined" sx={{ bgcolor: '#fff', fontWeight: 'bold' }} />
+            <Stack direction="row" spacing={1.2} alignItems="center">
+                <AiContentLabel kind="generated" size={18} />
+                <Chip icon={<AccessTimeIcon />} label={`ca. ${readTime} Min. Lesezeit`} variant="outlined" sx={{ bgcolor: '#fff', fontWeight: 'bold' }} />
+            </Stack>
         </Box>
 
         {/* BENTO GRID (Dynamisch nach Fokus & Datenverfügbarkeit) */}

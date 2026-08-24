@@ -141,11 +141,18 @@ async function run() {
             throw new Error('Das Ablaufdatum des Test-Direktlinks liegt nicht ungefähr einen Tag in der Zukunft.');
         }
 
-        const firstDownloadResponse = await fetch(createBody.url, { redirect: 'manual' });
+        const publicUrl = new URL(createBody.url);
+        const publicPathMatch = publicUrl.pathname.match(/^\/f\/([^/]+)\/([^/]+)$/);
+        if (!publicPathMatch || decodeURIComponent(publicPathMatch[1]) !== testFileId) {
+            throw new Error(`Erzeugter öffentlicher Link hat ein unerwartetes Format: ${publicUrl.pathname}`);
+        }
+        const publicDownloadApiUrl = `http://127.0.0.1:5000/api/public/files/${encodeURIComponent(testFileId)}/${publicPathMatch[2]}/download`;
+
+        const firstDownloadResponse = await fetch(publicDownloadApiUrl, { redirect: 'manual' });
         if (firstDownloadResponse.status !== 302) {
             throw new Error(`Erster erlaubter Download liefert HTTP ${firstDownloadResponse.status} statt 302.`);
         }
-        const limitedDownloadResponse = await fetch(createBody.url, { redirect: 'manual' });
+        const limitedDownloadResponse = await fetch(publicDownloadApiUrl, { redirect: 'manual' });
         if (limitedDownloadResponse.status !== 410) {
             throw new Error(`Erreichtes Downloadlimit liefert HTTP ${limitedDownloadResponse.status} statt 410.`);
         }
@@ -157,7 +164,7 @@ async function run() {
         if (!disableResponse.ok) {
             throw new Error(`Test-Direktlink konnte nicht deaktiviert werden (HTTP ${disableResponse.status}).`);
         }
-        const revokedDownloadResponse = await fetch(createBody.url, { redirect: 'manual' });
+        const revokedDownloadResponse = await fetch(publicDownloadApiUrl, { redirect: 'manual' });
         if (revokedDownloadResponse.status !== 404) {
             throw new Error(`Deaktivierter Direktlink liefert HTTP ${revokedDownloadResponse.status} statt 404.`);
         }

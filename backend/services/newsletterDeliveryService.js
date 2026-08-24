@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const db = require('../config/db');
 const { sendDailyBriefing, sendEmail } = require('./emailService');
 const { renderFleetDailyBriefingEmail } = require('./emailTemplates');
+const { ACTIVE_MEMBERSHIP_SQL } = require('../utils/membershipExpiry');
 
 const DEFAULT_RECIPIENT_LIMIT = 250;
 
@@ -142,11 +143,12 @@ async function dispatchBriefing({ partner, items, briefing, nextEvent, frequency
 
     const recipientsResult = await client.query(
       `SELECT id, email, first_name, last_name
-       FROM users
+       FROM users u
        WHERE business_partner_id = $1
          AND is_active = TRUE
          AND newsletter_opt_in = TRUE
          AND briefing_email_enabled = TRUE
+         AND ${ACTIVE_MEMBERSHIP_SQL}
          AND email IS NOT NULL
        ORDER BY id`,
       [partner.id]
