@@ -10,6 +10,7 @@ const {
   renderNewOpportunitiesEmail,
   renderFleetDailyBriefingEmail
 } = require('./emailTemplates');
+const { buildPreferenceUrl, buildOneClickUnsubscribeUrl } = require('./newsletterPreferenceService');
 
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
@@ -152,9 +153,15 @@ async function sendCommunityReplyNotification({ to, recipientName, commenterName
 
 // --- KI BRIEFING VERSAND ---
 async function sendDailyBriefing({ to, user, partner, briefing, nextEvent, pdfUrl }) {
-  const html = renderFleetDailyBriefingEmail({ briefing, partner, nextEvent, pdfUrl });
+  const unsubscribeUrl = buildPreferenceUrl(user?.id);
+  const oneClickUrl = buildOneClickUnsubscribeUrl(user?.id);
+  const html = renderFleetDailyBriefingEmail({ briefing, partner, nextEvent, pdfUrl, unsubscribeUrl });
   const subject = `${partner?.dashboard_title || 'Markt-Briefing'}: ${briefing.top_insights?.[0]?.title || 'Ihre aktuellen Insights'}`;
-  return sendEmail({ to, subject, html, partner });
+  const headers = oneClickUrl ? {
+    'List-Unsubscribe': `<${oneClickUrl}>`,
+    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+  } : undefined;
+  return sendEmail({ to, subject, html, partner, headers });
 }
 
 module.exports = {

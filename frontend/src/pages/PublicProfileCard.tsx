@@ -60,8 +60,15 @@ const PublicProfileCard: React.FC = () => {
     useEffect(() => {
         const fetchProfile = async () => {
             try {
-                const res = await apiClient.get(`/api/users/public/${userId}`);
-                setUser(res.data);
+                const response = await apiClient.get<PublicUser>(`/api/users/public/${userId}`);
+                if (!response.res.ok || !response.data?.id) {
+                    setUser(null);
+                    setError(response.res.status === 404
+                        ? 'Diese Visitenkarte ist nicht öffentlich freigegeben.'
+                        : 'Profil konnte nicht geladen werden.');
+                    return;
+                }
+                setUser(response.data);
             } catch {
                 setError('Profil konnte nicht geladen werden.');
             } finally {
@@ -78,11 +85,27 @@ const PublicProfileCard: React.FC = () => {
         return fullName || 'Profil';
     }, [user]);
 
-    // NEU: Setzt den Browser-Tab Titel auf den Namen des Users
+    // Öffentliche Visitenkarten sollen nur über ihren geteilten Link erreichbar
+    // sein und nicht als Personenverzeichnis in Suchmaschinen landen.
     useEffect(() => {
+        const previousTitle = document.title;
+        let robotsMeta = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
+        const createdMeta = !robotsMeta;
+        const previousRobots = robotsMeta?.content || '';
+        if (!robotsMeta) {
+            robotsMeta = document.createElement('meta');
+            robotsMeta.name = 'robots';
+            document.head.appendChild(robotsMeta);
+        }
+        robotsMeta.content = 'noindex, nofollow';
         if (displayName && displayName !== 'Profil') {
             document.title = `${displayName} | Visitenkarte`;
         }
+        return () => {
+            document.title = previousTitle;
+            if (createdMeta) robotsMeta?.remove();
+            else if (robotsMeta) robotsMeta.content = previousRobots;
+        };
     }, [displayName]);
 
     const initials = useMemo(() => {
@@ -98,7 +121,7 @@ const PublicProfileCard: React.FC = () => {
     const publicProfileUrl = useMemo(() => window.location.href, []);
     const primaryOrganization = useMemo(() => {
         if (!user) return null;
-        return user.organization_name || user.bp_name || null;
+        return user.organization_name || null;
     }, [user]);
 
     useEffect(() => () => {
@@ -135,14 +158,14 @@ const PublicProfileCard: React.FC = () => {
 
         const fullName =
             [user.first_name || '', user.last_name || ''].join(' ').trim() || 'Kontakt';
-        const orgName = user.organization_name || user.bp_name || 'Mobiliti Dashboard';
+        const orgName = user.organization_name || '';
 
         const vCardLines = [
             'BEGIN:VCARD',
             'VERSION:3.0',
             `N:${escapeVCardValue(user.last_name || '')};${escapeVCardValue(user.first_name || '')};;;`,
             `FN:${escapeVCardValue(fullName)}`,
-            `ORG:${escapeVCardValue(orgName)}`,
+            orgName ? `ORG:${escapeVCardValue(orgName)}` : '',
             user.email ? `EMAIL;TYPE=INTERNET,WORK:${escapeVCardValue(user.email)}` : '',
             user.phone ? `TEL;TYPE=CELL:${escapeVCardValue(user.phone)}` : '',
             user.linkedin_url ? `URL:${escapeVCardValue(user.linkedin_url)}` : '',

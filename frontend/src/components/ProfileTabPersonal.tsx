@@ -1,6 +1,6 @@
 // frontend/src/components/ProfileTabPersonal.tsx
 import React, { useState, useRef, useEffect } from 'react';
-import { Box, Grid, TextField, Button, Avatar, Badge, IconButton, Tooltip, CircularProgress, Snackbar, Dialog, DialogTitle, DialogContent, DialogActions, Typography, Paper } from '@mui/material';
+import { Box, Grid, TextField, Button, Avatar, Badge, IconButton, Tooltip, CircularProgress, Snackbar, Dialog, DialogTitle, DialogContent, DialogActions, Typography, Paper, FormControlLabel, Switch, Divider, Stack, Alert } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import QrCodeIcon from '@mui/icons-material/QrCode';
@@ -21,11 +21,29 @@ const ProfileTabPersonal: React.FC<{ user: any; isDemoUser: boolean }> = ({ user
   const [organizationName, setOrganizationName] = useState(user.organization_name || '');
   const [linkedinUrl, setLinkedinUrl] = useState(user.linkedin_url || '');
   const [phone, setPhone] = useState(user.phone || '');
+  const [publicProfileEnabled, setPublicProfileEnabled] = useState(Boolean(user.public_profile_enabled));
+  const [showEmailPublicly, setShowEmailPublicly] = useState(Boolean(user.show_email_publicly));
+  const [showPhonePublicly, setShowPhonePublicly] = useState(Boolean(user.show_phone_publicly));
+  const [showOrganizationPublicly, setShowOrganizationPublicly] = useState(Boolean(user.show_organization_publicly));
+  const [showLinkedinPublicly, setShowLinkedinPublicly] = useState(Boolean(user.show_linkedin_publicly));
   
   const [avatarLoading, setAvatarLoading] = useState(false);
   const avatarUploadRef = useRef<HTMLInputElement>(null);
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '' });
+
+  useEffect(() => {
+    setFirstName(user.first_name || '');
+    setLastName(user.last_name || '');
+    setOrganizationName(user.organization_name || '');
+    setLinkedinUrl(user.linkedin_url || '');
+    setPhone(user.phone || '');
+    setPublicProfileEnabled(Boolean(user.public_profile_enabled));
+    setShowEmailPublicly(Boolean(user.show_email_publicly));
+    setShowPhonePublicly(Boolean(user.show_phone_publicly));
+    setShowOrganizationPublicly(Boolean(user.show_organization_publicly));
+    setShowLinkedinPublicly(Boolean(user.show_linkedin_publicly));
+  }, [user]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,7 +55,15 @@ const ProfileTabPersonal: React.FC<{ user: any; isDemoUser: boolean }> = ({ user
         organization_name: organizationName,
         linkedin_url: linkedinUrl,
         phone: phone,
+        public_profile_enabled: publicProfileEnabled,
+        show_email_publicly: showEmailPublicly,
+        show_phone_publicly: showPhonePublicly,
+        show_organization_publicly: showOrganizationPublicly,
+        show_linkedin_publicly: showLinkedinPublicly,
       });
+      if (!response.res.ok || !response.data?.id) {
+        throw new Error(response.data?.message || 'Profildaten konnten nicht gespeichert werden.');
+      }
       updateUser(response.data);
       setSnackbar({ open: true, message: 'Persönliche Daten erfolgreich gespeichert.' });
       posthog.capture('profile_updated');
@@ -104,7 +130,13 @@ const ProfileTabPersonal: React.FC<{ user: any; isDemoUser: boolean }> = ({ user
           <Button color="error" size="small" onClick={handleAvatarDelete} disabled={avatarLoading || isDemoUser} sx={{ mt: 1 }}>Bild entfernen</Button>
         )}
         
-        <Button variant="outlined" startIcon={<QrCodeIcon />} onClick={() => setQrDialogOpen(true)} sx={{ mt: 2 }}>
+        <Button
+          variant="outlined"
+          startIcon={<QrCodeIcon />}
+          onClick={() => setQrDialogOpen(true)}
+          disabled={!publicProfileEnabled || !user.public_profile_enabled}
+          sx={{ mt: 2 }}
+        >
           Digitale Visitenkarte
         </Button>
       </Box>
@@ -116,6 +148,58 @@ const ProfileTabPersonal: React.FC<{ user: any; isDemoUser: boolean }> = ({ user
         <Grid item xs={12} sm={6}><TextField label={t('profile.linkedinUrl')} fullWidth value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} disabled={isDemoUser} /></Grid>
         <Grid item xs={12} sm={6}><TextField label="Telefonnummer" fullWidth value={phone} onChange={(e) => setPhone(e.target.value)} disabled={isDemoUser} /></Grid>
       </Grid>
+
+      <Paper variant="outlined" sx={{ mt: 4, p: { xs: 2, sm: 3 }, borderRadius: 2 }}>
+        <Typography variant="h6" gutterBottom>Öffentliche Visitenkarte</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Sie bestimmen selbst, ob Ihre Visitenkarte erreichbar ist und welche Kontaktdaten öffentlich ausgeliefert werden.
+        </Typography>
+
+        <FormControlLabel
+          control={(
+            <Switch
+              checked={publicProfileEnabled}
+              onChange={(event) => setPublicProfileEnabled(event.target.checked)}
+              disabled={isDemoUser}
+            />
+          )}
+          label="Öffentliche Visitenkarte aktivieren"
+        />
+
+        {!publicProfileEnabled && (
+          <Alert severity="info" sx={{ mt: 1.5 }}>
+            Das öffentliche Profil ist nicht erreichbar. Die interne Community bleibt davon unberührt.
+          </Alert>
+        )}
+
+        <Divider sx={{ my: 2 }} />
+        <Stack spacing={0.5}>
+          <FormControlLabel
+            control={<Switch checked={showOrganizationPublicly} onChange={(event) => setShowOrganizationPublicly(event.target.checked)} />}
+            label="Organisation öffentlich anzeigen"
+            disabled={isDemoUser || !publicProfileEnabled}
+          />
+          <FormControlLabel
+            control={<Switch checked={showLinkedinPublicly} onChange={(event) => setShowLinkedinPublicly(event.target.checked)} />}
+            label="LinkedIn öffentlich anzeigen"
+            disabled={isDemoUser || !publicProfileEnabled || !linkedinUrl.trim()}
+          />
+          <FormControlLabel
+            control={<Switch checked={showEmailPublicly} onChange={(event) => setShowEmailPublicly(event.target.checked)} />}
+            label="E-Mail-Adresse öffentlich anzeigen"
+            disabled={isDemoUser || !publicProfileEnabled || !user.email}
+          />
+          <FormControlLabel
+            control={<Switch checked={showPhonePublicly} onChange={(event) => setShowPhonePublicly(event.target.checked)} />}
+            label="Telefonnummer öffentlich anzeigen"
+            disabled={isDemoUser || !publicProfileEnabled || !phone.trim()}
+          />
+        </Stack>
+
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5 }}>
+          E-Mail und Telefonnummer sind standardmäßig nicht öffentlich. Änderungen werden erst mit „Persönliche Daten speichern“ wirksam.
+        </Typography>
+      </Paper>
 
       <Box sx={{ mt: 4, display: 'flex', justifyContent: 'flex-end' }}>
         <Button type="submit" variant="contained" startIcon={<SaveIcon />} disabled={isDemoUser} size="large">

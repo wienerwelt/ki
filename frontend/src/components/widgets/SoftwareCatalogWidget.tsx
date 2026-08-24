@@ -26,6 +26,7 @@ import { resolveAssetUrl } from '../../utils/assetUrl';
 interface SoftwareCategory { id: string; slug: string; name: string; }
 interface SoftwareEntry {
     id: string;
+    provider_id: string;
     name: string;
     provider_name: string;
     provider_logo_url?: string | null;
@@ -50,6 +51,7 @@ interface SoftwareCatalogWidgetProps extends BaseWidgetProps {
     isPublic?: boolean;
     partnerId?: string;
     primaryColor?: string;
+    onProviderOpen?: (providerId: string) => void;
 }
 
 const scopeLabel: Record<string, string> = {
@@ -85,6 +87,7 @@ const SoftwareCatalogWidget: React.FC<SoftwareCatalogWidgetProps> = ({
     isPublic = false,
     partnerId,
     primaryColor,
+    onProviderOpen,
 }) => {
     const theme = useTheme();
     const navigate = useNavigate();
@@ -241,7 +244,17 @@ const SoftwareCatalogWidget: React.FC<SoftwareCatalogWidgetProps> = ({
                                             </Box>
                                             <Box sx={{ minWidth: 0 }}>
                                                 <Typography fontWeight={950} noWrap>{entry.name}</Typography>
-                                                <Typography variant="caption" color="text.secondary" noWrap>{entry.provider_name}</Typography>
+                                                {isPublic && onProviderOpen ? (
+                                                    <Button
+                                                        size="small"
+                                                        onClick={() => onProviderOpen(entry.provider_id)}
+                                                        sx={{ minWidth: 0, p: 0, justifyContent: 'flex-start', textTransform: 'none', color: 'text.secondary', fontSize: '0.75rem', lineHeight: 1.3, maxWidth: '100%' }}
+                                                    >
+                                                        <Typography variant="caption" noWrap>{entry.provider_name}</Typography>
+                                                    </Button>
+                                                ) : (
+                                                    <Typography variant="caption" color="text.secondary" noWrap>{entry.provider_name}</Typography>
+                                                )}
                                             </Box>
                                         </Stack>
                                         {entry.is_featured && <Chip size="small" label="Empfohlen" sx={{ bgcolor: alpha(accent, 0.1), color: accent, fontWeight: 900 }} />}

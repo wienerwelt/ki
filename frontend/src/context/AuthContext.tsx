@@ -44,12 +44,22 @@ export interface UserPayload {
   last_name: string | null;
   organization_name: string | null;
   linkedin_url: string | null;
+  phone?: string | null;
+  public_profile_enabled?: boolean;
+  show_email_publicly?: boolean;
+  show_phone_publicly?: boolean;
+  show_organization_publicly?: boolean;
+  show_linkedin_publicly?: boolean;
   article_score_min: number | null;
   article_score_max: number | null;
   preferred_theme?: 'light' | 'dark';
   preferred_language?: 'de' | 'en';
   newsletter_opt_in?: boolean;
   briefing_email_enabled?: boolean;
+  member_newsletter_enabled?: boolean;
+  active_until?: string | null;
+  membership_expires_on?: string | null;
+  membership_days_remaining?: number | null;
   profile_image_url?: string | null;
   has_completed_onboarding?: boolean;
 }

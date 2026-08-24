@@ -13,6 +13,7 @@ import { useSnackbar } from '../context/SnackbarContext';
 
 // KI Konfiguration importieren
 import { AI_CONFIG } from '../components/aiConfig';
+import AiContentLabel from '../components/AiContentLabel';
 
 interface AiSource {
   id: string;
@@ -120,9 +121,12 @@ const AiAskPage: React.FC = () => {
           />
 
           <Box sx={{ width: '100%' }}>
-            <Typography variant="h6" component="div" sx={{ fontWeight: 'bold' }}>
-              {AI_CONFIG.name} (KI-Assistent)
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+              <Typography variant="h6" component="div" sx={{ fontWeight: 'bold' }}>
+                {AI_CONFIG.name} (KI-Assistent)
+              </Typography>
+              <AiContentLabel kind="generated" size={17} />
+            </Box>
             
             {loading && (
               <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 2, display: 'flex', alignItems: 'center', gap: 2 }}>

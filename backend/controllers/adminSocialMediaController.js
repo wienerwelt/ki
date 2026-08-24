@@ -2,10 +2,14 @@
 const db = require('../config/db');
 const fs = require('fs');
 const path = require('path');
-const { extractTop10Austria } = require('../services/statisticsParsingService');
+const { randomUUID } = require('crypto');
+const sharp = require('sharp');
+const { extractAustriaBrandPeriods } = require('../services/statisticsParsingService');
+const { buildSocialMetrics, getPreviousPeriod } = require('../services/socialMediaMetricsService');
 const { executePrompt } = require('../services/aiService');
 
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.svg', '.gif', '.webp'];
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.svg', '.gif', '.webp', '.avif'];
+const GALLERY_DELIVERY_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif'];
 
 const monthNames = [
     'Jänner',
@@ -43,9 +47,86 @@ const parseYearMonth = (year, month) => {
     return { year: parsedYear, month: parsedMonth };
 };
 
+const formatRegistrationCount = (value) => Number(value || 0).toLocaleString('de-DE');
+
+const formatPercentValue = (value) => {
+    if (!Number.isFinite(value)) return 'n. v.';
+    return `${value > 0 ? '+' : ''}${value.toFixed(1).replace('.', ',')} %`;
+};
+
+const sanitizeAiIntroduction = (content, topData) => {
+    const brandNames = [
+        ...(Array.isArray(topData?.topMarken) ? topData.topMarken : []),
+        ...(Array.isArray(topData?.topElektro) ? topData.topElektro : []),
+    ]
+        .map((entry) => String(entry?.name || '').trim().toLocaleLowerCase('de-DE'))
+        .filter(Boolean);
+
+    const sentences = String(content || '')
+        .replace(/\r/g, ' ')
+        .split(/(?<=[.!?])\s+|\n+/)
+        .map((sentence) => sentence.trim())
+        .filter(Boolean)
+        .filter((sentence) => {
+            const normalized = sentence.toLocaleLowerCase('de-DE');
+            return !/[\d%#]/.test(sentence)
+                && !brandNames.some((brandName) => normalized.includes(brandName));
+        })
+        .slice(0, 2)
+        .join(' ')
+        .slice(0, 360)
+        .trim();
+
+    return sentences || 'Der Automarkt bleibt in Bewegung und zeigt eine klare Verschiebung zwischen etablierten Antrieben und Elektromobilität.';
+};
+
+const buildGroundedSocialPost = ({ aiIntroduction, countryName, year, month, metrics }) => {
+    const lines = [];
+
+    const comparisonText = (metric) => `${formatPercentValue(metric.changePercent)} ${metric.comparisonLabel}`;
+    const yearOverYearText = (metric) => metric.comparisonBasis === 'previous_month' && Number.isFinite(metric.yearOverYearPercent)
+        ? `; Vorjahresmonat: ${formatPercentValue(metric.yearOverYearPercent)}`
+        : '';
+
+    if (metrics.marketLeader) {
+        lines.push(`🏆 Marktführer: ${metrics.marketLeader.name} mit ${formatRegistrationCount(metrics.marketLeader.zulassungen)} Neuzulassungen (${comparisonText(metrics.marketLeader)}${yearOverYearText(metrics.marketLeader)})`);
+    }
+    if (metrics.topElectricBrand) {
+        lines.push(`⚡ Top E-Auto-Marke (nur Elektroantrieb): ${metrics.topElectricBrand.name} mit ${formatRegistrationCount(metrics.topElectricBrand.zulassungen)} Neuzulassungen (${comparisonText(metrics.topElectricBrand)}${yearOverYearText(metrics.topElectricBrand)})`);
+    }
+    if (metrics.strongestGrowth) {
+        lines.push(`📈 Stärkstes Wachstum im Gesamtmarkt*: ${metrics.strongestGrowth.name} mit ${comparisonText(metrics.strongestGrowth)}${yearOverYearText(metrics.strongestGrowth)}`);
+    }
+    if (metrics.strongestDecline) {
+        lines.push(`📉 Stärkster Rückgang im Gesamtmarkt*: ${metrics.strongestDecline.name} mit ${comparisonText(metrics.strongestDecline)}${yearOverYearText(metrics.strongestDecline)}`);
+    }
+
+    const comparisonNote = metrics.comparisonBasis === 'previous_month'
+        ? 'Die primären Prozentwerte vergleichen mit dem Vormonat; der Vorjahresmonat bleibt als Zusatzvergleich erhalten.'
+        : 'Mangels belastbarer Vormonatsdaten vergleichen die Prozentwerte mit dem Vorjahresmonat.';
+
+    return `${aiIntroduction}\n\nDie Kennzahlen für ${countryName}, ${monthNames[month - 1]} ${year}:\n${lines.join('\n')}\n\n${comparisonNote}\n*Auswertung über alle in der Quelle einzeln ausgewiesenen Marken; für Wachstum und Rückgang werden in beiden Monaten jeweils mehr als 100 Neuzulassungen vorausgesetzt. Sammelpositionen und Modellreihen werden ausgeschlossen.\n\n#Automotive #Mobility #Elektromobilität`;
+};
+
 const getArchiveFileName = (archivePath) => {
     if (!archivePath) return '';
     return path.basename(String(archivePath));
+};
+
+const getArchiveForPeriod = async (country, year, month) => {
+    const result = await db.query(
+        `SELECT archive_path, source_url, source_name, time_period, last_updated
+         FROM economic_statistics
+         WHERE country_code = $1
+           AND statistic_type = 'fleet_statistics'
+           AND time_period >= make_date($2::int, $3::int, 1)
+           AND time_period < make_date($2::int, $3::int, 1) + interval '1 month'
+           AND archive_path IS NOT NULL
+         ORDER BY last_updated DESC
+         LIMIT 1`,
+        [country, year, month]
+    );
+    return result.rows[0] || null;
 };
 
 const sanitizeFileName = (filename) => {
@@ -55,7 +136,42 @@ const sanitizeFileName = (filename) => {
     return clean.replace(/\s+/g, '_');
 };
 
+const sanitizeGraphicBaseName = (filename) => {
+    const parsedName = path.parse(String(filename || '')).name;
+    return parsedName
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9_-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 80) || 'hintergrund';
+};
+
 const getPublicDir = (folder) => path.join(__dirname, '..', 'public', folder);
+
+const resolveGalleryFile = (folder, filename) => {
+    const allowedFolders = new Set(['social-media']);
+    const normalizedFolder = String(folder || '').trim();
+    const normalizedFilename = String(filename || '').trim();
+
+    if (!allowedFolders.has(normalizedFolder)) return { error: 'Ungültiger Ordner.' };
+    if (
+        !normalizedFilename
+        || normalizedFilename !== path.basename(normalizedFilename)
+        || normalizedFilename.includes('..')
+        || normalizedFilename.includes('/')
+        || normalizedFilename.includes('\\')
+        || !GALLERY_DELIVERY_EXTENSIONS.includes(path.extname(normalizedFilename).toLowerCase())
+    ) {
+        return { error: 'Ungültiger Dateiname.' };
+    }
+
+    const directory = path.resolve(getPublicDir(normalizedFolder));
+    const filePath = path.resolve(directory, normalizedFilename);
+    if (path.dirname(filePath) !== directory) return { error: 'Ungültiger Dateipfad.' };
+
+    return { filePath, filename: normalizedFilename };
+};
 
 const getFilesData = (dir, defaultType, apiUrlPrefix) => {
     if (!fs.existsSync(dir)) return [];
@@ -156,35 +272,47 @@ exports.generateSocialMediaPost = async (req, res) => {
     }
 
     try {
-        const fileQuery = await db.query(
-            `SELECT archive_path, source_url, source_name, time_period, last_updated
-             FROM economic_statistics
-             WHERE country_code = $1
-               AND statistic_type = 'fleet_statistics'
-               AND time_period >= make_date($2::int, $3::int, 1)
-               AND time_period < make_date($2::int, $3::int, 1) + interval '1 month'
-               AND archive_path IS NOT NULL
-             ORDER BY last_updated DESC
-             LIMIT 1`,
-            [country, parsed.year, parsed.month]
-        );
-
-        if (fileQuery.rows.length === 0) {
+        const archiveFile = await getArchiveForPeriod(country, parsed.year, parsed.month);
+        if (!archiveFile) {
             return res.status(404).json({ message: `Keine Rohdaten für ${country} im Zeitraum ${parsed.year}-${String(parsed.month).padStart(2, '0')} gefunden.` });
         }
 
-        const archiveFile = fileQuery.rows[0];
-        const s3Key = archiveFile.archive_path;
-
-        let topData = {};
+        let fullCurrentData = {};
+        let previousData = null;
 
         if (country === 'AT') {
-            topData = await extractTop10Austria(s3Key, monthNames[parsed.month - 1]);
+            const previousPeriod = getPreviousPeriod(parsed.year, parsed.month);
+            const previousArchive = await getArchiveForPeriod(country, previousPeriod.year, previousPeriod.month);
+            const previousArchivePath = previousArchive?.archive_path
+                || (previousPeriod.year === parsed.year ? archiveFile.archive_path : null);
+            const periods = [{
+                key: 'current',
+                s3Key: archiveFile.archive_path,
+                monthName: monthNames[parsed.month - 1],
+            }];
+
+            if (previousArchivePath) {
+                periods.push({
+                    key: 'previous',
+                    s3Key: previousArchivePath,
+                    monthName: monthNames[previousPeriod.month - 1],
+                    optional: true,
+                });
+            }
+
+            const parsedPeriods = await extractAustriaBrandPeriods(periods);
+            fullCurrentData = parsedPeriods.current;
+            previousData = parsedPeriods.previous || null;
         } else if (country === 'DE') {
             return res.status(501).json({ message: 'DE KBA Parsing ist noch nicht implementiert.' });
         } else {
             return res.status(400).json({ message: `Land ${country} wird aktuell nicht unterstützt.` });
         }
+
+        const topData = {
+            topMarken: fullCurrentData.topMarken.slice(0, 10),
+            topElektro: fullCurrentData.topElektro.slice(0, 10),
+        };
 
         const promptQuery = await db.query(`SELECT prompt_template FROM ai_prompt_rules WHERE name = 'LinkedIn KFZ Statistik' LIMIT 1`);
         const promptTemplate = promptQuery.rows.length > 0
@@ -196,19 +324,36 @@ Hier sind die Daten der Top-Marken:
 
 Hebe den Gewinner hervor, erwähne den stärksten Aufsteiger in Prozent und baue ein paar passende Emojis sowie Hashtags (#Automotive #Mobility) ein.`;
 
-        const dataString = JSON.stringify(topData, null, 2);
+        const socialMetrics = buildSocialMetrics({
+            currentData: fullCurrentData,
+            previousData,
+            year: parsed.year,
+            month: parsed.month,
+            monthNames,
+        });
+        const countryName = country === 'AT' ? 'Österreich' : 'Deutschland';
+        const dataString = JSON.stringify({ ...topData, metrics: socialMetrics }, null, 2);
         const finalPrompt = promptTemplate
-            .replace(/{{COUNTRY}}/g, country === 'AT' ? 'Österreich' : 'Deutschland')
+            .replace(/{{COUNTRY}}/g, countryName)
             .replace(/{{MONTH}}/g, monthNames[parsed.month - 1])
             .replace(/{{YEAR}}/g, parsed.year)
-            .replace(/{{TOP_DATA}}/g, dataString);
+            .replace(/{{TOP_DATA}}/g, dataString)
+            .concat(`\n\nVERBINDLICHE AUSGABEREGEL: Schreibe ausschließlich einen kurzen, professionellen Einstieg mit höchstens zwei Sätzen. Verwende darin keine Zahlen, Prozentwerte, Markennamen, Rangfolgen oder Hashtags. Die geprüften Kennzahlen werden anschließend technisch ergänzt.`);
 
         console.log(`[SocialMedia] Generiere KI-Text mit Modell: ${aiModel} für ${country} ${parsed.year}-${String(parsed.month).padStart(2, '0')}...`);
         const aiResponse = await executePrompt(aiModel, finalPrompt);
+        const aiIntroduction = sanitizeAiIntroduction(aiResponse.content, topData);
+        const groundedText = buildGroundedSocialPost({
+            aiIntroduction,
+            countryName,
+            year: parsed.year,
+            month: parsed.month,
+            metrics: socialMetrics,
+        });
 
         res.status(200).json({
-            text: aiResponse.content,
-            parsedData: topData,
+            text: groundedText,
+            parsedData: { ...topData, metrics: socialMetrics },
             usage: aiResponse.usage,
             sourceDownloadUrl: archiveFile.source_url || null,
             sourceFileName: getArchiveFileName(archiveFile.archive_path),
@@ -241,6 +386,91 @@ exports.getGalleryFiles = async (_req, res) => {
     } catch (error) {
         console.error('Fehler beim Auslesen der Galerie:', error);
         res.status(500).json({ message: 'Fehler beim Laden der Galerie-Dateien.' });
+    }
+};
+
+exports.viewGalleryFile = async (req, res) => {
+    const resolved = resolveGalleryFile(req.params.folder, req.params.filename);
+    if (resolved.error) return res.status(400).json({ message: resolved.error });
+
+    try {
+        const stats = await fs.promises.stat(resolved.filePath);
+        if (!stats.isFile()) return res.status(404).json({ message: 'Datei nicht gefunden.' });
+
+        res.setHeader('Cache-Control', 'private, max-age=300');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Disposition', 'inline');
+        return res.type(path.extname(resolved.filename)).sendFile(resolved.filePath);
+    } catch (error) {
+        if (error.code === 'ENOENT') return res.status(404).json({ message: 'Datei nicht gefunden.' });
+        console.error('Fehler beim Anzeigen der Galerie-Datei:', error);
+        return res.status(500).json({ message: 'Datei konnte nicht angezeigt werden.' });
+    }
+};
+
+exports.downloadGalleryFile = async (req, res) => {
+    const resolved = resolveGalleryFile(req.params.folder, req.params.filename);
+    if (resolved.error) return res.status(400).json({ message: resolved.error });
+
+    try {
+        const stats = await fs.promises.stat(resolved.filePath);
+        if (!stats.isFile()) return res.status(404).json({ message: 'Datei nicht gefunden.' });
+
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        return res.download(resolved.filePath, resolved.filename, (error) => {
+            if (!error || res.headersSent) return;
+            console.error('Fehler beim Download der Galerie-Datei:', error);
+            res.status(error.code === 'ENOENT' ? 404 : 500).json({
+                message: error.code === 'ENOENT' ? 'Datei nicht gefunden.' : 'Datei konnte nicht heruntergeladen werden.',
+            });
+        });
+    } catch (error) {
+        if (error.code === 'ENOENT') return res.status(404).json({ message: 'Datei nicht gefunden.' });
+        console.error('Fehler beim Download der Galerie-Datei:', error);
+        return res.status(500).json({ message: 'Datei konnte nicht heruntergeladen werden.' });
+    }
+};
+
+exports.uploadGalleryGraphic = async (req, res) => {
+    if (!req.file?.buffer) {
+        return res.status(400).json({ message: 'Bitte wählen Sie eine Bilddatei aus.' });
+    }
+
+    try {
+        const grafikenPath = getPublicDir('grafiken');
+        fs.mkdirSync(grafikenPath, { recursive: true });
+
+        const baseName = sanitizeGraphicBaseName(req.file.originalname);
+        const filename = `${baseName}-${randomUUID().slice(0, 8)}.webp`;
+        const filePath = path.join(grafikenPath, filename);
+        const { data, info } = await sharp(req.file.buffer, { limitInputPixels: 40_000_000 })
+            .rotate()
+            .resize(2000, 2000, { fit: 'inside', withoutEnlargement: true })
+            .webp({ quality: 82, alphaQuality: 88, effort: 5 })
+            .toBuffer({ resolveWithObject: true });
+
+        await fs.promises.writeFile(filePath, data, { flag: 'wx' });
+
+        return res.status(201).json({
+            message: 'Hintergrundgrafik wurde optimiert und hochgeladen.',
+            file: {
+                name: filename,
+                width: info.width,
+                height: info.height,
+                size: data.length,
+                url: `/api/grafiken/${encodeURIComponent(filename)}?v=${Date.now()}`,
+                rawUrl: `/api/grafiken/${encodeURIComponent(filename)}`,
+            },
+        });
+    } catch (error) {
+        console.error('Fehler beim Upload der Hintergrundgrafik:', error);
+        const isInvalidImage = /unsupported image|Input buffer|corrupt|invalid/i.test(String(error.message || ''));
+        return res.status(isInvalidImage ? 400 : 500).json({
+            message: isInvalidImage
+                ? 'Die Datei ist kein gültiges oder unterstütztes Bild.'
+                : 'Hintergrundgrafik konnte nicht gespeichert werden.',
+        });
     }
 };
 

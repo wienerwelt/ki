@@ -28,6 +28,8 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import LinkIcon from '@mui/icons-material/Link';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 
 interface PartnerFile {
   id: string;
@@ -56,6 +58,13 @@ interface BusinessPartner {
   storage_limit_bytes?: number;
 }
 interface Category { id: string; name: string; }
+interface PublicLinkShareData {
+  fileId: string;
+  filename: string;
+  url: string;
+  expiresAt: string | null;
+  maxDownloads: number | null;
+}
 
 type Order = 'asc' | 'desc';
 const formatFileSize = (bytes: number | null | undefined, decimals = 2) => {
@@ -175,6 +184,7 @@ const FileManagementPage: React.FC = () => {
   const [shareCategory, setShareCategory] = useState('');
   const [sharing, setSharing] = useState(false);
   const [publicLinkBusyFileId, setPublicLinkBusyFileId] = useState<string | null>(null);
+  const [publicLinkShare, setPublicLinkShare] = useState<PublicLinkShareData | null>(null);
   const [categories, setCategories] = useState<Category[]>([]); 
 
   // --- NEU: Edit State ---
@@ -414,6 +424,13 @@ const FileManagementPage: React.FC = () => {
         ...(updatedFile || {}),
         public_link_enabled: true,
       };
+      setPublicLinkShare({
+        fileId: file.id,
+        filename: updatedFile?.filename || file.filename,
+        url,
+        expiresAt: updatedFile?.public_link_expires_at || null,
+        maxDownloads: updatedFile?.public_max_downloads ?? null,
+      });
 
       setFiles(prev => prev.map(item => item.id === file.id ? { ...item, ...mergedFile } : item));
       setFileToEdit(prev => prev?.id === file.id ? { ...prev, ...mergedFile } : prev);
@@ -433,6 +450,34 @@ const FileManagementPage: React.FC = () => {
     } finally {
       setPublicLinkBusyFileId(null);
     }
+  };
+
+  const handleCopyPublicLink = async () => {
+    if (!publicLinkShare?.url) return;
+    const copied = await copyToClipboardWithFallback(publicLinkShare.url);
+    showSnackbar(copied ? 'Download-Link kopiert.' : 'Download-Link wurde angezeigt.', 'success');
+  };
+
+  const handleSharePublicLink = async () => {
+    if (!publicLinkShare?.url) return;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: publicLinkShare.filename,
+          text: `Datei zum sicheren Download: ${publicLinkShare.filename}`,
+          url: publicLinkShare.url,
+        });
+        return;
+      } catch (shareError: any) {
+        if (shareError?.name === 'AbortError') return;
+      }
+    }
+
+    const copied = await copyToClipboardWithFallback(publicLinkShare.url);
+    showSnackbar(
+      copied ? 'Teilen wird von diesem Browser nicht unterstützt. Der Link wurde kopiert.' : 'Download-Link wurde angezeigt.',
+      'info'
+    );
   };
 
   const handleDisablePublicLink = async (file: PartnerFile) => {
@@ -804,9 +849,64 @@ const FileManagementPage: React.FC = () => {
           </DialogActions>
       </Dialog>
 
+      {/* EXTERNER LINK: wird aus Sicherheitsgründen nur direkt nach dem Erzeugen vollständig angezeigt */}
+      <Dialog open={!!publicLinkShare} onClose={() => setPublicLinkShare(null)} fullWidth maxWidth="sm" fullScreen={isMobile}>
+        <DialogTitle>Externen Download teilen</DialogTitle>
+        <DialogContent dividers>
+          {publicLinkShare && (
+            <Stack spacing={2.5} sx={{ mt: 0.5 }}>
+              <Alert severity="success">
+                Die gebrandete Downloadseite wurde erstellt. Empfänger benötigen keinen Login.
+              </Alert>
+              <Box>
+                <Typography variant="subtitle2" fontWeight={800} sx={{ mb: 0.75 }}>{publicLinkShare.filename}</Typography>
+                <TextField
+                  fullWidth
+                  label="Geheimer Download-Link"
+                  value={publicLinkShare.url}
+                  InputProps={{ readOnly: true }}
+                  onFocus={(event) => event.currentTarget.querySelector('input')?.select()}
+                />
+              </Box>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                {publicLinkShare.expiresAt && (
+                  <Chip label={`Gültig bis ${new Date(publicLinkShare.expiresAt).toLocaleDateString('de-DE')}`} size="small" variant="outlined" />
+                )}
+                <Chip
+                  label={publicLinkShare.maxDownloads ? `Maximal ${publicLinkShare.maxDownloads} Downloads` : 'Kein Downloadlimit'}
+                  size="small"
+                  variant="outlined"
+                />
+              </Stack>
+              <Alert severity="warning">
+                Der vollständige Link wird nur jetzt angezeigt. Falls er verloren geht, muss ein neuer Link erzeugt werden; der bisherige wird dabei ungültig.
+              </Alert>
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2, flexWrap: 'wrap' }}>
+          <Button onClick={() => setPublicLinkShare(null)}>Schließen</Button>
+          <Button
+            component="a"
+            href={publicLinkShare?.url || '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            startIcon={<OpenInNewIcon />}
+          >
+            Öffnen
+          </Button>
+          <Button variant="outlined" startIcon={<ContentCopyIcon />} onClick={handleCopyPublicLink}>
+            Kopieren
+          </Button>
+          <Button variant="contained" startIcon={<ShareIcon />} onClick={handleSharePublicLink}>
+            Teilen
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* SHARE DIALOG */}
       <Dialog open={shareOpen} onClose={() => setShareOpen(false)} fullWidth maxWidth="sm" fullScreen={isMobile}>
-            <DialogTitle>Datei teilen</DialogTitle>
+            <DialogTitle>Intern in der Community teilen</DialogTitle>
             <DialogContent dividers>
                 <DialogContentText sx={{ mb: 2 }}>Poste <strong>{fileToShare?.filename}</strong> in der Community.</DialogContentText>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -904,7 +1004,7 @@ const FileManagementPage: React.FC = () => {
                                 </Tooltip>
                             )}
                             {isUploader && (
-                                <Tooltip title="Teilen">
+                                <Tooltip title="Intern in der Community teilen">
                                     <IconButton color="primary" onClick={() => handleOpenShare(file)} size="small">
                                         <ShareIcon fontSize="small" />
                                     </IconButton>

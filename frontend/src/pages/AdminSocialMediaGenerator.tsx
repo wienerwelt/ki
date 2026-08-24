@@ -24,11 +24,14 @@ import StorageIcon from '@mui/icons-material/Storage';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import * as htmlToImage from 'html-to-image';
 
 import apiClient from '../apiClient';
 import DashboardLayout from '../components/DashboardLayout';
 import { useSnackbar } from '../context/SnackbarContext';
+import AiContentLabel from '../components/AiContentLabel';
 
 interface ArchiveFile {
     country_code: string;
@@ -107,13 +110,16 @@ const AdminSocialMediaGenerator: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
 
     const [aiText, setAiText] = useState('');
+    const [generatedAiText, setGeneratedAiText] = useState('');
     const [chartData, setChartData] = useState<any | null>(null);
     const [sourceFileUrl, setSourceFileUrl] = useState<string | null>(null);
 
     const [galleryFiles, setGalleryFiles] = useState<{ logos: GalleryFile[], socialMedia: GalleryFile[], grafiken: GalleryFile[] }>({ logos: [], socialMedia: [], grafiken: [] });
     const [loadingGallery, setLoadingGallery] = useState(false);
+    const [uploadingGraphic, setUploadingGraphic] = useState(false);
 
     const graphicRef = useRef<HTMLDivElement>(null);
+    const graphicUploadInputRef = useRef<HTMLInputElement>(null);
 
     const fetchArchiveFiles = useCallback(async () => {
         setLoadingArchive(true);
@@ -253,7 +259,9 @@ const AdminSocialMediaGenerator: React.FC = () => {
                 month: Number(month),
             });
 
-            setAiText(response.data.text || '');
+            const generatedText = response.data.text || '';
+            setAiText(generatedText);
+            setGeneratedAiText(generatedText);
             setChartData(response.data.parsedData);
             setSourceFileUrl(response.data.sourceDownloadUrl || activeArchiveFile.source_url || activeArchiveFile.sourceDownloadUrl || '#');
             showSnackbar('Inhalt erfolgreich generiert!', 'success');
@@ -309,6 +317,28 @@ const AdminSocialMediaGenerator: React.FC = () => {
         }
     };
 
+    const handleGraphicUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append('graphic', file);
+        setUploadingGraphic(true);
+
+        try {
+            const response = await apiClient.post('/api/admin/social-media/gallery-files/grafiken', formData);
+            await fetchGalleryFiles();
+            if (response.data?.file?.name) setGraphicTheme(response.data.file.name);
+            showSnackbar('Grafik wurde optimiert, hochgeladen und als Hintergrund ausgewählt.', 'success');
+        } catch (err: any) {
+            console.error('Fehler beim Grafik-Upload:', err);
+            showSnackbar(err.response?.data?.message || 'Grafik konnte nicht hochgeladen werden.', 'error');
+        } finally {
+            setUploadingGraphic(false);
+        }
+    };
+
     const handleDownloadSource = () => {
         const targetUrl = sourceFileUrl || activeArchiveFile?.source_url || activeArchiveFile?.sourceDownloadUrl;
         if (targetUrl && targetUrl !== '#') window.open(targetUrl, '_blank', 'noopener,noreferrer');
@@ -338,9 +368,32 @@ const AdminSocialMediaGenerator: React.FC = () => {
         showSnackbar('URL kopiert!', 'success');
     };
 
-    const formatPercent = (rawStr: string) => {
-        if (!rawStr || rawStr === 'n.v.') return { text: 'n.v.', isPositive: false };
-        const val = parseFloat(rawStr.replace(',', '.'));
+    const getGalleryActionUrl = (folder: string, filename: string, action: 'view' | 'download') => (
+        getImageUrl(`/api/admin/social-media/gallery-files/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}/${action}`)
+    );
+
+    const handleViewGalleryFile = (folder: string, filename: string) => {
+        const link = document.createElement('a');
+        link.href = getGalleryActionUrl(folder, filename, 'view');
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    };
+
+    const handleDownloadGalleryFile = (folder: string, filename: string) => {
+        const link = document.createElement('a');
+        link.href = getGalleryActionUrl(folder, filename, 'download');
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    };
+
+    const formatPercent = (rawValue: unknown) => {
+        if (rawValue === null || rawValue === undefined || String(rawValue).trim() === 'n.v.') return { text: 'n.v.', isPositive: false };
+        const val = parseFloat(String(rawValue).replace(',', '.'));
         if (isNaN(val)) return { text: '0,0%', isPositive: false };
         return { text: `${val > 0 ? '+' : ''}${val.toFixed(1).replace('.', ',')}%`, isPositive: val > 0 };
     };
@@ -504,14 +557,25 @@ const AdminSocialMediaGenerator: React.FC = () => {
         if (!chartData || !chartData.topMarken || chartData.topMarken.length === 0) return null;
 
         const displayMonth = getMonthLabel(Number(month));
-        const topMarke = chartData.topMarken[0];
+        const metrics = chartData.metrics || {};
+        const topMarke = metrics.marketLeader || chartData.topMarken[0];
         const validTrends = chartData.topMarken
             .filter((m: any) => m.zulassungen > 100 && m.vergleichVorjahr !== 'n.v.')
             .map((m: any) => ({ ...m, trendVal: parseFloat(String(m.vergleichVorjahr).replace(',', '.')) }))
             .sort((a: any, b: any) => b.trendVal - a.trendVal);
-        const topWinner = validTrends[0];
-        const topLoser = validTrends[validTrends.length - 1];
-        const topElektro = chartData.topElektro && chartData.topElektro.length > 0 ? chartData.topElektro[0] : null;
+        const topWinner = metrics.strongestGrowth || validTrends[0];
+        const topLoser = metrics.strongestDecline || validTrends[validTrends.length - 1];
+        const topElektro = metrics.topElectricBrand || (chartData.topElektro && chartData.topElektro.length > 0 ? chartData.topElektro[0] : null);
+        const comparisonLabel = metrics.comparisonLabel || `ggü. ${displayMonth} ${Number(year) - 1}`;
+        const trendSelectionLabel = metrics.trendSelectionLabel || 'Top-10-Marken · mehr als 100 Zulassungen';
+        const metricPercent = (metric: any) => formatPercent(metric?.changePercent ?? metric?.vergleichVorjahr);
+        const metricComparisonLabel = (metric: any) => metric?.comparisonLabel || comparisonLabel;
+        const metricYearOverYear = (metric: any) => metric?.comparisonBasis === 'previous_month' && metric?.yearOverYearPercent !== null && metric?.yearOverYearPercent !== undefined
+            ? `Vorjahr: ${formatPercent(metric.yearOverYearPercent).text}`
+            : null;
+        const flagBands = country === 'DE'
+            ? ['#111827', '#dc2626', '#facc15']
+            : ['#ed2939', '#ffffff', '#ed2939'];
 
         const isDark = colorMode === 'dark';
         const uiColors = {
@@ -557,7 +621,21 @@ const AdminSocialMediaGenerator: React.FC = () => {
                         <Typography variant="h3" sx={{ fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, textShadow: isDark ? '0 2px 10px rgba(0,0,0,0.5)' : 'none' }}>
                             Automarkt <Box component="span" sx={{ color: '#eab308' }}>{displayMonth} {year}</Box>
                         </Typography>
-                        <Box sx={{ width: '60%', height: '2px', bgcolor: '#3b82f6', mx: 'auto', mt: 1, mb: 1, boxShadow: isDark ? '0 0 10px #3b82f6' : 'none' }} />
+                        <Box sx={{ width: '60%', height: '2px', bgcolor: uiColors.textMuted, mx: 'auto', mt: 1, mb: 2.5, boxShadow: isDark ? `0 0 10px ${uiColors.textMuted}` : 'none', position: 'relative' }}>
+                            <Box
+                                role="img"
+                                aria-label={`Flagge ${countryLabel(country)}`}
+                                sx={{
+                                    position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
+                                    width: 48, height: 30, borderRadius: '5px', overflow: 'hidden',
+                                    border: '2px solid rgba(255,255,255,0.92)',
+                                    boxShadow: isDark ? '0 4px 14px rgba(0,0,0,0.55)' : '0 4px 12px rgba(15,23,42,0.25)',
+                                    display: 'grid', gridTemplateRows: 'repeat(3, 1fr)', zIndex: 2,
+                                }}
+                            >
+                                {flagBands.map((bandColor, index) => <Box key={`${bandColor}-${index}`} sx={{ bgcolor: bandColor }} />)}
+                            </Box>
+                        </Box>
                         <Typography variant="h6" sx={{ fontWeight: 400, color: uiColors.textMuted }}>
                             {countryLabel(country)} im Wandel
                         </Typography>
@@ -565,28 +643,29 @@ const AdminSocialMediaGenerator: React.FC = () => {
 
                     <Grid container spacing={3} sx={{ mb: 4, flexGrow: 1, alignContent: 'center' }}>
                         <Grid item xs={6}>
-                            <Paper sx={{ bgcolor: uiColors.cardBg, border: uiColors.cardBorder, borderRadius: 2, p: 3, height: '100%', backdropFilter: 'blur(10px)', boxShadow: isDark ? 'none' : '0 4px 6px rgba(0,0,0,0.05)' }}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: uiColors.divider, pb: 1 }}>
-                                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: uiColors.text }}>Marktführer</Typography>
-                                    <EmojiEventsIcon sx={{ color: '#eab308' }} />
+                            <Paper sx={{ background: 'linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: 3, height: '100%', boxShadow: '0 8px 18px rgba(30, 58, 138, 0.24)' }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 1 }}>
+                                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#fff' }}>Marktführer</Typography>
+                                    <EmojiEventsIcon sx={{ color: '#fde047' }} />
                                 </Box>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                                     <Box sx={{ width: 60, height: 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
                                         <img src={getSmartLogoUrl(topMarke?.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                     </Box>
                                     <Box>
-                                        <Typography variant="h4" sx={{ fontWeight: 800 }}>{topMarke?.zulassungen.toLocaleString('de-DE')}</Typography>
-                                        <Typography variant="body2" sx={{ color: uiColors.textMuted }}>Neuzulassungen</Typography>
-                                        {topMarke && <Typography variant="subtitle2" sx={{ color: formatPercent(topMarke.vergleichVorjahr).isPositive ? '#16a34a' : '#ef4444', fontWeight: 'bold' }}>{formatPercent(topMarke.vergleichVorjahr).text} zum Vorjahr</Typography>}
+                                        <Typography variant="h4" sx={{ fontWeight: 800, color: '#fff' }}>{topMarke?.zulassungen.toLocaleString('de-DE')}</Typography>
+                                        <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.82)' }}>Neuzulassungen</Typography>
+                                        {topMarke && <Typography variant="subtitle2" sx={{ color: metricPercent(topMarke).isPositive ? '#bbf7d0' : '#fecaca', fontWeight: 'bold' }}>{metricPercent(topMarke).text} {metricComparisonLabel(topMarke)}</Typography>}
+                                        {metricYearOverYear(topMarke) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.74)', display: 'block' }}>{metricYearOverYear(topMarke)}</Typography>}
                                     </Box>
                                 </Box>
                             </Paper>
                         </Grid>
                         <Grid item xs={6}>
-                            <Paper sx={{ bgcolor: uiColors.cardBg, border: uiColors.cardBorder, borderRadius: 2, p: 3, height: '100%', backdropFilter: 'blur(10px)', boxShadow: isDark ? 'none' : '0 4px 6px rgba(0,0,0,0.05)' }}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: uiColors.divider, pb: 1 }}>
-                                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: uiColors.text }}>Top E-Auto Marke</Typography>
-                                    <ElectricCarIcon sx={{ color: '#16a34a' }} />
+                            <Paper sx={{ background: 'linear-gradient(135deg, #0891b2 0%, #0f766e 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: 3, height: '100%', boxShadow: '0 8px 18px rgba(15, 118, 110, 0.24)' }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 1 }}>
+                                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#fff' }}>Top E-Auto Marke</Typography>
+                                    <ElectricCarIcon sx={{ color: '#bbf7d0' }} />
                                 </Box>
                                 {topElektro ? (
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -594,18 +673,23 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                             <img src={getSmartLogoUrl(topElektro.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                         </Box>
                                         <Box>
-                                            <Typography variant="h4" sx={{ fontWeight: 800 }}>{topElektro.zulassungen.toLocaleString('de-DE')}</Typography>
-                                            <Typography variant="subtitle2" sx={{ color: formatPercent(topElektro.vergleichVorjahr).isPositive ? '#16a34a' : '#ef4444', fontWeight: 'bold' }}>{formatPercent(topElektro.vergleichVorjahr).text}</Typography>
+                                            <Typography variant="h4" sx={{ fontWeight: 800, color: '#fff' }}>{topElektro.zulassungen.toLocaleString('de-DE')}</Typography>
+                                            <Typography variant="body2" sx={{ color: '#fff', fontWeight: 800 }}>{topElektro.name}</Typography>
+                                            <Typography variant="subtitle2" sx={{ color: metricPercent(topElektro).isPositive ? '#bbf7d0' : '#fecaca', fontWeight: 'bold' }}>{metricPercent(topElektro).text}</Typography>
+                                            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.82)', display: 'block', fontSize: '0.68rem', lineHeight: 1.2 }}>
+                                                nur Elektro · {metricComparisonLabel(topElektro)}
+                                            </Typography>
+                                            {metricYearOverYear(topElektro) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.74)', display: 'block', fontSize: '0.65rem' }}>{metricYearOverYear(topElektro)}</Typography>}
                                         </Box>
                                     </Box>
                                 ) : <Typography color="text.secondary">Keine Daten.</Typography>}
                             </Paper>
                         </Grid>
                         <Grid item xs={6}>
-                            <Paper sx={{ bgcolor: uiColors.cardBg, border: uiColors.cardBorder, borderRadius: 2, p: 3, height: '100%', backdropFilter: 'blur(10px)', boxShadow: isDark ? 'none' : '0 4px 6px rgba(0,0,0,0.05)' }}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: uiColors.divider, pb: 1 }}>
-                                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: uiColors.text }}>Stärkstes Wachstum</Typography>
-                                    <TrendingUpIcon sx={{ color: '#16a34a' }} />
+                            <Paper sx={{ background: 'linear-gradient(135deg, #16a34a 0%, #166534 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: 3, height: '100%', boxShadow: '0 8px 18px rgba(22, 101, 52, 0.22)' }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 1 }}>
+                                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#fff' }}>Stärkstes Wachstum</Typography>
+                                    <TrendingUpIcon sx={{ color: '#fff' }} />
                                 </Box>
                                 {topWinner && (
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -613,18 +697,25 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                             <img src={getSmartLogoUrl(topWinner.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                         </Box>
                                         <Box>
-                                            <Typography variant="h3" sx={{ fontWeight: 900, color: '#16a34a' }}>{formatPercent(topWinner.vergleichVorjahr).text}</Typography>
-                                            <Typography variant="body1" sx={{ fontWeight: 'bold' }}>{topWinner.name}</Typography>
+                                            <Typography variant="h3" sx={{ fontWeight: 900, color: '#fff' }}>{metricPercent(topWinner).text}</Typography>
+                                            <Typography variant="body1" sx={{ fontWeight: 'bold', color: '#fff' }}>{topWinner.name}</Typography>
+                                            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.82)', display: 'block', fontSize: '0.66rem', lineHeight: 1.2 }}>
+                                                Gesamtmarkt · {metricComparisonLabel(topWinner)}
+                                            </Typography>
+                                            {metricYearOverYear(topWinner) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)', display: 'block', fontSize: '0.63rem' }}>{metricYearOverYear(topWinner)}</Typography>}
+                                            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.72)', display: 'block', fontSize: '0.61rem', lineHeight: 1.2 }}>
+                                                {trendSelectionLabel}
+                                            </Typography>
                                         </Box>
                                     </Box>
                                 )}
                             </Paper>
                         </Grid>
                         <Grid item xs={6}>
-                            <Paper sx={{ bgcolor: uiColors.cardBg, border: uiColors.cardBorder, borderRadius: 2, p: 3, height: '100%', backdropFilter: 'blur(10px)', boxShadow: isDark ? 'none' : '0 4px 6px rgba(0,0,0,0.05)' }}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: uiColors.divider, pb: 1 }}>
-                                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: uiColors.text }}>Stärkster Rückgang</Typography>
-                                    <TrendingDownIcon sx={{ color: '#ef4444' }} />
+                            <Paper sx={{ background: 'linear-gradient(135deg, #dc2626 0%, #991b1b 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: 3, height: '100%', boxShadow: '0 8px 18px rgba(153, 27, 27, 0.22)' }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 1 }}>
+                                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#fff' }}>Stärkster Rückgang</Typography>
+                                    <TrendingDownIcon sx={{ color: '#fff' }} />
                                 </Box>
                                 {topLoser && (
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -632,8 +723,15 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                             <img src={getSmartLogoUrl(topLoser.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                         </Box>
                                         <Box>
-                                            <Typography variant="h3" sx={{ fontWeight: 900, color: '#ef4444' }}>{formatPercent(topLoser.vergleichVorjahr).text}</Typography>
-                                            <Typography variant="body1" sx={{ fontWeight: 'bold' }}>{topLoser.name}</Typography>
+                                            <Typography variant="h3" sx={{ fontWeight: 900, color: '#fff' }}>{metricPercent(topLoser).text}</Typography>
+                                            <Typography variant="body1" sx={{ fontWeight: 'bold', color: '#fff' }}>{topLoser.name}</Typography>
+                                            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.82)', display: 'block', fontSize: '0.66rem', lineHeight: 1.2 }}>
+                                                Gesamtmarkt · {metricComparisonLabel(topLoser)}
+                                            </Typography>
+                                            {metricYearOverYear(topLoser) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)', display: 'block', fontSize: '0.63rem' }}>{metricYearOverYear(topLoser)}</Typography>}
+                                            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.72)', display: 'block', fontSize: '0.61rem', lineHeight: 1.2 }}>
+                                                {trendSelectionLabel}
+                                            </Typography>
                                         </Box>
                                     </Box>
                                 )}
@@ -805,7 +903,10 @@ const AdminSocialMediaGenerator: React.FC = () => {
 
                                     <Paper sx={{ p: 3, borderRadius: 2 }}>
                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                            <Typography variant="h6">KI-Post (LinkedIn)</Typography>
+                                            <Stack direction="row" alignItems="center" spacing={1}>
+                                                <Typography variant="h6">KI-Post (LinkedIn)</Typography>
+                                                <AiContentLabel kind={aiText !== generatedAiText ? 'modified' : 'generated'} size={17} />
+                                            </Stack>
                                             <Button variant="outlined" size="small" startIcon={<ContentCopyIcon />} onClick={handleCopyText}>Kopieren</Button>
                                         </Box>
                                         <TextField multiline rows={8} fullWidth value={aiText} onChange={(e) => setAiText(e.target.value)} variant="outlined" />
@@ -850,10 +951,30 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                                         <Chip label={`${item.format} • ${item.size}`} size="small" variant="outlined" sx={{ fontSize: '0.65rem', height: 20 }} />
                                                     </Box>
                                                     <Typography variant="subtitle2" noWrap title={item.name}>{item.name}</Typography>
-                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
+                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1, gap: 1 }}>
                                                         <Typography variant="caption" color="text.secondary">{item.dateTime || item.date}</Typography>
                                                         <Button size="small" variant="text" sx={{ minWidth: 'auto', p: 0.5 }} onClick={() => handleCopyUrl(item.rawUrl || item.url)}>URL</Button>
                                                     </Box>
+                                                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 1.25 }}>
+                                                        <Button
+                                                            size="small"
+                                                            variant="outlined"
+                                                            fullWidth
+                                                            startIcon={<VisibilityIcon />}
+                                                            onClick={() => handleViewGalleryFile('social-media', item.name)}
+                                                        >
+                                                            Ansehen
+                                                        </Button>
+                                                        <Button
+                                                            size="small"
+                                                            variant="contained"
+                                                            fullWidth
+                                                            startIcon={<DownloadIcon />}
+                                                            onClick={() => handleDownloadGalleryFile('social-media', item.name)}
+                                                        >
+                                                            Download
+                                                        </Button>
+                                                    </Stack>
                                                 </Box>
                                             </Paper>
                                         </Grid>
@@ -865,10 +986,28 @@ const AdminSocialMediaGenerator: React.FC = () => {
                         <Paper sx={{ p: 4, borderRadius: 2 }}>
                             <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2} sx={{ mb: 1 }}>
                                 <Typography variant="h5">Ordner: /grafiken</Typography>
-                                <Chip label={`${galleryFiles.grafiken.length} Dateien`} variant="outlined" />
+                                <Stack direction="row" alignItems="center" spacing={1}>
+                                    <input
+                                        ref={graphicUploadInputRef}
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp,image/avif"
+                                        hidden
+                                        onChange={handleGraphicUpload}
+                                    />
+                                    <Button
+                                        variant="contained"
+                                        size="small"
+                                        startIcon={uploadingGraphic ? <CircularProgress size={16} color="inherit" /> : <CloudUploadIcon />}
+                                        disabled={uploadingGraphic}
+                                        onClick={() => graphicUploadInputRef.current?.click()}
+                                    >
+                                        {uploadingGraphic ? 'Wird optimiert…' : 'Grafik hochladen'}
+                                    </Button>
+                                    <Chip label={`${galleryFiles.grafiken.length} Dateien`} variant="outlined" />
+                                </Stack>
                             </Stack>
                             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                                Hintergrundbilder, die im Generator ausgewählt werden können.
+                                Hintergrundbilder für den Generator. JPEG, PNG, WebP oder AVIF bis 8 MB; Uploads werden automatisch auf maximal 2.000 × 2.000 px verkleinert und als WebP gespeichert.
                             </Typography>
                             {loadingGallery ? <CircularProgress /> : (
                                 <Grid container spacing={3}>

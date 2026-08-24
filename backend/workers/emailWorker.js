@@ -19,6 +19,7 @@ const {
 const { dispatchAutomatedNewsletters } = require('../services/marketBriefingService');
 
 const { processSavedSearchNotifications } = require('../services/notificationService');
+const { processMemberNewsletterCampaign } = require('../services/memberNewsletterService');
 
 function logWorkerBoot() {
   console.log('==================================================');
@@ -61,6 +62,12 @@ async function startWorker() {
           case 'saved-search-notifications':
             console.log('[mail] Starte processSavedSearchNotifications...');
             await processSavedSearchNotifications();
+            break;
+
+          case 'member-newsletter':
+            if (!job.data?.campaignId) throw new Error('campaignId fehlt.');
+            console.log(`[mail] Starte Mitglieder-Mail ${job.data.campaignId}...`);
+            await processMemberNewsletterCampaign(job.data.campaignId);
             break;
 
           default:

@@ -18,6 +18,20 @@ function toAbsoluteUrl(pathOrUrl) {
   return `${getBaseUrl()}${pathOrUrl.startsWith('/') ? '' : '/'}${pathOrUrl}`;
 }
 
+function renderAiGeneratedBadge() {
+  const labelUrl = toAbsoluteUrl('/AI_generated-label.png');
+  return `
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 14px;">
+      <tr>
+        <td style="vertical-align:middle;">
+          <img src="${labelUrl}" alt="KI-generiert" width="94" height="18"
+               style="display:block;width:94px;height:18px;object-fit:cover;object-position:center center;" />
+        </td>
+        <td style="padding-left:8px;font-size:11px;color:#64748b;vertical-align:middle;">Mit KI erstellt</td>
+      </tr>
+    </table>`;
+}
+
 function resolveLogoRef(logoUrl) {
   if (logoUrl) return { type: 'url', url: toAbsoluteUrl(logoUrl) };
   if ((process.env.EMAIL_EMBED_LOGO_PATH || '').trim()) return { type: 'cid', id: 'brand-logo' };
@@ -37,7 +51,8 @@ function renderLayout({
   partner = {}, 
   brandLogoUrl, 
   dashboardTitle,
-  colors = {} 
+  colors = {},
+  unsubscribeUrl
 }) {
   const logoUrlToUse = partner?.logo_url || brandLogoUrl;
   const logo = resolveLogoRef(logoUrlToUse);
@@ -79,6 +94,9 @@ function renderLayout({
     footerHtml += `<strong>${escapeHtml(partnerName)}</strong><br>${footerDetails}<br><br>© ${new Date().getFullYear()} ${escapeHtml(partnerName)}. Alle Rechte vorbehalten.`;
   } else {
     footerHtml += `© ${new Date().getFullYear()} Mobiliti`;
+  }
+  if (unsubscribeUrl) {
+    footerHtml += `<br><br><a href="${escapeHtml(unsubscribeUrl)}" style="color:#9ca3af;text-decoration:underline;">E-Mail-Einstellungen ändern oder abmelden</a>`;
   }
 
   return `<!doctype html>
@@ -236,7 +254,7 @@ function renderNewOpportunitiesEmail({ username, searchName, newOpportunities, s
 function renderBriefingEmail({ briefing, brandLogoUrl, dashboardTitle, nextEvent }) {
   const title = `Ihr Tägliches Briefing für den ${new Date().toLocaleDateString('de-DE')}`;
   
-  let contentHtml = '';
+  let contentHtml = renderAiGeneratedBadge();
   if (briefing.market_briefing) {
     const mb = briefing.market_briefing;
     contentHtml += `
@@ -301,7 +319,7 @@ function getDomain(urlStr) {
 }
 
 // --- DAS NEUE KI BRIEFING ---
-function renderFleetDailyBriefingEmail({ briefing, partner, nextEvent, pdfUrl }) {
+function renderFleetDailyBriefingEmail({ briefing, partner, nextEvent, pdfUrl, unsubscribeUrl }) {
   const today = new Date().toLocaleDateString('de-DE');
   const title = `${partner?.dashboard_title || 'Tages-Briefing'} – ${today}`;
   const primaryColor = partner?.color_scheme?.primary_color || '#1e293b';
@@ -411,6 +429,7 @@ function renderFleetDailyBriefingEmail({ briefing, partner, nextEvent, pdfUrl })
 
   // --- ZUSAMMENBAU DES GESAMTEN HTML ---
   const contentHtml = `
+    ${renderAiGeneratedBadge()}
     <p style="margin:0 0 16px;color:#6b7280;font-size:14px;">Ihre wichtigsten Branchen-Entwicklungen, zusammengefasst in 60 Sekunden.</p>
     <h2 style="font-size: 18px; margin-top: 24px;">Top Insights</h2>
     ${topInsightsHtml}
@@ -427,7 +446,41 @@ function renderFleetDailyBriefingEmail({ briefing, partner, nextEvent, pdfUrl })
     contentHtml,
     ctaLabel: 'Alle Daten im Dashboard ansehen',
     ctaUrl: getBaseUrl(),
-    partner
+    partner,
+    unsubscribeUrl
+  });
+}
+
+function renderMemberNewsletterEmail({ campaign, partner, user, unsubscribeUrl, isTest = false }) {
+  const paragraphs = String(campaign.body_text || '')
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p style="margin:0 0 16px;line-height:1.65;">${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
+    .join('');
+  const greeting = user?.first_name ? `Guten Tag ${escapeHtml(user.first_name)},` : 'Guten Tag,';
+  const signatureName = partner?.dashboard_title || partner?.name || 'Mobiliti';
+  const signatureUrl = /^https?:\/\//i.test(String(partner?.url_businesspartner || '').trim())
+    ? String(partner.url_businesspartner).trim()
+    : '';
+  const signatureDetails = [
+    partner?.name && partner.name !== signatureName ? escapeHtml(partner.name) : '',
+    partner?.address ? escapeHtml(partner.address) : '',
+    partner?.email ? `<a href="mailto:${escapeHtml(partner.email)}">${escapeHtml(partner.email)}</a>` : '',
+    signatureUrl ? `<a href="${escapeHtml(signatureUrl)}" target="_blank" rel="noopener">${escapeHtml(signatureUrl)}</a>` : '',
+  ].filter(Boolean).join('<br>');
+  const signatureHtml = `
+    <div style="margin-top:28px;padding-top:18px;border-top:1px solid #e5e7eb;line-height:1.55;">
+      <p style="margin:0 0 8px;">Freundliche Grüße</p>
+      <p style="margin:0;"><strong>${escapeHtml(signatureName)}</strong>${signatureDetails ? `<br>${signatureDetails}` : ''}</p>
+    </div>`;
+  return renderLayout({
+    preheader: campaign.preheader || campaign.subject,
+    title: campaign.subject,
+    contentHtml: `${isTest ? '<p style="padding:10px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;"><strong>Testversand:</strong> Diese Nachricht ging nur an Ihr eigenes Konto.</p>' : ''}<p>${greeting}</p>${paragraphs}${signatureHtml}`,
+    ctaLabel: campaign.cta_label || undefined,
+    ctaUrl: campaign.cta_url || undefined,
+    footerText: 'Sie erhalten diese Nachricht aufgrund Ihrer bestätigten Newsletter-Einwilligung.',
+    partner,
+    unsubscribeUrl,
   });
 }
 
@@ -512,5 +565,6 @@ module.exports = {
   renderNewOpportunitiesEmail,
   renderBriefingEmail,
   renderFleetDailyBriefingEmail,
+  renderMemberNewsletterEmail,
   renderMonthlyPartnerReportEmail,
 };

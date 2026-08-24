@@ -364,7 +364,13 @@ exports.getUsageStats = async (req, res) => {
         // -------------------------
         const topUserActivityQuery = `
             SELECT
+                u.id AS user_id,
+                u.username,
+                u.first_name,
+                u.last_name,
                 u.email,
+                u.organization_name,
+                u.profile_image_url,
                 bp.name as business_partner_name,
                 (
                     COUNT(DISTINCT al.id) +

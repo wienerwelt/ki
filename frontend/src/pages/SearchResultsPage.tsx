@@ -16,6 +16,7 @@ import PodcastsIcon from '@mui/icons-material/Podcasts';
 import YouTubeIcon from '@mui/icons-material/YouTube';
 
 import apiClient from '../apiClient';
+import AiContentLabel from '../components/AiContentLabel';
 
 interface SearchResult {
   id: string;
@@ -188,6 +189,7 @@ const SearchResultsPage: React.FC = () => {
                               variant="outlined"
                               sx={{ height: 20, fontSize: '0.7rem' }}
                             />
+                            {result.type === 'ai' && <AiContentLabel kind="generated" size={14} />}
                           </Box>
                           <Typography variant="body2" color="text.primary">
                             {result.summary ? (result.summary.length > 250 ? `${result.summary.substring(0, 250)}...` : result.summary) : ''}

@@ -7,13 +7,15 @@ const fileController = require('../controllers/fileController');
 const softwareController = require('../controllers/softwareController');
 
 const contactFormLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 5,
+    // Kontaktformular bewusst strenger als die übrigen Public-Routen:
+    // maximal 3 POST-Versuche pro IP und Stunde.
+    windowMs: 60 * 60 * 1000,
+    limit: 3,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     message: {
         success: false,
-        message: 'Zu viele Anfragen. Bitte versuchen Sie es in 15 Minuten erneut.'
+        message: 'Zu viele Anfragen. Bitte versuchen Sie es später erneut.'
     }
 });
 
@@ -51,6 +53,7 @@ router.get('/v1/event-feed/:token.json', publicController.getPublicEventFeedJson
 
 
 // --- 5. PUBLIC DATEI-DOWNLOADS (geheime Direktlinks, keine öffentliche Liste) ---
+router.get('/files/:id/:token', publicFileDownloadLimiter, fileController.getPublicFileInfo);
 router.get('/files/:id/:token/download', publicFileDownloadLimiter, fileController.getPublicDownloadUrl);
 
 // --- 6. DER NEUE GENERIC WIDGET HUB (Für alle zukünftigen Widgets) ---

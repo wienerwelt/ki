@@ -5,6 +5,16 @@ const { PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const s3Client = require("../config/s3Client.js");
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
+const { getMembershipExpiry } = require('../utils/membershipExpiry');
+
+function withMembershipExpiry(profile) {
+    const expiry = getMembershipExpiry(profile?.active_until);
+    return {
+        ...profile,
+        membership_expires_on: expiry.expiresOn,
+        membership_days_remaining: expiry.daysRemaining,
+    };
+}
 
 
 exports.getProfile = async (req, res) => {
@@ -16,7 +26,13 @@ exports.getProfile = async (req, res) => {
                 u.linkedin_url, u.membership_level, u.role, u.business_partner_id,
                 u.article_score_min, u.article_score_max,
                 u.contribution_score, u.newsletter_opt_in, u.briefing_email_enabled,
+                u.member_newsletter_enabled, u.active_until,
                 u.newsletter_opt_in_confirmed_at,
+                u.public_profile_enabled,
+                u.show_email_publicly,
+                u.show_phone_publicly,
+                u.show_organization_publicly,
+                u.show_linkedin_publicly,
                 u.profile_image_url,
                 u.last_login_at,
                 u.phone,
@@ -38,7 +54,7 @@ exports.getProfile = async (req, res) => {
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Benutzer nicht gefunden.' });
         }
-        res.json(result.rows[0]);
+        res.json(withMembershipExpiry(result.rows[0]));
     } catch (err) {
         console.error('Fehler beim Abrufen des Profils:', err.message);
         res.status(500).send('Serverfehler');
@@ -80,12 +96,25 @@ exports.updateProfile = async (req, res) => {
                 message: 'Bitte bestätigen Sie zuerst die Newsletter-Anmeldung per E-Mail.'
             });
         }
+        if (body.member_newsletter_enabled === true && rows[0].newsletter_opt_in !== true) {
+            return res.status(400).json({
+                message: 'Bitte bestätigen Sie zuerst die Newsletter-Anmeldung per E-Mail.'
+            });
+        }
 
         const allowedFields = [
             'first_name', 'last_name', 'organization_name', 'linkedin_url',
             'article_score_min', 'article_score_max', 'preferred_theme',
-            'preferred_language', 'newsletter_opt_in', 'briefing_email_enabled', 'phone'
+            'preferred_language', 'newsletter_opt_in', 'briefing_email_enabled',
+            'member_newsletter_enabled', 'phone', 'public_profile_enabled',
+            'show_email_publicly', 'show_phone_publicly',
+            'show_organization_publicly', 'show_linkedin_publicly'
         ];
+        const booleanFields = new Set([
+            'newsletter_opt_in', 'briefing_email_enabled', 'member_newsletter_enabled',
+            'public_profile_enabled', 'show_email_publicly', 'show_phone_publicly',
+            'show_organization_publicly', 'show_linkedin_publicly'
+        ]);
         const assignments = [];
         const values = [];
         const addValue = (column, value) => {
@@ -96,12 +125,16 @@ exports.updateProfile = async (req, res) => {
         for (const field of allowedFields) {
             if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
             let value = body[field];
+            if (booleanFields.has(field) && typeof value !== 'boolean') {
+                return res.status(400).json({ message: `Ungültiger Wert für ${field}.` });
+            }
             if (field === 'phone') value = value ? String(value).trim() : null;
             addValue(field, value);
         }
 
         if (body.newsletter_opt_in === false) {
             addValue('briefing_email_enabled', false);
+            addValue('member_newsletter_enabled', false);
             assignments.push('newsletter_unsubscribed_at = CURRENT_TIMESTAMP');
         }
 
@@ -127,7 +160,13 @@ exports.updateProfile = async (req, res) => {
                 u.linkedin_url, u.membership_level, u.role, u.business_partner_id,
                 u.article_score_min, u.article_score_max,
                 u.contribution_score, u.newsletter_opt_in, u.briefing_email_enabled,
+                u.member_newsletter_enabled, u.active_until,
                 u.newsletter_opt_in_confirmed_at,
+                u.public_profile_enabled,
+                u.show_email_publicly,
+                u.show_phone_publicly,
+                u.show_organization_publicly,
+                u.show_linkedin_publicly,
                 u.phone,
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
@@ -143,7 +182,7 @@ exports.updateProfile = async (req, res) => {
             [userId]
         );
 
-        res.json(profileResult.rows[0]);
+        res.json(withMembershipExpiry(profileResult.rows[0]));
         
     } catch (err) {
         console.error('Fehler beim Aktualisieren des Profils:', err.message);
@@ -712,20 +751,25 @@ exports.getPublicUserProfile = async (req, res) => {
                 u.first_name,
                 u.last_name,
                 u.username,
-                u.organization_name,
+                CASE WHEN u.show_organization_publicly THEN u.organization_name ELSE NULL END AS organization_name,
                 u.role,
                 u.membership_level,
-                u.linkedin_url,
+                CASE WHEN u.show_linkedin_publicly THEN u.linkedin_url ELSE NULL END AS linkedin_url,
                 u.profile_image_url,
                 u.contribution_score,
                 u.created_at as member_since,
-                u.email,  -- NEU
-                u.phone,  -- NEU (muss in DB existieren)
-                bp.logo_url as bp_logo_url, -- NEU
+                CASE WHEN u.show_email_publicly THEN u.email ELSE NULL END AS email,
+                CASE WHEN u.show_phone_publicly THEN u.phone ELSE NULL END AS phone,
+                bp.logo_url as bp_logo_url,
                 bp.name as bp_name
             FROM users u
             LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
-            WHERE u.id = $1 AND u.is_active = TRUE
+            WHERE u.id = $1
+              AND u.is_active = TRUE
+              AND u.public_profile_enabled = TRUE
+              AND (u.active_until IS NULL OR (u.active_until AT TIME ZONE 'Europe/Vienna')::date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Vienna')::date)
+              AND COALESCE(bp.is_active, TRUE) = TRUE
+              AND (bp.subscription_end_date IS NULL OR bp.subscription_end_date >= CURRENT_DATE)
         `;
         
         const { rows } = await db.query(query, [userId]);
@@ -734,6 +778,8 @@ exports.getPublicUserProfile = async (req, res) => {
             return res.status(404).json({ message: 'Profil nicht verfügbar.' });
         }
 
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('X-Robots-Tag', 'noindex, nofollow');
         res.json(rows[0]);
 
     } catch (err) {

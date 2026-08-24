@@ -11,6 +11,7 @@ import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import AiContentLabel from './AiContentLabel';
 
 
 interface FundingResult {
@@ -85,6 +86,7 @@ const FundingResultCard: React.FC<Props> = ({ item, allCategories, selectedCateg
                         </MuiLink>
                     </Typography>
                     
+                    <Box sx={{ mb: 0.8 }}><AiContentLabel kind="generated" size={15} /></Box>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                         {item.summary_ai}
                     </Typography>

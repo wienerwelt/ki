@@ -17,6 +17,7 @@ import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
 import { useSnackbar } from '../../context/SnackbarContext';
+import AiContentLabel from '../AiContentLabel';
 
 // --- Interfaces ---
 interface BriefingItem {
@@ -222,7 +223,7 @@ const DailyCockpitWidget: React.FC<DailyCockpitWidgetProps> = ({
         });
         if (response.data?.alreadyConfirmed) {
           setIsSubscribed(true);
-          updateUser({ newsletter_opt_in: true, briefing_email_enabled: true });
+          updateUser({ newsletter_opt_in: true, briefing_email_enabled: true, member_newsletter_enabled: true });
           showSnackbar('E-Mail-Briefing aktiviert.', 'success');
         } else {
           setIsSubscribed(false);
@@ -303,9 +304,12 @@ const items = data?.items || [];
       {/* --- TOP INSIGHTS --- */}
       {topInsights.length > 0 && (
               <Box mb={isPublic ? 0 : 3}>
-                <Typography variant="overline" color="primary.main" sx={{ fontWeight: 800, mb: 2, display: 'flex', alignItems: 'center', gap: 1, letterSpacing: 1 }}>
-                  <AutoAwesomeIcon fontSize="small" /> Heute in 60 Sekunden
-                </Typography>
+                <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
+                  <Typography variant="overline" color="primary.main" sx={{ fontWeight: 800, display: 'flex', alignItems: 'center', gap: 1, letterSpacing: 1 }}>
+                    <AutoAwesomeIcon fontSize="small" /> Heute in 60 Sekunden
+                  </Typography>
+                  <AiContentLabel kind="generated" size={16} />
+                </Stack>
                 <Grid container spacing={2}>
                   {topInsights.slice(0, 3).map((ins, idx) => (
                     <Grid item xs={12} md={4} key={idx}>

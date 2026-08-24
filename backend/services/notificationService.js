@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { sendNewOpportunitiesNotification } = require('./emailService');
+const { ACTIVE_MEMBERSHIP_SQL } = require('../utils/membershipExpiry');
 
 const findNewOpportunitiesForSearch = async (search) => {
     const { search_criteria } = search;
@@ -29,7 +30,9 @@ const processSavedSearchNotifications = async () => {
         `SELECT usfs.*, u.email, u.username 
          FROM user_saved_funding_searches usfs
          JOIN users u ON usfs.user_id = u.id
-         WHERE usfs.notifications_enabled = true`
+         WHERE usfs.notifications_enabled = true
+           AND u.is_active = TRUE
+           AND ${ACTIVE_MEMBERSHIP_SQL}`
     );
 
     for (const search of searches) {

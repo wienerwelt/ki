@@ -68,7 +68,7 @@ Keine einzelnen Quellcodedateien mehr per SFTP verteilen. Im normalen Ablauf wer
 ### Produktion
 
 - Projektverzeichnis: `/var/www/vhosts/mobiliti.at/httpdocs/dashboard`
-- Docker, Docker Compose, Node/npm, `curl`, `tar`, `sha256sum`, `rsync`, `realpath`, `mktemp` und `grep` sind installiert.
+- Docker, Docker Compose, Node/npm, `curl`, `tar`, `sha256sum`, `rsync`, `realpath`, `mktemp`, `grep`, `sed` und `tail` sind installiert. Für die einmalige Secret-Erzeugung wird zusätzlich `openssl` benötigt.
 - Die produktive `.env` liegt ausschließlich im Projekt-Root des Servers.
 - Darin steht mindestens:
 
@@ -76,9 +76,57 @@ Keine einzelnen Quellcodedateien mehr per SFTP verteilen. Im normalen Ablauf wer
   FRONTEND_URL=https://dashboard.mobiliti.at
   JWT_EXPIRES_IN=8h
   SESSION_COOKIE_MAX_AGE_MS=28800000
+  NEWSLETTER_TOKEN_SECRET=<eigenes-zufaelliges-secret-mit-mindestens-32-zeichen>
   ```
 
-  `JWT_SECRET` muss ebenfalls vorhanden sein und mindestens 32 zufällige Zeichen haben. Sein Inhalt wird niemals in Git, in diese Anleitung oder in Terminalausgaben kopiert. `SESSION_COOKIE_MAX_AGE_MS=28800000` begrenzt eine Browser-Sitzung auf acht Stunden; eine Verlängerung erfolgt bewusst über den Sitzungsdialog.
+  `JWT_SECRET` und `NEWSLETTER_TOKEN_SECRET` müssen jeweils mindestens 32 zufällige Zeichen haben und zwingend unterschiedlich sein. Das Newsletter-Secret signiert ausschließlich Präferenz- und Abmeldelinks; es darf niemals auf das Login-Secret zurückfallen. Secrets werden weder in Git noch in diese Anleitung oder in Terminalausgaben kopiert. `SESSION_COOKIE_MAX_AGE_MS=28800000` begrenzt eine Browser-Sitzung auf acht Stunden; eine Verlängerung erfolgt bewusst über den Sitzungsdialog.
+
+### Einmalig: getrenntes Newsletter-Secret einrichten
+
+Das Secret wird in DEV und PROD jeweils unabhängig erzeugt. Bestehende Präferenzlinks werden durch einen späteren Wechsel ungültig; deshalb nur bei einer geplanten Rotation ändern.
+
+DEV / Windows-PowerShell im Projekt-Root (fügt den Wert nur hinzu, wenn der Schlüssel noch nicht existiert):
+
+```powershell
+$EnvPath = (Resolve-Path '.\.env').Path
+if (Select-String -LiteralPath $EnvPath -Pattern '^\s*NEWSLETTER_TOKEN_SECRET\s*=' -Quiet) {
+  throw 'STOPP: NEWSLETTER_TOKEN_SECRET existiert bereits. Nicht automatisch überschreiben.'
+}
+$Bytes = New-Object byte[] 32
+$Generator = [Security.Cryptography.RandomNumberGenerator]::Create()
+try {
+  $Generator.GetBytes($Bytes)
+  $NewsletterSecret = ($Bytes | ForEach-Object { $_.ToString('x2') }) -join ''
+  [IO.File]::AppendAllText(
+    $EnvPath,
+    [Environment]::NewLine + "NEWSLETTER_TOKEN_SECRET=$NewsletterSecret" + [Environment]::NewLine,
+    [Text.UTF8Encoding]::new($false)
+  )
+} finally {
+  $Generator.Dispose()
+  $Bytes = $null
+  $NewsletterSecret = $null
+}
+Write-Host 'NEWSLETTER_TOKEN_SECRET wurde lokal gesetzt, ohne es auszugeben.'
+```
+
+PROD / Ubuntu-PuTTY im Produktions-Projekt-Root (vor dem ersten Deployment mit dieser Prüfung):
+
+```bash
+cd /var/www/vhosts/mobiliti.at/httpdocs/dashboard
+(
+  set -e
+  command -v openssl >/dev/null
+  if grep -Eq '^[[:space:]]*NEWSLETTER_TOKEN_SECRET[[:space:]]*=' .env; then
+    echo 'STOPP: NEWSLETTER_TOKEN_SECRET existiert bereits. Nicht automatisch überschreiben.'
+    false
+  fi
+  NEWSLETTER_SECRET_VALUE="$(openssl rand -hex 32)"
+  printf '\nNEWSLETTER_TOKEN_SECRET=%s\n' "$NEWSLETTER_SECRET_VALUE" >> .env
+  unset NEWSLETTER_SECRET_VALUE
+  echo 'NEWSLETTER_TOKEN_SECRET wurde in PROD gesetzt, ohne es auszugeben.'
+)
+```
 
 - Optional kann ein erreichbarer ClamAV-Dienst für hochgeladene Dokumente aktiviert werden. Erst wenn der Dienst unter dem angegebenen Host tatsächlich läuft, diese Werte lokal und in Produktion ergänzen:
 
@@ -180,6 +228,7 @@ Eine Versionsnummer darf nach erfolgreichem Deployment niemals wiederverwendet w
    - Benutzerverwaltung der Mandantenassistenz zeigt und findet ausschließlich normale Benutzer des eigenen Mandanten
    - Dashboard und geänderte Widgets
    - Community-Profile, Bewertungen und Benutzersuche
+   - Profil → Öffentliche Visitenkarte: ohne Freigabe nicht erreichbar; in einem privaten Browserfenster erscheinen nur die ausdrücklich aktivierten Felder
    - Actions & Software im Adminbereich
    - Software-Lexikon intern und öffentlich
    - Branchenverzeichnis als Liste und Karte
@@ -194,7 +243,19 @@ Eine Versionsnummer darf nach erfolgreichem Deployment niemals wiederverwendet w
    powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\preflight.ps1
    ```
 
-Der Preflight prüft Dev- und Prod-Compose, alle npm-Abhängigkeiten einschließlich Build-/Dev-Werkzeugen auf kritische Sicherheitsmeldungen, `deploy.sh`, Backend-Syntax, unsichere JWT-Ablage im Frontend, Migrationen und Frontend-Build. Danach baut er die Docker-Images neu, erneuert ausschließlich die anonymen Dev-Abhängigkeitsvolumes, erstellt die lokale API und Worker daraus neu und prüft API-Health sowie alle sicheren fachlichen Smoke-Tests. Der Sicherheitstest erwartet insbesondere `403` auf globalen Adminrouten für Assistenzen, `404` auf fremde Mandantendaten und `403` auf Cookie-Schreibzugriffe ohne CSRF-Token. Er versendet keine E-Mails. Nur bei der Meldung `Preflight vollständig erfolgreich.` fortfahren.
+Der Preflight prüft zuerst, dass `JWT_SECRET` und `NEWSLETTER_TOKEN_SECRET` vorhanden, ausreichend lang und unterschiedlich sind. Danach prüft er Dev- und Prod-Compose, alle npm-Abhängigkeiten einschließlich Build-/Dev-Werkzeugen auf kritische Sicherheitsmeldungen, `deploy.sh`, Backend-Syntax, unsichere JWT-Ablage im Frontend, Migrationen und Frontend-Build. Anschließend baut er die Docker-Images neu, erneuert ausschließlich die anonymen Dev-Abhängigkeitsvolumes, erstellt die lokale API und Worker daraus neu und prüft API-Health sowie alle sicheren fachlichen Smoke-Tests. Der Sicherheitstest erwartet insbesondere `403` auf globalen Adminrouten für Assistenzen, `404` auf fremde Mandantendaten und `403` auf Cookie-Schreibzugriffe ohne CSRF-Token. Er versendet keine E-Mails. Nur bei der Meldung `Preflight vollständig erfolgreich.` fortfahren.
+
+### Verbindlicher Feature-Freeze
+
+Mit der Meldung `Preflight vollständig erfolgreich.` ist der Release-Kandidat eingefroren. Bis zum abgeschlossenen Produktionstest gelten diese Regeln:
+
+- keine neuen Funktionen, Datenbankfelder, Migrationen oder Paket-Updates mehr aufnehmen;
+- nur echte Release-Blocker korrigieren;
+- jede Code-, Konfigurations-, Migrations- oder Abhängigkeitsänderung hebt die Freigabe auf und verlangt wieder den vollständigen manuellen Test aus Schritt 4 sowie den vollständigen Preflight;
+- `-SkipHealthCheck` und `-SkipSmokeTests` sind für ein Release unzulässig;
+- erst danach committen, nach `main` übernehmen, das SFTP-Archiv erzeugen und übertragen.
+
+Das Release-Skript erzwingt zusätzlich einen sauberen `main`, merkt sich den Commit vor dem vollständigen Preflight, prüft danach Branch, Commit und Arbeitsbaum erneut und erstellt das Archiv ausschließlich aus diesem unveränderten Git-Stand.
 
 6. DEV nach der Arbeit sicher stoppen:
 
@@ -329,7 +390,10 @@ grep -F 'FRONTEND_URL=https://dashboard.mobiliti.at' .env
 grep -F 'SESSION_COOKIE_MAX_AGE_MS=28800000' .env
 JWT_SECRET_VALUE="$(sed -n 's/^JWT_SECRET=//p' .env | tail -n 1)"
 test "${#JWT_SECRET_VALUE}" -ge 32 && echo "JWT_SECRET-Länge OK"
-unset JWT_SECRET_VALUE
+NEWSLETTER_TOKEN_SECRET_VALUE="$(sed -n 's/^NEWSLETTER_TOKEN_SECRET=//p' .env | tail -n 1)"
+test "${#NEWSLETTER_TOKEN_SECRET_VALUE}" -ge 32 && echo "NEWSLETTER_TOKEN_SECRET-Länge OK"
+test "$NEWSLETTER_TOKEN_SECRET_VALUE" != "$JWT_SECRET_VALUE" && echo "Release-Secrets sind getrennt"
+unset JWT_SECRET_VALUE NEWSLETTER_TOKEN_SECRET_VALUE
 df -h .
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 ```
@@ -339,7 +403,8 @@ Stoppen, wenn:
 - `pwd` nicht exakt das Produktions-Projektverzeichnis zeigt;
 - Projektmarker oder `.env` fehlen;
 - `FRONTEND_URL` oder `SESSION_COOKIE_MAX_AGE_MS` falsch ist;
-- `JWT_SECRET` fehlt oder kürzer als 32 Zeichen ist;
+- `JWT_SECRET` oder `NEWSLETTER_TOKEN_SECRET` fehlt oder kürzer als 32 Zeichen ist;
+- beide Secrets identisch sind;
 - der Datenträger fast voll ist;
 - PostgreSQL nicht läuft oder nicht gesund ist.
 
@@ -620,7 +685,7 @@ Das erhält Datenbank, Redis-Daten und Uploads. Niemals `docker compose down -v`
 
 ### D. DEV / PowerShell: geprüftes Release erzeugen
 
-Erst ausführen, wenn Entwicklung und manueller Browsertest abgeschlossen sind:
+Erst ausführen, wenn Entwicklung und manueller Browsertest abgeschlossen sind. Ab dem erfolgreichen Preflight in diesem Block gilt der Feature-Freeze aus Abschnitt 5; jede nachträgliche Änderung erfordert den vollständigen Test erneut.
 
 ```powershell
 Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
@@ -732,7 +797,10 @@ Den gesamten folgenden Block in PuTTY einfügen. Die Release-Version wird abgefr
   grep -F 'SESSION_COOKIE_MAX_AGE_MS=28800000' .env
   JWT_SECRET_VALUE="$(sed -n 's/^JWT_SECRET=//p' .env | tail -n 1)"
   test "${#JWT_SECRET_VALUE}" -ge 32
-  unset JWT_SECRET_VALUE
+  NEWSLETTER_TOKEN_SECRET_VALUE="$(sed -n 's/^NEWSLETTER_TOKEN_SECRET=//p' .env | tail -n 1)"
+  test "${#NEWSLETTER_TOKEN_SECRET_VALUE}" -ge 32
+  test "$NEWSLETTER_TOKEN_SECRET_VALUE" != "$JWT_SECRET_VALUE"
+  unset JWT_SECRET_VALUE NEWSLETTER_TOKEN_SECRET_VALUE
   test "$(stat -c '%a' .)" = '755'
 
   test -f ".deploy/incoming/mobiliti-dashboard-${RELEASE_VERSION}.tar.gz"

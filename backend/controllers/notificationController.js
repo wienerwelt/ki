@@ -9,7 +9,7 @@ const SYSTEM_NOTIFICATION_TYPES = [
 
 const isActiveUserClause = `
     is_active = TRUE
-    AND (active_until IS NULL OR active_until > NOW())
+    AND (active_until IS NULL OR (active_until AT TIME ZONE 'Europe/Vienna')::date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Vienna')::date)
 `;
 
 const sanitizeText = (value, fallback = '') => {

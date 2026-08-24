@@ -1,11 +1,15 @@
 // frontend/src/apiClient.ts
 import { getPartnerPublicPath } from './utils/partnerNavigation';
 
-// Basis-URL: Wir nutzen im Dev-Modus einen leeren String, damit der Vite-Proxy greift.
-const API_BASE: string =
+// Im Dev-Modus laufen API-Aufrufe immer ueber den Vite-Proxy. Dadurch bleiben
+// Frontend und Session-Cookies auf demselben Host (localhost bzw. 127.0.0.1).
+// Ein direkter Wechsel zwischen beiden Hosts wuerde SameSite=Strict-Cookies
+// blockieren und einen erfolgreichen Login sofort wieder abmelden.
+const CONFIGURED_API_BASE: string =
   (import.meta as any).env?.VITE_API_BASE_URL ??
   (import.meta as any).env?.VITE_API_URL ??
   '';
+const API_BASE: string = (import.meta as any).env?.DEV ? '' : CONFIGURED_API_BASE;
 
 export interface ApiResult<T = any> {
   res: Response;
@@ -141,7 +145,8 @@ export async function apiRequest<T = any>(path: string, init: LooseInit = {}): P
     // ==========================================
     // 🚨 401 UNAUTHORIZED INTERCEPTOR (NEU)
     // ==========================================
-    if (res.status === 401) {
+    const isAuthenticationRequest = /^\/api\/auth\/(?:login|register|forgot-password|resend-verification|reset-password(?:\/|$))/.test(path);
+    if (res.status === 401 && !isAuthenticationRequest) {
       console.warn(`🔒 [API 401] [${reqId}] Token abgelaufen oder ungültig. Führe Logout durch.`);
       if (typeof window !== 'undefined') {
         // Abgelaufene Sitzungen bleiben im zuletzt verwendeten Mandantenkontext.

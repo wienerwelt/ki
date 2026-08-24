@@ -25,10 +25,12 @@ const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const DisclaimerPage = lazy(() => import('./pages/DisclaimerPage'));
 const CookieSettingsPage = lazy(() => import('./pages/CookieSettingsPage'));
 const NewsletterConfirmed = lazy(() => import('./pages/NewsletterConfirmed'));
+const NewsletterPreferencesPage = lazy(() => import('./pages/NewsletterPreferencesPage'));
 const FundingSearchPage = lazy(() => import('./pages/FundingSearchPage'));
 const FundingDetailPage = lazy(() => import('./pages/FundingDetailPage'));
 const PublicProfileCard = lazy(() => import('./pages/PublicProfileCard'));
 const PublicBpCard = lazy(() => import('./pages/PublicBpCard'));
+const PublicFileDownloadPage = lazy(() => import('./pages/PublicFileDownloadPage'));
 
 // Geschützte Seiten – route-level code splitting.
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
@@ -233,8 +235,10 @@ function App() {
           <Route path="/disclaimer" element={lazyRoute(<DisclaimerPage />)} />
           <Route path="/cookie-settings" element={lazyRoute(<CookieSettingsPage />)} />
           <Route path="/newsletter/confirmed" element={lazyRoute(<NewsletterConfirmed />)} />
+          <Route path="/newsletter/preferences/:token" element={lazyRoute(<NewsletterPreferencesPage />)} />
           <Route path="/p/:userId" element={lazyRoute(<PublicProfileCard />)} />
           <Route path="/invite/:bpId" element={lazyRoute(<PublicBpCard />)} />
+          <Route path="/f/:fileId/:token" element={lazyRoute(<PublicFileDownloadPage />)} />
 
           {/* Dynamische Route für Partner-Slugs, z. B. /vfa */}
           <Route path="/:partnerSlug" element={lazyRoute(<PublicPortalPage />)} />

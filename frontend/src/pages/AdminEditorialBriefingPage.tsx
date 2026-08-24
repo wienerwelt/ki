@@ -7,7 +7,7 @@ import {
     DialogTitle, DialogActions, RadioGroup, FormControlLabel, Radio, 
     Switch, Backdrop, Avatar, Alert,
     // NEU: Diese Imports haben gefehlt
-    List, ListItem, ListItemText
+    List, ListItem, ListItemText, Tabs, Tab
 } from '@mui/material';
 import { 
     AutoAwesome as AutoAwesomeIcon, HistoryEdu as HistoryEduIcon, Email as EmailIcon, 
@@ -23,6 +23,8 @@ import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
 import { useAuth } from '../context/AuthContext';
+import AiContentLabel from '../components/AiContentLabel';
+import MemberNewsletterPanel from '../components/MemberNewsletterPanel';
 
 // --- HELPER: Nächsten Versandzeitpunkt berechnen ---
 const getNextRunText = (frequency: string) => {
@@ -100,7 +102,10 @@ const BriefingPreviewDialog = ({ open, onClose, items, partner }: any) => {
                             </Box>
                         </Box>
                         <Box sx={{ p: 4, bgcolor: '#fff' }}>
-                            <Typography variant="h5" sx={{ fontWeight: 800, mb: 3 }}>Tages-Briefing</Typography>
+                            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 3 }}>
+                                <Typography variant="h5" sx={{ fontWeight: 800 }}>Tages-Briefing</Typography>
+                                <AiContentLabel kind="generated" size={17} />
+                            </Stack>
                             
                             {topInsights.length > 0 && (
                                 <Box sx={{ mb: 4 }}>
@@ -166,6 +171,7 @@ const AdminEditorialBriefingPage: React.FC = () => {
     const { user } = useAuth();
     const { showSnackbar } = useSnackbar();
     const theme = useTheme();
+    const [communicationTab, setCommunicationTab] = useState(0);
     
     const [partners, setPartners] = useState<any[]>([]);
     const [selectedBpId, setSelectedBpId] = useState<string>('');
@@ -409,12 +415,12 @@ const AdminEditorialBriefingPage: React.FC = () => {
                     {user?.role === 'admin' && (
                         <Select size="small" value={selectedBpId} onChange={(e) => setSelectedBpId(e.target.value)} sx={{ minWidth: 200, bgcolor: 'background.paper' }}>
                             {partners.map(p => {
-                                const isDisabled = p.is_active === false || p.allow_automated_newsletter === false;
+                                const isDisabled = p.is_active === false || (communicationTab === 0 && p.allow_automated_newsletter === false);
                                 return (
                                     <MenuItem key={p.id} value={p.id} disabled={isDisabled} sx={{ opacity: isDisabled ? 0.6 : 1 }}>
                                         {p.name} 
                                         {p.is_active === false && ' (Inaktiv)'}
-                                        {(p.is_active !== false && p.allow_automated_newsletter === false) && ' (Newsletter deaktiviert)'}
+                                        {(p.is_active !== false && p.allow_automated_newsletter === false && communicationTab === 0) && ' (Briefing deaktiviert)'}
                                     </MenuItem>
                                 );
                             })}
@@ -422,6 +428,14 @@ const AdminEditorialBriefingPage: React.FC = () => {
                     )}
                 </Box>
 
+                <Paper sx={{ mb: 4, borderRadius: 3, overflow: 'hidden' }}>
+                    <Tabs value={communicationTab} onChange={(_event, value) => setCommunicationTab(value)} variant="scrollable" scrollButtons="auto">
+                        <Tab label="Branchenbriefing" icon={<AutoAwesomeIcon />} iconPosition="start" />
+                        <Tab label="Mitglieder-Mail" icon={<EmailIcon />} iconPosition="start" />
+                    </Tabs>
+                </Paper>
+
+                {communicationTab === 0 ? (<>
                 <Grid container spacing={4} sx={{ mb: 6 }}>
                     <Grid item xs={12} md={6}>
                         <Paper sx={{ p: 3, height: '100%', borderRadius: 3, border: '1px solid #e2e8f0', bgcolor: '#f8fafc' }}>
@@ -702,7 +716,13 @@ const AdminEditorialBriefingPage: React.FC = () => {
                         )}
                     </DialogContent>
                 </Dialog>
-
+                </>) : (
+                    <MemberNewsletterPanel
+                        businessPartnerId={selectedBpId}
+                        partnerName={currentPartnerData?.name}
+                        ownEmail={user?.email}
+                    />
+                )}
             </Container>
         </DashboardLayout>
     );

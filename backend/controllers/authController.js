@@ -9,6 +9,7 @@ const axios = require('axios');
 const db = require('../config/db');
 const { logActivity } = require('../services/auditLogService');
 const { setSessionCookies, clearSessionCookies } = require('../services/sessionSecurity');
+const { getMembershipExpiry, isMembershipExpired } = require('../utils/membershipExpiry');
 const {
   sendVerificationEmail,
   sendPasswordResetEmail,
@@ -418,6 +419,10 @@ exports.login = async (req, res) => {
       `SELECT
           u.id, u.username, u.email, u.role, u.password_hash,
           u.is_email_verified, u.contribution_score, u.profile_image_url,
+          u.first_name, u.last_name, u.organization_name, u.linkedin_url, u.phone, u.membership_level,
+          u.newsletter_opt_in, u.briefing_email_enabled, u.member_newsletter_enabled,
+          u.public_profile_enabled, u.show_email_publicly, u.show_phone_publicly,
+          u.show_organization_publicly, u.show_linkedin_publicly,
           u.business_partner_id, u.has_completed_onboarding,
           u.is_active, u.active_until, u.auth_version,
           bp.name as business_partner_name,
@@ -467,9 +472,7 @@ exports.login = async (req, res) => {
       return res.status(403).json({ message: 'Account gesperrt.' });
     }
 
-    if (user.active_until && new Date(user.active_until) < new Date()) {
-      // Automatisches Update auf false, wenn das Datum überschritten ist
-      await db.query('UPDATE users SET is_active = false WHERE id = $1', [user.id]);
+    if (isMembershipExpired(user.active_until)) {
       return res.status(403).json({ message: 'Account abgelaufen.' });
     }
 
@@ -537,6 +540,7 @@ exports.login = async (req, res) => {
 
     const session = setSessionCookies(res, token);
 
+    const membershipExpiry = getMembershipExpiry(user.active_until);
     return res.status(200).json({
       session_expires_at: session.expiresAt,
       user: {
@@ -549,7 +553,24 @@ exports.login = async (req, res) => {
         business_partner_category: user.business_partner_category || null, // NEU HINZUGEFÜGT
         dashboard_title: user.dashboard_title || null,
         contribution_score: user.contribution_score ?? 0,
+        first_name: user.first_name || null,
+        last_name: user.last_name || null,
+        organization_name: user.organization_name || null,
+        linkedin_url: user.linkedin_url || null,
+        phone: user.phone || null,
+        membership_level: user.membership_level || null,
+        newsletter_opt_in: user.newsletter_opt_in === true,
+        briefing_email_enabled: user.briefing_email_enabled === true,
+        member_newsletter_enabled: user.member_newsletter_enabled === true,
+        public_profile_enabled: user.public_profile_enabled === true,
+        show_email_publicly: user.show_email_publicly === true,
+        show_phone_publicly: user.show_phone_publicly === true,
+        show_organization_publicly: user.show_organization_publicly === true,
+        show_linkedin_publicly: user.show_linkedin_publicly === true,
         profile_image_url: user.profile_image_url || null,
+        active_until: user.active_until || null,
+        membership_expires_on: membershipExpiry.expiresOn,
+        membership_days_remaining: membershipExpiry.daysRemaining,
         last_login_at: new Date(),
         has_completed_onboarding: user.has_completed_onboarding
       },
@@ -836,6 +857,7 @@ exports.confirmNewsletterOptIn = async (req, res) => {
       `UPDATE users
           SET newsletter_opt_in = TRUE,
               briefing_email_enabled = TRUE,
+              member_newsletter_enabled = TRUE,
               newsletter_opt_in_confirmed_at = CURRENT_TIMESTAMP,
               newsletter_consent_version = COALESCE(newsletter_consent_version, '2026-08'),
               newsletter_unsubscribed_at = NULL,
@@ -880,6 +902,7 @@ exports.startNewsletterOptIn = async (req, res) => {
       await db.query(
         `UPDATE users
          SET briefing_email_enabled = TRUE,
+             member_newsletter_enabled = TRUE,
              newsletter_opt_in_source = COALESCE(newsletter_opt_in_source, $1),
              newsletter_opt_in_confirmed_at = COALESCE(newsletter_opt_in_confirmed_at, CURRENT_TIMESTAMP),
              newsletter_consent_version = COALESCE(newsletter_consent_version, '2026-08')
@@ -952,8 +975,7 @@ async function handleSSOLoginOrRegister(res, profile, partnerCode) {
                 return safeFrontendRedirect(res, '/login', { error: 'account_locked' });
             }
 
-            if (user.active_until && new Date(user.active_until) < new Date()) {
-                await db.query('UPDATE users SET is_active = false WHERE id = $1', [user.id]);
+            if (isMembershipExpired(user.active_until)) {
                 return safeFrontendRedirect(res, '/login', { error: 'account_expired' });
             }
             // ------------------------------------------------

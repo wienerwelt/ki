@@ -1,7 +1,13 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
+  Avatar,
   Box,
+  Button,
   Checkbox,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Typography,
   Container,
   Paper,
@@ -16,10 +22,14 @@ import {
   Divider,
   FormControlLabel,
   Switch,
+  IconButton,
+  Link,
   useTheme,
 } from '@mui/material';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
+import CloseIcon from '@mui/icons-material/Close';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import {
   LineChart,
   Line,
@@ -37,6 +47,7 @@ import {
 } from 'recharts';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
+import { resolveAssetUrl } from '../utils/assetUrl';
 
 // --- Interfaces (unverändert) ---
 interface TimeSeriesData {
@@ -85,9 +96,38 @@ interface CategoryDistributionData {
   count: number;
 }
 interface TopUserData {
+  user_id: string;
+  username: string;
+  first_name: string | null;
+  last_name: string | null;
   email: string;
+  organization_name: string | null;
+  profile_image_url: string | null;
   activity_count: number;
   business_partner_name: string | null;
+}
+
+interface AdminUserProfile {
+  id: string;
+  username: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  organization_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  linkedin_url?: string | null;
+  login_count?: number | null;
+  contribution_score?: number | null;
+  membership_level?: string | null;
+  role?: string | null;
+  is_active?: boolean;
+  active_until?: string | null;
+  created_at?: string | null;
+  last_login_at?: string | null;
+  profile_image_url?: string | null;
+  newsletter_opt_in?: boolean;
+  business_partner_name?: string | null;
+  tags?: string[];
 }
 
 type Timespan = 'day' | 'week' | 'month' | 'year';
@@ -125,6 +165,31 @@ const fmtAxis = (tickItem: any) => {
   if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
   if (v >= 1000) return `${(v / 1000).toFixed(0)}k`;
   return v.toString();
+};
+
+const safeExternalUrl = (value?: string | null) => {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : '';
+  } catch {
+    return '';
+  }
+};
+
+const getUserDisplayName = (user: {
+  first_name?: string | null;
+  last_name?: string | null;
+  username?: string | null;
+  email?: string | null;
+}) => [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || user.email || 'Unbekannter Nutzer';
+
+const formatProfileDate = (value?: string | null) => {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('de-AT', { dateStyle: 'short', timeStyle: 'short' });
 };
 
 function deltaPct(current: any, previous: any) {
@@ -221,6 +286,11 @@ const AdminStatisticsPage: React.FC = () => {
   const [timespan, setTimespan] = useState<Timespan>('week');
   const [modelFilter, setModelFilter] = useState<string>('');
   const [bpFilter, setBpFilter] = useState<string>('');
+  const [selectedTopUser, setSelectedTopUser] = useState<TopUserData | null>(null);
+  const [selectedTopUserProfile, setSelectedTopUserProfile] = useState<AdminUserProfile | null>(null);
+  const [selectedTopUserLoading, setSelectedTopUserLoading] = useState(false);
+  const [selectedTopUserError, setSelectedTopUserError] = useState<string | null>(null);
+  const selectedTopUserRequest = useRef(0);
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     const d = new Date();
@@ -259,6 +329,48 @@ const AdminStatisticsPage: React.FC = () => {
   useEffect(() => {
     fetchStats();
   }, [fetchStats]);
+
+  const handleOpenTopUser = async (user: TopUserData) => {
+    if (!user?.user_id) return;
+
+    const requestId = ++selectedTopUserRequest.current;
+    setSelectedTopUser(user);
+    setSelectedTopUserProfile(null);
+    setSelectedTopUserError(null);
+    setSelectedTopUserLoading(true);
+
+    try {
+      const response = await apiClient.get<AdminUserProfile>(`/api/admin/users/${encodeURIComponent(user.user_id)}`);
+      if (requestId !== selectedTopUserRequest.current) return;
+
+      if (!response.res.ok || !response.data?.id) {
+        setSelectedTopUserError(
+          response.res.status === 404
+            ? 'Das Benutzerprofil ist nicht mehr verfügbar.'
+            : (response.data as any)?.message || 'Das Benutzerprofil konnte nicht geladen werden.'
+        );
+        return;
+      }
+
+      setSelectedTopUserProfile(response.data);
+    } catch (err: any) {
+      if (requestId === selectedTopUserRequest.current) {
+        setSelectedTopUserError(err?.message || 'Das Benutzerprofil konnte nicht geladen werden.');
+      }
+    } finally {
+      if (requestId === selectedTopUserRequest.current) {
+        setSelectedTopUserLoading(false);
+      }
+    }
+  };
+
+  const handleCloseTopUser = () => {
+    selectedTopUserRequest.current += 1;
+    setSelectedTopUser(null);
+    setSelectedTopUserProfile(null);
+    setSelectedTopUserError(null);
+    setSelectedTopUserLoading(false);
+  };
 
   const handleTimespanChange = (_event: React.MouseEvent<HTMLElement>, newTimespan: Timespan | null) => {
     if (newTimespan !== null) setTimespan(newTimespan);
@@ -302,6 +414,10 @@ const AdminStatisticsPage: React.FC = () => {
     const totalTokens = num(k.total_tokens_overall);
     const fundingTokens = num(k.total_funding_tokens);
     const estimatedFundingCost = (fundingTokens / 1_000_000 * 5.0).toFixed(2);
+    const topUsersForChart = stats.topUserActivity.slice(0, 10).map((user) => ({
+      ...user,
+      display_name: getUserDisplayName(user),
+    }));
 
     return (
       <Grid container spacing={3}>
@@ -481,21 +597,61 @@ const AdminStatisticsPage: React.FC = () => {
 
         {/* Top users */}
         <Grid item xs={12}>
-          <Paper sx={{ p: 3, height: 450, borderRadius: 2 }}>
-            <Typography variant="h6" gutterBottom fontWeight="bold">Aktivste Nutzer (Top 10)</Typography>
-            <ResponsiveContainer>
-              <BarChart data={stats.topUserActivity.slice(0, 10)} layout="vertical" margin={{ top: 5, right: 30, left: 220, bottom: 5 }}>
+          <Paper sx={{ p: 3, height: 480, borderRadius: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 2, mb: 1 }}>
+              <Typography variant="h6" fontWeight="bold">Aktivste Nutzer (Top 10)</Typography>
+              <Typography variant="caption" color="text.secondary">Balken anklicken, um Profildaten zu öffnen</Typography>
+            </Box>
+            <ResponsiveContainer width="100%" height="92%">
+              <BarChart data={topUsersForChart} layout="vertical" margin={{ top: 5, right: 30, left: 220, bottom: 5 }} barCategoryGap="28%">
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" tickFormatter={fmtAxis} />
                 <YAxis
                   type="category"
-                  dataKey="email"
+                  dataKey="display_name"
                   width={210}
                   tick={{ fontSize: 12 }}
                   tickFormatter={(value) => (String(value).length > 30 ? String(value).substring(0, 27) + '…' : value)}
                 />
-                <Tooltip formatter={(value: number) => new Intl.NumberFormat('de-AT').format(value)} />
-                <Bar dataKey="activity_count" name="Gesamt-Aktionen" fill={theme.palette.secondary.main} radius={[0, 4, 4, 0]} />
+                <Tooltip
+                  cursor={{ fill: theme.palette.action.hover }}
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null;
+                    const user = payload[0].payload as TopUserData & { display_name: string };
+                    return (
+                      <Paper elevation={5} sx={{ p: 1.5, minWidth: 260, borderRadius: 2 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+                          <Avatar src={resolveAssetUrl(user.profile_image_url)} sx={{ width: 42, height: 42 }}>
+                            {(user.first_name?.[0] || user.username?.[0] || '?').toUpperCase()}
+                          </Avatar>
+                          <Box sx={{ minWidth: 0 }}>
+                            <Typography variant="subtitle2" fontWeight="bold">{user.display_name}</Typography>
+                            <Typography variant="caption" color="text.secondary" display="block">{user.email}</Typography>
+                          </Box>
+                        </Box>
+                        {(user.organization_name || user.business_partner_name) && (
+                          <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+                            {user.organization_name || user.business_partner_name}
+                          </Typography>
+                        )}
+                        <Typography variant="body2" fontWeight="bold" color="secondary.main" sx={{ mt: 0.75 }}>
+                          {fmtInt(user.activity_count)} Gesamt-Aktionen
+                        </Typography>
+                      </Paper>
+                    );
+                  }}
+                />
+                <Bar
+                  dataKey="activity_count"
+                  name="Gesamt-Aktionen"
+                  fill={theme.palette.secondary.main}
+                  radius={[0, 4, 4, 0]}
+                  barSize={22}
+                  maxBarSize={22}
+                  minPointSize={3}
+                  style={{ cursor: 'pointer' }}
+                  onClick={(entry: any) => handleOpenTopUser((entry?.payload || entry) as TopUserData)}
+                />
               </BarChart>
             </ResponsiveContainer>
           </Paper>
@@ -596,6 +752,126 @@ const AdminStatisticsPage: React.FC = () => {
         </Box>
 
         {renderDashboard()}
+
+        <Dialog open={!!selectedTopUser} onClose={handleCloseTopUser} fullWidth maxWidth="sm">
+          <DialogTitle sx={{ pr: 6 }}>
+            Nutzerprofil
+            <IconButton aria-label="Schließen" onClick={handleCloseTopUser} sx={{ position: 'absolute', right: 8, top: 8 }}>
+              <CloseIcon />
+            </IconButton>
+          </DialogTitle>
+          <DialogContent dividers>
+            {selectedTopUserLoading && (
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1.5, py: 5 }}>
+                <CircularProgress size={24} />
+                <Typography variant="body2" color="text.secondary">Profildaten werden geladen …</Typography>
+              </Box>
+            )}
+
+            {!selectedTopUserLoading && selectedTopUserError && <Alert severity="info">{selectedTopUserError}</Alert>}
+
+            {!selectedTopUserLoading && selectedTopUserProfile && (
+              <Box>
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2.5 }}>
+                  <Avatar
+                    src={resolveAssetUrl(selectedTopUserProfile.profile_image_url)}
+                    alt={getUserDisplayName(selectedTopUserProfile)}
+                    sx={{ width: 72, height: 72 }}
+                  >
+                    {(selectedTopUserProfile.first_name?.[0] || selectedTopUserProfile.username?.[0] || '?').toUpperCase()}
+                  </Avatar>
+                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                    <Typography variant="h6" fontWeight="bold">{getUserDisplayName(selectedTopUserProfile)}</Typography>
+                    <Typography variant="body2" color="text.secondary">@{selectedTopUserProfile.username}</Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1 }}>
+                      {selectedTopUserProfile.role && <Chip label={`Rolle: ${selectedTopUserProfile.role}`} size="small" />}
+                      <Chip
+                        label={selectedTopUserProfile.is_active ? 'Aktiv' : 'Inaktiv'}
+                        color={selectedTopUserProfile.is_active ? 'success' : 'default'}
+                        variant="outlined"
+                        size="small"
+                      />
+                      {selectedTopUserProfile.membership_level && <Chip label={selectedTopUserProfile.membership_level} size="small" variant="outlined" />}
+                    </Box>
+                  </Box>
+                </Box>
+
+                <Grid container spacing={1.5}>
+                  {selectedTopUserProfile.organization_name && (
+                    <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Organisation:</strong> {selectedTopUserProfile.organization_name}</Typography></Grid>
+                  )}
+                  {selectedTopUserProfile.business_partner_name && (
+                    <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Mandant:</strong> {selectedTopUserProfile.business_partner_name}</Typography></Grid>
+                  )}
+                  {selectedTopUserProfile.email && (
+                    <Grid item xs={12} sm={6}>
+                      <Typography variant="body2"><strong>E-Mail:</strong> <Link href={`mailto:${selectedTopUserProfile.email}`}>{selectedTopUserProfile.email}</Link></Typography>
+                    </Grid>
+                  )}
+                  {selectedTopUserProfile.phone && (
+                    <Grid item xs={12} sm={6}>
+                      <Typography variant="body2"><strong>Telefon:</strong> <Link href={`tel:${selectedTopUserProfile.phone}`}>{selectedTopUserProfile.phone}</Link></Typography>
+                    </Grid>
+                  )}
+                  {formatProfileDate(selectedTopUserProfile.created_at) && (
+                    <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Registriert seit:</strong> {formatProfileDate(selectedTopUserProfile.created_at)}</Typography></Grid>
+                  )}
+                  {formatProfileDate(selectedTopUserProfile.last_login_at) && (
+                    <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Letzter Login:</strong> {formatProfileDate(selectedTopUserProfile.last_login_at)}</Typography></Grid>
+                  )}
+                  {formatProfileDate(selectedTopUserProfile.active_until) && (
+                    <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Aktiv bis:</strong> {formatProfileDate(selectedTopUserProfile.active_until)}</Typography></Grid>
+                  )}
+                  {selectedTopUserProfile.login_count != null && (
+                    <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Logins:</strong> {fmtInt(selectedTopUserProfile.login_count)}</Typography></Grid>
+                  )}
+                  {selectedTopUserProfile.contribution_score != null && (
+                    <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Community-Punkte:</strong> {fmtInt(selectedTopUserProfile.contribution_score)}</Typography></Grid>
+                  )}
+                  {selectedTopUser && (
+                    <Grid item xs={12} sm={6}><Typography variant="body2"><strong>Aktivitäten im Zeitraum:</strong> {fmtInt(selectedTopUser.activity_count)}</Typography></Grid>
+                  )}
+                </Grid>
+
+                {!!selectedTopUserProfile.tags?.length && (
+                  <Box sx={{ mt: 2.5 }}>
+                    <Typography variant="body2" fontWeight="bold" sx={{ mb: 0.75 }}>Experte für</Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                      {selectedTopUserProfile.tags.map((tag) => <Chip key={tag} label={tag} size="small" color="primary" variant="outlined" />)}
+                    </Box>
+                  </Box>
+                )}
+
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 2.5 }}>
+                  <Button
+                    component="a"
+                    href={`/p/${selectedTopUserProfile.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    variant="outlined"
+                    size="small"
+                    endIcon={<OpenInNewIcon />}
+                  >
+                    Visitenkarte öffnen
+                  </Button>
+                  {safeExternalUrl(selectedTopUserProfile.linkedin_url) && (
+                    <Button
+                      component="a"
+                      href={safeExternalUrl(selectedTopUserProfile.linkedin_url)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      size="small"
+                      endIcon={<OpenInNewIcon />}
+                    >
+                      LinkedIn
+                    </Button>
+                  )}
+                </Box>
+              </Box>
+            )}
+          </DialogContent>
+          <DialogActions><Button onClick={handleCloseTopUser}>Schließen</Button></DialogActions>
+        </Dialog>
       </Container>
     </DashboardLayout>
   );

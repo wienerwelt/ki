@@ -35,6 +35,46 @@ function Assert-NoCriticalVulnerabilities([string]$PackageDirectory, [string]$La
     }
 }
 
+function Get-DotEnvValue([string]$Path, [string]$Name) {
+    $escapedName = [Regex]::Escape($Name)
+    $line = Get-Content -LiteralPath $Path |
+        Where-Object { $_ -match "^\s*$escapedName\s*=" } |
+        Select-Object -Last 1
+    if ($null -eq $line) { return $null }
+
+    $value = (($line -split '=', 2)[1]).Trim()
+    if ($value.Length -ge 2 -and (
+        ($value.StartsWith('"') -and $value.EndsWith('"')) -or
+        ($value.StartsWith("'") -and $value.EndsWith("'"))
+    )) {
+        $value = $value.Substring(1, $value.Length - 2)
+    }
+    return $value
+}
+
+function Assert-SeparateReleaseSecrets([string]$EnvironmentFile) {
+    if (-not (Test-Path -LiteralPath $EnvironmentFile -PathType Leaf)) {
+        throw 'Die lokale .env fehlt im Projekt-Root.'
+    }
+
+    $jwtSecret = Get-DotEnvValue $EnvironmentFile 'JWT_SECRET'
+    $newsletterSecret = Get-DotEnvValue $EnvironmentFile 'NEWSLETTER_TOKEN_SECRET'
+    try {
+        if ([string]::IsNullOrWhiteSpace($jwtSecret) -or $jwtSecret.Length -lt 32) {
+            throw 'JWT_SECRET fehlt in .env oder ist kürzer als 32 Zeichen.'
+        }
+        if ([string]::IsNullOrWhiteSpace($newsletterSecret) -or $newsletterSecret.Length -lt 32) {
+            throw 'NEWSLETTER_TOKEN_SECRET fehlt in .env oder ist kürzer als 32 Zeichen.'
+        }
+        if ($newsletterSecret -ceq $jwtSecret) {
+            throw 'NEWSLETTER_TOKEN_SECRET und JWT_SECRET müssen unterschiedlich sein.'
+        }
+    } finally {
+        $jwtSecret = $null
+        $newsletterSecret = $null
+    }
+}
+
 function Assert-NoUnsafeFrontendTokenStorage([string]$FrontendSourceDirectory) {
     $unsafePattern = 'localStorage\.(getItem|setItem)\(\s*["''](jwt_token|token)["'']|[?&]token=\$?\{'
     $matches = Get-ChildItem -Path $FrontendSourceDirectory -File -Recurse -Include '*.ts','*.tsx','*.js','*.jsx' |
@@ -48,7 +88,8 @@ function Assert-NoUnsafeFrontendTokenStorage([string]$FrontendSourceDirectory) {
 Push-Location $repoRoot
 
 try {
-    Write-Host '[1/9] Dev- und Prod-Docker-Konfiguration prüfen'
+    Write-Host '[1/9] Release-Secrets sowie Dev- und Prod-Docker-Konfiguration prüfen'
+    Assert-SeparateReleaseSecrets (Join-Path $repoRoot '.env')
     & docker compose -f docker-compose.yml -f docker-compose.override.yml config --quiet
     Assert-LastExitCode 'Die lokale Docker-Compose-Konfiguration ist ungültig.'
     & docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
@@ -128,8 +169,12 @@ try {
             'smoke:event-feed-dedup',
             'smoke:scraper-date',
             'smoke:public-file-links',
+            'smoke:public-profile-privacy',
             'smoke:newsletter-delivery',
-            'smoke:security-boundaries'
+            'smoke:member-newsletter',
+            'smoke:security-boundaries',
+            'smoke:social-media-metrics',
+            'smoke:social-media-gallery'
         )
         foreach ($smokeScript in $smokeScripts) {
             Write-Host "  -> $smokeScript"

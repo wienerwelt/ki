@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { isMembershipExpired } = require('../utils/membershipExpiry');
 const { PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const s3Client = require("../config/s3Client.js");
 const { v4: uuidv4 } = require('uuid');
@@ -396,7 +397,8 @@ exports.createComment = async (req, res) => {
         await processMentions(content, postId, userId, req.user.business_partner_id, client);
 
         const postRes = await client.query(`
-            SELECT p.user_id, p.content, u.email, u.first_name, u.newsletter_opt_in 
+            SELECT p.user_id, p.content, u.email, u.first_name, u.newsletter_opt_in,
+                   u.is_active, u.active_until
             FROM community_posts p
             JOIN users u ON p.user_id = u.id
             WHERE p.id = $1 AND p.business_partner_id = $2
@@ -424,13 +426,15 @@ exports.createComment = async (req, res) => {
                 const frontendUrl = process.env.FRONTEND_URL || 'https://dashboard.mobiliti.at';
                 const postLink = `${frontendUrl}/community`;
 
-                sendCommunityReplyNotification({
-                    to: postData.email,
-                    recipientName: postData.first_name || 'Nutzer',
-                    commenterName: commenterName,
-                    postTitle: postSnippet,
-                    postLink: postLink
-                }).catch(err => console.error("Async Email Error:", err.message));
+                if (postData.is_active === true && !isMembershipExpired(postData.active_until)) {
+                    sendCommunityReplyNotification({
+                        to: postData.email,
+                        recipientName: postData.first_name || 'Nutzer',
+                        commenterName: commenterName,
+                        postTitle: postSnippet,
+                        postLink: postLink
+                    }).catch(err => console.error("Async Email Error:", err.message));
+                }
             }
         }
 

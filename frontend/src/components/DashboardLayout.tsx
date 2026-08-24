@@ -46,6 +46,7 @@ import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
 import ShareIcon from '@mui/icons-material/Share';
 import StorefrontIcon from '@mui/icons-material/Storefront';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -105,6 +106,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         && businessPartner?.newsletter_delivery_mode === 'mobiliti'
         && businessPartner?.newsletter_frequency !== 'never';
     const effectiveSubscription = isNewsletterAllowed && isSubscribed;
+    const membershipDaysRemaining = user?.membership_days_remaining;
+    const membershipNotice = typeof membershipDaysRemaining === 'number' && membershipDaysRemaining >= 0
+        ? membershipDaysRemaining === 0
+            ? 'Mitgliedschaft endet heute'
+            : membershipDaysRemaining === 1
+                ? 'Mitgliedschaft endet morgen'
+                : `Mitgliedschaft endet in ${membershipDaysRemaining} Tagen`
+        : null;
 
     const [menuBadges, setMenuBadges] = useState({
         community: 0,
@@ -168,7 +177,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 const response = await apiClient.post('/api/auth/newsletter/opt-in', { email: user?.email, source: 'daily_cockpit' });
                 if (response.data?.alreadyConfirmed) {
                     setIsSubscribed(true);
-                    updateUser({ newsletter_opt_in: true, briefing_email_enabled: true });
+                    updateUser({ newsletter_opt_in: true, briefing_email_enabled: true, member_newsletter_enabled: true });
                     showSnackbar('E-Mail-Briefing aktiviert.', 'success');
                 } else {
                     showSnackbar('Bitte bestätigen Sie die Anmeldung über die zugesandte E-Mail.', 'info');
@@ -578,6 +587,18 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         </Box>
                     )}
                     
+                    {membershipNotice && (
+                        <Tooltip title={`${membershipNotice}${user?.membership_expires_on ? ` (${new Date(`${user.membership_expires_on}T12:00:00`).toLocaleDateString('de-AT')})` : ''}`}>
+                            <Chip
+                                icon={<AccessTimeIcon />}
+                                label={isMobile ? (membershipDaysRemaining === 0 ? 'Heute' : `${membershipDaysRemaining} T.`) : membershipNotice}
+                                color={membershipDaysRemaining <= 7 ? 'error' : 'warning'}
+                                size="small"
+                                sx={{ mr: 1, fontWeight: 700, maxWidth: { xs: 88, md: 280 } }}
+                            />
+                        </Tooltip>
+                    )}
+
                     <SessionTimer />
                     
                     {user && (
