@@ -1,11 +1,11 @@
 // frontend/src/components/DashboardLayout.tsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import {
     AppBar, Toolbar, Typography, Box, Drawer, List, ListItem, ListItemText,
     ListItemIcon, IconButton, Divider, Menu, MenuItem, Tooltip, Chip, Switch,
     useTheme, useMediaQuery, Dialog, DialogContent, DialogTitle,
-    Avatar, Badge, Collapse, Button, ListSubheader
+    Avatar, Badge, Collapse, Button, ListSubheader, Alert, ToggleButtonGroup, ToggleButton
 } from '@mui/material';
 
 import { alpha, keyframes } from '@mui/material/styles';
@@ -47,6 +47,11 @@ import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
 import ShareIcon from '@mui/icons-material/Share';
 import StorefrontIcon from '@mui/icons-material/Storefront';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import RadarIcon from '@mui/icons-material/Radar';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
+import ContactMailOutlinedIcon from '@mui/icons-material/ContactMailOutlined';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -60,6 +65,14 @@ import ContributionHistoryModal from '../components/ContributionHistoryModal';
 import DailyBriefingContent from './DailyBriefingContent';
 import OnboardingFlow from '../components/OnboardingFlow';
 import { AiChatWidget } from './AiChatWidget';
+import {
+    canUseContentWorkspace,
+    canUseSalesWorkspace,
+    getPreferredWorkspace,
+    getWorkspacePath,
+    WorkspaceModule,
+} from '../utils/workspaceAccess';
+import { isExternalLogoutTarget } from '../utils/partnerNavigation';
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -82,6 +95,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     
     const { t } = useTranslation();
     const navigate = useNavigate();
+    const location = useLocation();
     const { showSnackbar } = useSnackbar();
     
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -100,6 +114,34 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
     const token = 'cookie-session';
+    const canUseContent = canUseContentWorkspace(user, businessPartner);
+    const canUseSales = canUseSalesWorkspace(user, businessPartner);
+    const salesPlan = businessPartner?.sales_plan || user?.tenant_sales_plan || 'basic';
+    const salesSubscriptionStatus = businessPartner?.sales_subscription_status || user?.tenant_sales_subscription_status || 'active';
+    const salesTrialDaysRemaining = businessPartner?.sales_trial_days_remaining ?? user?.tenant_sales_trial_days_remaining;
+    const salesAccessActive = businessPartner?.sales_access_active ?? user?.tenant_sales_access_active ?? true;
+    const salesStatusLabel = salesSubscriptionStatus === 'trial'
+        ? (salesAccessActive ? `Test · ${salesTrialDaysRemaining ?? 0} Tage` : 'Test beendet')
+        : salesSubscriptionStatus === 'paused' ? 'Pausiert' : (salesPlan === 'premium' ? 'Premium' : 'Basic');
+    const isSalesRoute = location.pathname.startsWith('/radar')
+        || location.pathname === '/admin/sales-leads'
+        || location.pathname.startsWith('/admin/business-partners/') && location.pathname.endsWith('/accounts')
+        || location.pathname.startsWith('/admin/accounts/');
+    const contentRoutePrefixes = [
+        '/dashboard', '/community', '/directory', '/files', '/trusted-sources', '/surveys', '/funding',
+        '/admin/actions', '/admin/briefing-editorial', '/admin/public-assistant', '/admin/legal-monitor',
+        '/admin/scraped-content', '/admin/social-media', '/admin/newsletter', '/admin/statistics',
+    ];
+    const isContentRoute = contentRoutePrefixes.some((prefix) => (
+        location.pathname === prefix || location.pathname.startsWith(`${prefix}/`)
+    ));
+    const preferredWorkspace = getPreferredWorkspace(user, businessPartner);
+    const activeWorkspace: WorkspaceModule = isSalesRoute
+        ? 'sales'
+        : isContentRoute
+            ? 'content'
+            : preferredWorkspace || (canUseSales && !canUseContent ? 'sales' : 'content');
+    const isSalesWorkspace = activeWorkspace === 'sales';
     
     const [isSubscribed, setIsSubscribed] = useState(!!user?.newsletter_opt_in && !!user?.briefing_email_enabled);
     const isNewsletterAllowed = businessPartner?.allow_automated_newsletter !== false
@@ -122,7 +164,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         sources: 0,
         scraped: 0,
         ai: 0,
-        actions: 0
+        actions: 0,
+        salesLeads: 0
     });
 
     const fetchMenuBadges = useCallback(async () => {
@@ -141,7 +184,11 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     useEffect(() => {
         fetchMenuBadges();
         const badgeInterval = setInterval(fetchMenuBadges, 60000);
-        return () => clearInterval(badgeInterval);
+        window.addEventListener('menu-badges-refresh', fetchMenuBadges);
+        return () => {
+            clearInterval(badgeInterval);
+            window.removeEventListener('menu-badges-refresh', fetchMenuBadges);
+        };
     }, [fetchMenuBadges]);
 
     useEffect(() => {
@@ -225,8 +272,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     }, []);
 
     useEffect(() => {
-        if (token) fetchAd();
-    }, [token, user, fetchAd]);
+        if (token && canUseContent && !isSalesWorkspace) fetchAd();
+    }, [token, user, fetchAd, canUseContent, isSalesWorkspace]);
 
     const handleCloseAd = async () => {
         setIsAdVisible(false);
@@ -290,9 +337,15 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             business_partner_id: businessPartner?.id || user?.business_partner_id || null,
             business_partner_name: businessPartner?.name || user?.business_partner_name || null,
             business_partner_slug: businessPartner?.slug || null,
+            workspace: activeWorkspace,
         });
-        const targetUrl = await logout();
-        navigate(targetUrl, { 
+        const targetUrl = await logout(activeWorkspace);
+        if (isExternalLogoutTarget(targetUrl)) {
+          window.location.replace(targetUrl);
+          return;
+        }
+        navigate(targetUrl, {
+          replace: true,
           state: { 
             snackbarMessage: 'Sie wurden erfolgreich abgemeldet.',
             severity: 'success'
@@ -305,9 +358,22 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const handleBriefingOpen = () => setBriefingOpen(true);
     const handleBriefingClose = () => setBriefingOpen(false);
 
-    const dashboardTitle = businessPartner?.dashboard_title || businessPartner?.name || 'KI-Dashboard';
+    const handleWorkspaceChange = async (workspace: WorkspaceModule) => {
+        if ((workspace === 'content' && !canUseContent) || (workspace === 'sales' && !canUseSales)) return;
+        try {
+            await apiClient.put('/api/users/me', { preferred_workspace: workspace });
+            updateUser({ preferred_workspace: workspace });
+        } catch {
+            showSnackbar('Der bevorzugte Arbeitsbereich konnte nicht gespeichert werden.', 'warning');
+        }
+        navigate(getWorkspacePath(workspace));
+    };
+
+    const dashboardTitle = isSalesWorkspace
+        ? 'Account Radar'
+        : businessPartner?.dashboard_title || businessPartner?.name || 'KI-Dashboard';
     const showOnboarding = user && user.has_completed_onboarding === false && user.role !== 'demo';
-    const adBannerHeight = isAdVisible && ad ? 40 : 0;
+    const adBannerHeight = !isSalesWorkspace && isAdVisible && ad ? 40 : 0;
 
     const drawerContent = (
         <Box sx={{ width: 290 }} role="presentation" onClick={toggleDrawer(false)} onKeyDown={toggleDrawer(false)}>
@@ -315,6 +381,80 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             {adBannerHeight > 0 && <Box sx={{ height: adBannerHeight }} />}
             <Divider />
             <List>
+                {canUseContent && canUseSales && (
+                    <Box sx={{ px: 1.5, pb: 1 }} onClick={(event) => event.stopPropagation()}>
+                        <ToggleButtonGroup
+                            exclusive
+                            fullWidth
+                            size="small"
+                            value={activeWorkspace}
+                            onChange={(_, workspace: WorkspaceModule | null) => workspace && handleWorkspaceChange(workspace)}
+                            aria-label="Arbeitsbereich auswählen"
+                        >
+                            <ToggleButton value="content"><DashboardIcon sx={{ mr: 0.7, fontSize: 18 }} />Content</ToggleButton>
+                            <ToggleButton value="sales"><RadarIcon sx={{ mr: 0.7, fontSize: 18 }} />Sales</ToggleButton>
+                        </ToggleButtonGroup>
+                    </Box>
+                )}
+
+                {isSalesWorkspace && (
+                    <>
+                        <ListSubheader
+                            disableSticky
+                            sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                        >
+                            Account Radar
+                        </ListSubheader>
+                        <ListItem button component={RouterLink} to="/radar?view=today">
+                            <ListItemIcon><RadarIcon /></ListItemIcon>
+                            <ListItemText primary="Heute" secondary="Aktuelle Signale" />
+                        </ListItem>
+                        <ListItem button component={RouterLink} to="/radar?view=accounts">
+                            <ListItemIcon><BusinessIcon /></ListItemIcon>
+                            <ListItemText primary="Accounts" secondary="Gesamter Bestand" />
+                        </ListItem>
+                        <ListItem button component={RouterLink} to="/radar?view=planned">
+                            <ListItemIcon><ScheduleIcon /></ListItemIcon>
+                            <ListItemText primary="Aufgaben" secondary="Geplante Kontakte" />
+                        </ListItem>
+                        <ListItem button component={RouterLink} to="/radar?panel=settings">
+                            <ListItemIcon><QueryStatsIcon /></ListItemIcon>
+                            <ListItemText primary="Reports & Daily-Radar" />
+                        </ListItem>
+                        <ListItem button component={RouterLink} to="/radar/help">
+                            <ListItemIcon><HelpOutlineIcon /></ListItemIcon>
+                            <ListItemText primary="Anleitung & FAQ" secondary="Schnellstart und Hilfe" />
+                        </ListItem>
+                        {salesPlan === 'premium' && ['admin', 'assistenz', 'sales_manager'].includes(String(user?.role || '').toLowerCase()) && (
+                            <ListItem button component={RouterLink} to="/radar?panel=import">
+                                <ListItemIcon><DataObjectIcon /></ListItemIcon>
+                                <ListItemText primary="Import & Einstellungen" />
+                            </ListItem>
+                        )}
+                        {salesAccessActive && ['admin', 'assistenz', 'sales_manager'].includes(String(user?.role || '').toLowerCase()) && user?.business_partner_id && (
+                            <ListItem button component={RouterLink} to={`/admin/business-partners/${user.business_partner_id}/accounts`}>
+                                <ListItemIcon><SwitchAccountIcon /></ListItemIcon>
+                                <ListItemText primary="Accounts verwalten" />
+                            </ListItem>
+                        )}
+                        {(user?.role === 'admin' || user?.role === 'assistenz') && (
+                            <ListItem button component={RouterLink} to="/admin/users">
+                                <ListItemIcon><GroupIcon /></ListItemIcon>
+                                <ListItemText primary="Team & Benutzer" />
+                            </ListItem>
+                        )}
+                        {user?.role === 'admin' && (
+                            <ListItem button component={RouterLink} to="/admin">
+                                <ListItemIcon><SettingsIcon /></ListItemIcon>
+                                <ListItemText primary="System-Administration" />
+                            </ListItem>
+                        )}
+                        <Divider sx={{ my: 1 }} />
+                    </>
+                )}
+
+                {!isSalesWorkspace && (
+                  <>
                 <ListItem button component={RouterLink} to="/dashboard">
                     <ListItemIcon><DashboardIcon /></ListItemIcon>
                     <ListItemText primary={t('layout.myDashboard')} />
@@ -335,7 +475,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <StorefrontIcon />
                         </Badge>
                     </ListItemIcon>
-                    <ListItemText primary="Partner-Netzwerk" />
+                    <ListItemText primary="Branchenlösungen" secondary="Anbieter & Software" />
                 </ListItem>
 
                 <ListItem button component={RouterLink} to="/files">
@@ -359,13 +499,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 <ListItem button component={RouterLink} to="/feedback">
                     <ListItemIcon><FeedbackIcon /></ListItemIcon>
                     <ListItemText primary={t('layout.feedbackAndIdeas')} />
-                </ListItem>                
-                
+                </ListItem>
+
                 <Divider sx={{ my: 1 }} />
                 
                 {user?.role === 'assistenz' && (
                    <>
                         <ListItem button component={RouterLink} to="/admin/briefing-editorial"><ListItemIcon><HistoryEduIcon /></ListItemIcon><ListItemText primary="Briefing Redaktion" /></ListItem>
+                        <ListItem button component={RouterLink} to="/admin/public-assistant"><ListItemIcon><SmartToyIcon /></ListItemIcon><ListItemText primary="Homepage-Assistent" /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/users"><ListItemIcon><GroupIcon /></ListItemIcon><ListItemText primary={t('layout.userManagement')} /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/actions">
                             <ListItemIcon>
@@ -419,6 +560,17 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 disableSticky
                                 sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
                             >
+                                Produkte & Vertrieb
+                            </ListSubheader>
+                            <ListItem button component={RouterLink} to="/admin/sales-leads">
+                                <ListItemIcon><Badge badgeContent={menuBadges.salesLeads} color="error" max={99}><ContactMailOutlinedIcon /></Badge></ListItemIcon>
+                                <ListItemText primary="Account-Radar Anfragen" />
+                            </ListItem>
+
+                            <ListSubheader
+                                disableSticky
+                                sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                            >
                                 Mandanten & Netzwerk
                             </ListSubheader>
                             <ListItem button component={RouterLink} to="/admin/business-partners"><ListItemIcon><BusinessIcon /></ListItemIcon><ListItemText primary={t('layout.businessPartners')} /></ListItem>
@@ -464,6 +616,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 <ListItemText primary={t('layout.aiContent')} />
                             </ListItem>
                             <ListItem button component={RouterLink} to="/admin/ai-prompt-rules"><ListItemIcon><AutoAwesomeIcon /></ListItemIcon><ListItemText primary={t('layout.aiPromptRules')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/public-assistant"><ListItemIcon><SmartToyIcon /></ListItemIcon><ListItemText primary="Homepage-Assistent" /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/categories"><ListItemIcon><CategoryIcon /></ListItemIcon><ListItemText primary={t('layout.categories')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/tags"><ListItemIcon><TagIcon /></ListItemIcon><ListItemText primary={t('layout.tags')} /></ListItem>
 
@@ -479,6 +632,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <Divider sx={{ my: 1 }} />                                            
                         </List>
                     </>
+                )}
+                  </>
                 )}
                 <ListItem button onClick={handleLogout}>
                     <ListItemIcon><LogoutIcon color="error" /></ListItemIcon>
@@ -498,11 +653,11 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 }}
                 color="primary"
             >
-                {isAdVisible && ad && (<AdvertisementBanner content={ad.content} onClose={handleCloseAd} />)}
+                {!isSalesWorkspace && isAdVisible && ad && (<AdvertisementBanner content={ad.content} onClose={handleCloseAd} />)}
                 <Toolbar>
                     <IconButton color="inherit" aria-label="open drawer" onClick={toggleDrawer(true)} edge="start" sx={{ mr: 2 }}><MenuIcon /></IconButton>
                     <RouterLink
-                      to="/dashboard"
+                      to={getWorkspacePath(activeWorkspace)}
                       style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center' }}
                     >
                     {businessPartner?.logo_url && (
@@ -535,10 +690,41 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                       <Typography variant="h6" noWrap component="div" sx={{ display: { xs: 'none', sm: 'block' } }}>
                         {dashboardTitle}
                       </Typography>
+                      {isSalesWorkspace && (
+                        <Chip
+                          size="small"
+                          label={salesStatusLabel}
+                          sx={{ display: { xs: 'none', md: 'inline-flex' }, ml: 1, color: 'inherit', borderColor: 'currentColor' }}
+                          variant="outlined"
+                        />
+                      )}
                     </RouterLink>
 
+                    {!isMobile && canUseContent && canUseSales && (
+                        <Box sx={{ display: 'flex', ml: 2, p: 0.35, borderRadius: 2, bgcolor: alpha(theme.palette.common.white, 0.16), gap: 0.35 }}>
+                            <Button
+                                size="small"
+                                color="inherit"
+                                variant={activeWorkspace === 'content' ? 'contained' : 'text'}
+                                onClick={() => handleWorkspaceChange('content')}
+                                sx={{ minWidth: 78, color: 'inherit', fontWeight: 850, bgcolor: activeWorkspace === 'content' ? alpha(theme.palette.common.white, 0.22) : 'transparent' }}
+                            >
+                                Content
+                            </Button>
+                            <Button
+                                size="small"
+                                color="inherit"
+                                variant={activeWorkspace === 'sales' ? 'contained' : 'text'}
+                                onClick={() => handleWorkspaceChange('sales')}
+                                sx={{ minWidth: 70, color: 'inherit', fontWeight: 850, bgcolor: activeWorkspace === 'sales' ? alpha(theme.palette.common.white, 0.22) : 'transparent' }}
+                            >
+                                Sales
+                            </Button>
+                        </Box>
+                    )}
+
                     <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', ml: { xs: 1, md: 3 }, mr: 2 }}>
-                        {isMobile ? (
+                        {!isSalesWorkspace && (isMobile ? (
                             <>
                                 <IconButton color="inherit" onClick={handleBriefingOpen}>
                                     <InsightsIcon />
@@ -570,7 +756,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                     </IconButton>
                                 </Tooltip>
                             </Box>
-                        )}
+                        ))}
                     </Box>
 
                     {!isMobile && dashboardHeaderActions && (
@@ -848,6 +1034,15 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             flexShrink: 0,
                         }}
                     />
+                )}
+                {user?.role === 'demo' && (
+                    <Alert
+                        severity="info"
+                        icon={<VisibilityIcon />}
+                        sx={{ mb: 2, borderRadius: 2.5, fontWeight: 750 }}
+                    >
+                        Demo-Modus · Alle Inhalte sind schreibgeschützt. Änderungen und Versandfunktionen sind deaktiviert.
+                    </Alert>
                 )}
                 {children}
             </Box>

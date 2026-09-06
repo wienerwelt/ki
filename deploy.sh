@@ -68,6 +68,7 @@ read_env_value() {
 
 JWT_SECRET_VALUE="$(read_env_value JWT_SECRET)"
 NEWSLETTER_TOKEN_SECRET_VALUE="$(read_env_value NEWSLETTER_TOKEN_SECRET)"
+PUBLIC_AI_RATE_LIMIT_SECRET_VALUE="$(read_env_value PUBLIC_AI_RATE_LIMIT_SECRET)"
 if [[ ${#JWT_SECRET_VALUE} -lt 32 ]]; then
   echo "Abbruch: JWT_SECRET fehlt in .env oder ist kürzer als 32 Zeichen."
   exit 2
@@ -80,7 +81,17 @@ if [[ "$NEWSLETTER_TOKEN_SECRET_VALUE" == "$JWT_SECRET_VALUE" ]]; then
   echo "Abbruch: NEWSLETTER_TOKEN_SECRET und JWT_SECRET müssen unterschiedlich sein."
   exit 2
 fi
-unset JWT_SECRET_VALUE NEWSLETTER_TOKEN_SECRET_VALUE
+if [[ -n "$PUBLIC_AI_RATE_LIMIT_SECRET_VALUE" ]]; then
+  if [[ ${#PUBLIC_AI_RATE_LIMIT_SECRET_VALUE} -lt 32 ]]; then
+    echo "Abbruch: PUBLIC_AI_RATE_LIMIT_SECRET ist gesetzt, aber kürzer als 32 Zeichen."
+    exit 2
+  fi
+  if [[ "$PUBLIC_AI_RATE_LIMIT_SECRET_VALUE" == "$JWT_SECRET_VALUE" || "$PUBLIC_AI_RATE_LIMIT_SECRET_VALUE" == "$NEWSLETTER_TOKEN_SECRET_VALUE" ]]; then
+    echo "Abbruch: PUBLIC_AI_RATE_LIMIT_SECRET muss sich von JWT_SECRET und NEWSLETTER_TOKEN_SECRET unterscheiden."
+    exit 2
+  fi
+fi
+unset JWT_SECRET_VALUE NEWSLETTER_TOKEN_SECRET_VALUE PUBLIC_AI_RATE_LIMIT_SECRET_VALUE
 
 if [[ ! -f "$ARCHIVE_INPUT" ]]; then
   echo "Release-Archiv nicht gefunden: $ARCHIVE_INPUT"

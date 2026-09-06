@@ -12,6 +12,7 @@ const { sendCommunityReplyNotification } = require('../services/emailService');
 // --- HILFSFUNKTIONEN ---
 const getFileExtension = (originalname) => originalname.split('.').pop();
 const isValidUuid = (value) => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(String(value || ''));
+const ALLOWED_EXPERIENCE_LEVELS = new Set(['in_use', 'evaluated', 'general']);
 
 // Helper: Mentions verarbeiten (@username)
 const processMentions = async (content, referenceId, authorId, businessPartnerId, client) => {
@@ -76,7 +77,7 @@ exports.getPostById = async (req, res) => {
         const query = `
             SELECT 
                 p.id, p.content, p.image_url, p.created_at, p.is_pinned,
-                p.software_tool_id, p.software_rating,
+                p.software_tool_id, p.software_rating, p.software_experience_level,
                 st.name AS software_tool_name, st.logo_url AS software_tool_logo_url,
                 st.product_url AS software_tool_url, software_provider.name AS software_provider_name,
                 c.name as category_name, c.id as category_id,
@@ -120,7 +121,7 @@ exports.getFeed = async (req, res) => {
         let query = `
             SELECT 
                 p.id, p.content, p.image_url, p.created_at, p.is_pinned,
-                p.software_tool_id, p.software_rating,
+                p.software_tool_id, p.software_rating, p.software_experience_level,
                 st.name AS software_tool_name, st.logo_url AS software_tool_logo_url,
                 st.product_url AS software_tool_url, software_provider.name AS software_provider_name,
                 c.name as category_name, c.id as category_id,
@@ -200,6 +201,7 @@ exports.createPost = async (req, res) => {
     const parsedSoftwareRating = req.body.softwareRating === undefined || req.body.softwareRating === ''
         ? null
         : Number.parseInt(req.body.softwareRating, 10);
+    const softwareExperienceLevel = String(req.body.softwareExperienceLevel || '');
 
     if (softwareToolId && !/^[0-9a-fA-F-]{36}$/.test(softwareToolId)) {
         return res.status(400).json({ message: 'Ungültige Software-Auswahl.' });
@@ -209,6 +211,9 @@ exports.createPost = async (req, res) => {
     }
     if (parsedSoftwareRating !== null && !softwareToolId) {
         return res.status(400).json({ message: 'Eine Bewertung benötigt eine Software-Zuordnung.' });
+    }
+    if (softwareToolId && !ALLOWED_EXPERIENCE_LEVELS.has(softwareExperienceLevel)) {
+        return res.status(400).json({ message: 'Bitte angeben, worauf die Software-Erfahrung beruht.' });
     }
 
     if (!content && !file && !existingFileUrl && parsedOptions.length === 0 && !softwareToolId) {
@@ -264,25 +269,26 @@ exports.createPost = async (req, res) => {
         const insertQuery = `
             INSERT INTO community_posts (
                 business_partner_id, user_id, content, image_url, category_id,
-                software_tool_id, software_rating
+                software_tool_id, software_rating, software_experience_level
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at
         `;
         const postResult = await client.query(insertQuery, [
             business_partner_id, userId, content || '', publicUrl, effectiveCategoryId,
-            softwareToolId || null, parsedSoftwareRating
+            softwareToolId || null, parsedSoftwareRating, softwareToolId ? softwareExperienceLevel : null
         ]);
         const postId = postResult.rows[0].id;
 
         if (softwareToolId && parsedSoftwareRating !== null) {
             await client.query(`
                 INSERT INTO software_ratings (
-                    software_tool_id, business_partner_id, user_id, rating
-                ) VALUES ($1, $2, $3, $4)
+                    software_tool_id, business_partner_id, user_id, rating, experience_level
+                ) VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (software_tool_id, business_partner_id, user_id) DO UPDATE
                 SET rating = EXCLUDED.rating,
+                    experience_level = EXCLUDED.experience_level,
                     updated_at = CURRENT_TIMESTAMP
-            `, [softwareToolId, business_partner_id, userId, parsedSoftwareRating]);
+            `, [softwareToolId, business_partner_id, userId, parsedSoftwareRating, softwareExperienceLevel]);
         }
 
         if (content) {
@@ -306,7 +312,7 @@ exports.createPost = async (req, res) => {
         const fullPostRes = await client.query(`
             SELECT 
                 p.id, p.content, p.image_url, p.created_at, p.is_pinned,
-                p.software_tool_id, p.software_rating,
+                p.software_tool_id, p.software_rating, p.software_experience_level,
                 st.name AS software_tool_name, st.logo_url AS software_tool_logo_url,
                 st.product_url AS software_tool_url, software_provider.name AS software_provider_name,
                 c.name as category_name, c.id as category_id,

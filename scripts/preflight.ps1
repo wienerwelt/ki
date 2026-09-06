@@ -59,6 +59,7 @@ function Assert-SeparateReleaseSecrets([string]$EnvironmentFile) {
 
     $jwtSecret = Get-DotEnvValue $EnvironmentFile 'JWT_SECRET'
     $newsletterSecret = Get-DotEnvValue $EnvironmentFile 'NEWSLETTER_TOKEN_SECRET'
+    $publicAiSecret = Get-DotEnvValue $EnvironmentFile 'PUBLIC_AI_RATE_LIMIT_SECRET'
     try {
         if ([string]::IsNullOrWhiteSpace($jwtSecret) -or $jwtSecret.Length -lt 32) {
             throw 'JWT_SECRET fehlt in .env oder ist kürzer als 32 Zeichen.'
@@ -69,9 +70,18 @@ function Assert-SeparateReleaseSecrets([string]$EnvironmentFile) {
         if ($newsletterSecret -ceq $jwtSecret) {
             throw 'NEWSLETTER_TOKEN_SECRET und JWT_SECRET müssen unterschiedlich sein.'
         }
+        if (-not [string]::IsNullOrWhiteSpace($publicAiSecret)) {
+            if ($publicAiSecret.Length -lt 32) {
+                throw 'PUBLIC_AI_RATE_LIMIT_SECRET ist gesetzt, aber kürzer als 32 Zeichen.'
+            }
+            if ($publicAiSecret -ceq $jwtSecret -or $publicAiSecret -ceq $newsletterSecret) {
+                throw 'PUBLIC_AI_RATE_LIMIT_SECRET muss sich von JWT_SECRET und NEWSLETTER_TOKEN_SECRET unterscheiden.'
+            }
+        }
     } finally {
         $jwtSecret = $null
         $newsletterSecret = $null
+        $publicAiSecret = $null
     }
 }
 
@@ -162,6 +172,7 @@ try {
         Write-Host '[9/9] Fachliche Smoke-Tests ausführen (ohne E-Mail-Versand)'
         $smokeScripts = @(
             'smoke:software-rating',
+            'smoke:software-delete',
             'smoke:monthly-report',
             'smoke:monthly-report-monitor',
             'smoke:community-profile',
@@ -173,6 +184,12 @@ try {
             'smoke:newsletter-delivery',
             'smoke:member-newsletter',
             'smoke:security-boundaries',
+            'smoke:public-ai-assistant',
+            'smoke:account-radar-trust',
+            'smoke:account-radar-campaigns',
+            'smoke:tenant-modules',
+            'smoke:sales-plans',
+            'smoke:sales-lifecycle',
             'smoke:social-media-metrics',
             'smoke:social-media-gallery'
         )

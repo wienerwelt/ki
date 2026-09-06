@@ -24,11 +24,11 @@ const TrustedSourcesWidget: React.FC<TrustedSourcesWidgetProps> = ({ onDelete, w
             setLoading(true);
             setError(null);
             try {
-                const token = 'cookie-session';
-                const response = await apiClient.get('/api/sources/pending', { headers: { 'x-auth-token': token } });
-                setPendingCount(response.data.length);
+                const { res, data } = await apiClient.get<any[]>('/api/sources/community-trust');
+                if (!res.ok) throw new Error((data as any)?.message || 'Community-Trust konnte nicht geladen werden.');
+                setPendingCount(Array.isArray(data) ? data.filter((source) => !source.user_rating).length : 0);
             } catch (err: any) {
-                setError(err.response?.data?.message || "Fehler beim Laden der ausstehenden Quellen.");
+                setError(err?.message || "Fehler beim Laden der Community-Trust-Daten.");
                 setPendingCount(0);
             } finally {
                 setLoading(false);
@@ -79,7 +79,7 @@ const TrustedSourcesWidget: React.FC<TrustedSourcesWidgetProps> = ({ onDelete, w
                         Gestalten Sie die Datenbasis der KI aktiv mit!
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
-                        Schlagen Sie neue Quellen vor oder bewerten Sie die Vorschläge anderer Nutzer.
+                        Schlagen Sie neue Quellen vor und halten Sie deren Community-Trust dauerhaft aktuell.
                     </Typography>
                     <Stack spacing={1} divider={<Divider />}>
                         <Badge badgeContent={pendingCount} color="primary" sx={{ width: '100%' }}>
@@ -89,10 +89,9 @@ const TrustedSourcesWidget: React.FC<TrustedSourcesWidgetProps> = ({ onDelete, w
                                 state={{ tab: 1 }}
                                 variant="contained"
                                 fullWidth
-                                disabled={pendingCount === 0}
                                 sx={{ textDecoration: 'none' }} 
                             >
-                                {pendingCount > 0 ? 'Jetzt Abstimmen' : 'Keine Abstimmungen'}
+                                {pendingCount > 0 ? `${pendingCount} Quellen bewerten` : 'Community-Trust prüfen'}
                             </Button>
                         </Badge>
                          <Button

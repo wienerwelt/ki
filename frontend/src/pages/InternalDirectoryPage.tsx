@@ -6,7 +6,8 @@ import {
   FormControl, InputLabel, InputAdornment, TextField,
   Dialog, DialogTitle, DialogContent, DialogActions,
   alpha, Tabs, Tab, Rating, Avatar, List, ListItem,
-  ListItemAvatar, ListItemText, Alert, Divider, Pagination
+  ListItemAvatar, ListItemText, Alert, Divider, Pagination,
+  FormControlLabel, Radio, RadioGroup
 } from '@mui/material';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -16,6 +17,11 @@ import { useSnackbar } from '../context/SnackbarContext';
 import { useAuth } from '../context/AuthContext';
 import { formatDistanceToNow } from 'date-fns';
 import { de } from 'date-fns/locale';
+import {
+  EXPERIENCE_LEVEL_OPTIONS,
+  ExperienceLevel,
+  getExperienceLevelLabel,
+} from '../utils/experienceLevel';
 
 // Icons
 import SearchIcon from '@mui/icons-material/Search';
@@ -57,6 +63,9 @@ interface Provider {
   review_count?: number | string;
   software_count?: number;
   action_count?: number;
+  in_use_count?: number;
+  evaluated_count?: number;
+  general_count?: number;
   categories: string[];
   tags: string[];
   locations?: ProviderLocation[];
@@ -72,8 +81,10 @@ interface ProviderMention {
 
 interface ProviderReview {
   id: string;
+  user_id: string;
   rating: number;
   comment: string;
+  experience_level?: ExperienceLevel | null;
   created_at: string;
   user_name: string;
   user_avatar: string | null;
@@ -169,7 +180,19 @@ function createProviderLocationIcon(isHeadquarter: boolean, primaryColor: string
 // --- MAIN COMPONENT ---
 const ITEMS_PER_PAGE = 12;
 
-const InternalDirectoryPage: React.FC = () => {
+interface InternalDirectoryPageProps {
+  embedded?: boolean;
+  initialProviderId?: string | null;
+  onProviderDetailClosed?: () => void;
+  onTotalChange?: (total: number) => void;
+}
+
+const InternalDirectoryPage: React.FC<InternalDirectoryPageProps> = ({
+  embedded = false,
+  initialProviderId,
+  onProviderDetailClosed,
+  onTotalChange,
+}) => {
   const { showSnackbar } = useSnackbar();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
@@ -203,12 +226,14 @@ const InternalDirectoryPage: React.FC = () => {
   // State: Inputs
   const [newReviewText, setNewReviewText] = useState('');
   const [newReviewRating, setNewReviewRating] = useState<number | null>(0);
+  const [newReviewExperienceLevel, setNewReviewExperienceLevel] = useState<ExperienceLevel | ''>('');
   const [newNoteText, setNewNoteText] = useState('');
 
   // Leaflet Map für Provider-Standorte
   const providerMapRef = useRef<L.Map | null>(null);
   const providerMapContainerRef = useRef<HTMLDivElement | null>(null);
   const providerMarkersRef = useRef<L.FeatureGroup>(new L.FeatureGroup());
+  const autoOpenedProviderRef = useRef<string | null>(null);
 
   // Effekt: Debouncing für die Textsuche
   useEffect(() => {
@@ -241,6 +266,10 @@ const InternalDirectoryPage: React.FC = () => {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    onTotalChange?.(providers.length);
+  }, [onTotalChange, providers.length]);
+
   const handleCategoryChange = (val: string) => {
     setFilterCategory(val);
     setPage(1); // Zurück auf Seite 1 beim Filterwechsel
@@ -249,6 +278,8 @@ const InternalDirectoryPage: React.FC = () => {
   const handleCloseDetail = () => {
     setSelectedProvider(null);
     setDetailTab(0);
+    autoOpenedProviderRef.current = null;
+    onProviderDetailClosed?.();
 
     if (providerMapRef.current) {
       providerMapRef.current.remove();
@@ -279,6 +310,15 @@ const InternalDirectoryPage: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (!initialProviderId || providers.length === 0 || selectedProvider) return;
+    if (autoOpenedProviderRef.current === initialProviderId) return;
+    const provider = providers.find((item) => item.id === initialProviderId);
+    if (!provider) return;
+    autoOpenedProviderRef.current = initialProviderId;
+    void handleOpenDetail(provider);
+  }, [initialProviderId, providers, selectedProvider]);
+
   const toggleShortlist = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
 
@@ -296,16 +336,22 @@ const InternalDirectoryPage: React.FC = () => {
       showSnackbar('Bitte vergeben Sie eine Sterne-Bewertung.', 'warning');
       return;
     }
+    if (!newReviewExperienceLevel) {
+      showSnackbar('Bitte geben Sie an, worauf Ihre Erfahrung beruht.', 'warning');
+      return;
+    }
 
     try {
       await apiClient.post(`/api/directory/internal/${selectedProvider?.id}/reviews`, {
         rating: newReviewRating,
-        comment: newReviewText
+        comment: newReviewText,
+        experienceLevel: newReviewExperienceLevel,
       });
 
       showSnackbar('Bewertung gespeichert!', 'success');
       setNewReviewText('');
       setNewReviewRating(0);
+      setNewReviewExperienceLevel('');
 
       if (selectedProvider) {
         handleOpenDetail(selectedProvider);
@@ -354,7 +400,7 @@ const InternalDirectoryPage: React.FC = () => {
   const paginatedProviders = filteredProviders.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
   // Review-Prüfung: Hat der User hier schon bewertet?
-  const userHasReviewed = reviews.some(r => r.user_name === user?.username);
+  const userHasReviewed = reviews.some(r => r.user_id === user?.id);
 
   // Map Logik
   const selectedProviderLocations = selectedProvider?.locations || [];
@@ -477,8 +523,8 @@ const InternalDirectoryPage: React.FC = () => {
   }, []);
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 3, mb: 4, px: isMobile ? 1 : 3 }}>
-      <Box sx={{ mb: 4, display: 'flex', flexDirection: 'column', gap: 1 }}>
+    <Container maxWidth="xl" sx={{ mt: embedded ? 0 : 3, mb: 4, px: embedded ? 0 : (isMobile ? 1 : 3) }}>
+      {!embedded && <Box sx={{ mb: 4, display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Typography variant={isMobile ? 'h5' : 'h4'} sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.5, fontWeight: 'bold' }}>
           <StorefrontIcon fontSize="large" color="primary" /> 
           {bpName ? `${bpName} Partner-Netzwerk` : 'Partner-Netzwerk'}
@@ -489,7 +535,7 @@ const InternalDirectoryPage: React.FC = () => {
         <Typography variant="body1" color="text.secondary">
           Finde empfohlene Dienstleister, lese Erfahrungen der Community und verwalte Deine Partner.
         </Typography>
-      </Box>
+      </Box>}
 
       <Paper sx={{ p: 2, mb: 4, borderRadius: 3, display: 'flex', gap: 2, flexDirection: { xs: 'column', md: 'row' }, alignItems: 'center', boxShadow: theme.shadows[2] }}>
         <TextField
@@ -604,6 +650,13 @@ const InternalDirectoryPage: React.FC = () => {
                         ({provider.review_count || 0} Bewertungen)
                       </Typography>
                     </Box>
+                    {(Number(provider.in_use_count) > 0 || Number(provider.evaluated_count) > 0 || Number(provider.general_count) > 0) && (
+                      <Box sx={{ display: 'flex', gap: 0.6, flexWrap: 'wrap', mt: 1 }}>
+                        {Number(provider.in_use_count) > 0 && <Chip size="small" label={`${provider.in_use_count} im Einsatz`} color="success" variant="outlined" />}
+                        {Number(provider.evaluated_count) > 0 && <Chip size="small" label={`${provider.evaluated_count} evaluiert`} color="info" variant="outlined" />}
+                        {Number(provider.general_count) > 0 && <Chip size="small" label={`${provider.general_count} allgemein`} variant="outlined" />}
+                      </Box>
+                    )}
                   </CardContent>
                 </Card>
               </Grid>
@@ -875,8 +928,30 @@ const InternalDirectoryPage: React.FC = () => {
                           <Typography variant="subtitle2" fontWeight="bold" mb={1}>
                             Eigene Erfahrung teilen
                           </Typography>
+                          <Typography variant="caption" color="text.secondary" fontWeight="bold">
+                            Worauf beruht Ihre Bewertung? *
+                          </Typography>
+                          <RadioGroup
+                            value={newReviewExperienceLevel}
+                            onChange={(event) => setNewReviewExperienceLevel(event.target.value as ExperienceLevel)}
+                            sx={{ mb: 1.5 }}
+                          >
+                            {EXPERIENCE_LEVEL_OPTIONS.map((option) => (
+                              <FormControlLabel
+                                key={option.value}
+                                value={option.value}
+                                control={<Radio size="small" />}
+                                label={
+                                  <Box>
+                                    <Typography variant="body2" fontWeight="bold">{option.label}</Typography>
+                                    <Typography variant="caption" color="text.secondary">{option.description}</Typography>
+                                  </Box>
+                                }
+                              />
+                            ))}
+                          </RadioGroup>
                           <Rating value={newReviewRating} onChange={(_, val) => setNewReviewRating(val)} sx={{ mb: 2 }} />
-                          <Box sx={{ display: 'flex', gap: 2 }}>
+                          <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
                             <TextField
                               fullWidth
                               size="small"
@@ -914,7 +989,20 @@ const InternalDirectoryPage: React.FC = () => {
                                   </Typography>
                                 </Box>
                               }
-                              secondary={<Typography variant="body2" color="text.primary">{r.comment}</Typography>}
+                              secondary={
+                                <Box>
+                                  {getExperienceLevelLabel(r.experience_level) && (
+                                    <Chip
+                                      size="small"
+                                      label={getExperienceLevelLabel(r.experience_level)}
+                                      color={r.experience_level === 'in_use' ? 'success' : r.experience_level === 'evaluated' ? 'info' : 'default'}
+                                      variant="outlined"
+                                      sx={{ mb: r.comment ? 0.75 : 0 }}
+                                    />
+                                  )}
+                                  {r.comment && <Typography variant="body2" color="text.primary">{r.comment}</Typography>}
+                                </Box>
+                              }
                             />
                           </ListItem>
                         ))}

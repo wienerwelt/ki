@@ -4,6 +4,7 @@ const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
 const communityController = require('../controllers/communityController');
 const multer = require('multer');
+const { requireTenantModule } = require('../services/tenantModuleService');
 
 // Speicher im RAM, damit Sharp (für Bilder) arbeiten kann.
 const storage = multer.memoryStorage();
@@ -21,6 +22,7 @@ const upload = multer({
 });
 
 router.use(authMiddleware);
+router.use(requireTenantModule('content'));
 
 // Kategorien
 router.get('/categories', communityController.getCategories);

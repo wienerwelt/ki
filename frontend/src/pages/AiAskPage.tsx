@@ -2,8 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Container, Typography, Box, CircularProgress, Alert, List, ListItem, ListItemText,
-  Paper, Divider, Chip, Avatar
+  Container, Typography, Box, CircularProgress, Alert, Link,
+  Paper, Divider, Avatar
 } from '@mui/material';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import ReactMarkdown from 'react-markdown';
@@ -18,7 +18,7 @@ import AiContentLabel from '../components/AiContentLabel';
 interface AiSource {
   id: string;
   title: string;
-  type: 'scraped' | 'ai' | 'tracked_account_news';
+  type: string;
   url: string;
 }
 
@@ -151,36 +151,17 @@ const AiAskPage: React.FC = () => {
                 </Box>
                 
                 {response.sources && response.sources.length > 0 && (
-                  <>
-                    <Typography variant="subtitle2" sx={{ mt: 4, fontWeight: 'bold' }}>
-                      Verwendete interne Quellen:
-                    </Typography>
-                    <List dense>
-                      {response.sources.map((source) => (
-                        <ListItem 
-                          key={source.id}
-                          button 
-                          component="a" 
-                          href={source.url} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          disabled={!source.url}
-                        >
-                          <ListItemText 
-                            primary={source.title} 
-                            secondary={
-                              <Chip 
-                                label={source.type} 
-                                size="small" 
-                                variant="outlined" 
-                                sx={{ mt: 0.5 }}
-                              />
-                            }
-                          />
-                        </ListItem>
-                      ))}
-                    </List>
-                  </>
+                  <Box sx={{ mt: 2, pt: 1, borderTop: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', gap: 0.75, overflowX: 'auto', whiteSpace: 'nowrap', scrollbarWidth: 'thin' }}>
+                    <Typography variant="caption" fontWeight={800} flexShrink={0}>Quellen:</Typography>
+                    {response.sources.map((source, sourceIndex) => (
+                      <React.Fragment key={`${source.type}-${source.id}-${source.url}`}>
+                        {sourceIndex > 0 && <Typography variant="caption" color="text.disabled">·</Typography>}
+                        <Link href={source.url} target="_blank" rel="noopener noreferrer" variant="caption" underline="hover" sx={{ color: 'primary.main', flexShrink: 0 }}>
+                          {source.title}
+                        </Link>
+                      </React.Fragment>
+                    ))}
+                  </Box>
                 )}
               </Box>
             )}

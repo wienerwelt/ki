@@ -26,6 +26,13 @@ import { useSnackbar } from '../context/SnackbarContext';
 
 interface Region { id: string; name: string; is_default?: boolean; }
 interface Category { id: string; name: string; }
+type StorageTier = 'free' | 'standard' | 'premium';
+
+const CONTENT_STORAGE_PACKAGES: Record<StorageTier, { label: string; shortLabel: string; limitLabel: string }> = {
+    free: { label: 'Kein Cloud-Speicher', shortLabel: 'Ohne Speicher', limitLabel: '0 MB' },
+    standard: { label: 'Content Standard', shortLabel: 'Standard', limitLabel: '100 MB' },
+    premium: { label: 'Content Premium', shortLabel: 'Premium', limitLabel: '1 GB' }
+};
 
 interface ColorScheme {
     id: string;
@@ -59,7 +66,7 @@ interface BusinessPartner {
     level_1_name: string | null;
     level_2_name: string | null;
     level_3_name: string | null;
-    storage_tier: 'free' | 'standard' | 'premium';
+    storage_tier: StorageTier;
     storage_usage_bytes: string;
     storage_limit_bytes: string;
     file_count: string;
@@ -67,6 +74,15 @@ interface BusinessPartner {
     account_count: string;
     industries: Category[];
     dashboard_focus: 'information' | 'sales';
+    enabled_modules: Array<'content' | 'sales'>;
+    default_workspace: 'content' | 'sales';
+    sales_plan: 'basic' | 'premium';
+    sales_subscription_status: 'active' | 'trial' | 'paused';
+    sales_trial_ends_on: string | null;
+    sales_trial_days_remaining: number | null;
+    sales_access_active: boolean;
+    sales_monthly_price_eur: string | number | null;
+    sales_billing_cycle: 'monthly' | 'annual';
     newsletter_delivery_mode: 'mobiliti' | 'export' | 'external';
     newsletter_export_email: string | null;
     newsletter_external_signup_url: string | null;
@@ -96,6 +112,12 @@ const formatFileSize = (bytes: number | string | null | undefined) => {
     const k = 1024; const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(numBytes) / Math.log(k));
     return parseFloat((numBytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+const getDefaultSalesTrialEnd = () => {
+    const date = new Date();
+    date.setDate(date.getDate() + 14);
+    return date.toISOString().slice(0, 10);
 };
 
 // --- HILFSKOMPONENTE FÜR DEN COLOR PICKER ---
@@ -153,13 +175,19 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [formLevel1Name, setFormLevel1Name] = useState('');
     const [formLevel2Name, setFormLevel2Name] = useState('');
     const [formLevel3Name, setFormLevel3Name] = useState('');
-    const [formStorageTier, setFormStorageTier] = useState<'free' | 'standard' | 'premium'>('free');
+    const [formStorageTier, setFormStorageTier] = useState<StorageTier>('free');
     const [formAllowNewsletter, setFormAllowNewsletter] = useState(false);
     const [formNewsletterDeliveryMode, setFormNewsletterDeliveryMode] = useState<'mobiliti' | 'export' | 'external'>('mobiliti');
     const [formNewsletterExportEmail, setFormNewsletterExportEmail] = useState('');
     const [formNewsletterExternalUrl, setFormNewsletterExternalUrl] = useState('');
     const [formNewsletterRecipientLimit, setFormNewsletterRecipientLimit] = useState(250);
-    const [formDashboardFocus, setFormDashboardFocus] = useState<'information' | 'sales'>('information');
+    const [formEnabledModules, setFormEnabledModules] = useState<Array<'content' | 'sales'>>(['content']);
+    const [formDefaultWorkspace, setFormDefaultWorkspace] = useState<'content' | 'sales'>('content');
+    const [formSalesPlan, setFormSalesPlan] = useState<'basic' | 'premium'>('basic');
+    const [formSalesSubscriptionStatus, setFormSalesSubscriptionStatus] = useState<'active' | 'trial' | 'paused'>('active');
+    const [formSalesTrialEndsOn, setFormSalesTrialEndsOn] = useState('');
+    const [formSalesMonthlyPrice, setFormSalesMonthlyPrice] = useState('');
+    const [formSalesBillingCycle, setFormSalesBillingCycle] = useState<'monthly' | 'annual'>('monthly');
     const [formIndustryIds, setFormIndustryIds] = useState<string[]>([]);
 
     // --- NEUE FORM STATES FÜR FARBEN ---
@@ -198,7 +226,9 @@ const AdminBusinessPartnersPage: React.FC = () => {
         setEditingBp(null); setFormName(''); setFormSlug(''); setFormDashboardTitle(''); setFormAddress(''); setFormEmail(''); setFormLogoUrl('');
         setFormSubscriptionStartDate(''); setFormSubscriptionEndDate(''); setFormRegionIds([]); setFormDefaultRegionId(null);
         setFormIsActive(true); setFormUrlBusinessPartner(''); setFormLevel1Name(''); setFormLevel2Name(''); setFormLevel3Name('');
-        setFormStorageTier('free'); setFormAllowNewsletter(false); setFormDashboardFocus('information'); setFormIndustryIds([]);
+        setFormStorageTier('free'); setFormAllowNewsletter(false); setFormIndustryIds([]);
+        setFormEnabledModules(['content']); setFormDefaultWorkspace('content'); setFormSalesPlan('basic');
+        setFormSalesSubscriptionStatus('active'); setFormSalesTrialEndsOn(''); setFormSalesMonthlyPrice(''); setFormSalesBillingCycle('monthly');
         setFormNewsletterDeliveryMode('mobiliti'); setFormNewsletterExportEmail(''); setFormNewsletterExternalUrl(''); setFormNewsletterRecipientLimit(250);
         
         // Farben Reset
@@ -216,7 +246,15 @@ const AdminBusinessPartnersPage: React.FC = () => {
         const defaultRegion = bp.regions.find(r => r.is_default); setFormDefaultRegionId(defaultRegion?.id || bp.regions[0]?.id || null);
         setFormIsActive(bp.is_active); setFormUrlBusinessPartner(bp.url_businesspartner || ''); setFormLevel1Name(bp.level_1_name || '');
         setFormLevel2Name(bp.level_2_name || ''); setFormLevel3Name(bp.level_3_name || ''); setFormStorageTier(bp.storage_tier || 'free');
-        setFormAllowNewsletter(bp.allow_automated_newsletter); setFormDashboardFocus(bp.dashboard_focus || 'information'); setFormIndustryIds(bp.industries.map(ind => ind.id));
+        setFormAllowNewsletter(bp.allow_automated_newsletter); setFormIndustryIds(bp.industries.map(ind => ind.id));
+        const enabledModules = bp.enabled_modules?.length ? bp.enabled_modules : ['content'];
+        setFormEnabledModules(enabledModules);
+        setFormDefaultWorkspace(enabledModules.includes(bp.default_workspace) ? bp.default_workspace : enabledModules[0]);
+        setFormSalesPlan(bp.sales_plan || 'basic');
+        setFormSalesSubscriptionStatus(bp.sales_subscription_status || 'active');
+        setFormSalesTrialEndsOn(bp.sales_trial_ends_on ? bp.sales_trial_ends_on.split('T')[0] : '');
+        setFormSalesMonthlyPrice(bp.sales_monthly_price_eur == null ? '' : String(bp.sales_monthly_price_eur));
+        setFormSalesBillingCycle(bp.sales_billing_cycle || 'monthly');
         setFormNewsletterDeliveryMode(bp.newsletter_delivery_mode || 'mobiliti');
         setFormNewsletterExportEmail(bp.newsletter_export_email || '');
         setFormNewsletterExternalUrl(bp.newsletter_external_signup_url || '');
@@ -274,7 +312,15 @@ const AdminBusinessPartnersPage: React.FC = () => {
             logo_url: formLogoUrl || null, subscription_start_date: formSubscriptionStartDate, subscription_end_date: formSubscriptionEndDate,
             region_ids: formRegionIds, default_region_id: formDefaultRegionId, is_active: formIsActive, url_businesspartner: formUrlBusinessPartner || null,
             level_1_name: formLevel1Name || null, level_2_name: formLevel2Name || null, level_3_name: formLevel3Name || null,
-            storage_tier: formStorageTier, allow_automated_newsletter: formAllowNewsletter, category_ids: formIndustryIds, dashboard_focus: formDashboardFocus,
+            storage_tier: formStorageTier, allow_automated_newsletter: formAllowNewsletter, category_ids: formIndustryIds,
+            dashboard_focus: formDefaultWorkspace === 'sales' ? 'sales' : 'information',
+            enabled_modules: formEnabledModules,
+            default_workspace: formDefaultWorkspace,
+            sales_plan: formSalesPlan,
+            sales_subscription_status: formSalesSubscriptionStatus,
+            sales_trial_ends_on: formSalesSubscriptionStatus === 'trial' ? formSalesTrialEndsOn : null,
+            sales_monthly_price_eur: formSalesMonthlyPrice === '' ? null : Number(formSalesMonthlyPrice),
+            sales_billing_cycle: formSalesBillingCycle,
             newsletter_delivery_mode: formNewsletterDeliveryMode,
             newsletter_export_email: formNewsletterExportEmail || null,
             newsletter_external_signup_url: formNewsletterExternalUrl || null,
@@ -286,10 +332,12 @@ const AdminBusinessPartnersPage: React.FC = () => {
         };
 
         try {
-            if (editingBp) { await apiClient.put(`/api/admin/business-partners/${editingBp.id}`, bpData, { headers: { 'x-auth-token': token } }); } 
-            else { await apiClient.post('/api/admin/business-partners', bpData, { headers: { 'x-auth-token': token } }); }
+            const response = editingBp
+                ? await apiClient.put(`/api/admin/business-partners/${editingBp.id}`, bpData, { headers: { 'x-auth-token': token } })
+                : await apiClient.post('/api/admin/business-partners', bpData, { headers: { 'x-auth-token': token } });
+            if (!response.res.ok) throw new Error(response.data?.message || 'Fehler beim Speichern.');
             handleCloseDialog(); fetchData(); showSnackbar('Erfolgreich gespeichert', 'success');
-        } catch (err: any) { setError(err.response?.data?.message || 'Fehler beim Speichern.'); }
+        } catch (err: any) { setError(err.message || err.response?.data?.message || 'Fehler beim Speichern.'); }
     };
 
     const handleDelete = async (id: string) => {
@@ -384,6 +432,36 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                                                 <MuiTooltip title="Einladungskarte öffnen (QR-Code)"><IconButton size="small" onClick={() => window.open(`/invite/${bp.id}`, '_blank')} sx={{ padding: '2px', ml: 0.5 }}><QrCodeIcon fontSize="small" /></IconButton></MuiTooltip>
                                                             </Box>
                                                             <Typography variant="caption" color="text.disabled" sx={{ display: 'block', fontSize: '0.7rem', mt: 0.2 }}>{bp.id}</Typography>
+                                                            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mt: 0.7 }}>
+                                                                {(bp.enabled_modules || ['content']).includes('content') && (
+                                                                    <Chip
+                                                                        size="small"
+                                                                        variant={bp.storage_tier === 'premium' ? 'filled' : 'outlined'}
+                                                                        color={bp.storage_tier === 'premium' ? 'success' : bp.storage_tier === 'standard' ? 'info' : 'default'}
+                                                                        label={`Content · ${CONTENT_STORAGE_PACKAGES[bp.storage_tier]?.shortLabel || bp.storage_tier}`}
+                                                                        sx={{ fontWeight: 850 }}
+                                                                    />
+                                                                )}
+                                                                {bp.enabled_modules?.includes('sales') && (
+                                                                    <Chip
+                                                                        size="small"
+                                                                        color={bp.sales_plan === 'premium' ? 'success' : 'primary'}
+                                                                        variant={bp.sales_plan === 'premium' ? 'filled' : 'outlined'}
+                                                                        label={`Sales · ${bp.sales_plan === 'premium' ? 'Premium' : 'Basic'}`}
+                                                                        sx={{ fontWeight: 850 }}
+                                                                    />
+                                                                )}
+                                                                {bp.enabled_modules?.includes('sales') && (
+                                                                    <Chip
+                                                                        size="small"
+                                                                        color={bp.sales_access_active ? (bp.sales_subscription_status === 'trial' ? 'warning' : 'success') : 'error'}
+                                                                        variant="outlined"
+                                                                        label={bp.sales_subscription_status === 'trial'
+                                                                            ? (bp.sales_access_active ? `Test · ${bp.sales_trial_days_remaining ?? 0} Tage` : 'Test abgelaufen')
+                                                                            : bp.sales_subscription_status === 'paused' ? 'Pausiert' : 'Aktiv'}
+                                                                    />
+                                                                )}
+                                                            </Stack>
                                                         </Box>
                                                     </Box>
                                                 </TableCell>
@@ -392,18 +470,24 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                                     <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>{bp.regions.length > 1 ? `+${bp.regions.length - 1} weitere` : (bp.regions.length === 0 ? 'Keine' : '')}</Typography>
                                                 </TableCell>
                                                 <TableCell>
-                                                    <Chip label={bp.storage_tier} size="small" variant="outlined" />
-                                                    <Box sx={{ mt: 1 }}>
-                                                        <LinearProgress variant="determinate" value={usagePercent} sx={{ height: 8, borderRadius: 4, mb: 0.5 }} />
-                                                        <Typography variant="caption" color="text.secondary">{`${formatFileSize(bp.storage_usage_bytes)} / ${formatFileSize(bp.storage_limit_bytes)}`}</Typography>
-                                                    </Box>
+                                                    {(bp.enabled_modules?.length ? bp.enabled_modules : ['content']).includes('content') ? (
+                                                        <>
+                                                            <Chip label={`Content ${CONTENT_STORAGE_PACKAGES[bp.storage_tier]?.shortLabel || bp.storage_tier}`} size="small" variant="outlined" />
+                                                            <Box sx={{ mt: 1 }}>
+                                                                <LinearProgress variant="determinate" value={usagePercent} sx={{ height: 8, borderRadius: 4, mb: 0.5 }} />
+                                                                <Typography variant="caption" color="text.secondary">{`${formatFileSize(bp.storage_usage_bytes)} / ${formatFileSize(bp.storage_limit_bytes)}`}</Typography>
+                                                            </Box>
+                                                        </>
+                                                    ) : (
+                                                        <Chip label="Kein Content-Modul" size="small" variant="outlined" color="default" />
+                                                    )}
                                                 </TableCell>
                                                 <TableCell>
                                                     <Typography variant="body2" display="block">{bp.subscription_end_date ? new Date(bp.subscription_end_date).toLocaleDateString('de-DE') : 'N/A'}</Typography>
                                                     <Typography variant="body2" display="block" sx={{ color: getDaysRemaining(bp.subscription_end_date).color, fontWeight: 'bold' }}>{getDaysRemaining(bp.subscription_end_date).text}</Typography>
                                                 </TableCell>
                                                 <TableCell align="center"><IconButton color="info" onClick={() => navigate(`/admin/users/${bp.id}`)}><GroupIcon /> {bp.user_count}</IconButton></TableCell>
-                                                <TableCell align="center"><IconButton color="primary" onClick={() => navigate(`/admin/business-partners/${bp.id}/accounts`)}><SwitchAccountIcon /> {bp.account_count}</IconButton></TableCell>                                                
+                                                <TableCell align="center"><IconButton color="primary" disabled={!bp.enabled_modules?.includes('sales')} onClick={() => navigate(`/admin/business-partners/${bp.id}/accounts`)}><SwitchAccountIcon /> {bp.account_count}</IconButton></TableCell>
                                                 <TableCell align="center"><IconButton color="secondary" onClick={() => navigate(`/admin/bp-widget-access/${bp.id}`)}><WidgetsIcon /> {bp.widget_count}</IconButton></TableCell>
                                                 <TableCell>
                                                     <MuiTooltip title="Bearbeiten"><IconButton color="primary" onClick={() => handleOpenEditDialog(bp)}><EditIcon /></IconButton></MuiTooltip>
@@ -423,10 +507,12 @@ const AdminBusinessPartnersPage: React.FC = () => {
                     <DialogContent>
                         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 <Grid container spacing={2} sx={{ mt: 1 }}>
-                            {/* Standard Felder */}
-                            <Grid item xs={12} sm={5}><TextField label="Name" fullWidth value={formName} onChange={(e) => setFormName(e.target.value)} required /></Grid>
-                            {/* NEU: Das Slug-Feld */}
-                            <Grid item xs={12} sm={3}>
+                            <Grid item xs={12}>
+                                <Typography variant="h6">Stammdaten &amp; Auftritt</Typography>
+                                <Typography variant="body2" color="text.secondary">Öffentliche Angaben, Logo und Bezeichnungen des Mandanten.</Typography>
+                            </Grid>
+                            <Grid item xs={12} sm={7}><TextField label="Name" fullWidth value={formName} onChange={(e) => setFormName(e.target.value)} required /></Grid>
+                            <Grid item xs={12} sm={5}>
                                 <TextField 
                                     label="Kürzel (Slug)" 
                                     fullWidth 
@@ -434,11 +520,6 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                     onChange={(e) => setFormSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))} 
                                     helperText="z.B. vfa" 
                                 />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                                <TextField select label="Speicher-Paket" fullWidth value={formStorageTier} onChange={(e) => setFormStorageTier(e.target.value as any)}>
-                                    <MenuItem value="free">Free (0 MB)</MenuItem><MenuItem value="standard">Standard (100 MB)</MenuItem><MenuItem value="premium">Premium (1 GB)</MenuItem>
-                                </TextField>
                             </Grid>
                             <Grid item xs={12}><TextField label="Dashboard-Titel" fullWidth value={formDashboardTitle} onChange={(e) => setFormDashboardTitle(e.target.value)} helperText="Dieser Titel wird im Dashboard angezeigt." /></Grid>
                             <Grid item xs={12}><TextField label="Adresse" fullWidth value={formAddress} onChange={(e) => setFormAddress(e.target.value)} /></Grid>
@@ -451,19 +532,167 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                 </Box>
                             </Grid>
                             
-                            <Grid item xs={12}><Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>Mitgliedslevel-Bezeichnungen</Typography></Grid>
+                            <Grid item xs={12}>
+                                <Divider sx={{ mt: 1, mb: 2 }} />
+                                <Typography variant="h6">Mitgliedschaft &amp; Branchen</Typography>
+                                <Typography variant="body2" color="text.secondary">Bezeichnungen der Mitgliedsstufen und fachliche Zuordnung des Mandanten.</Typography>
+                            </Grid>
+                            <Grid item xs={12}><Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Mitgliedslevel-Bezeichnungen</Typography></Grid>
                             <Grid item xs={12} sm={4}><TextField label="Level 1 Name" fullWidth value={formLevel1Name} onChange={(e) => setFormLevel1Name(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={4}><TextField label="Level 2 Name" fullWidth value={formLevel2Name} onChange={(e) => setFormLevel2Name(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={4}><TextField label="Level 3 Name" fullWidth value={formLevel3Name} onChange={(e) => setFormLevel3Name(e.target.value)} /></Grid>
                             
-                            <Grid item xs={12} sm={8}>
+                            <Grid item xs={12}>
                                 <Autocomplete multiple options={allIndustries} getOptionLabel={(option) => option.name} value={allIndustries.filter(ind => formIndustryIds.includes(ind.id))} onChange={(_, newValue) => { setFormIndustryIds(newValue.map(v => v.id)); }} isOptionEqualToValue={(option, value) => option.id === value.id} renderInput={(params) => <TextField {...params} label="Branchen" placeholder="Branchen auswählen" />} />
                             </Grid>
-                            <Grid item xs={12} sm={4}>
-                                <TextField select label="Dashboard Fokus" fullWidth value={formDashboardFocus} onChange={(e) => setFormDashboardFocus(e.target.value as any)}>
-                                    <MenuItem value="information">Information</MenuItem><MenuItem value="sales">Sales</MenuItem>
-                                </TextField>
-                            </Grid>                            
+                            <Grid item xs={12}>
+                                <Divider sx={{ mt: 1, mb: 2 }} />
+                                <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2 }, borderRadius: 2 }}>
+                                    <Typography variant="h6">Produkte &amp; Arbeitsbereiche</Typography>
+                                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                        Content-Paket und Sales-Paket werden unabhängig voneinander verwaltet.
+                                    </Typography>
+                                    <Grid container spacing={2}>
+                                        <Grid item xs={12} sm={6}>
+                                            <Typography variant="subtitle2" sx={{ mb: 0.7, fontWeight: 800 }}>Gebuchte Arbeitsbereiche</Typography>
+                                            <ToggleButtonGroup
+                                                value={formEnabledModules}
+                                                onChange={(_, value: Array<'content' | 'sales'>) => {
+                                                    if (!value.length) return;
+                                                    setFormEnabledModules(value);
+                                                    if (!value.includes(formDefaultWorkspace)) setFormDefaultWorkspace(value[0]);
+                                                }}
+                                                size="small"
+                                                fullWidth
+                                            >
+                                                <ToggleButton value="content">Content</ToggleButton>
+                                                <ToggleButton value="sales">Sales</ToggleButton>
+                                            </ToggleButtonGroup>
+                                        </Grid>
+                                        <Grid item xs={12} sm={6}>
+                                            <TextField select label="Standard-Arbeitsbereich" fullWidth value={formDefaultWorkspace} onChange={(e) => {
+                                                const workspace = e.target.value as 'content' | 'sales';
+                                                setFormDefaultWorkspace(workspace);
+                                            }} helperText="Startseite für neue und noch nicht konfigurierte Nutzer.">
+                                                {formEnabledModules.includes('content') && <MenuItem value="content">Content-Dashboard</MenuItem>}
+                                                {formEnabledModules.includes('sales') && <MenuItem value="sales">Account-Radar</MenuItem>}
+                                            </TextField>
+                                        </Grid>
+
+                                        {formEnabledModules.includes('content') && (
+                                            <>
+                                                <Grid item xs={12}>
+                                                    <Divider sx={{ my: 0.5 }} />
+                                                    <Typography variant="subtitle1" sx={{ mt: 1.5, fontWeight: 900 }}>Content-Paket &amp; Cloud-Speicher</Typography>
+                                                    <Typography variant="body2" color="text.secondary">Das Paket bestimmt den Speicher für hochgeladene Mandantendateien.</Typography>
+                                                </Grid>
+                                                <Grid item xs={12} sm={6}>
+                                                    <TextField
+                                                        select
+                                                        label="Content-Paket"
+                                                        fullWidth
+                                                        value={formStorageTier}
+                                                        onChange={(e) => setFormStorageTier(e.target.value as StorageTier)}
+                                                        helperText={editingBp ? `Aktuell belegt: ${formatFileSize(editingBp.storage_usage_bytes)}` : 'Die Paketgrenze wird beim Speichern automatisch gesetzt.'}
+                                                    >
+                                                        {(Object.entries(CONTENT_STORAGE_PACKAGES) as Array<[StorageTier, typeof CONTENT_STORAGE_PACKAGES[StorageTier]]>).map(([tier, definition]) => (
+                                                            <MenuItem key={tier} value={tier}>{definition.label} · {definition.limitLabel}</MenuItem>
+                                                        ))}
+                                                    </TextField>
+                                                </Grid>
+                                                <Grid item xs={12} sm={6}>
+                                                    <Alert severity={formStorageTier === 'free' ? 'warning' : 'info'} sx={{ height: '100%', alignItems: 'center' }}>
+                                                        {formStorageTier === 'free'
+                                                            ? 'Dateiverwaltung aktiv, aber ohne Speicher für neue Uploads.'
+                                                            : `${CONTENT_STORAGE_PACKAGES[formStorageTier].label}: ${CONTENT_STORAGE_PACKAGES[formStorageTier].limitLabel} Cloud-Speicher.`}
+                                                    </Alert>
+                                                </Grid>
+                                            </>
+                                        )}
+
+                                        {formEnabledModules.includes('sales') && (
+                                            <>
+                                                <Grid item xs={12}>
+                                                    <Divider sx={{ my: 0.5 }} />
+                                                    <Typography variant="subtitle1" sx={{ mt: 1.5, fontWeight: 900 }}>Sales-Paket &amp; Zugriff</Typography>
+                                                    <Alert severity={formSalesSubscriptionStatus === 'paused' ? 'warning' : 'info'} sx={{ mt: 1 }}>
+                                                        Paket, Testphase und Aktivierung werden durch den Mobiliti-Admin gesteuert. Ein Interessent erhält durch das Anfrageformular noch keinen automatischen Zugang.
+                                                    </Alert>
+                                                </Grid>
+                                                <Grid item xs={12} sm={6}>
+                                                    <TextField
+                                                        select
+                                                        label="Sales-Paket"
+                                                        fullWidth
+                                                        value={formSalesPlan}
+                                                        onChange={(e) => setFormSalesPlan(e.target.value as 'basic' | 'premium')}
+                                                        helperText={formSalesPlan === 'premium'
+                                                            ? '5.000 Accounts, 25 Report-Empfänger, Import, täglicher Radar, Wettbewerber, Analytics, Management-PDF und API (5 Tokens).'
+                                                            : '250 Accounts, 3 Report-Empfänger, wöchentlicher Radar, Workflows, CSV-Export und Datenqualitätsprüfung.'}
+                                                    >
+                                                        <MenuItem value="basic">Sales Basic</MenuItem>
+                                                        <MenuItem value="premium">Sales Premium</MenuItem>
+                                                    </TextField>
+                                                </Grid>
+                                                <Grid item xs={12} sm={6}>
+                                                    <TextField
+                                                        select
+                                                        label="Sales-Status"
+                                                        fullWidth
+                                                        value={formSalesSubscriptionStatus}
+                                                        onChange={(e) => {
+                                                            const status = e.target.value as 'active' | 'trial' | 'paused';
+                                                            setFormSalesSubscriptionStatus(status);
+                                                            if (status === 'trial' && !formSalesTrialEndsOn) setFormSalesTrialEndsOn(getDefaultSalesTrialEnd());
+                                                        }}
+                                                        helperText={formSalesSubscriptionStatus === 'active' ? 'Paket ist freigeschaltet.' : formSalesSubscriptionStatus === 'trial' ? 'Zugriff bis einschließlich Enddatum.' : 'Sales-Zugriff gesperrt; Daten bleiben erhalten.'}
+                                                    >
+                                                        <MenuItem value="active">Aktiv</MenuItem>
+                                                        <MenuItem value="trial">Testphase</MenuItem>
+                                                        <MenuItem value="paused">Pausiert</MenuItem>
+                                                    </TextField>
+                                                </Grid>
+                                                {formSalesSubscriptionStatus === 'trial' && (
+                                                    <Grid item xs={12} sm={4}>
+                                                        <TextField
+                                                            label="Testphase endet am"
+                                                            type="date"
+                                                            fullWidth
+                                                            required
+                                                            InputLabelProps={{ shrink: true }}
+                                                            value={formSalesTrialEndsOn}
+                                                            onChange={(e) => setFormSalesTrialEndsOn(e.target.value)}
+                                                            helperText="Der Zugriff endet automatisch nach diesem Tag."
+                                                        />
+                                                    </Grid>
+                                                )}
+                                                <Grid item xs={12} sm={formSalesSubscriptionStatus === 'trial' ? 4 : 6}>
+                                                    <TextField
+                                                        label="Vereinbarter Preis"
+                                                        type="number"
+                                                        fullWidth
+                                                        value={formSalesMonthlyPrice}
+                                                        onChange={(e) => setFormSalesMonthlyPrice(e.target.value)}
+                                                        inputProps={{ min: 0, step: '0.01' }}
+                                                        InputProps={{ endAdornment: <InputAdornment position="end">€</InputAdornment> }}
+                                                        helperText="Optional, nur intern."
+                                                    />
+                                                </Grid>
+                                                <Grid item xs={12} sm={formSalesSubscriptionStatus === 'trial' ? 4 : 6}>
+                                                    <TextField select label="Abrechnung" fullWidth value={formSalesBillingCycle} onChange={(e) => setFormSalesBillingCycle(e.target.value as 'monthly' | 'annual')} helperText="Vereinbarter Zyklus.">
+                                                        <MenuItem value="monthly">Monatlich</MenuItem>
+                                                        <MenuItem value="annual">Jährlich</MenuItem>
+                                                    </TextField>
+                                                </Grid>
+                                            </>
+                                        )}
+                                    </Grid>
+                                </Paper>
+                            </Grid>
+                            <Grid item xs={12}>
+                                <Typography variant="h6" sx={{ mt: 1 }}>Vertrag &amp; Betrieb</Typography>
+                                <Typography variant="body2" color="text.secondary">Regionen, Laufzeit und aktive Dienste.</Typography>
+                            </Grid>
                             <Grid item xs={12}><TextField select label="Regionen" fullWidth value={formRegionIds} onChange={(e) => setFormRegionIds(e.target.value as unknown as string[])} SelectProps={{ multiple: true, renderValue: (selected) => (<Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{(selected as string[]).map(id => <Chip key={id} size="small" label={regions.find(r => r.id === id)?.name} />)}</Box>) }} > {regions.map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))} </TextField></Grid>
                             <Grid item xs={12}><TextField select label="Standard-Region" fullWidth value={formDefaultRegionId || ''} onChange={(e) => setFormDefaultRegionId(e.target.value)} disabled={formRegionIds.length === 0} helperText="Diese Region wird als Voreinstellung in den Widgets verwendet." > <MenuItem value=""><em>Keine</em></MenuItem> {regions.filter(r => formRegionIds.includes(r.id)).map((r) => (<MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>))} </TextField></Grid>
                             <Grid item xs={12} sm={6}><TextField label="Abo Startdatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formSubscriptionStartDate} onChange={(e) => setFormSubscriptionStartDate(e.target.value)} /></Grid>

@@ -1,6 +1,7 @@
 User-agent: *
 Allow: /
 Disallow: /dashboard
+Disallow: /radar
 Disallow: /admin
 Disallow: /api
 Disallow: /login

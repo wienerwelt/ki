@@ -5,9 +5,11 @@ const feedbackController = require('../controllers/feedbackController');
 const authMiddleware = require('../middleware/authMiddleware');
 // NEU: Ihre Admin-Middleware wird importiert
 const adminAuth = require('../middleware/adminAuth'); 
+const { requireTenantModule } = require('../services/tenantModuleService');
 
 // Alle Routen hier erfordern eine Authentifizierung
 router.use(authMiddleware);
+router.use(requireTenantModule('content'));
 
 router.get('/', feedbackController.getFeedbackItems);
 router.post('/', feedbackController.createFeedbackItem);

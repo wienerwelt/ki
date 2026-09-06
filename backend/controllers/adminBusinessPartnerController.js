@@ -5,6 +5,28 @@ const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F
 const { PutObjectCommand } = require("@aws-sdk/client-s3");
 const s3Client = require("../config/s3Client.js");
 const { v4: uuidv4 } = require('uuid');
+const { normalizeTenantModules, normalizeWorkspace } = require('../services/tenantModuleService');
+const {
+    SALES_SUBSCRIPTION_STATUSES,
+    getSalesPlanDefinition,
+    normalizeSalesPlan,
+    normalizeSalesSubscriptionStatus,
+} = require('../services/salesPlanService');
+
+const normalizeSalesTrialDate = (value) => {
+    if (!value) return null;
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+    const direct = String(value).trim().match(/^(\d{4}-\d{2}-\d{2})/);
+    if (direct) return direct[1];
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+};
+
+const normalizeSalesPrice = (value) => {
+    if (value === '' || value === null || value === undefined) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed * 100) / 100 : Number.NaN;
+};
 
 exports.getAllBusinessPartners = async (req, res) => {
     try {
@@ -16,6 +38,15 @@ exports.getAllBusinessPartners = async (req, res) => {
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 bp.storage_tier, bp.storage_usage_bytes, bp.storage_limit_bytes,
                 bp.allow_automated_newsletter, bp.dashboard_focus,
+                bp.enabled_modules, bp.default_workspace, bp.sales_plan,
+                bp.sales_subscription_status, bp.sales_trial_ends_on,
+                bp.sales_monthly_price_eur, bp.sales_billing_cycle,
+                CASE WHEN bp.sales_subscription_status = 'trial'
+                    THEN GREATEST(bp.sales_trial_ends_on - CURRENT_DATE, 0)
+                    ELSE NULL END AS sales_trial_days_remaining,
+                CASE WHEN bp.sales_subscription_status = 'active'
+                    OR (bp.sales_subscription_status = 'trial' AND bp.sales_trial_ends_on >= CURRENT_DATE)
+                    THEN TRUE ELSE FALSE END AS sales_access_active,
                 bp.briefing_frequency, bp.newsletter_frequency,
                 bp.newsletter_delivery_mode, bp.newsletter_export_email,
                 bp.newsletter_external_signup_url, bp.newsletter_recipient_limit,
@@ -68,6 +99,15 @@ exports.getBusinessPartnerById = async (req, res) => {
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 bp.briefing_frequency,
                 bp.newsletter_frequency, bp.allow_automated_newsletter, bp.dashboard_focus,
+                bp.enabled_modules, bp.default_workspace, bp.sales_plan,
+                bp.sales_subscription_status, bp.sales_trial_ends_on,
+                bp.sales_monthly_price_eur, bp.sales_billing_cycle,
+                CASE WHEN bp.sales_subscription_status = 'trial'
+                    THEN GREATEST(bp.sales_trial_ends_on - CURRENT_DATE, 0)
+                    ELSE NULL END AS sales_trial_days_remaining,
+                CASE WHEN bp.sales_subscription_status = 'active'
+                    OR (bp.sales_subscription_status = 'trial' AND bp.sales_trial_ends_on >= CURRENT_DATE)
+                    THEN TRUE ELSE FALSE END AS sales_access_active,
                 bp.newsletter_delivery_mode, bp.newsletter_export_email,
                 bp.newsletter_external_signup_url, bp.newsletter_recipient_limit,
                 cs.name AS color_scheme_name, cs.primary_color, cs.secondary_color,
@@ -103,12 +143,37 @@ exports.createBusinessPartner = async (req, res) => {
         color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
         default_region_id, email, briefing_frequency, allow_automated_newsletter,
-        category_ids = [], dashboard_focus, newsletter_delivery_mode = 'mobiliti',
+        category_ids = [], dashboard_focus, enabled_modules, default_workspace, sales_plan,
+        sales_subscription_status, sales_trial_ends_on, sales_monthly_price_eur, sales_billing_cycle,
+        newsletter_delivery_mode = 'mobiliti',
         newsletter_export_email, newsletter_external_signup_url, newsletter_recipient_limit = 250,
         color_mode, custom_colors 
     } = req.body;
 
     if (!name) return res.status(400).json({ message: 'Name is required.' });
+    if (sales_subscription_status !== undefined && !SALES_SUBSCRIPTION_STATUSES.includes(String(sales_subscription_status).trim().toLowerCase())) {
+        return res.status(400).json({ message: 'Ungültiger Sales-Status.' });
+    }
+    if (sales_billing_cycle !== undefined && !['monthly', 'annual'].includes(String(sales_billing_cycle).trim().toLowerCase())) {
+        return res.status(400).json({ message: 'Ungültiger Sales-Abrechnungszyklus.' });
+    }
+
+    const tenantModules = normalizeTenantModules(enabled_modules);
+    const tenantDefaultWorkspace = normalizeWorkspace(default_workspace, tenantModules);
+    const tenantSalesPlan = normalizeSalesPlan(sales_plan);
+    const tenantSalesSubscriptionStatus = normalizeSalesSubscriptionStatus(sales_subscription_status);
+    const tenantSalesTrialEndsOn = tenantSalesSubscriptionStatus === 'trial'
+        ? normalizeSalesTrialDate(sales_trial_ends_on)
+        : null;
+    const tenantSalesMonthlyPrice = normalizeSalesPrice(sales_monthly_price_eur);
+    const tenantSalesBillingCycle = sales_billing_cycle === 'annual' ? 'annual' : 'monthly';
+
+    if (tenantSalesSubscriptionStatus === 'trial' && !tenantSalesTrialEndsOn) {
+        return res.status(400).json({ message: 'Für eine Testphase ist ein gültiges Enddatum erforderlich.' });
+    }
+    if (Number.isNaN(tenantSalesMonthlyPrice)) {
+        return res.status(400).json({ message: 'Der vereinbarte Sales-Preis muss eine gültige Zahl ab 0 sein.' });
+    }
 
     const newsletterError = validateNewsletterDelivery({
         newsletter_delivery_mode, newsletter_export_email, newsletter_external_signup_url, newsletter_recipient_limit, email
@@ -152,8 +217,11 @@ exports.createBusinessPartner = async (req, res) => {
                 color_scheme_id, is_active, url_businesspartner, dashboard_title,
                 level_1_name, level_2_name, level_3_name, email, allow_automated_newsletter, briefing_frequency,
                 dashboard_focus, newsletter_delivery_mode, newsletter_export_email,
-                newsletter_external_signup_url, newsletter_recipient_limit
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING *`,
+                newsletter_external_signup_url, newsletter_recipient_limit,
+                enabled_modules, default_workspace, sales_plan,
+                sales_subscription_status, sales_trial_ends_on,
+                sales_monthly_price_eur, sales_billing_cycle
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) RETURNING *`,
             [
                 name, slug || null, address || null, logo_url || null, subscription_start_date || null,
                 subscription_end_date || null, finalColorSchemeId || null, is_active,
@@ -161,7 +229,10 @@ exports.createBusinessPartner = async (req, res) => {
                 level_2_name || null, level_3_name || null, email || null,
                 !!allow_automated_newsletter, briefing_frequency || 'never', dashboard_focus || 'information',
                 newsletter_delivery_mode, newsletter_export_email || null,
-                newsletter_external_signup_url || null, Number(newsletter_recipient_limit) || 250
+                newsletter_external_signup_url || null, Number(newsletter_recipient_limit) || 250,
+                tenantModules, tenantDefaultWorkspace, tenantSalesPlan,
+                tenantSalesSubscriptionStatus, tenantSalesTrialEndsOn,
+                tenantSalesMonthlyPrice, tenantSalesBillingCycle
             ]
         );
         const newBp = bpResult.rows[0];
@@ -213,7 +284,9 @@ exports.updateBusinessPartner = async (req, res) => {
         dashboard_title, level_1_name, level_2_name, level_3_name,
         default_region_id, email, storage_tier, 
         allow_automated_newsletter, briefing_frequency, 
-        category_ids, dashboard_focus, newsletter_delivery_mode = 'mobiliti',
+        category_ids, dashboard_focus, enabled_modules, default_workspace, sales_plan,
+        sales_subscription_status, sales_trial_ends_on, sales_monthly_price_eur, sales_billing_cycle,
+        newsletter_delivery_mode = 'mobiliti',
         newsletter_export_email, newsletter_external_signup_url, newsletter_recipient_limit = 250,
         color_mode, custom_colors 
     } = req.body;
@@ -228,15 +301,95 @@ exports.updateBusinessPartner = async (req, res) => {
     if (storage_tier && !validTiers.hasOwnProperty(storage_tier)) {
         return res.status(400).json({ message: 'Ungültiger Tier-Name.' });
     }
+    if (sales_subscription_status !== undefined && !SALES_SUBSCRIPTION_STATUSES.includes(String(sales_subscription_status).trim().toLowerCase())) {
+        return res.status(400).json({ message: 'Ungültiger Sales-Status.' });
+    }
+    if (sales_billing_cycle !== undefined && !['monthly', 'annual'].includes(String(sales_billing_cycle).trim().toLowerCase())) {
+        return res.status(400).json({ message: 'Ungültiger Sales-Abrechnungszyklus.' });
+    }
     const newsletterError = validateNewsletterDelivery({
         newsletter_delivery_mode, newsletter_export_email, newsletter_external_signup_url, newsletter_recipient_limit, email
     });
     if (newsletterError) return res.status(400).json({ message: newsletterError });
+    let tenantModules = null;
+    let tenantDefaultWorkspace = null;
+    const tenantSalesPlan = sales_plan === undefined ? null : normalizeSalesPlan(sales_plan);
+    let tenantSalesSubscriptionStatus = null;
+    let tenantSalesTrialEndsOn = null;
+    let tenantSalesMonthlyPrice = null;
+    let tenantSalesBillingCycle = null;
+    const salesLifecycleWasProvided = sales_subscription_status !== undefined || sales_trial_ends_on !== undefined;
+    const salesMonthlyPriceWasProvided = sales_monthly_price_eur !== undefined;
     const newLimit = storage_tier ? validTiers[storage_tier] : undefined;
 
     const client = await db.connect();
     try {
         await client.query('BEGIN');
+
+        if (
+            enabled_modules !== undefined || default_workspace !== undefined
+            || sales_subscription_status !== undefined || sales_trial_ends_on !== undefined
+            || sales_monthly_price_eur !== undefined || sales_billing_cycle !== undefined
+        ) {
+            const currentProductSettings = await client.query(
+                `SELECT enabled_modules, default_workspace, sales_subscription_status,
+                        sales_trial_ends_on, sales_monthly_price_eur, sales_billing_cycle
+                 FROM business_partners WHERE id = $1 FOR UPDATE`,
+                [id]
+            );
+            if (!currentProductSettings.rows.length) throw new Error('Business Partner not found.');
+            tenantModules = normalizeTenantModules(
+                enabled_modules === undefined ? currentProductSettings.rows[0].enabled_modules : enabled_modules
+            );
+            tenantDefaultWorkspace = normalizeWorkspace(
+                default_workspace === undefined ? currentProductSettings.rows[0].default_workspace : default_workspace,
+                tenantModules
+            );
+            tenantSalesSubscriptionStatus = normalizeSalesSubscriptionStatus(
+                sales_subscription_status === undefined
+                    ? currentProductSettings.rows[0].sales_subscription_status
+                    : sales_subscription_status
+            );
+            tenantSalesTrialEndsOn = tenantSalesSubscriptionStatus === 'trial'
+                ? normalizeSalesTrialDate(
+                    sales_trial_ends_on === undefined
+                        ? currentProductSettings.rows[0].sales_trial_ends_on
+                        : sales_trial_ends_on
+                )
+                : null;
+            tenantSalesMonthlyPrice = normalizeSalesPrice(
+                sales_monthly_price_eur === undefined
+                    ? currentProductSettings.rows[0].sales_monthly_price_eur
+                    : sales_monthly_price_eur
+            );
+            tenantSalesBillingCycle = (sales_billing_cycle === undefined
+                ? currentProductSettings.rows[0].sales_billing_cycle
+                : sales_billing_cycle) === 'annual' ? 'annual' : 'monthly';
+
+            if (tenantSalesSubscriptionStatus === 'trial' && !tenantSalesTrialEndsOn) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ message: 'Für eine Testphase ist ein gültiges Enddatum erforderlich.' });
+            }
+            if (Number.isNaN(tenantSalesMonthlyPrice)) {
+                await client.query('ROLLBACK');
+            return res.status(400).json({ message: 'Der vereinbarte Sales-Preis muss eine gültige Zahl ab 0 sein.' });
+            }
+        }
+
+        if (tenantSalesPlan === 'basic') {
+            const accountUsage = await client.query(
+                'SELECT COUNT(*)::int AS count FROM business_partner_accounts WHERE business_partner_id = $1',
+                [id]
+            );
+            const accountLimit = getSalesPlanDefinition('basic').limits.accounts;
+            if (Number(accountUsage.rows[0]?.count || 0) > accountLimit) {
+                await client.query('ROLLBACK');
+                return res.status(409).json({
+                    message: `Der Mandant besitzt mehr als ${accountLimit} Accounts. Vor dem Wechsel zu Sales Basic muss der Bestand reduziert werden.`,
+                    code: 'SALES_ACCOUNT_LIMIT_REACHED',
+                });
+            }
+        }
 
         let finalColorSchemeId = color_scheme_id;
 
@@ -290,8 +443,19 @@ exports.updateBusinessPartner = async (req, res) => {
                 newsletter_export_email = $21,
                 newsletter_external_signup_url = $22,
                 newsletter_recipient_limit = $23,
+                enabled_modules = COALESCE($24, enabled_modules),
+                default_workspace = COALESCE($25, default_workspace),
+                sales_plan = COALESCE($26, sales_plan),
+                sales_subscription_status = CASE WHEN $27::boolean THEN $28 ELSE sales_subscription_status END,
+                sales_trial_ends_on = CASE
+                    WHEN NOT $27::boolean THEN sales_trial_ends_on
+                    WHEN COALESCE($28, sales_subscription_status) = 'trial' THEN $29
+                    ELSE NULL
+                END,
+                sales_monthly_price_eur = CASE WHEN $30::boolean THEN $31 ELSE sales_monthly_price_eur END,
+                sales_billing_cycle = COALESCE($32, sales_billing_cycle),
                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = $24 RETURNING *`,
+             WHERE id = $33 RETURNING *`,
             [
                 name, 
                 address || null, 
@@ -316,12 +480,43 @@ exports.updateBusinessPartner = async (req, res) => {
                 newsletter_export_email || null,
                 newsletter_external_signup_url || null,
                 Number(newsletter_recipient_limit) || 250,
+                tenantModules,
+                tenantDefaultWorkspace,
+                tenantSalesPlan,
+                salesLifecycleWasProvided,
+                tenantSalesSubscriptionStatus,
+                tenantSalesTrialEndsOn,
+                salesMonthlyPriceWasProvided,
+                tenantSalesMonthlyPrice,
+                tenantSalesBillingCycle,
                 id 
             ]
         );
 
         if (updatedBpResult.rows.length === 0) {
             throw new Error('Business Partner not found.');
+        }
+
+        if (tenantSalesPlan === 'basic') {
+            await client.query(
+                `UPDATE account_radar_settings
+                 SET digest_frequency = 'weekly', updated_at = CURRENT_TIMESTAMP
+                 WHERE business_partner_id = $1
+                   AND digest_frequency IN ('daily', 'weekdays')`,
+                [id]
+            );
+            await client.query(
+                `DELETE FROM account_radar_digest_recipients recipient
+                 WHERE recipient.business_partner_id = $1
+                   AND recipient.user_id NOT IN (
+                     SELECT kept.user_id
+                     FROM account_radar_digest_recipients kept
+                     WHERE kept.business_partner_id = $1
+                     ORDER BY kept.created_at, kept.user_id
+                     LIMIT 3
+                   )`,
+                [id]
+            );
         }
 
         // 1. Regions-Logik

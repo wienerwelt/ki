@@ -1,9 +1,30 @@
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { campaignKeyFor, resolveDeliveryPlan } = require('../services/newsletterDeliveryService');
+const { renderNewsletterOptInEmail } = require('../services/emailTemplates');
+const { __test: emailTest } = require('../services/emailService');
 
 async function main() {
   if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET fehlt.');
+
+  const brandedPartner = {
+    name: 'Smoke-Mandant',
+    dashboard_title: 'Smoke Dashboard',
+    logo_url: '/logos/de-mobiliti.png',
+    color_scheme: { primary_color: '#e30613', primary_text_color: '#ffffff' },
+  };
+  const optInHtml = renderNewsletterOptInEmail({
+    username: 'Smoke',
+    confirmUrl: 'https://dashboard.mobiliti.at/newsletter/confirm/smoke',
+    partner: brandedPartner,
+  });
+  const logoAttachment = emailTest.resolveLogoAttachment(brandedPartner);
+  if (!optInHtml.includes('Smoke-Mandant') || !optInHtml.includes('Smoke Dashboard') || !optInHtml.includes('cid:brand-logo')) {
+    throw new Error('Newsletter-Opt-In verwendet nicht das mandantenspezifische Standard-Template.');
+  }
+  if (!logoAttachment?.path) {
+    throw new Error('Das PNG-Logo für System-Mails kann nicht als eingebetteter Anhang aufgelöst werden.');
+  }
 
   const directPlan = resolveDeliveryPlan({ newsletter_delivery_mode: 'mobiliti', newsletter_recipient_limit: 250 }, 250);
   const fallbackPlan = resolveDeliveryPlan({ newsletter_delivery_mode: 'mobiliti', newsletter_recipient_limit: 250 }, 251);

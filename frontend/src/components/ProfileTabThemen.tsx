@@ -1,15 +1,13 @@
 // frontend/src/components/ProfileTabThemen.tsx
 import React, { useState, useEffect } from 'react';
-import { Box, Grid, Typography, Autocomplete, TextField, Chip, ToggleButton, ToggleButtonGroup, FormControlLabel, Switch, CircularProgress, Tooltip, Snackbar } from '@mui/material';
+import { Box, Typography, Autocomplete, TextField, Chip, ToggleButton, ToggleButtonGroup, CircularProgress, Snackbar, Paper, Stack } from '@mui/material';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../apiClient';
-import { useTranslation } from 'react-i18next';
 
 const ProfileTabThemen: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, isDemoUser }) => {
-  const { t } = useTranslation();
   const { userTags, refreshUserTags, updateUser } = useAuth();
   
   const [allAvailableTags, setAllAvailableTags] = useState<string[]>([]);
@@ -21,15 +19,6 @@ const ProfileTabThemen: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, 
   // Initiale States
   const initialScore = user.article_score_min === 1 ? 'positive' : user.article_score_min === 0 ? 'balanced' : 'all';
   const [scoreFilter, setScoreFilter] = useState<'all'|'balanced'|'positive'>(initialScore);
-  const [newsletterOptIn, setNewsletterOptIn] = useState(Boolean(user.newsletter_opt_in));
-  const [briefingEnabled, setBriefingEnabled] = useState(Boolean(user.briefing_email_enabled));
-  const [memberNewsletterEnabled, setMemberNewsletterEnabled] = useState(Boolean(user.member_newsletter_enabled));
-
-  useEffect(() => {
-    setNewsletterOptIn(Boolean(user.newsletter_opt_in));
-    setBriefingEnabled(Boolean(user.briefing_email_enabled));
-    setMemberNewsletterEnabled(Boolean(user.member_newsletter_enabled));
-  }, [user.newsletter_opt_in, user.briefing_email_enabled, user.member_newsletter_enabled]);
 
   useEffect(() => {
     const fetchSelectData = async () => {
@@ -88,43 +77,28 @@ const ProfileTabThemen: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, 
     }
   };
 
-  const handleNewsletterChange = async (enabled: boolean) => {
-    if (isDemoUser) return;
-    try {
-      if (enabled) {
-        const response = await apiClient.post('/api/auth/newsletter/opt-in', {
-          email: user.email,
-          source: 'profile'
-        });
-        if (response.data?.alreadyConfirmed) {
-          setNewsletterOptIn(true);
-          setBriefingEnabled(true);
-          setMemberNewsletterEnabled(true);
-          updateUser({ newsletter_opt_in: true, briefing_email_enabled: true, member_newsletter_enabled: true });
-          setSnackbar({ open: true, message: 'Newsletter und Branchenbriefing sind aktiviert.' });
-        } else {
-          setNewsletterOptIn(false);
-          setSnackbar({ open: true, message: t('profile.newsletterSubscribeSuccess') });
-        }
-      } else {
-        await apiClient.put('/api/users/me', { newsletter_opt_in: false });
-        setNewsletterOptIn(false);
-        setBriefingEnabled(false);
-        setMemberNewsletterEnabled(false);
-        updateUser({ newsletter_opt_in: false, briefing_email_enabled: false, member_newsletter_enabled: false });
-        setSnackbar({ open: true, message: t('profile.newsletterUnsubscribeSuccess') });
-      }
-    } catch (_) {
-      setSnackbar({ open: true, message: t('profile.newsletterActionError') });
-    }
-  };
-
   return (
     <Box>
-      <Grid container spacing={4}>
-        <Grid item xs={12}>
-          <Typography variant="h6">Meine Förder-Interessen</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Wählen Sie relevante Branchen und Themen für den Match-Score.</Typography>
+      <Stack spacing={3}>
+        <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 3 }}>
+          <Typography variant="h6" fontWeight={800}>Meine Themen</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Diese Themen steuern, welche Inhalte im Dashboard bevorzugt erscheinen.</Typography>
+          {loading ? <CircularProgress size={24} /> : (
+            <Autocomplete
+              multiple
+              options={allAvailableTags}
+              value={userTags}
+              onChange={handleTagsChange}
+              disabled={isDemoUser}
+              renderInput={(params) => <TextField {...params} variant="outlined" placeholder="Themen auswählen" />}
+              renderTags={(val, getTagProps) => val.map((o, i) => <Chip variant="outlined" label={o} {...getTagProps({ index: i })} key={o} />)}
+            />
+          )}
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 3 }}>
+          <Typography variant="h6" fontWeight={800}>Förder-Interessen</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Relevante Bereiche verbessern den persönlichen Match-Score bei Förderungen.</Typography>
           {loading ? <CircularProgress size={24} /> : (
             <Autocomplete
               multiple
@@ -137,26 +111,11 @@ const ProfileTabThemen: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, 
               renderTags={(val, getTagProps) => val.map((o, i) => <Chip label={o.name} {...getTagProps({ index: i })} key={o.id} />)}
             />
           )}
-        </Grid>
+        </Paper>
 
-        <Grid item xs={12}>
-          <Typography variant="h6">Meine Themen / Tags</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Personalisieren Sie Ihre Dashboard-Inhalte.</Typography>
-          {loading ? <CircularProgress size={24} /> : (
-            <Autocomplete
-              multiple
-              options={allAvailableTags}
-              value={userTags}
-              onChange={handleTagsChange}
-              disabled={isDemoUser}
-              renderInput={(params) => <TextField {...params} variant="outlined" placeholder="Themen auswählen" />}
-              renderTags={(val, getTagProps) => val.map((o, i) => <Chip variant="outlined" label={o} {...getTagProps({ index: i })} key={o} />)}
-            />
-          )}
-        </Grid>
-
-        <Grid item xs={12}>
-          <Typography variant="h6">Artikel-Qualität</Typography>
+        <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 3 }}>
+          <Typography variant="h6" fontWeight={800}>Qualitätsfilter für Artikel</Typography>
+          <Typography variant="body2" color="text.secondary">Bestimmen Sie, welche redaktionelle Einordnung im Feed sichtbar sein soll.</Typography>
           <ToggleButtonGroup
             value={scoreFilter}
             exclusive
@@ -168,46 +127,14 @@ const ProfileTabThemen: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, 
                 }
             }}
             disabled={isDemoUser}
-            sx={{ mt: 1 }}
+            sx={{ mt: 2, flexWrap: 'wrap' }}
           >
             <ToggleButton value="all"><ThumbDownIcon sx={{ mr: 1 }} /> Alles</ToggleButton>
             <ToggleButton value="balanced"><RemoveCircleOutlineIcon sx={{ mr: 1 }} /> Ausgeglichen+</ToggleButton>
             <ToggleButton value="positive"><ThumbUpIcon sx={{ mr: 1 }} /> Nur Positive</ToggleButton>
           </ToggleButtonGroup>
-        </Grid>
-
-        <Grid item xs={12}>
-          <Typography variant="h6">{t('profile.newsletterTitle')}</Typography>
-          <FormControlLabel 
-            control={(
-              <Switch
-                checked={newsletterOptIn}
-                onChange={(e) => handleNewsletterChange(e.target.checked)}
-                disabled={isDemoUser}
-              />
-            )}
-            label={newsletterOptIn ? t('profile.newsletterOn') : t('profile.newsletterOff')}
-          />
-          {newsletterOptIn && (
-            <Box sx={{ pl: { xs: 0, sm: 4 }, mt: 1 }}>
-              <FormControlLabel
-                control={<Switch checked={briefingEnabled} disabled={isDemoUser} onChange={(event) => {
-                  setBriefingEnabled(event.target.checked);
-                  autoSaveProfilePref('briefing_email_enabled', event.target.checked);
-                }} />}
-                label="Branchenbriefing erhalten"
-              />
-              <FormControlLabel
-                control={<Switch checked={memberNewsletterEnabled} disabled={isDemoUser} onChange={(event) => {
-                  setMemberNewsletterEnabled(event.target.checked);
-                  autoSaveProfilePref('member_newsletter_enabled', event.target.checked);
-                }} />}
-                label="Manuelle Mitglieder-Mail erhalten"
-              />
-            </Box>
-          )}
-        </Grid>
-      </Grid>
+        </Paper>
+      </Stack>
       <Snackbar open={snackbar.open} autoHideDuration={3000} onClose={() => setSnackbar({ ...snackbar, open: false })} message={snackbar.message} />
     </Box>
   );

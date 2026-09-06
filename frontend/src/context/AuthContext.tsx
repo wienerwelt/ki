@@ -11,7 +11,11 @@ import apiClient from '../apiClient';
 import { Region } from '../types/dashboard.types';
 import i18n from 'i18next';
 import posthog from 'posthog-js';
-import { getPartnerPublicPath, rememberPartnerSlug } from '../utils/partnerNavigation';
+import {
+  getLogoutTarget,
+  rememberPartnerSlug,
+  type LogoutWorkspace,
+} from '../utils/partnerNavigation';
 
 interface ColorScheme {
   id: string;
@@ -62,6 +66,14 @@ export interface UserPayload {
   membership_days_remaining?: number | null;
   profile_image_url?: string | null;
   has_completed_onboarding?: boolean;
+  preferred_workspace?: 'content' | 'sales' | null;
+  tenant_modules?: Array<'content' | 'sales'>;
+  tenant_default_workspace?: 'content' | 'sales';
+  tenant_sales_plan?: 'basic' | 'premium';
+  tenant_sales_subscription_status?: 'active' | 'trial' | 'paused';
+  tenant_sales_trial_ends_on?: string | null;
+  tenant_sales_trial_days_remaining?: number | null;
+  tenant_sales_access_active?: boolean;
 }
 
 export interface BusinessPartnerData {
@@ -84,6 +96,13 @@ export interface BusinessPartnerData {
   newsletter_external_signup_url?: string | null;
   newsletter_recipient_limit?: number;
   dashboard_focus?: 'information' | 'sales';
+  enabled_modules?: Array<'content' | 'sales'>;
+  default_workspace?: 'content' | 'sales';
+  sales_plan?: 'basic' | 'premium';
+  sales_subscription_status?: 'active' | 'trial' | 'paused';
+  sales_trial_ends_on?: string | null;
+  sales_trial_days_remaining?: number | null;
+  sales_access_active?: boolean;
   favicon_url?: string;
 }
 
@@ -94,7 +113,7 @@ interface AuthContextType {
   isLoading: boolean;
   tokenExp: number | null;
   login: (userData: UserPayload, sessionExpiresAt?: string | null) => void;
-  logout: () => Promise<string>;
+  logout: (workspaceHint?: LogoutWorkspace) => Promise<string>;
   renewSession: () => Promise<void>;
   updateUser: (newUserData: Partial<UserPayload>) => void;
   fetchBusinessPartnerData: () => Promise<void>;
@@ -299,8 +318,25 @@ useEffect(() => {
     });
   }, []);
 
-  const logout = useCallback(async () => {
-    const publicPath = getPartnerPublicPath(businessPartner?.slug);
+  const logout = useCallback(async (workspaceHint?: LogoutWorkspace) => {
+    const currentPath = typeof window === 'undefined' ? '' : window.location.pathname;
+    const routeWorkspace: LogoutWorkspace | null = currentPath.startsWith('/radar')
+      || currentPath === '/admin/sales-leads'
+      || currentPath.startsWith('/admin/accounts/')
+      || (currentPath.startsWith('/admin/business-partners/') && currentPath.endsWith('/accounts'))
+      ? 'sales'
+      : null;
+    const workspace: LogoutWorkspace = workspaceHint
+      || routeWorkspace
+      || user?.preferred_workspace
+      || businessPartner?.default_workspace
+      || user?.tenant_default_workspace
+      || 'content';
+    const targetUrl = getLogoutTarget(
+      workspace,
+      businessPartner?.slug,
+      String(user?.role || '').toLowerCase() !== 'admin'
+    );
     try {
       await apiClient.post('/api/auth/logout');
     } finally {
@@ -311,8 +347,14 @@ useEffect(() => {
       setUserTags([]);
       posthog.reset();
     }
-    return publicPath;
-  }, [businessPartner?.slug]);
+    return targetUrl;
+  }, [
+    businessPartner?.default_workspace,
+    businessPartner?.slug,
+    user?.preferred_workspace,
+    user?.role,
+    user?.tenant_default_workspace,
+  ]);
   
   const renewSession = async () => {
     const { res, data } = await apiClient.post<{ expiresAt?: string }>('/api/session/renew');

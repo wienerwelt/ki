@@ -56,6 +56,7 @@ services:
       - mobiliti_dashboard_public_logos:/app/public/logos
       - mobiliti_dashboard_public_social_media:/app/public/social-media
       - mobiliti_dashboard_public_grafiken:/app/public/grafiken
+      - ./frontend/public:/frontend/public:ro
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/health').then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1));"]
       interval: 30s
@@ -87,6 +88,8 @@ services:
     restart: unless-stopped
     env_file: .env
     depends_on: *service-dependencies
+    volumes:
+      - ./frontend/public:/frontend/public:ro
 
   worker-data:
     <<: *default-logging

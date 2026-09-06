@@ -3,6 +3,24 @@ const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { SESSION_MAX_AGE_MS } = require('../services/sessionSecurity');
 const { getMembershipExpiry, isMembershipExpired } = require('../utils/membershipExpiry');
+const { normalizeTenantModules, normalizeWorkspace } = require('../services/tenantModuleService');
+
+const DEMO_SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+// Technische POST-Endpunkte ohne fachliche Datenänderung bleiben im Demo-Modus nutzbar.
+const DEMO_ALLOWED_WRITE_PATHS = new Set([
+  '/api/auth/logout',
+  '/api/session/renew',
+  '/api/data/fuel/prices-by-ids',
+]);
+
+function rejectDemoMutation(req, res) {
+  if (String(req.user?.role || '').toLowerCase() !== 'demo') return false;
+  if (DEMO_SAFE_METHODS.has(String(req.method || '').toUpperCase())) return false;
+  const requestPath = String(req.originalUrl || req.url || '').split('?')[0];
+  if (DEMO_ALLOWED_WRITE_PATHS.has(requestPath)) return false;
+  res.status(403).json({ message: 'Demo-Modus: Änderungen sind deaktiviert.' });
+  return true;
+}
 
 function getTokenFromRequest(req) {
   const candidates = [
@@ -28,9 +46,24 @@ async function loadCurrentUser(userId) {
     `SELECT u.id, u.username, u.email, u.role, u.business_partner_id,
             u.contribution_score, u.last_login_at, u.first_name, u.last_name,
             u.organization_name, u.profile_image_url, u.membership_level,
-            u.is_active, u.active_until, u.auth_version,
+            u.is_active, u.active_until, u.auth_version, u.preferred_workspace,
             COALESCE(bp.is_active, TRUE) AS business_partner_is_active,
-            bp.subscription_end_date AS business_partner_subscription_end_date
+            bp.subscription_end_date AS business_partner_subscription_end_date,
+            bp.enabled_modules AS tenant_modules,
+            bp.default_workspace AS tenant_default_workspace,
+            bp.sales_plan AS tenant_sales_plan,
+            bp.sales_subscription_status AS tenant_sales_subscription_status,
+            bp.sales_trial_ends_on AS tenant_sales_trial_ends_on,
+            CASE
+              WHEN bp.sales_subscription_status = 'active' THEN TRUE
+              WHEN bp.sales_subscription_status = 'trial' AND bp.sales_trial_ends_on >= CURRENT_DATE THEN TRUE
+              ELSE FALSE
+            END AS tenant_sales_access_active,
+            CASE
+              WHEN bp.sales_subscription_status = 'trial'
+                THEN GREATEST(bp.sales_trial_ends_on - CURRENT_DATE, 0)
+              ELSE NULL
+            END AS tenant_sales_trial_days_remaining
      FROM users u
      LEFT JOIN business_partners bp ON bp.id = u.business_partner_id
      WHERE u.id = $1
@@ -41,7 +74,10 @@ async function loadCurrentUser(userId) {
 }
 
 const authMiddleware = async (req, res, next) => {
-  if (req.securityUserLoaded && req.user) return next();
+  if (req.securityUserLoaded && req.user) {
+    if (rejectDemoMutation(req, res)) return;
+    return next();
+  }
 
   const token = getTokenFromRequest(req);
   if (!token) return res.status(401).json({ message: 'Authentifizierung erforderlich.' });
@@ -67,6 +103,7 @@ const authMiddleware = async (req, res, next) => {
     }
 
     const membershipExpiry = getMembershipExpiry(user.active_until);
+    const tenantModules = normalizeTenantModules(user.tenant_modules);
     req.user = {
       id: user.id,
       username: user.username,
@@ -80,6 +117,18 @@ const authMiddleware = async (req, res, next) => {
       organization_name: user.organization_name,
       profile_image_url: user.profile_image_url,
       membership_level: user.membership_level,
+      preferred_workspace: user.preferred_workspace || null,
+      tenant_modules: tenantModules,
+      tenant_default_workspace: normalizeWorkspace(user.tenant_default_workspace, tenantModules),
+      tenant_sales_plan: user.tenant_sales_plan || 'basic',
+      tenant_sales_subscription_status: user.tenant_sales_subscription_status || 'active',
+      tenant_sales_trial_ends_on: user.tenant_sales_trial_ends_on || null,
+      tenant_sales_trial_days_remaining: user.tenant_sales_trial_days_remaining === null
+        ? null
+        : Number(user.tenant_sales_trial_days_remaining),
+      tenant_sales_access_active: user.tenant_sales_access_active !== false,
+      tenant_sales_trial_expired: user.tenant_sales_subscription_status === 'trial'
+        && user.tenant_sales_access_active === false,
       active_until: user.active_until,
       membership_expires_on: membershipExpiry.expiresOn,
       membership_days_remaining: membershipExpiry.daysRemaining,
@@ -92,6 +141,7 @@ const authMiddleware = async (req, res, next) => {
       expiresAt: new Date(Math.min(tokenExpiresAt, absoluteSessionEnd)),
     };
     req.securityUserLoaded = true;
+    if (rejectDemoMutation(req, res)) return;
     return next();
   } catch (_error) {
     return res.status(401).json({ message: 'Sitzung ist ungültig oder abgelaufen.' });
@@ -100,5 +150,6 @@ const authMiddleware = async (req, res, next) => {
 
 authMiddleware.getTokenFromRequest = getTokenFromRequest;
 authMiddleware.loadCurrentUser = loadCurrentUser;
+authMiddleware.__test = { rejectDemoMutation };
 
 module.exports = authMiddleware;

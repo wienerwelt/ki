@@ -3,10 +3,22 @@ const { ListObjectsV2Command, PutObjectCommand } = require('@aws-sdk/client-s3')
 const s3Client = require('../config/s3Client.js');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
+const fs = require('fs');
+const path = require('path');
+const { logActivity } = require('../services/auditLogService');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALLOWED_SCOPES = new Set(['country', 'europe', 'worldwide']);
 const ALLOWED_STATUSES = new Set(['draft', 'published', 'archived']);
+const ALLOWED_EXPERIENCE_LEVELS = new Set(['in_use', 'evaluated', 'general']);
+const ALLOWED_PRICING_MODELS = new Set([
+    'Kostenlos',
+    'Freemium',
+    'Abonnement',
+    'Einmalkauf / Lizenz',
+    'Nutzungsabhängig',
+    'Auf Anfrage',
+]);
 
 const isValidUUID = (value) => UUID_PATTERN.test(String(value || ''));
 
@@ -70,6 +82,17 @@ const normalizeCategoryIds = (value) => {
     return Array.from(new Set(source.map(String).filter(isValidUUID))).slice(0, 12);
 };
 
+const normalizePricingModel = (value) => {
+    const pricingModel = cleanText(value, 100);
+    if (!pricingModel) return null;
+    if (!ALLOWED_PRICING_MODELS.has(pricingModel)) {
+        const error = new Error('Bitte ein gültiges Preismodell aus der vorgegebenen Liste auswählen.');
+        error.statusCode = 400;
+        throw error;
+    }
+    return pricingModel;
+};
+
 const normalizeSoftwarePayload = (body, businessPartnerId) => {
     const coverageScope = ALLOWED_SCOPES.has(body.coverage_scope) ? body.coverage_scope : 'country';
     const countries = normalizeCountries(body.country_codes);
@@ -92,7 +115,7 @@ const normalizeSoftwarePayload = (body, businessPartnerId) => {
         coverage_scope: coverageScope,
         country_codes: countries,
         deployment_model: cleanText(body.deployment_model, 100),
-        pricing_model: cleanText(body.pricing_model, 100),
+        pricing_model: normalizePricingModel(body.pricing_model),
         target_group: cleanText(body.target_group, 255),
         status,
         is_active: body.is_active === undefined ? true : !!body.is_active,
@@ -216,7 +239,19 @@ const softwareSelect = `
                AND sr_count.business_partner_id = st.business_partner_id) AS rating_count,
             (SELECT AVG(sr_avg.rating) FROM software_ratings sr_avg
              WHERE sr_avg.software_tool_id = st.id
-               AND sr_avg.business_partner_id = st.business_partner_id) AS average_rating
+               AND sr_avg.business_partner_id = st.business_partner_id) AS average_rating,
+            (SELECT COUNT(*) FROM software_ratings sr_use
+             WHERE sr_use.software_tool_id = st.id
+               AND sr_use.business_partner_id = st.business_partner_id
+               AND sr_use.experience_level = 'in_use') AS in_use_count,
+            (SELECT COUNT(*) FROM software_ratings sr_eval
+             WHERE sr_eval.software_tool_id = st.id
+               AND sr_eval.business_partner_id = st.business_partner_id
+               AND sr_eval.experience_level = 'evaluated') AS evaluated_count,
+            (SELECT COUNT(*) FROM software_ratings sr_general
+             WHERE sr_general.software_tool_id = st.id
+               AND sr_general.business_partner_id = st.business_partner_id
+               AND sr_general.experience_level = 'general') AS general_count
     ) experiences ON true
 `;
 
@@ -348,6 +383,32 @@ exports.getManagedLogoLibrary = async (req, res) => {
             source: item.source_type,
         }));
 
+        // Frühere Branchenverzeichnis-Uploads liegen im persistenten Volume,
+        // auch wenn eine alte DB-Zuordnung später entfernt oder neu importiert
+        // wurde. Sie bleiben bewusst nur auswählbar und werden keinem Anbieter
+        // automatisch zugeordnet.
+        const directoryLogoPath = path.join(__dirname, '..', 'public', 'directory_logos');
+        try {
+            const files = await fs.promises.readdir(directoryLogoPath, { withFileTypes: true });
+            files
+                .filter((entry) => entry.isFile() && /^[a-zA-Z0-9._-]+\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(entry.name))
+                .slice(0, 600)
+                .forEach((entry) => {
+                    const label = entry.name
+                        .replace(/\.[^.]+$/, '')
+                        .replace(/-\d{4}$/, '')
+                        .replace(/[-_]+/g, ' ')
+                        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+                    library.push({
+                        url: `/directory_logos/${encodeURIComponent(entry.name)}`,
+                        label: label || 'Branchenverzeichnis-Logo',
+                        source: 'Branchenverzeichnis-Logoarchiv',
+                    });
+                });
+        } catch (fileError) {
+            if (fileError.code !== 'ENOENT') console.warn('[Software] directory logo archive unavailable:', fileError.message);
+        }
+
         const bucket = String(process.env.AWS_S3_BUCKET_NAME || '').trim();
         const region = String(process.env.AWS_S3_REGION || '').trim();
         if (bucket && region) {
@@ -384,7 +445,11 @@ exports.getManagedLogoLibrary = async (req, res) => {
             }
         }
 
-        const unique = Array.from(new Map(library.map((item) => [item.url, item])).values())
+        const uniqueByUrl = new Map();
+        library.forEach((item) => {
+            if (!uniqueByUrl.has(item.url)) uniqueByUrl.set(item.url, item);
+        });
+        const unique = Array.from(uniqueByUrl.values())
             .filter((item) => !search || `${item.label} ${item.source} ${item.url}`.toLowerCase().includes(search))
             .sort((a, b) => a.source.localeCompare(b.source, 'de') || a.label.localeCompare(b.label, 'de'))
             .slice(0, 600);
@@ -553,6 +618,81 @@ exports.archiveSoftware = async (req, res) => {
     }
 };
 
+exports.deleteSoftware = async (req, res) => {
+    let client;
+    try {
+        if (!isValidUUID(req.params.id)) return res.status(400).json({ message: 'Ungültige Software-ID.' });
+
+        client = await db.connect();
+        await client.query('BEGIN');
+        const existing = await client.query(`
+            SELECT id, business_partner_id, name
+            FROM software_tools
+            WHERE id = $1
+            FOR UPDATE
+        `, [req.params.id]);
+        if (existing.rows.length === 0) {
+            const error = new Error('Software nicht gefunden.');
+            error.statusCode = 404;
+            throw error;
+        }
+
+        const software = existing.rows[0];
+        const businessPartnerId = resolveManagedBusinessPartnerId(req, software.business_partner_id);
+        if (businessPartnerId !== software.business_partner_id) {
+            const error = new Error('Zugriff verweigert.');
+            error.statusCode = 403;
+            throw error;
+        }
+
+        // Inhalte bleiben erhalten: Actions und Community-Beiträge verlieren nur
+        // ihre Software-Verknüpfung. Kategorien und Bewertungen werden über die
+        // vorhandenen ON-DELETE-CASCADE-Regeln entfernt.
+        const detachedActions = await client.query(`
+            UPDATE business_partner_actions
+            SET software_tool_id = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE software_tool_id = $1 AND business_partner_id = $2
+        `, [software.id, businessPartnerId]);
+        const detachedPosts = await client.query(`
+            UPDATE community_posts
+            SET software_tool_id = NULL, software_rating = NULL
+            WHERE software_tool_id = $1 AND business_partner_id = $2
+        `, [software.id, businessPartnerId]);
+        await client.query('DELETE FROM software_tools WHERE id = $1', [software.id]);
+        await client.query('COMMIT');
+
+        logActivity({
+            userId: req.user.id,
+            username: req.user.username,
+            actionType: 'SOFTWARE_DELETE',
+            status: 'success',
+            targetId: software.id,
+            targetType: 'software',
+            details: {
+                name: software.name,
+                businessPartnerId,
+                detachedActions: detachedActions.rowCount,
+                detachedCommunityPosts: detachedPosts.rowCount,
+            },
+            ipAddress: req.ip,
+        }).catch((auditError) => console.error('[Software] delete audit:', auditError.message));
+
+        return res.json({
+            message: 'Software wurde endgültig gelöscht.',
+            detachedActions: detachedActions.rowCount,
+            detachedCommunityPosts: detachedPosts.rowCount,
+        });
+    } catch (error) {
+        if (client) await client.query('ROLLBACK');
+        console.error('[Software] delete:', error.message);
+        return res.status(error.statusCode || 500).json({
+            message: error.statusCode ? error.message : 'Software konnte nicht gelöscht werden.',
+        });
+    } finally {
+        if (client) client.release();
+    }
+};
+
 exports.getInternalCatalog = async (req, res) => {
     const businessPartnerId = req.user.business_partner_id;
     if (!isValidUUID(businessPartnerId)) return res.status(403).json({ message: 'Kein Mandant zugeordnet.' });
@@ -567,16 +707,17 @@ exports.getInternalCatalog = async (req, res) => {
                 ORDER BY st.is_featured DESC, st.name
             `, [businessPartnerId]),
             db.query(`
-                SELECT software_tool_id, rating
+                SELECT software_tool_id, rating, experience_level
                 FROM software_ratings
                 WHERE business_partner_id = $1 AND user_id = $2
             `, [businessPartnerId, req.user.id]),
         ]);
-        const ratingByTool = new Map(myRatings.rows.map((row) => [row.software_tool_id, Number(row.rating)]));
+        const ratingByTool = new Map(myRatings.rows.map((row) => [row.software_tool_id, row]));
         return res.json({
             data: result.rows.map((row) => ({
                 ...toCatalogEntry(row),
-                my_rating: ratingByTool.get(row.id) || null,
+                my_rating: ratingByTool.has(row.id) ? Number(ratingByTool.get(row.id).rating) : null,
+                my_experience_level: ratingByTool.get(row.id)?.experience_level || null,
             })),
         });
     } catch (error) {
@@ -593,11 +734,15 @@ exports.rateSoftware = async (req, res) => {
     const businessPartnerId = req.user.business_partner_id;
     const softwareToolId = req.params.id;
     const rating = Number.parseInt(req.body?.rating, 10);
+    const experienceLevel = String(req.body?.experienceLevel || '');
     if (!isValidUUID(businessPartnerId) || !isValidUUID(softwareToolId)) {
         return res.status(400).json({ message: 'Ungültige Software-Auswahl.' });
     }
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
         return res.status(400).json({ message: 'Die Bewertung muss zwischen 1 und 5 liegen.' });
+    }
+    if (!ALLOWED_EXPERIENCE_LEVELS.has(experienceLevel)) {
+        return res.status(400).json({ message: 'Bitte den Erfahrungskontext auswählen.' });
     }
 
     try {
@@ -616,16 +761,20 @@ exports.rateSoftware = async (req, res) => {
 
         await db.query(`
             INSERT INTO software_ratings (
-                software_tool_id, business_partner_id, user_id, rating
-            ) VALUES ($1, $2, $3, $4)
+                software_tool_id, business_partner_id, user_id, rating, experience_level
+            ) VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (software_tool_id, business_partner_id, user_id) DO UPDATE
             SET rating = EXCLUDED.rating,
+                experience_level = EXCLUDED.experience_level,
                 updated_at = CURRENT_TIMESTAMP
-        `, [softwareToolId, businessPartnerId, req.user.id, rating]);
+        `, [softwareToolId, businessPartnerId, req.user.id, rating, experienceLevel]);
 
         const aggregate = await db.query(`
             SELECT COUNT(*)::int AS rating_count,
-                   ROUND(AVG(rating)::numeric, 1) AS average_rating
+                   ROUND(AVG(rating)::numeric, 1) AS average_rating,
+                   COUNT(*) FILTER (WHERE experience_level = 'in_use')::int AS in_use_count,
+                   COUNT(*) FILTER (WHERE experience_level = 'evaluated')::int AS evaluated_count,
+                   COUNT(*) FILTER (WHERE experience_level = 'general')::int AS general_count
             FROM software_ratings
             WHERE software_tool_id = $1 AND business_partner_id = $2
         `, [softwareToolId, businessPartnerId]);
@@ -633,8 +782,12 @@ exports.rateSoftware = async (req, res) => {
         return res.json({
             software_tool_id: softwareToolId,
             my_rating: rating,
+            my_experience_level: experienceLevel,
             rating_count: aggregate.rows[0]?.rating_count || 0,
             average_rating: aggregate.rows[0]?.average_rating || 0,
+            in_use_count: aggregate.rows[0]?.in_use_count || 0,
+            evaluated_count: aggregate.rows[0]?.evaluated_count || 0,
+            general_count: aggregate.rows[0]?.general_count || 0,
         });
     } catch (error) {
         console.error('[Software] rating:', error.message);

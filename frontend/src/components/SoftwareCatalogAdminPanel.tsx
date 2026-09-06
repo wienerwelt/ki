@@ -37,6 +37,14 @@ import { useAuth } from '../context/AuthContext';
 import { resolveAssetUrl } from '../utils/assetUrl';
 
 const DEFAULT_SOFTWARE_LOGO = '/logos/default-company.svg';
+const PRICING_MODEL_OPTIONS = [
+    'Kostenlos',
+    'Freemium',
+    'Abonnement',
+    'Einmalkauf / Lizenz',
+    'Nutzungsabhängig',
+    'Auf Anfrage',
+] as const;
 
 interface BusinessPartner { id: string; name: string; }
 interface ProviderOption { id: string; name: string; logo_url?: string; }
@@ -122,10 +130,11 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
             const response = await apiClient.get('/api/admin/actions/software', {
                 params: selectedBusinessPartnerId ? { businessPartnerId: selectedBusinessPartnerId } : {},
             });
+            if (!response.res.ok) throw new Error(response.data?.message || 'Software-Katalog konnte nicht geladen werden.');
             setEntries(response.data || []);
             setError(null);
         } catch (err: any) {
-            setError(err.response?.data?.message || 'Software-Katalog konnte nicht geladen werden.');
+            setError(err?.message || err.response?.data?.message || 'Software-Katalog konnte nicht geladen werden.');
         } finally {
             setLoading(false);
         }
@@ -138,7 +147,10 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
     useEffect(() => {
         if (!isAdmin) return;
         apiClient.get('/api/admin/business-partners')
-            .then((response) => setBusinessPartners(response.data || []))
+            .then((response) => {
+                if (!response.res.ok) throw new Error(response.data?.message || 'Business Partner konnten nicht geladen werden.');
+                setBusinessPartners(response.data || []);
+            })
             .catch(() => setError('Business Partner konnten nicht geladen werden.'));
     }, [isAdmin]);
 
@@ -149,11 +161,12 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
         }
         apiClient.get('/api/admin/actions/catalog/options', { params: { businessPartnerId: form.business_partner_id } })
             .then((response) => {
+                if (!response.res.ok) throw new Error(response.data?.message || 'Katalog-Optionen konnten nicht geladen werden.');
                 setProviders(response.data.providers || []);
                 setCategories(response.data.categories || []);
                 setRegions(response.data.regions || []);
             })
-            .catch((err) => setError(err.response?.data?.message || 'Katalog-Optionen konnten nicht geladen werden.'));
+            .catch((err) => setError(err?.message || err.response?.data?.message || 'Katalog-Optionen konnten nicht geladen werden.'));
     }, [open, form.business_partner_id]);
 
     const openCreate = () => {
@@ -209,9 +222,10 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
             const response = await apiClient.get('/api/admin/actions/software-logo/library', {
                 params: { businessPartnerId: form.business_partner_id },
             });
+            if (!response.res.ok) throw new Error(response.data?.message || 'Bestehende Logos konnten nicht geladen werden.');
             setLogoLibrary(response.data?.items || []);
         } catch (err: any) {
-            setLogoLibraryError(err.response?.data?.message || 'Bestehende Logos konnten nicht geladen werden.');
+            setLogoLibraryError(err?.message || err.response?.data?.message || 'Bestehende Logos konnten nicht geladen werden.');
         } finally {
             setLogoLibraryLoading(false);
         }
@@ -229,9 +243,10 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
             payload.append('softwareLogo', file);
             payload.append('businessPartnerId', form.business_partner_id);
             const response = await apiClient.post('/api/admin/actions/software-logo/upload', payload);
+            if (!response.res.ok) throw new Error(response.data?.message || 'Logo konnte nicht hochgeladen werden.');
             setForm((current) => ({ ...current, logo_url: response.data.filePath }));
         } catch (err: any) {
-            setError(err.response?.data?.message || 'Logo konnte nicht hochgeladen werden.');
+            setError(err?.message || err.response?.data?.message || 'Logo konnte nicht hochgeladen werden.');
         } finally {
             setUploadingLogo(false);
         }
@@ -251,15 +266,14 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
         setError(null);
         const payload = { ...form, country_codes: form.country_codes };
         try {
-            if (form.id) {
-                await apiClient.put(`/api/admin/actions/software/${form.id}`, payload);
-            } else {
-                await apiClient.post('/api/admin/actions/software', payload);
-            }
+            const response = form.id
+                ? await apiClient.put(`/api/admin/actions/software/${form.id}`, payload)
+                : await apiClient.post('/api/admin/actions/software', payload);
+            if (!response.res.ok) throw new Error(response.data?.message || 'Software konnte nicht gespeichert werden.');
             setOpen(false);
             await loadEntries();
         } catch (err: any) {
-            setError(err.response?.data?.message || 'Software konnte nicht gespeichert werden.');
+            setError(err?.message || err.response?.data?.message || 'Software konnte nicht gespeichert werden.');
         } finally {
             setSaving(false);
         }
@@ -268,10 +282,33 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
     const archive = async (entry: SoftwareEntry) => {
         if (!window.confirm(`„${entry.name}“ archivieren? Bestehende Actions bleiben erhalten, der Eintrag wird aber nicht mehr ausgespielt.`)) return;
         try {
-            await apiClient.delete(`/api/admin/actions/software/${entry.id}`);
+            const response = await apiClient.delete(`/api/admin/actions/software/${entry.id}`);
+            if (!response.res.ok) throw new Error(response.data?.message || 'Software konnte nicht archiviert werden.');
             await loadEntries();
         } catch (err: any) {
-            setError(err.response?.data?.message || 'Software konnte nicht archiviert werden.');
+            setError(err?.message || err.response?.data?.message || 'Software konnte nicht archiviert werden.');
+        }
+    };
+
+    const removePermanently = async (entry: SoftwareEntry) => {
+        const confirmed = window.confirm(
+            `„${entry.name}“ endgültig löschen?\n\nBewertungen und Kategoriezuordnungen werden gelöscht. ` +
+            'Bestehende Actions und Community-Beiträge bleiben erhalten, werden aber von der Software entkoppelt. Dieser Schritt kann nicht rückgängig gemacht werden.'
+        );
+        if (!confirmed) return;
+
+        try {
+            const response = await apiClient.delete(`/api/admin/actions/software/${entry.id}/permanent`);
+            if (!response.res.ok) throw new Error(response.data?.message || 'Software konnte nicht gelöscht werden.');
+            const detachedActions = Number(response.data?.detachedActions || 0);
+            const detachedPosts = Number(response.data?.detachedCommunityPosts || 0);
+            setError(null);
+            await loadEntries();
+            if (detachedActions > 0 || detachedPosts > 0) {
+                window.alert(`Software gelöscht. ${detachedActions} Action(s) und ${detachedPosts} Community-Beitrag/Beiträge wurden entkoppelt.`);
+            }
+        } catch (err: any) {
+            setError(err?.message || err.response?.data?.message || 'Software konnte nicht gelöscht werden.');
         }
     };
 
@@ -323,6 +360,7 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                                         <Tooltip title="Bearbeiten"><IconButton size="small" onClick={() => openEdit(entry)}><EditIcon fontSize="small" /></IconButton></Tooltip>
                                         {entry.product_url && <Tooltip title="Produktseite"><IconButton size="small" href={entry.product_url} target="_blank" rel="noopener noreferrer"><OpenInNewIcon fontSize="small" /></IconButton></Tooltip>}
                                         {entry.status !== 'archived' && <Tooltip title="Archivieren"><IconButton size="small" onClick={() => archive(entry)}><ArchiveOutlinedIcon fontSize="small" /></IconButton></Tooltip>}
+                                        <Tooltip title="Endgültig löschen"><IconButton size="small" color="error" onClick={() => removePermanently(entry)}><DeleteOutlineIcon fontSize="small" /></IconButton></Tooltip>
                                     </Stack>
                                 </Stack>
                                 <Stack direction="row" spacing={0.7} useFlexGap flexWrap="wrap" sx={{ my: 1.3 }}>
@@ -482,7 +520,20 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                             />
                         </Grid>
                         <Grid item xs={12} md={4}><TextField fullWidth size="small" label="Bereitstellung" placeholder="Cloud / SaaS / On-Premise" value={form.deployment_model || ''} onChange={(event) => setForm((current) => ({ ...current, deployment_model: event.target.value }))} /></Grid>
-                        <Grid item xs={12} md={4}><TextField fullWidth size="small" label="Preismodell" placeholder="Abo / pro Fahrzeug / auf Anfrage" value={form.pricing_model || ''} onChange={(event) => setForm((current) => ({ ...current, pricing_model: event.target.value }))} /></Grid>
+                        <Grid item xs={12} md={4}>
+                            <TextField
+                                select
+                                fullWidth
+                                size="small"
+                                label="Preismodell"
+                                value={form.pricing_model || ''}
+                                onChange={(event) => setForm((current) => ({ ...current, pricing_model: event.target.value }))}
+                                helperText="Einheitliche Auswahl für Suche und Vergleich"
+                            >
+                                <MenuItem value=""><em>Nicht angegeben</em></MenuItem>
+                                {PRICING_MODEL_OPTIONS.map((model) => <MenuItem key={model} value={model}>{model}</MenuItem>)}
+                            </TextField>
+                        </Grid>
                         <Grid item xs={12} md={4}><TextField fullWidth size="small" label="Zielgruppe" placeholder="KMU, Großflotten, Kommunen …" value={form.target_group || ''} onChange={(event) => setForm((current) => ({ ...current, target_group: event.target.value }))} /></Grid>
                         <Grid item xs={12} md={4}>
                             <FormControl fullWidth size="small">

@@ -201,78 +201,116 @@ exports.createSource = async (req, res) => {
 
 
 exports.voteOnSource = async (req, res) => {
-    // --- NEU: Demo-Check ---
     if (req.user.role === 'demo') {
         return res.status(403).json({ message: 'Demo-Benutzer dürfen nicht abstimmen.' });
     }
 
     const { id: sourceId } = req.params;
-    if (!isValidUUID(sourceId)) return res.status(400).json({ message: 'Invalid source ID format.' });
-    
-    const { rating, comment } = req.body;
+    if (!isValidUUID(sourceId)) {
+        return res.status(400).json({ message: 'Ungültige Quellen-ID.' });
+    }
+
+    const numericRating = Number(req.body.rating);
+    const cleanComment = req.body.comment
+        ? sanitizeHtml(String(req.body.comment), { allowedTags: [], allowedAttributes: {} }).trim().slice(0, 1000)
+        : null;
     const userId = req.user.id;
 
-    if (!rating || rating < 1 || rating > 5) {
-        return res.status(400).json({ message: 'Rating must be a number between 1 and 5.' });
+    if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) {
+        return res.status(400).json({ message: 'Die Bewertung muss zwischen 1 und 5 Sternen liegen.' });
     }
 
     const client = await db.connect();
     try {
         await client.query('BEGIN');
 
-        // NEU: Den Namen (URL) der Quelle für die Beschreibung abrufen
-        const sourceRes = await client.query('SELECT url FROM sources WHERE id = $1', [sourceId]);
-        if (sourceRes.rows.length === 0) {
-            return res.status(404).json({ message: 'Source not found.' });
-        }
-        const sourceName = sourceRes.rows[0].url;
-        const description = `Punkte für Abstimmung über "${sourceName}" erhalten`;
-
-        // Log-Eintrag in die neue Tabelle einfügen
-        await client.query(
-            `INSERT INTO user_score_logs (id, reference_id, user_id, rating, comment, points_change, action_type, description) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [uuidv4(), sourceId, userId, rating, comment || null, 1, 'SOURCE_VOTE', description] // NEU: Dynamische Beschreibung
+        const sourceRes = await client.query(
+            `SELECT url, status
+             FROM sources
+             WHERE id = $1
+             FOR SHARE`,
+            [sourceId]
         );
+        if (sourceRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Quelle nicht gefunden.' });
+        }
+        if (!['pending_review', 'approved'].includes(sourceRes.rows[0].status)) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ message: 'Diese Quelle kann derzeit nicht bewertet werden.' });
+        }
 
-        // Dem abstimmenden Nutzer +1 Punkt geben
-        await client.query('UPDATE users SET contribution_score = contribution_score + 1 WHERE id = $1', [userId]);
+        const description = `Punkte für Abstimmung über "${sourceRes.rows[0].url}" erhalten`;
+        const insertedVote = await client.query(
+            `INSERT INTO source_votes (id, source_id, user_id, rating, comment)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (source_id, user_id) DO NOTHING
+             RETURNING id`,
+            [uuidv4(), sourceId, userId, numericRating, cleanComment]
+        );
+        const isFirstVote = insertedVote.rowCount === 1;
 
-        // average_rating und vote_count in der 'sources' Tabelle aktualisieren
-        await client.query(
-            `UPDATE sources s
-             SET
-                vote_count = (SELECT COUNT(*) FROM user_score_logs WHERE reference_id = s.id),
-                average_rating = (
-                    SELECT
-                        SUM(usl.rating * (1 + u.contribution_score / 100.0))
-                        /
-                        SUM(1 + u.contribution_score / 100.0)
-                    FROM
-                        user_score_logs usl
-                    JOIN
-                        users u ON usl.user_id = u.id
-                    WHERE
-                        usl.reference_id = s.id
-                )
-             WHERE
-                s.id = $1`,
+        if (isFirstVote) {
+            await client.query(
+                `INSERT INTO user_score_logs
+                    (id, reference_id, user_id, rating, comment, points_change, action_type, description)
+                 VALUES ($1, $2, $3, $4, $5, 1, 'SOURCE_VOTE', $6)`,
+                [uuidv4(), sourceId, userId, numericRating, cleanComment, description]
+            );
+            await client.query(
+                'UPDATE users SET contribution_score = contribution_score + 1 WHERE id = $1',
+                [userId]
+            );
+        } else {
+            await client.query(
+                `UPDATE source_votes
+                 SET rating = $3,
+                     comment = $4,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE source_id = $1 AND user_id = $2`,
+                [sourceId, userId, numericRating, cleanComment]
+            );
+        }
+
+        const aggregateResult = await client.query(
+            `WITH aggregate AS (
+                SELECT
+                    COUNT(*)::INTEGER AS vote_count,
+                    ROUND((
+                        SUM(votes.rating * (1 + GREATEST(COALESCE(app_user.contribution_score, 0), 0) / 100.0))
+                        / NULLIF(SUM(1 + GREATEST(COALESCE(app_user.contribution_score, 0), 0) / 100.0), 0)
+                    )::NUMERIC, 2) AS average_rating
+                FROM source_votes votes
+                JOIN users app_user ON app_user.id = votes.user_id
+                WHERE votes.source_id = $1
+             )
+             UPDATE sources source
+             SET vote_count = aggregate.vote_count,
+                 average_rating = COALESCE(aggregate.average_rating, 0),
+                 updated_at = CURRENT_TIMESTAMP
+             FROM aggregate
+             WHERE source.id = $1
+             RETURNING source.vote_count, source.average_rating`,
             [sourceId]
         );
 
         await client.query('COMMIT');
-        res.status(201).json({ message: 'Vote submitted successfully.' });
-
+        return res.status(isFirstVote ? 201 : 200).json({
+            message: isFirstVote
+                ? 'Community-Trust gespeichert. Du erhältst dafür einmalig +1 Punkt.'
+                : 'Community-Trust aktualisiert.',
+            isFirstVote,
+            userRating: numericRating,
+            voteCount: aggregateResult.rows[0]?.vote_count || 0,
+            averageRating: Number(aggregateResult.rows[0]?.average_rating || 0)
+        });
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error voting on source:', err.message);
-        if (err.code === '23505') { 
-            return res.status(409).json({ message: 'You have already voted on this source.' });
+        if (err.code === '23503') {
+            return res.status(404).json({ message: 'Quelle nicht gefunden.' });
         }
-         if (err.code === '23503') { 
-            return res.status(404).json({ message: 'Source not found.' });
-        }
-        res.status(500).send('Server error');
+        return res.status(500).json({ message: 'Community-Trust konnte nicht gespeichert werden.' });
     } finally {
         client.release();
     }
@@ -307,5 +345,39 @@ exports.reportSource = async (req, res) => {
             return res.status(404).json({ message: 'Source not found.' });
         }
         res.status(500).send('Server error');
+    }
+};
+
+// @desc    Freigegebene und noch zu prüfende Quellen für Community-Trust
+// @route   GET /api/sources/community-trust
+// @access  Private
+exports.getCommunityTrustSources = async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT
+                s.id, s.url, s.description, s.status, s.average_rating, s.vote_count,
+                s.created_at, s.logo_url,
+                c.name AS category_name,
+                c.name_lang AS category_name_lang,
+                own_vote.rating AS user_rating,
+                own_vote.comment AS user_comment,
+                own_vote.updated_at AS user_vote_updated_at
+             FROM sources s
+             LEFT JOIN categories c ON s.category_id = c.id
+             LEFT JOIN source_votes own_vote
+               ON own_vote.source_id = s.id
+              AND own_vote.user_id = $1
+             WHERE s.status IN ('pending_review', 'approved')
+             ORDER BY
+                CASE WHEN own_vote.id IS NULL THEN 0 ELSE 1 END,
+                CASE WHEN s.status = 'pending_review' THEN 0 ELSE 1 END,
+                s.created_at DESC`,
+            [req.user.id]
+        );
+
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching Community-Trust sources:', err.message);
+        res.status(500).json({ message: 'Community-Trust konnte nicht geladen werden.' });
     }
 };

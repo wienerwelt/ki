@@ -7,6 +7,11 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider, createTheme, Theme } from '@mui/material/styles';
 import { CssBaseline, Box, CircularProgress } from '@mui/material';
 import { SnackbarProvider } from './context/SnackbarContext';
+import {
+  canUseContentWorkspace,
+  canUseSalesWorkspace,
+  getDefaultWorkspacePath,
+} from './utils/workspaceAccess';
 
 // CookieBanner bleibt klein und global. Das DashboardLayout wird lazy geladen,
 // damit öffentliche Seiten nicht die komplette Dashboard-Shell mitladen.
@@ -17,6 +22,7 @@ const DashboardLayout = lazy(() => import('./components/DashboardLayout'));
 
 // Öffentliche Seiten – lazy, damit sie nicht alle im Hauptbundle landen.
 const PublicPortalPage = lazy(() => import('./pages/PublicPortalPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
@@ -31,6 +37,8 @@ const FundingDetailPage = lazy(() => import('./pages/FundingDetailPage'));
 const PublicProfileCard = lazy(() => import('./pages/PublicProfileCard'));
 const PublicBpCard = lazy(() => import('./pages/PublicBpCard'));
 const PublicFileDownloadPage = lazy(() => import('./pages/PublicFileDownloadPage'));
+const PublicAssistantEmbedPage = lazy(() => import('./pages/PublicAssistantEmbedPage'));
+const AccountRadarProductPage = lazy(() => import('./pages/AccountRadarProductPage'));
 
 // Geschützte Seiten – route-level code splitting.
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
@@ -41,7 +49,9 @@ const CommunityPage = lazy(() => import('./pages/CommunityPage'));
 const TrustedSourcesPage = lazy(() => import('./pages/TrustedSourcesPage'));
 const FeedbackCenterPage = lazy(() => import('./pages/FeedbackCenterPage'));
 const FileManagementPage = lazy(() => import('./pages/FileManagementPage'));
-const InternalDirectoryPage = lazy(() => import('./pages/InternalDirectoryPage'));
+const IndustrySolutionsPage = lazy(() => import('./pages/IndustrySolutionsPage'));
+const AccountRadarPage = lazy(() => import('./pages/AccountRadarPage'));
+const AccountRadarHelpPage = lazy(() => import('./pages/AccountRadarHelpPage'));
 
 // Admin / Assistenz Seiten – getrennte Chunks, werden erst bei Aufruf geladen.
 const AdminDashboardPage = lazy(() => import('./pages/AdminDashboardPage'));
@@ -72,6 +82,8 @@ const AdminLegalMonitorPage = lazy(() => import('./pages/AdminLegalMonitorPage')
 const AdminEditorialBriefingPage = lazy(() => import('./pages/AdminEditorialBriefingPage'));
 const AdminSocialMediaGenerator = lazy(() => import('./pages/AdminSocialMediaGenerator'));
 const AdminDirectoryPage = lazy(() => import('./pages/AdminDirectoryPage'));
+const AdminPublicAssistantPage = lazy(() => import('./pages/AdminPublicAssistantPage'));
+const AdminSalesLeadsPage = lazy(() => import('./pages/AdminSalesLeadsPage'));
 
 const PageLoader: React.FC = () => (
   <Box
@@ -122,13 +134,34 @@ const ProtectedRoutes: React.FC = () => {
 
 const AdminRoutes: React.FC = () => {
   const { user } = useAuth();
-  return user?.role === 'admin' ? <Outlet /> : <Navigate to="/dashboard" replace />;
+  return user?.role === 'admin' ? <Outlet /> : <Navigate to="/home" replace />;
 };
 
 const BpStaffAllowedRoutes: React.FC = () => {
   const { user } = useAuth();
   const isAllowed = user?.role === 'admin' || user?.role === 'assistenz';
-  return isAllowed ? <Outlet /> : <Navigate to="/dashboard" replace />;
+  return isAllowed ? <Outlet /> : <Navigate to="/home" replace />;
+};
+
+const AccountRadarAllowedRoutes: React.FC = () => {
+  const { user, businessPartner } = useAuth();
+  return canUseSalesWorkspace(user, businessPartner) ? <Outlet /> : <Navigate to="/home" replace />;
+};
+
+const AccountRadarManagerRoutes: React.FC = () => {
+  const { user, businessPartner } = useAuth();
+  const isManager = ['admin', 'assistenz', 'sales_manager'].includes(String(user?.role || '').toLowerCase());
+  return isManager && canUseSalesWorkspace(user, businessPartner) ? <Outlet /> : <Navigate to="/home" replace />;
+};
+
+const ContentAllowedRoutes: React.FC = () => {
+  const { user, businessPartner } = useAuth();
+  return canUseContentWorkspace(user, businessPartner) ? <Outlet /> : <Navigate to="/home" replace />;
+};
+
+const WorkspaceLandingRoute: React.FC = () => {
+  const { user, businessPartner } = useAuth();
+  return <Navigate to={getDefaultWorkspacePath(user, businessPartner)} replace />;
 };
 
 function App() {
@@ -225,7 +258,7 @@ function App() {
         <Routes>
           {/* Öffentliche Routen */}
           <Route path="/" element={lazyRoute(<PublicPortalPage />)} />
-          <Route path="/login" element={lazyRoute(<PublicPortalPage />)} />
+          <Route path="/login" element={lazyRoute(<LoginPage />)} />
           <Route path="/register" element={lazyRoute(<PublicPortalPage isRegister={true} />)} />
           <Route path="/forgot-password" element={lazyRoute(<ForgotPasswordPage />)} />
           <Route path="/reset-password/:token" element={lazyRoute(<ResetPasswordPage />)} />
@@ -239,42 +272,60 @@ function App() {
           <Route path="/p/:userId" element={lazyRoute(<PublicProfileCard />)} />
           <Route path="/invite/:bpId" element={lazyRoute(<PublicBpCard />)} />
           <Route path="/f/:fileId/:token" element={lazyRoute(<PublicFileDownloadPage />)} />
+          <Route path="/assistant/:siteKey" element={lazyRoute(<PublicAssistantEmbedPage />)} />
+          <Route path="/account-radar" element={lazyRoute(<AccountRadarProductPage />)} />
 
           {/* Dynamische Route für Partner-Slugs, z. B. /vfa */}
           <Route path="/:partnerSlug" element={lazyRoute(<PublicPortalPage />)} />
 
           {/* Geschützte Dashboard-Routen */}
           <Route element={<ProtectedRoutes />}>
-            <Route path="/dashboard" element={lazyRoute(<DashboardPage />)} />
+            <Route path="/home" element={<WorkspaceLandingRoute />} />
             <Route path="/profile" element={lazyRoute(<ProfilePage />)} />
-            <Route path="/search" element={lazyRoute(<SearchResultsPage />)} />
             <Route path="/ask" element={lazyRoute(<AiAskPage />)} />
-            <Route path="/trusted-sources" element={lazyRoute(<TrustedSourcesPage />)} />
-            <Route path="/feedback" element={lazyRoute(<FeedbackCenterPage />)} />
-            <Route path="/files" element={lazyRoute(<FileManagementPage />)} />
-            <Route path="/funding-search" element={lazyRoute(<FundingSearchPage />)} />
-            <Route path="/funding-detail/:id" element={lazyRoute(<FundingDetailPage />)} />
-            <Route path="/community" element={lazyRoute(<CommunityPage />)} />
-            <Route path="/directory" element={lazyRoute(<InternalDirectoryPage />)} />
+
+            <Route element={<ContentAllowedRoutes />}>
+              <Route path="/dashboard" element={lazyRoute(<DashboardPage />)} />
+              <Route path="/search" element={lazyRoute(<SearchResultsPage />)} />
+              <Route path="/trusted-sources" element={lazyRoute(<TrustedSourcesPage />)} />
+              <Route path="/feedback" element={lazyRoute(<FeedbackCenterPage />)} />
+              <Route path="/files" element={lazyRoute(<FileManagementPage />)} />
+              <Route path="/funding-search" element={lazyRoute(<FundingSearchPage />)} />
+              <Route path="/funding-detail/:id" element={lazyRoute(<FundingDetailPage />)} />
+              <Route path="/community" element={lazyRoute(<CommunityPage />)} />
+              <Route path="/directory" element={lazyRoute(<IndustrySolutionsPage />)} />
+            </Route>
+
+            <Route element={<AccountRadarAllowedRoutes />}>
+              <Route path="/radar" element={lazyRoute(<AccountRadarPage />)} />
+              <Route path="/radar/help" element={lazyRoute(<AccountRadarHelpPage />)} />
+            </Route>
 
             {/* Assistenz & Admin Routen */}
             <Route element={<BpStaffAllowedRoutes />}>
               <Route path="/admin/users" element={lazyRoute(<AdminUserManagementPage />)} />
               <Route path="/admin/users/:businessPartnerId" element={lazyRoute(<AdminUserManagementPage />)} />
-              <Route path="/admin/actions" element={lazyRoute(<AdminBpActionsPage />)} />
-              <Route path="/admin/surveys" element={lazyRoute(<AdminSurveysPage />)} />
-              <Route path="/admin/community" element={lazyRoute(<AdminCommunityPage />)} />
-              <Route path="/admin/legal-monitor" element={lazyRoute(<AdminLegalMonitorPage />)} />
-              <Route path="/admin/briefing-editorial" element={lazyRoute(<AdminEditorialBriefingPage />)} />
+              <Route element={<ContentAllowedRoutes />}>
+                <Route path="/admin/actions" element={lazyRoute(<AdminBpActionsPage />)} />
+                <Route path="/admin/surveys" element={lazyRoute(<AdminSurveysPage />)} />
+                <Route path="/admin/community" element={lazyRoute(<AdminCommunityPage />)} />
+                <Route path="/admin/legal-monitor" element={lazyRoute(<AdminLegalMonitorPage />)} />
+                <Route path="/admin/briefing-editorial" element={lazyRoute(<AdminEditorialBriefingPage />)} />
+                <Route path="/admin/public-assistant" element={lazyRoute(<AdminPublicAssistantPage />)} />
+              </Route>
+            </Route>
+
+            <Route element={<AccountRadarManagerRoutes />}>
+              <Route path="/admin/business-partners/:bpId/accounts" element={lazyRoute(<AdminBpAccountsPage />)} />
+              <Route path="/admin/accounts/:accountId/competitors" element={lazyRoute(<AdminBpCompetitorsPage />)} />
             </Route>
 
             {/* Admin-Only Routen */}
             <Route path="/admin" element={<AdminRoutes />}>
               <Route index element={lazyRoute(<AdminDashboardPage />)} />
               <Route path="business-partners" element={lazyRoute(<AdminBusinessPartnersPage />)} />
-              <Route path="business-partners/:bpId/accounts" element={lazyRoute(<AdminBpAccountsPage />)} />
+              <Route path="sales-leads" element={lazyRoute(<AdminSalesLeadsPage />)} />
               <Route path="tracked-articles" element={lazyRoute(<AdminBpTrackedArticlesPage />)} />
-              <Route path="accounts/:accountId/competitors" element={lazyRoute(<AdminBpCompetitorsPage />)} />
               <Route path="widget-types" element={lazyRoute(<AdminWidgetTypesPage />)} />
               <Route path="bp-widget-access" element={lazyRoute(<AdminBpWidgetAccessPage />)} />
               <Route path="bp-widget-access/:bpId" element={lazyRoute(<AdminBpWidgetAccessPage />)} />

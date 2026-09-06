@@ -104,6 +104,9 @@ Startanleitung.txt
 todo.txt
 /releases/
 /.deploy/
+/.tmp/
+/.codex-artifacts/
+/outputs/
 
 # optional SQL working directory
 /sql/

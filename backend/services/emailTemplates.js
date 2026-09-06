@@ -33,11 +33,13 @@ function renderAiGeneratedBadge() {
 }
 
 function resolveLogoRef(logoUrl) {
-  if (logoUrl) return { type: 'url', url: toAbsoluteUrl(logoUrl) };
-  if ((process.env.EMAIL_EMBED_LOGO_PATH || '').trim()) return { type: 'cid', id: 'brand-logo' };
-  
-  // Fallback: E-Mail-Clients blockieren SVGs. Wir nutzen ein sicheres PNG.
-  return { type: 'url', url: `${getBaseUrl()}/logos/de-mobiliti.png` }; 
+  if (logoUrl && /^https?:\/\//i.test(String(logoUrl).trim())) {
+    return { type: 'url', url: toAbsoluteUrl(logoUrl) };
+  }
+
+  // Relative Mandantenlogos und das Mobiliti-Fallback werden als CID eingebettet.
+  // Dadurch bleiben sie auch in Mail-Clients sichtbar, die externe Bilder blockieren.
+  return { type: 'cid', id: 'brand-logo' };
 }
 
 // Zentrales Layout (Abwärtskompatibel mit alten Aufrufen und neuem partner-Objekt)
@@ -60,7 +62,7 @@ function renderLayout({
   const primaryColor = partner?.color_scheme?.primary_color || colors.primary_color || '#1e293b'; 
   const primaryText = partner?.color_scheme?.primary_text_color || colors.primary_text_color || '#ffffff';
   
-  const partnerName = partner?.name || 'Intelligence Dashboard';
+  const partnerName = partner?.name || 'Mobiliti Dashboard';
   const finalDashboardTitle = partner?.dashboard_title || dashboardTitle || partnerName;
   const partnerEmail = partner?.email || '';
   const partnerAddress = partner?.address || '';

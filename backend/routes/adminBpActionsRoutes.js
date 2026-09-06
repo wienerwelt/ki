@@ -16,7 +16,7 @@ const {
     uploadActionImage
 } = require('../controllers/adminBpActionsController');
 
-const tenantManagerAuth = require('../middleware/tenantManagerAuth');
+const tenantManagerAuth = require('../middleware/contentManagerAuth');
 const softwareController = require('../controllers/softwareController');
 
 // --- Multer-Setup für den Datei-Upload ---
@@ -64,6 +64,7 @@ router.post('/software-logo/upload', receiveSoftwareLogo, softwareController.upl
 router.route('/software')
     .get(softwareController.getManagedSoftware)
     .post(softwareController.createSoftware);
+router.delete('/software/:id/permanent', softwareController.deleteSoftware);
 router.route('/software/:id')
     .put(softwareController.updateSoftware)
     .delete(softwareController.archiveSoftware);

@@ -32,6 +32,17 @@ exports.renew = async (req, res) => {
                 bp.is_active AS business_partner_is_active, 
                 bp.name as business_partner_name, 
                 bp.dashboard_title,
+                bp.enabled_modules AS tenant_modules,
+                bp.default_workspace AS tenant_default_workspace,
+                bp.sales_plan AS tenant_sales_plan,
+                bp.sales_subscription_status AS tenant_sales_subscription_status,
+                bp.sales_trial_ends_on AS tenant_sales_trial_ends_on,
+                CASE WHEN bp.sales_subscription_status = 'trial'
+                    THEN GREATEST(bp.sales_trial_ends_on - CURRENT_DATE, 0)
+                    ELSE NULL END AS tenant_sales_trial_days_remaining,
+                CASE WHEN bp.sales_subscription_status = 'active'
+                    OR (bp.sales_subscription_status = 'trial' AND bp.sales_trial_ends_on >= CURRENT_DATE)
+                    THEN TRUE ELSE FALSE END AS tenant_sales_access_active,
                 (
                   SELECT COALESCE(
                     json_agg(
@@ -72,7 +83,15 @@ exports.renew = async (req, res) => {
                 regions: user.regions,
                 contribution_score: user.contribution_score,
                 membership_level: user.membership_level,
-                has_seen_welcome_widget: user.has_seen_welcome_widget
+                has_seen_welcome_widget: user.has_seen_welcome_widget,
+                preferred_workspace: user.preferred_workspace || null,
+                tenant_modules: user.tenant_modules || ['content'],
+                tenant_default_workspace: user.tenant_default_workspace || 'content',
+                tenant_sales_plan: user.tenant_sales_plan || 'basic',
+                tenant_sales_subscription_status: user.tenant_sales_subscription_status || 'active',
+                tenant_sales_trial_ends_on: user.tenant_sales_trial_ends_on || null,
+                tenant_sales_trial_days_remaining: user.tenant_sales_trial_days_remaining === null ? null : Number(user.tenant_sales_trial_days_remaining),
+                tenant_sales_access_active: user.tenant_sales_access_active !== false
             },
             av: Number(user.auth_version || 0)
         };

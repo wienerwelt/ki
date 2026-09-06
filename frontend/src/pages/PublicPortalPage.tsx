@@ -78,6 +78,7 @@ const EventCalendarWidget = lazy(() => import('../components/widgets/EventCalend
 const FundingWidget = lazy(() => import('../components/widgets/FundingWidget'));
 const BpActionsWidget = lazy(() => import('../components/widgets/BusinessPartnerActionsWidget'));
 const SoftwareCatalogWidget = lazy(() => import('../components/widgets/SoftwareCatalogWidget'));
+const PublicAiAssistantWidget = lazy(() => import('../components/PublicAiAssistantWidget'));
 
 interface PublicPortalPageProps {
     isRegister?: boolean;
@@ -1751,6 +1752,16 @@ const renderProviderPreviewCard = (provider: any) => {
                     </Stack>
                 </Box>
             </Container>
+
+            {publicContext?.assistant?.enabled && (
+                <Suspense fallback={null}>
+                    <PublicAiAssistantWidget
+                        siteKey={String(publicContext.assistant.siteKey)}
+                        primaryColor={primaryColor}
+                        partnerName={partnerName}
+                    />
+                </Suspense>
+            )}
 
             <Fab
                 aria-label="Zum Seitenende"

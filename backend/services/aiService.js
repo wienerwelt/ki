@@ -49,10 +49,23 @@ async function callOpenAI(prompt, model = 'gpt-4', options = {}) {
     }
     try {
         // Basis-Konfiguration für den API-Aufruf
+        const messages = [];
+        if (options.systemPrompt) {
+            messages.push({ role: 'system', content: String(options.systemPrompt) });
+        }
+        messages.push({ role: 'user', content: String(prompt || '') });
+
         const apiConfig = {
-            messages: [{ role: 'user', content: prompt }],
+            messages,
             model: model,
         };
+
+        if (Number.isFinite(Number(options.maxOutputTokens)) && Number(options.maxOutputTokens) > 0) {
+            apiConfig.max_tokens = Math.min(Number(options.maxOutputTokens), 4000);
+        }
+        if (Number.isFinite(Number(options.temperature))) {
+            apiConfig.temperature = Math.max(0, Math.min(Number(options.temperature), 2));
+        }
 
         // NEU: Wenn responseFormat (JSON-Mode) gefordert ist, anfügen
         if (options.responseFormat && options.responseFormat.type === 'json_object') {
@@ -107,7 +120,10 @@ async function callGoogleGemini(prompt, model = 'gemini-1.5-flash', options = {}
         }
 
         const geminiModel = genAI.getGenerativeModel(modelConfig);
-        const result = await geminiModel.generateContent(prompt);
+        const finalPrompt = options.systemPrompt
+            ? `${String(options.systemPrompt)}\n\n${String(prompt || '')}`
+            : String(prompt || '');
+        const result = await geminiModel.generateContent(finalPrompt);
         const response = await result.response;
         
         return {

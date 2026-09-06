@@ -82,6 +82,17 @@ const runScheduledJobs = async () => {
             console.error('[CRON] Fehler beim Ausführen des System Health Checks:', err.message);
         });
 
+        // Technische Integrationsprotokolle dienen der Fehlersuche, nicht der
+        // dauerhaften Profilbildung. Ein täglicher Lauf hält die Tabelle klein.
+        if (now.getUTCHours() === 2 && now.getUTCMinutes() === 23) {
+            const cleanup = await client.query(
+                "DELETE FROM account_radar_api_sync_logs WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '180 days'"
+            );
+            if (cleanup.rowCount > 0) {
+                console.log(`[CRON] ${cleanup.rowCount} alte Account-Radar-API-Protokolle entfernt.`);
+            }
+        }
+
     } catch (error) {
         console.error('[CRON] Error during scheduled job execution:', error);
     } finally {

@@ -6,7 +6,32 @@ const { Readable } = require('stream');
 const { logActivity } = require('../services/auditLogService');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
-const ASSISTANT_ALLOWED_TARGET_ROLES = new Set(['user', 'demo']);
+const ASSISTANT_ALLOWED_TARGET_ROLES = new Set(['user', 'demo', 'sales_user']);
+
+const normalizeUserEmail = (value) => String(value || '').trim().toLowerCase();
+const normalizeUsername = (value) => String(value || '').trim();
+const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(value || ''));
+
+const findUserIdentityConflict = async ({ email, username, excludeUserId = null }) => {
+    const params = [normalizeUserEmail(email), normalizeUsername(username)];
+    let exclusion = '';
+    if (excludeUserId) {
+        params.push(excludeUserId);
+        exclusion = 'AND id <> $3';
+    }
+
+    const result = await db.query(`
+        SELECT id,
+               lower(btrim(email)) = lower(btrim($1)) AS email_conflict,
+               lower(btrim(username)) = lower(btrim($2)) AS username_conflict
+        FROM users
+        WHERE (lower(btrim(email)) = lower(btrim($1))
+           OR lower(btrim(username)) = lower(btrim($2)))
+          ${exclusion}
+        LIMIT 1
+    `, params);
+    return result.rows[0] || null;
+};
 
 const assistantCanManageUser = (requester, user) =>
     requester.role !== 'assistenz' || (
@@ -27,6 +52,51 @@ const getBusinessPartnerName = async (bpId) => {
     } catch (error) {
         console.error(`Error fetching business partner name for ID ${bpId}:`, error);
         return null;
+    }
+};
+
+const getMembershipLevelsForPartner = async (bpId) => {
+    if (!isValidUUID(bpId)) return [];
+    const result = await db.query(
+        'SELECT level_1_name, level_2_name, level_3_name FROM business_partners WHERE id = $1',
+        [bpId]
+    );
+    if (!result.rows.length) return null;
+    return Array.from(new Set(Object.values(result.rows[0]).map((level) => String(level || '').trim()).filter(Boolean)));
+};
+
+const validateMembershipLevel = async (bpId, membershipLevel) => {
+    const normalized = String(membershipLevel || '').trim();
+    if (!normalized) return null;
+    const levels = await getMembershipLevelsForPartner(bpId);
+    if (levels === null) {
+        const error = new Error('Mandant nicht gefunden.');
+        error.statusCode = 404;
+        throw error;
+    }
+    if (!levels.includes(normalized)) {
+        const error = new Error('Bitte ein vorhandenes Mitgliedslevel dieses Mandanten auswählen.');
+        error.statusCode = 400;
+        throw error;
+    }
+    return normalized;
+};
+
+exports.getManagedMembershipLevels = async (req, res) => {
+    try {
+        const requestedId = String(req.query.businessPartnerId || '');
+        const businessPartnerId = req.user.role === 'assistenz'
+            ? req.user.business_partner_id
+            : requestedId;
+        if (!isValidUUID(businessPartnerId)) {
+            return res.status(400).json({ message: 'Bitte einen gültigen Mandanten auswählen.' });
+        }
+        const levels = await getMembershipLevelsForPartner(businessPartnerId);
+        if (levels === null) return res.status(404).json({ message: 'Mandant nicht gefunden.' });
+        return res.json({ business_partner_id: businessPartnerId, levels });
+    } catch (error) {
+        console.error('Mitgliedslevel konnten nicht geladen werden:', error.message);
+        return res.status(500).json({ message: 'Mitgliedslevel konnten nicht geladen werden.' });
     }
 };
 
@@ -208,6 +278,8 @@ exports.createUser = async (req, res) => {
         business_partner_id, is_active = true, active_until = null
     } = req.body;
     const { user: requester } = req;
+    const normalizedEmail = normalizeUserEmail(email);
+    const normalizedUsername = normalizeUsername(username);
 
     try {
         if (requester.role === 'assistenz' && !ASSISTANT_ALLOWED_TARGET_ROLES.has(String(role).toLowerCase())) {
@@ -217,11 +289,24 @@ exports.createUser = async (req, res) => {
         
         const finalBpId = requester.role === 'assistenz' ? requester.business_partner_id : business_partner_id;
 
-        if (!username || !email || !password) {
+        if (!normalizedUsername || !normalizedEmail || !password) {
             return res.status(400).json({ message: 'Username, email, and password are required.' });
+        }
+        if (!isValidEmail(normalizedEmail)) {
+            return res.status(400).json({ message: 'Bitte eine gültige E-Mail-Adresse eingeben.' });
         }
         if (finalBpId && !isValidUUID(finalBpId)) {
             return res.status(400).json({ message: 'Invalid Business Partner ID format.' });
+        }
+        const validatedMembershipLevel = await validateMembershipLevel(finalBpId, membership_level);
+
+        const identityConflict = await findUserIdentityConflict({ email: normalizedEmail, username: normalizedUsername });
+        if (identityConflict) {
+            return res.status(409).json({
+                message: identityConflict.email_conflict
+                    ? 'Diese E-Mail-Adresse wird bereits verwendet.'
+                    : 'Dieser Benutzername wird bereits verwendet.',
+            });
         }
 
         const salt = await bcrypt.genSalt(10);
@@ -230,7 +315,7 @@ exports.createUser = async (req, res) => {
         const newUserResult = await db.query(
             `INSERT INTO users (username, email, password_hash, first_name, last_name, organization_name, linkedin_url, profile_image_url, membership_level, role, business_partner_id, is_active, active_until)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
-            [username, email, password_hash, first_name, last_name, organization_name, linkedin_url, profile_image_url || null, membership_level, role, finalBpId || null, is_active, active_until || null]
+            [normalizedUsername, normalizedEmail, password_hash, first_name, last_name, organization_name, linkedin_url, profile_image_url || null, validatedMembershipLevel, role, finalBpId || null, is_active, active_until || null]
         );
         const newUserId = newUserResult.rows[0].id;
 
@@ -261,7 +346,7 @@ exports.createUser = async (req, res) => {
         await logActivity({
             userId: requester.id, username: requester.username, actionType: 'USER_CREATE', status: 'success',
             targetId: newUserId, targetType: 'user',
-            details: { createdUsername: username, role: role, businessPartnerName: businessPartnerName },
+            details: { createdUsername: normalizedUsername, role: role, businessPartnerName: businessPartnerName },
             ipAddress: req.ip
         });
 
@@ -272,6 +357,7 @@ exports.createUser = async (req, res) => {
         if (err.code === '23505') {
             return res.status(409).json({ message: 'User with this username or email already exists.' });
         }
+        if (err.statusCode) return res.status(err.statusCode).json({ message: err.message });
         res.status(500).send('Server error');
     }
 };
@@ -296,6 +382,24 @@ exports.updateUser = async (req, res) => {
             return res.status(403).json({ message: 'Mandantenassistenzen dürfen keine privilegierten Benutzerrollen vergeben.' });
         }
 
+        updateData.email = normalizeUserEmail(updateData.email);
+        updateData.username = normalizeUsername(updateData.username);
+        if (!updateData.username || !isValidEmail(updateData.email)) {
+            return res.status(400).json({ message: 'Bitte einen Benutzernamen und eine gültige E-Mail-Adresse eingeben.' });
+        }
+        const identityConflict = await findUserIdentityConflict({
+            email: updateData.email,
+            username: updateData.username,
+            excludeUserId: targetUserId,
+        });
+        if (identityConflict) {
+            return res.status(409).json({
+                message: identityConflict.email_conflict
+                    ? 'Diese E-Mail-Adresse wird bereits verwendet.'
+                    : 'Dieser Benutzername wird bereits verwendet.',
+            });
+        }
+
         let password_hash = beforeUpdate.password_hash;
         if (updateData.password && updateData.password.trim() !== '') {
             const salt = await bcrypt.genSalt(10);
@@ -303,6 +407,7 @@ exports.updateUser = async (req, res) => {
         }
 
         const finalBpId = requester.role === 'assistenz' ? requester.business_partner_id : updateData.business_partner_id;
+        const validatedMembershipLevel = await validateMembershipLevel(finalBpId, updateData.membership_level);
 
         await db.query(
             `UPDATE users SET
@@ -315,7 +420,7 @@ exports.updateUser = async (req, res) => {
             [
                 updateData.username, updateData.email, password_hash, updateData.first_name,
                 updateData.last_name, updateData.organization_name, updateData.linkedin_url,
-                updateData.membership_level, updateData.role, finalBpId || null,
+                validatedMembershipLevel, updateData.role, finalBpId || null,
                 updateData.is_active, updateData.active_until || null, updateData.profile_image_url || null,
                 targetUserId,
                 Boolean(updateData.password && updateData.password.trim() !== '')
@@ -355,6 +460,7 @@ exports.updateUser = async (req, res) => {
         if (err.code === '23505') {
             return res.status(409).json({ message: 'Benutzername oder E-Mail wird bereits verwendet.' });
         }
+        if (err.statusCode) return res.status(err.statusCode).json({ message: err.message });
         res.status(500).send('Server error');
     }
 };
@@ -413,9 +519,12 @@ exports.importUsersFromCSV = async (req, res) => {
                         is_active, active_until
                     } = row;
 
-                    if (!email || !role) {
+                    const normalizedEmail = normalizeUserEmail(email);
+                    const normalizedUsername = normalizeUsername(username);
+
+                    if (!normalizedEmail || !isValidEmail(normalizedEmail) || !role) {
                         report.errorCount++;
-                        report.errors.push(`Zeile ${index + 2}: Fehlende Pflichtfelder (email, role).`);
+                        report.errors.push(`Zeile ${index + 2}: Fehlende oder ungültige Pflichtfelder (email, role).`);
                         continue;
                     }
 
@@ -444,6 +553,15 @@ exports.importUsersFromCSV = async (req, res) => {
                         report.errors.push(`Zeile ${index + 2} (${email}): DB-Fehler beim Suchen des Business Partners.`);
                         continue;
                     }
+
+                    let validatedMembershipLevel = null;
+                    try {
+                        validatedMembershipLevel = await validateMembershipLevel(business_partner_id, membership_level);
+                    } catch (levelError) {
+                        report.errorCount++;
+                        report.errors.push(`Zeile ${index + 2} (${email}): ${levelError.message}`);
+                        continue;
+                    }
                     
                     // Parse is_active & active_until
                     let parsedIsActive = true;
@@ -454,7 +572,7 @@ exports.importUsersFromCSV = async (req, res) => {
                     if (parsedActiveUntil && isNaN(parsedActiveUntil.getTime())) parsedActiveUntil = null; // Basic Validation
 
                     try {
-                        const userCheck = await db.query('SELECT id, password_hash, role, business_partner_id FROM users WHERE email = $1', [email]);
+                        const userCheck = await db.query('SELECT id, password_hash, role, business_partner_id FROM users WHERE lower(btrim(email)) = $1', [normalizedEmail]);
                         
                         if (userCheck.rows.length > 0) {
                             const existingUser = userCheck.rows[0];
@@ -483,7 +601,7 @@ exports.importUsersFromCSV = async (req, res) => {
                                     auth_version = auth_version + CASE WHEN $12::boolean THEN 1 ELSE 0 END,
                                     updated_at = CURRENT_TIMESTAMP
                                  WHERE id = $11`,
-                                [first_name, last_name, organization_name, linkedin_url, membership_level, role, business_partner_id, newPasswordHash, parsedIsActive, parsedActiveUntil, existingUser.id, Boolean(password && password.trim() !== '')]
+                                [first_name, last_name, organization_name, linkedin_url, validatedMembershipLevel, role, business_partner_id, newPasswordHash, parsedIsActive, parsedActiveUntil, existingUser.id, Boolean(password && password.trim() !== '')]
                             );
                             report.successCount++;
                             continue;
@@ -498,17 +616,17 @@ exports.importUsersFromCSV = async (req, res) => {
                         let finalUsername = null;
                         let isUnique = false;
                         let attempt = 0;
-                        if (username && username.trim() !== '') {
-                            const check = await db.query('SELECT 1 FROM users WHERE username = $1', [username.trim()]);
-                            if (check.rows.length === 0) { finalUsername = username.trim(); isUnique = true; }
+                        if (normalizedUsername) {
+                            const check = await db.query('SELECT 1 FROM users WHERE lower(btrim(username)) = lower(btrim($1))', [normalizedUsername]);
+                            if (check.rows.length === 0) { finalUsername = normalizedUsername; isUnique = true; }
                         }
 
-                        let generatedUsernameBase = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '');
+                        let generatedUsernameBase = normalizedEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '');
                         if (generatedUsernameBase.length < 3) generatedUsernameBase = 'user';
                         let currentAttemptUsername = generatedUsernameBase;
                         
                         while (!isUnique && attempt < 10) {
-                            const check = await db.query('SELECT 1 FROM users WHERE username = $1', [currentAttemptUsername]);
+                            const check = await db.query('SELECT 1 FROM users WHERE lower(btrim(username)) = lower(btrim($1))', [currentAttemptUsername]);
                             if (check.rows.length === 0) {
                                 finalUsername = currentAttemptUsername;
                                 isUnique = true;
@@ -529,7 +647,7 @@ exports.importUsersFromCSV = async (req, res) => {
                         const newUserResult = await db.query(
                             `INSERT INTO users (username, email, password_hash, first_name, last_name, organization_name, linkedin_url, membership_level, role, business_partner_id, is_active, active_until)
                              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
-                            [finalUsername, email, password_hash, first_name || null, last_name || null, organization_name || null, linkedin_url || null, membership_level || null, role, business_partner_id, parsedIsActive, parsedActiveUntil]
+                            [finalUsername, normalizedEmail, password_hash, first_name || null, last_name || null, organization_name || null, linkedin_url || null, validatedMembershipLevel, role, business_partner_id, parsedIsActive, parsedActiveUntil]
                         );
                         report.successCount++;
                     } catch (dbErr) {

@@ -1,3 +1,4 @@
 *.sh text eol=lf
-*.sql text eol=lf
+*.sql text eol=lf whitespace=-blank-at-eof
 .mobiliti-dashboard-root text eol=lf
+*.pdf binary

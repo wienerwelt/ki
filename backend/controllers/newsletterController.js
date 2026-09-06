@@ -23,6 +23,33 @@ exports.subscribe = async (req, res) => {
     const email = (req.body.email || '').trim().toLowerCase();
     if (!email) return res.status(400).json({ message: 'E-Mail fehlt' });
 
+    const userResult = await db.query(
+      `SELECT u.username, u.business_partner_id,
+              bp.name AS partner_name, bp.logo_url, bp.dashboard_title, bp.address AS partner_address,
+              bp.email AS partner_email, bp.url_businesspartner,
+              cs.primary_color, cs.primary_text_color
+       FROM users u
+       LEFT JOIN business_partners bp ON bp.id = u.business_partner_id
+       LEFT JOIN color_schemes cs ON cs.id = bp.color_scheme_id
+       WHERE LOWER(u.email) = LOWER($1)
+       LIMIT 1`,
+      [email]
+    );
+    const user = userResult.rows[0] || null;
+    const partner = user?.business_partner_id ? {
+      id: user.business_partner_id,
+      name: user.partner_name,
+      logo_url: user.logo_url,
+      dashboard_title: user.dashboard_title,
+      address: user.partner_address,
+      email: user.partner_email,
+      url_businesspartner: user.url_businesspartner,
+      color_scheme: {
+        primary_color: user.primary_color,
+        primary_text_color: user.primary_text_color,
+      },
+    } : null;
+
     // Token erzeugen, speichern und Opt-In-Mail senden
     const token = crypto.randomBytes(24).toString('hex');
     await db.query(
@@ -34,7 +61,7 @@ exports.subscribe = async (req, res) => {
     const base = process.env.FRONTEND_URL || 'http://localhost:5173';
     const confirmUrl = `${base.replace(/\/$/,'')}/newsletter/confirm/${token}`;
 
-    await sendNewsletterOptInEmail({ to: email, confirmUrl });
+    await sendNewsletterOptInEmail({ to: email, username: user?.username, confirmUrl, partner });
     return res.json({ message: 'Bestätigungsmail gesendet' });
   } catch (e) {
     console.error('newsletter.subscribe', e);

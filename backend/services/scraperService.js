@@ -1605,6 +1605,35 @@ async function processNewsKeywordSearch(jobData) {
 
     if (!search_term || !account_id) return 0;
 
+    // Jobs können bereits vor einer Paketänderung in der Queue liegen. Deshalb
+    // wird unmittelbar vor kostenpflichtiger Suche/KI nochmals serverseitig geprüft.
+    const entitlementResult = await db.query(
+        `SELECT partner.sales_plan
+         FROM business_partner_accounts account
+         JOIN business_partners partner ON partner.id = account.business_partner_id
+         WHERE account.id = $1
+           AND account.is_active = TRUE
+           AND partner.is_active = TRUE
+           AND (partner.subscription_end_date IS NULL OR partner.subscription_end_date >= CURRENT_DATE)
+           AND 'sales' = ANY(COALESCE(partner.enabled_modules, ARRAY['content']::TEXT[]))
+           AND (
+             partner.sales_subscription_status = 'active'
+             OR (
+               partner.sales_subscription_status = 'trial'
+               AND partner.sales_trial_ends_on >= CURRENT_DATE
+             )
+           )`,
+        [account_id]
+    );
+    if (!entitlementResult.rows.length) {
+        console.log(`[NewsSearch] Übersprungen: Account ${account_id} hat keinen aktiven Sales-Zugang.`);
+        return 0;
+    }
+    if (competitor_name && entitlementResult.rows[0].sales_plan !== 'premium') {
+        console.log(`[NewsSearch] Übersprungen: Wettbewerbsmonitoring ist für Account ${account_id} nicht freigeschaltet.`);
+        return 0;
+    }
+
     console.log(`[NewsSearch] Starte Google-Suche für "${search_term}" (Account ${account_id})`);
     const searchResults = await searchGoogle(`"${search_term}"`, { sortByDate: true, language: 'lr=lang_de' });
 

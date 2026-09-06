@@ -14,9 +14,21 @@ async function triggerNewsSearchForAll() {
                     SELECT COALESCE(json_agg(json_build_object('id', comp.id, 'name', comp.name)), '[]'::json)
                     FROM business_partner_competitors comp
                     WHERE comp.account_id = acc.id
+                      AND partner.sales_plan = 'premium'
                 ) as competitors
             FROM business_partner_accounts acc
-            WHERE acc.is_active = TRUE;
+            JOIN business_partners partner ON partner.id = acc.business_partner_id
+            WHERE acc.is_active = TRUE
+              AND partner.is_active = TRUE
+              AND (partner.subscription_end_date IS NULL OR partner.subscription_end_date >= CURRENT_DATE)
+              AND 'sales' = ANY(COALESCE(partner.enabled_modules, ARRAY['content']::TEXT[]))
+              AND (
+                partner.sales_subscription_status = 'active'
+                OR (
+                  partner.sales_subscription_status = 'trial'
+                  AND partner.sales_trial_ends_on >= CURRENT_DATE
+                )
+              );
         `);
 
         if (accounts.length === 0) {

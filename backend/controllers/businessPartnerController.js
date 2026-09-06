@@ -35,6 +35,17 @@ exports.getMyBusinessPartner = async (req, res) => {
                 bp.newsletter_external_signup_url,
                 bp.newsletter_recipient_limit,
                 bp.dashboard_focus,
+                bp.enabled_modules,
+                bp.default_workspace,
+                bp.sales_plan,
+                bp.sales_subscription_status,
+                bp.sales_trial_ends_on,
+                CASE WHEN bp.sales_subscription_status = 'trial'
+                    THEN GREATEST(bp.sales_trial_ends_on - CURRENT_DATE, 0)
+                    ELSE NULL END AS sales_trial_days_remaining,
+                CASE WHEN bp.sales_subscription_status = 'active'
+                    OR (bp.sales_subscription_status = 'trial' AND bp.sales_trial_ends_on >= CURRENT_DATE)
+                    THEN TRUE ELSE FALSE END AS sales_access_active,
                 
                 bp.level_1_name,
                 bp.level_2_name,

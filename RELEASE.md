@@ -77,9 +77,10 @@ Keine einzelnen Quellcodedateien mehr per SFTP verteilen. Im normalen Ablauf wer
   JWT_EXPIRES_IN=8h
   SESSION_COOKIE_MAX_AGE_MS=28800000
   NEWSLETTER_TOKEN_SECRET=<eigenes-zufaelliges-secret-mit-mindestens-32-zeichen>
+  PUBLIC_AI_RATE_LIMIT_SECRET=<weiteres-zufaelliges-secret-mit-mindestens-32-zeichen>
   ```
 
-  `JWT_SECRET` und `NEWSLETTER_TOKEN_SECRET` müssen jeweils mindestens 32 zufällige Zeichen haben und zwingend unterschiedlich sein. Das Newsletter-Secret signiert ausschließlich Präferenz- und Abmeldelinks; es darf niemals auf das Login-Secret zurückfallen. Secrets werden weder in Git noch in diese Anleitung oder in Terminalausgaben kopiert. `SESSION_COOKIE_MAX_AGE_MS=28800000` begrenzt eine Browser-Sitzung auf acht Stunden; eine Verlängerung erfolgt bewusst über den Sitzungsdialog.
+  `JWT_SECRET`, `NEWSLETTER_TOKEN_SECRET` und `PUBLIC_AI_RATE_LIMIT_SECRET` sollen jeweils mindestens 32 zufällige Zeichen haben und unterschiedlich sein. Das Public-AI-Secret anonymisiert IP-, Sitzungs- und Fragenwerte für die Missbrauchsbegrenzung; es wird nie an den Browser ausgeliefert. Falls es beim ersten Release noch fehlt, nutzt die Anwendung vorübergehend das Newsletter-Secret als sicheren Fallback. Vor der Freischaltung des öffentlichen Assistenten soll ein eigenes Secret gesetzt und der API-Container neu erstellt werden. Secrets werden weder in Git noch in diese Anleitung oder in Terminalausgaben kopiert. `SESSION_COOKIE_MAX_AGE_MS=28800000` begrenzt eine Browser-Sitzung auf acht Stunden; eine Verlängerung erfolgt bewusst über den Sitzungsdialog.
 
 ### Einmalig: getrenntes Newsletter-Secret einrichten
 
@@ -195,28 +196,28 @@ Eine Versionsnummer darf nach erfolgreichem Deployment niemals wiederverwendet w
 
 1. Projekt öffnen und Docker starten:
 
-   ```powershell
-   Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
-   docker compose up -d
-   docker compose ps
-   Invoke-RestMethod 'http://127.0.0.1:5001/api/health'
-   ```
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+docker compose up -d
+docker compose ps
+Invoke-RestMethod 'http://127.0.0.1:5001/api/health'
+```
 
 2. Offene Migrationen lokal anwenden:
 
-   ```powershell
-   docker compose exec -T api npm run migrate
-   ```
+```powershell
+docker compose exec -T api npm run migrate
+```
 
 3. Frontend für die Entwicklung starten:
 
-   ```powershell
-   Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
-   if (-not (Test-Path '.\frontend\package.json')) {
-     throw 'Falsches Arbeitsverzeichnis: frontend\package.json wurde nicht gefunden.'
-   }
-   npm.cmd --prefix .\frontend run dev
-   ```
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+if (-not (Test-Path '.\frontend\package.json')) {
+throw 'Falsches Arbeitsverzeichnis: frontend\package.json wurde nicht gefunden.'
+}
+npm.cmd --prefix .\frontend run dev
+```
 
    Der Befehl muss aus dem Projekt-Root `...\dashboard` gestartet werden. Wenn die PowerShell-Eingabe bereits mit `...\dashboard\frontend>` endet, zuerst den oben stehenden `Set-Location`-Befehl ausführen. Den laufenden Dev-Server in diesem Fenster geöffnet lassen und für die weiteren Schritte ein zweites PowerShell-Fenster verwenden.
 
@@ -872,3 +873,256 @@ Assert-NativeSuccess 'Git-Status konnte nicht gelesen werden.'
 ```
 
 Erwartet: `main...origin/main` ohne `ahead` und ohne geänderte Dateien.
+
+## 17. Einmaliger FVA-Import: 50 Fleet-Softwareprodukte und Brancheneinträge
+
+Dieser Abschnitt wird nur für den freigegebenen Datensatz
+`backend/data/fleet-software-de-at-2026-08-28.json` verwendet. Er ist kein Bestandteil jedes Routine-Releases.
+
+Der Import ist mandantenspezifisch auf den Slug `fva` begrenzt. Neue Anbieter werden ohne Logo und ohne unbestätigte Standortadresse als **nicht öffentlich** angelegt. Neue Software wird als **Entwurf / nicht öffentlich / nicht gesponsert** angelegt. Bestehende gleichnamige Anbieter und Software werden nicht überschrieben.
+
+### A. Vor dem Release: Excel-Freigabe und Datensatz entsperren
+
+Erst wenn die Excel-Prüfliste fachlich freigegeben wurde, im JSON genau diesen Wert ändern:
+
+```json
+"approval_status": "approved"
+```
+
+Danach in DEV / Windows-PowerShell validieren:
+
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+
+node .\backend\scripts\importFleetSoftwareCatalog.js --validate-only
+if ($LASTEXITCODE -ne 0) {
+  throw 'STOPP: Fleet-Software-Datensatz ist ungültig.'
+}
+
+git --no-pager diff -- backend/data/fleet-software-de-at-2026-08-28.json
+```
+
+Erwartet: 50 Produkte, 43 Anbieter und 19 Kategorien. Die Änderung von `pending` auf `approved` muss zusammen mit dem Importskript und dem Datensatz im normalen Release-Commit enthalten sein.
+
+### B. DEV-Datenbank: Dry Run, Import, Wiederholungsprüfung
+
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+docker compose up -d
+docker compose exec -T api npm run migrate
+
+docker compose exec -T api npm run catalog:import:fleet -- --dry-run --partner-slug fva
+if ($LASTEXITCODE -ne 0) {
+  throw 'STOPP: DEV-Dry-Run ist fehlgeschlagen.'
+}
+
+$Freigabe = (Read-Host 'Nur bei plausiblen Zählern DEV-IMPORT eingeben').Trim()
+if ($Freigabe -cne 'DEV-IMPORT') {
+  throw 'STOPP: DEV-Import nicht freigegeben.'
+}
+
+docker compose exec -T api npm run catalog:import:fleet -- --apply --partner-slug fva
+if ($LASTEXITCODE -ne 0) {
+  throw 'STOPP: DEV-Import ist fehlgeschlagen.'
+}
+
+docker compose exec -T api npm run catalog:import:fleet -- --dry-run --partner-slug fva
+if ($LASTEXITCODE -ne 0) {
+  throw 'STOPP: DEV-Wiederholungsprüfung ist fehlgeschlagen.'
+}
+```
+
+Beim letzten Dry Run müssen `productsExisting: 50` und `productsCreated: 0` erscheinen. Anschließend im DEV-Adminbereich stichprobenartig Mandant, Anbieterzuordnung, Kategorien, Links und Entwurfsstatus prüfen. Erst danach das reguläre Release nach Abschnitt 16 erstellen und deployen.
+
+### C. PROD-Datenbank: erst nach erfolgreichem Code-Release
+
+Der folgende Block wird in PROD / Ubuntu-PuTTY im Projekt-Root ausgeführt. Er nutzt exakt den im gerade deployten Release enthaltenen Datensatz.
+
+```bash
+(
+  set -Eeuo pipefail
+  cd /var/www/vhosts/mobiliti.at/httpdocs/dashboard
+
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api \
+    npm run catalog:import:fleet -- --dry-run --partner-slug fva
+
+  read -r -p 'Nur bei plausiblen Zählern PROD-IMPORT eingeben: ' IMPORT_CONFIRMATION
+  test "$IMPORT_CONFIRMATION" = 'PROD-IMPORT'
+
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api \
+    npm run catalog:import:fleet -- --apply --partner-slug fva
+
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api \
+    npm run catalog:import:fleet -- --dry-run --partner-slug fva
+)
+```
+
+Beim letzten Dry Run müssen `productsExisting: 50` und `productsCreated: 0` erscheinen. Danach im PROD-Adminbereich prüfen. Die 50 Datensätze bleiben Entwürfe; Veröffentlichung und Sponsored-Status erfolgen bewusst pro Eintrag nach der Inhaltsprüfung.
+
+## 18. Öffentlichen Homepage-Assistenten je Mandant freischalten
+
+Dieser Abschnitt wird einmal pro Mandant ausgeführt und ist **kein** Bestandteil jedes Routine-Releases. Der Assistent verwendet ausschließlich zuvor eingelesene, öffentliche Texte der hinterlegten Mandanten-Homepage. Interne Dashboard-, Community- oder Nutzerdaten werden dafür nicht verwendet.
+
+1. In der Mandantenverwaltung muss eine vollständige HTTPS-Homepage hinterlegt sein, zum Beispiel `https://www.fuhrparkverband.at/`.
+2. Als Admin oder Mandanten-Assistenz im Dashboard **Homepage-Assistent** öffnen. Ein Admin wählt zuerst den Mandanten; eine Assistenz kann ausschließlich den eigenen Mandanten bearbeiten.
+3. Quell-URL prüfen. Sie muss auf derselben Domain wie die Mandanten-Homepage liegen. Name, Begrüßung und Limits festlegen.
+4. Für die externe Website die erlaubte HTTPS-Domain ohne Pfad eintragen, zum Beispiel `https://fuhrparkverband.at`. Die Varianten mit und ohne `www.` werden automatisch gemeinsam freigegeben.
+5. Einstellungen speichern und **Homepage jetzt synchronisieren** ausführen. Erst fortfahren, wenn der Status erfolgreich ist und die Liste der indexierten Seiten plausibel aussieht.
+6. Den Assistenten aktivieren und auf der mandantenspezifischen Public Page testen. Fünf typische Fragen sowie eine absichtlich nicht beantwortbare Frage prüfen. Der Assistent muss fehlende Informationen offen benennen.
+7. Nach der Aktivierung erscheint der Assistent automatisch auf der mandantenspezifischen Public Page; dort ist kein Einbettungscode nötig. Für weitere Websites den Code unter **Homepage-Assistent → 3. Website-Einbettung** kopieren. In WordPress kommt er in einen Block **Individuelles HTML**; auf einer normalen Website wird er direkt vor `</body>` eingefügt. Danach Desktop und Mobilansicht testen. Es werden keine Website-Zugangsdaten im Dashboard benötigt.
+
+Schutzgrenzen pro Assistent: maximal 500 Zeichen je Frage, fünf Fragen pro IP in zehn Minuten, 20 Fragen pro Browser-Sitzung und Tag sowie die konfigurierten Tages- und Monatsbudgets des Mandanten. IP, Sitzung und Frage werden nur als nicht rückrechenbare HMAC-Werte gespeichert. Antworten werden höchstens 24 Stunden je Homepage-Datenstand wiederverwendet. Die Homepage wird bei aktivierten Assistenten täglich neu synchronisiert; ein durch Serverneustart hängen gebliebener Lauf wird nach 30 Minuten automatisch wieder freigegeben.
+
+Vor der produktiven Aktivierung ein eigenes `PUBLIC_AI_RATE_LIMIT_SECRET` mit mindestens 32 zufälligen Zeichen in der produktiven `.env` setzen.
+
+Ein typischer sicherer Wert besteht aus 64 zufälligen Hex-Zeichen und ist weder ein Passwortsatz noch der Mandantenname. Nicht selbst ausdenken. In DEV erzeugt und ergänzt dieser PowerShell-Block den Wert, ohne ihn auszugeben oder einen vorhandenen Wert zu überschreiben:
+
+```powershell
+$EnvPath = (Resolve-Path '.\.env').Path
+if (Select-String -LiteralPath $EnvPath -Pattern '^\s*PUBLIC_AI_RATE_LIMIT_SECRET\s*=' -Quiet) {
+  throw 'STOPP: PUBLIC_AI_RATE_LIMIT_SECRET existiert bereits.'
+}
+$Bytes = New-Object byte[] 32
+$Generator = [Security.Cryptography.RandomNumberGenerator]::Create()
+try {
+  $Generator.GetBytes($Bytes)
+  $SecretValue = ($Bytes | ForEach-Object { $_.ToString('x2') }) -join ''
+  [IO.File]::AppendAllText($EnvPath, [Environment]::NewLine + "PUBLIC_AI_RATE_LIMIT_SECRET=$SecretValue" + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+} finally {
+  $Generator.Dispose()
+  $Bytes = $null
+  $SecretValue = $null
+}
+Write-Host 'PUBLIC_AI_RATE_LIMIT_SECRET wurde gesetzt, ohne es auszugeben.'
+```
+
+In PROD wird unabhängig davon ein anderer Wert erzeugt:
+
+```bash
+cd /var/www/vhosts/mobiliti.at/httpdocs/dashboard
+grep -Eq '^[[:space:]]*PUBLIC_AI_RATE_LIMIT_SECRET[[:space:]]*=' .env \
+  && { echo 'STOPP: PUBLIC_AI_RATE_LIMIT_SECRET existiert bereits.'; false; }
+PUBLIC_AI_SECRET_VALUE="$(openssl rand -hex 32)"
+printf '\nPUBLIC_AI_RATE_LIMIT_SECRET=%s\n' "$PUBLIC_AI_SECRET_VALUE" >> .env
+unset PUBLIC_AI_SECRET_VALUE
+echo 'PUBLIC_AI_RATE_LIMIT_SECRET wurde gesetzt, ohne es auszugeben.'
+```
+
+Danach ausschließlich die API neu erstellen:
+
+```bash
+cd /var/www/vhosts/mobiliti.at/httpdocs/dashboard
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps --build --force-recreate api
+curl --fail --silent https://dashboard.mobiliti.at/api/health
+echo
+```
+
+Falls der WordPress-Assistent nicht erscheint: zuerst die erlaubte Domain exakt prüfen, dann Browser-Konsole und Content-Security-Policy der WordPress-Seite kontrollieren. Den Einbettungsschlüssel nur bei Verdacht auf Missbrauch erneuern; danach muss der neue Einbettungscode auf der Website ersetzt werden.
+
+## 19. Homepage `www.mobiliti.at` separat aktualisieren
+
+Dieser Abschnitt wird **nur ausgeführt, wenn sich die Mobiliti-Homepage geändert hat**. Die Homepage liegt lokal unter `C:\DATEN\WWW\projekte\www.mobiliti.at` und ist absichtlich kein Bestandteil des Dashboard-Release-Archivs. Dashboard und Homepage werden daher nacheinander, aber nie in dasselbe Zielverzeichnis übertragen.
+
+Aktuell gehören diese Homepage-Dateien zusammen:
+
+- `index.html`
+- `about-us.html`
+- `sitemap.xml`
+- `assets/css/home.css`
+- `assets/js/site.js`
+- `assets/js/forms.js`
+
+### A. DEV / Windows-PowerShell: Homepage prüfen
+
+```powershell
+$HomepageRoot = 'C:\DATEN\WWW\projekte\www.mobiliti.at'
+Set-Location $HomepageRoot
+
+node --check .\assets\js\site.js
+if ($LASTEXITCODE -ne 0) { throw 'site.js ist syntaktisch ungültig.' }
+
+node --check .\assets\js\forms.js
+if ($LASTEXITCODE -ne 0) { throw 'forms.js ist syntaktisch ungültig.' }
+
+$HomepageMarker = Select-String -LiteralPath .\index.html -SimpleMatch 'Eine KI-Plattform für'
+if (-not $HomepageMarker) { throw 'Neue Homepage-Kennung fehlt.' }
+
+Get-Item .\index.html, .\about-us.html, .\sitemap.xml,
+  .\assets\css\home.css, .\assets\js\site.js, .\assets\js\forms.js |
+  Select-Object FullName, Length, LastWriteTime
+```
+
+Danach `index.html` lokal in Desktop- und Mobilbreite prüfen. Besonders Navigation, Content-, Sales- und Kontaktbereich sowie die Auswahl des Produktinteresses testen. Das Formular in DEV nicht absenden, wenn dadurch eine echte Anfrage ausgelöst würde.
+
+### B. PROD / Ubuntu-PuTTY: vorhandene Homepage sichern
+
+**Vor dem SFTP-Upload** diesen Block ausführen:
+
+```bash
+(
+  set -Eeuo pipefail
+  HOMEPAGE_ROOT='/var/www/vhosts/mobiliti.at/httpdocs'
+  BACKUP_ID="homepage-pre-$(date -u +%Y%m%dT%H%M%SZ)"
+  BACKUP_DIR="/var/www/vhosts/mobiliti.at/private/homepage-backups/$BACKUP_ID"
+
+  test -f "$HOMEPAGE_ROOT/index.html"
+  test -f "$HOMEPAGE_ROOT/about-us.html"
+  mkdir -p "$BACKUP_DIR/assets/css" "$BACKUP_DIR/assets/js"
+
+  cp -p "$HOMEPAGE_ROOT/index.html" "$BACKUP_DIR/index.html"
+  cp -p "$HOMEPAGE_ROOT/about-us.html" "$BACKUP_DIR/about-us.html"
+  cp -p "$HOMEPAGE_ROOT/sitemap.xml" "$BACKUP_DIR/sitemap.xml"
+  cp -p "$HOMEPAGE_ROOT/assets/css/home.css" "$BACKUP_DIR/assets/css/home.css"
+  cp -p "$HOMEPAGE_ROOT/assets/js/site.js" "$BACKUP_DIR/assets/js/site.js"
+  cp -p "$HOMEPAGE_ROOT/assets/js/forms.js" "$BACKUP_DIR/assets/js/forms.js"
+
+  echo "Homepage-Backup erstellt: $BACKUP_DIR"
+)
+```
+
+### C. SFTP / Windows: exakt diese sechs Dateien übertragen
+
+Lokale Quelle:
+
+```text
+C:\DATEN\WWW\projekte\www.mobiliti.at\
+```
+
+Produktionsziel:
+
+```text
+/var/www/vhosts/mobiliti.at/httpdocs/
+```
+
+Die Unterverzeichnisse `assets/css/` und `assets/js/` müssen erhalten bleiben. **Nicht** nach `/httpdocs/dashboard/` hochladen und keine `.env`, Datenbank, Uploads oder Dashboard-Dateien überschreiben.
+
+### D. PROD / Ubuntu-PuTTY: Rechte und Ergebnis prüfen
+
+```bash
+(
+  set -Eeuo pipefail
+  HOMEPAGE_ROOT='/var/www/vhosts/mobiliti.at/httpdocs'
+
+  chmod 644 \
+    "$HOMEPAGE_ROOT/index.html" \
+    "$HOMEPAGE_ROOT/about-us.html" \
+    "$HOMEPAGE_ROOT/sitemap.xml" \
+    "$HOMEPAGE_ROOT/assets/css/home.css" \
+    "$HOMEPAGE_ROOT/assets/js/site.js" \
+    "$HOMEPAGE_ROOT/assets/js/forms.js"
+
+  curl --fail --silent https://www.mobiliti.at/ | grep -F 'Eine KI-Plattform für'
+  curl --fail --silent --show-error --head https://www.mobiliti.at/
+  curl --fail --silent --show-error --head https://www.mobiliti.at/about-us.html
+  curl --fail --silent --show-error --head https://www.mobiliti.at/sitemap.xml
+)
+```
+
+Abschließend im Browser testen:
+
+1. `https://www.mobiliti.at/` in Desktop- und Mobilansicht öffnen.
+2. Content und Sales über die Navigation anspringen.
+3. Beim Sales-CTA muss im Demoformular **Sales Account-Radar** vorausgewählt sein.
+4. Beim Content-CTA muss **Content Dashboard** vorausgewählt sein.
+5. Eine einzige kontrollierte Testanfrage senden und in **Admin → Account-Radar Anfragen** prüfen. Sales-Anfragen müssen dort als neue Anfrage erscheinen.
+6. Im Dashboard einmal aus Content und einmal aus Sales abmelden: Content führt zur Mandanten-Publicpage, Sales zu `https://www.mobiliti.at/#sales`.

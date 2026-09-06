@@ -16,7 +16,12 @@ const safeEqual = (left, right) => {
 };
 
 module.exports = (req, res, next) => {
-  if (SAFE_METHODS.has(req.method) || EXEMPT_PATHS.has(req.path) || req.path.startsWith('/api/auth/reset-password/')) return next();
+  if (
+    SAFE_METHODS.has(req.method)
+    || EXEMPT_PATHS.has(req.path)
+    || req.path.startsWith('/api/auth/reset-password/')
+    || req.path.startsWith('/api/public/assistant/')
+  ) return next();
 
   const authorization = String(req.headers.authorization || '');
   const legacyToken = String(req.headers['x-auth-token'] || '');
