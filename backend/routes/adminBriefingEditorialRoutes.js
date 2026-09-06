@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const tenantManagerAuth = require('../middleware/tenantManagerAuth');
+const tenantManagerAuth = require('../middleware/contentManagerAuth');
 const memberNewsletter = require('../controllers/adminMemberNewsletterController');
 
 const { 

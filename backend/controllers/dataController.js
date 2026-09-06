@@ -6,6 +6,10 @@ const { renderLayout } = require('../services/emailTemplates');
 const { generateAIContent } = require('../services/aiExecutionService');
 const { logToDb } = require('../services/aiExecutionService'); 
 const { sanitizeRichText } = require('../services/htmlSanitizer');
+const { retrieveTenantInternalDocuments } = require('../services/internalAiRetrievalService');
+const { findReusableAccountLogo, getDomainFromUrl, loadLogoCandidates } = require('../services/accountLogoService');
+const { hasTenantModule } = require('../services/tenantModuleService');
+const { hasSalesFeature } = require('../services/salesPlanService');
 const TANKERKOENIG_API_KEY = process.env.TANKERKOENIG_API_KEY;
 const ECONTROL_API_KEY     = process.env.ECONTROL_API_KEY;
 const ECONTROL_BASE_URL    = process.env.ECONTROL_BASE_URL;
@@ -1468,15 +1472,6 @@ const safeDateDiffDays = (dateValue) => {
     return Math.max(0, Math.floor((today.getTime() - date.getTime()) / (1000 * 60 * 60 * 24)));
 };
 
-const getDomainFromUrl = (url) => {
-    if (!url) return null;
-    try {
-        return new URL(url).hostname.replace(/^www\./, '');
-    } catch (_) {
-        return String(url).replace(/^https?:\/\//i, '').split('/')[0] || null;
-    }
-};
-
 const classifyAccountIntelligenceArticle = (article, type) => {
     const text = `${article.article_title || ''} ${article.summary || ''}`.toLowerCase();
     const isCompetitor = type === 'competitor';
@@ -1544,6 +1539,13 @@ const classifyAccountIntelligenceArticle = (article, type) => {
 
 exports.getAccountIntelligence = async (req, res) => {
     const { id: userId, business_partner_id: businessPartnerId } = req.user;
+    const includeCompetitors = hasSalesFeature(req.user, 'competitorMonitoring');
+    const requestedLimit = Number.parseInt(String(req.query.limitPerGroup || ''), 10);
+    const requestedPeriodDays = Number.parseInt(String(req.query.periodDays || ''), 10);
+    const limitPerGroup = Number.isFinite(requestedLimit)
+        ? Math.min(Math.max(requestedLimit, 1), 50)
+        : 15;
+    const periodDays = [7, 30, 90, 365].includes(requestedPeriodDays) ? requestedPeriodDays : 30;
 
     if (!businessPartnerId || !userId) {
         return res.json([]);
@@ -1557,6 +1559,43 @@ exports.getAccountIntelligence = async (req, res) => {
                 acc.status as account_status,
                 acc.website_url,
                 acc.linkedin_url,
+                acc.logo_url,
+                acc.address,
+                acc.contact_email,
+                acc.contact_phone,
+                acc.owner_user_id::text,
+                COALESCE(NULLIF(TRIM(CONCAT_WS(' ', account_owner.first_name, account_owner.last_name)), ''), account_owner.username) AS owner_user_name,
+                account_owner.profile_image_url AS owner_profile_image_url,
+                (SELECT COALESCE(json_agg(json_build_object('id', region.id, 'name', region.name) ORDER BY region.name), '[]'::json)
+                 FROM business_partner_account_regions relation
+                 JOIN regions region ON region.id = relation.region_id
+                 WHERE relation.account_id = acc.id) AS regions,
+                (SELECT COALESCE(json_agg(json_build_object('id', category.id, 'name', category.name) ORDER BY category.name), '[]'::json)
+                 FROM business_partner_account_categories relation
+                 JOIN categories category ON category.id = relation.category_id
+                 WHERE relation.account_id = acc.id) AS categories,
+                (SELECT COALESCE(json_agg(json_build_object(
+                    'id', contact.id::text,
+                    'name', contact.name,
+                    'job_title', contact.job_title,
+                    'email', contact.email,
+                    'phone', contact.phone,
+                    'linkedin_url', contact.linkedin_url,
+                    'is_primary', contact.is_primary
+                ) ORDER BY contact.is_primary DESC, contact.name), '[]'::json)
+                 FROM business_partner_account_contacts contact
+                 WHERE contact.account_id = acc.id) AS contacts,
+                (SELECT COALESCE(json_agg(json_build_object(
+                    'id', competitor.id::text,
+                    'name', competitor.name,
+                    'website_url', competitor.website_url,
+                    'linkedin_url', competitor.linkedin_url,
+                    'notes', competitor.notes
+                ) ORDER BY competitor.name), '[]'::json)
+                 FROM business_partner_competitors competitor
+                 WHERE competitor.account_id = acc.id) AS competitors,
+                COALESCE(account_counts.open_signal_count, 0)::int AS open_signal_count,
+                COALESCE(account_counts.period_open_signal_count, 0)::int AS period_open_signal_count,
                 (
                     SELECT COALESCE(json_agg(news.* ORDER BY news.published_at DESC NULLS LAST), '[]'::json)
                     FROM (
@@ -1569,17 +1608,66 @@ exports.getAccountIntelligence = async (req, res) => {
                             bpta.published_at,
                             bpta.summary,
                             bpta.created_at,
-                            COALESCE(ais.status, 'new') AS status,
-                            ais.updated_at AS status_updated_at
+                            CASE
+                                WHEN radar_feedback.relevance_status = 'irrelevant' THEN 'ignored'
+                                WHEN radar_task.task_status = 'done' THEN 'done'
+                                ELSE COALESCE(ais.status, 'new')
+                            END AS status,
+                            radar_feedback.relevance_status,
+                            radar_feedback.reason AS relevance_reason,
+                            radar_feedback.note AS relevance_note,
+                            ais.updated_at AS status_updated_at,
+                            radar_task.id::text AS task_id,
+                            radar_task.task_status,
+                            radar_task.completed_at,
+                            radar_task.sales_stage,
+                            radar_task.sales_stage_updated_at,
+                            radar_task.priority,
+                            radar_task.opportunity_value_eur,
+                            radar_task.opportunity_probability,
+                            radar_task.first_contact_at,
+                            CASE WHEN radar_task.id IS NOT NULL THEN radar_task.action_type ELSE ais.action_type END AS action_type,
+                            CASE WHEN radar_task.id IS NOT NULL THEN radar_task.follow_up_at ELSE ais.follow_up_at END AS follow_up_at,
+                            CASE WHEN radar_task.id IS NOT NULL THEN radar_task.note ELSE ais.note END AS workflow_note,
+                            COALESCE(radar_task.updated_at, ais.action_updated_at) AS action_updated_at,
+                            radar_task.assigned_user_id::text,
+                            COALESCE(
+                                NULLIF(TRIM(CONCAT_WS(' ', assigned_user.first_name, assigned_user.last_name)), ''),
+                                assigned_user.username
+                            ) AS assigned_user_name,
+                            assigned_user.profile_image_url AS assigned_user_profile_image_url,
+                            radar_task.contact_id::text,
+                            radar_task.contact_channel,
+                            radar_contact.name AS contact_name,
+                            radar_contact.job_title AS contact_job_title,
+                            radar_contact.email AS contact_email,
+                            radar_contact.phone AS contact_phone,
+                            radar_contact.linkedin_url AS contact_linkedin_url,
+                            (SELECT COALESCE(json_agg(link.campaign_id::text ORDER BY link.campaign_id::text), '[]'::json)
+                             FROM account_radar_campaign_signals link
+                             JOIN account_radar_campaigns campaign ON campaign.id = link.campaign_id
+                             WHERE link.tracked_article_id = bpta.id
+                               AND campaign.business_partner_id = $1
+                               AND campaign.status <> 'archived') AS campaign_ids
                         FROM business_partner_tracked_articles bpta
                         LEFT JOIN account_intelligence_item_status ais
                           ON ais.tracked_article_id = bpta.id
                          AND ais.user_id = $2
+                        LEFT JOIN account_radar_tasks radar_task
+                          ON radar_task.tracked_article_id = bpta.id
+                         AND radar_task.business_partner_id = $1
+                         AND radar_task.task_status <> 'cancelled'
+                        LEFT JOIN users assigned_user ON assigned_user.id = radar_task.assigned_user_id
+                        LEFT JOIN account_radar_signal_feedback radar_feedback
+                          ON radar_feedback.tracked_article_id = bpta.id
+                         AND radar_feedback.business_partner_id = $1
+                        LEFT JOIN business_partner_account_contacts radar_contact
+                          ON radar_contact.id = radar_task.contact_id
+                         AND radar_contact.account_id = bpta.account_id
                         WHERE bpta.account_id = acc.id
                           AND bpta.competitor_name IS NULL
-                          AND COALESCE(ais.status, 'new') <> 'ignored'
                         ORDER BY bpta.published_at DESC NULLS LAST, bpta.created_at DESC
-                        LIMIT 5
+                        LIMIT $3
                     ) as news
                 ) as account_news,
                 (
@@ -1595,33 +1683,130 @@ exports.getAccountIntelligence = async (req, res) => {
                             bpta.published_at,
                             bpta.summary,
                             bpta.created_at,
-                            COALESCE(ais.status, 'new') AS status,
-                            ais.updated_at AS status_updated_at
+                            CASE
+                                WHEN radar_feedback.relevance_status = 'irrelevant' THEN 'ignored'
+                                WHEN radar_task.task_status = 'done' THEN 'done'
+                                ELSE COALESCE(ais.status, 'new')
+                            END AS status,
+                            radar_feedback.relevance_status,
+                            radar_feedback.reason AS relevance_reason,
+                            radar_feedback.note AS relevance_note,
+                            ais.updated_at AS status_updated_at,
+                            radar_task.id::text AS task_id,
+                            radar_task.task_status,
+                            radar_task.completed_at,
+                            radar_task.sales_stage,
+                            radar_task.sales_stage_updated_at,
+                            radar_task.priority,
+                            radar_task.opportunity_value_eur,
+                            radar_task.opportunity_probability,
+                            radar_task.first_contact_at,
+                            CASE WHEN radar_task.id IS NOT NULL THEN radar_task.action_type ELSE ais.action_type END AS action_type,
+                            CASE WHEN radar_task.id IS NOT NULL THEN radar_task.follow_up_at ELSE ais.follow_up_at END AS follow_up_at,
+                            CASE WHEN radar_task.id IS NOT NULL THEN radar_task.note ELSE ais.note END AS workflow_note,
+                            COALESCE(radar_task.updated_at, ais.action_updated_at) AS action_updated_at,
+                            radar_task.assigned_user_id::text,
+                            COALESCE(
+                                NULLIF(TRIM(CONCAT_WS(' ', assigned_user.first_name, assigned_user.last_name)), ''),
+                                assigned_user.username
+                            ) AS assigned_user_name,
+                            assigned_user.profile_image_url AS assigned_user_profile_image_url,
+                            radar_task.contact_id::text,
+                            radar_task.contact_channel,
+                            radar_contact.name AS contact_name,
+                            radar_contact.job_title AS contact_job_title,
+                            radar_contact.email AS contact_email,
+                            radar_contact.phone AS contact_phone,
+                            radar_contact.linkedin_url AS contact_linkedin_url,
+                            (SELECT COALESCE(json_agg(link.campaign_id::text ORDER BY link.campaign_id::text), '[]'::json)
+                             FROM account_radar_campaign_signals link
+                             JOIN account_radar_campaigns campaign ON campaign.id = link.campaign_id
+                             WHERE link.tracked_article_id = bpta.id
+                               AND campaign.business_partner_id = $1
+                               AND campaign.status <> 'archived') AS campaign_ids
                         FROM business_partner_tracked_articles bpta
                         LEFT JOIN account_intelligence_item_status ais
                           ON ais.tracked_article_id = bpta.id
                          AND ais.user_id = $2
+                        LEFT JOIN account_radar_tasks radar_task
+                          ON radar_task.tracked_article_id = bpta.id
+                         AND radar_task.business_partner_id = $1
+                         AND radar_task.task_status <> 'cancelled'
+                        LEFT JOIN users assigned_user ON assigned_user.id = radar_task.assigned_user_id
+                        LEFT JOIN account_radar_signal_feedback radar_feedback
+                          ON radar_feedback.tracked_article_id = bpta.id
+                         AND radar_feedback.business_partner_id = $1
+                        LEFT JOIN business_partner_account_contacts radar_contact
+                          ON radar_contact.id = radar_task.contact_id
+                         AND radar_contact.account_id = bpta.account_id
                         WHERE bpta.account_id = acc.id
+                          AND $5::boolean = TRUE
                           AND bpta.competitor_name IS NOT NULL
-                          AND COALESCE(ais.status, 'new') <> 'ignored'
                         ORDER BY bpta.published_at DESC NULLS LAST, bpta.created_at DESC
-                        LIMIT 8
+                        LIMIT $3
                     ) as comp_news
                 ) as competitor_news
             FROM business_partner_accounts acc
+            LEFT JOIN users account_owner ON account_owner.id = acc.owner_user_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE counted.effective_status IN ('new', 'read')
+                    ) AS open_signal_count,
+                    COUNT(*) FILTER (
+                        WHERE counted.effective_status IN ('new', 'read')
+                          AND NOT (
+                              counted.action_type IS NOT NULL
+                              AND counted.follow_up_at IS NOT NULL
+                              AND counted.follow_up_at > CURRENT_TIMESTAMP
+                          )
+                          AND counted.published_at >= CURRENT_DATE - (($4::integer - 1) * INTERVAL '1 day')
+                    ) AS period_open_signal_count
+                FROM (
+                    SELECT
+                        article.published_at,
+                        CASE
+                            WHEN feedback.relevance_status = 'irrelevant' THEN 'ignored'
+                            WHEN task.task_status = 'done' THEN 'done'
+                            ELSE COALESCE(item_status.status, 'new')
+                        END AS effective_status,
+                        CASE WHEN task.id IS NOT NULL THEN task.action_type ELSE item_status.action_type END AS action_type,
+                        CASE WHEN task.id IS NOT NULL THEN task.follow_up_at ELSE item_status.follow_up_at END AS follow_up_at
+                    FROM business_partner_tracked_articles article
+                    LEFT JOIN account_intelligence_item_status item_status
+                      ON item_status.tracked_article_id = article.id
+                     AND item_status.user_id = $2
+                    LEFT JOIN account_radar_tasks task
+                      ON task.tracked_article_id = article.id
+                     AND task.business_partner_id = $1
+                     AND task.task_status <> 'cancelled'
+                    LEFT JOIN account_radar_signal_feedback feedback
+                      ON feedback.tracked_article_id = article.id
+                     AND feedback.business_partner_id = $1
+                    WHERE article.account_id = acc.id
+                      AND ($5::boolean = TRUE OR article.competitor_name IS NULL)
+                ) counted
+            ) account_counts ON TRUE
             WHERE acc.business_partner_id = $1
               AND COALESCE(acc.is_active, TRUE) = TRUE
             ORDER BY acc.name ASC;
         `;
 
-        const { rows } = await db.query(query, [businessPartnerId, userId]);
+        const [accountResult, logoCandidates] = await Promise.all([
+            db.query(query, [businessPartnerId, userId, limitPerGroup, periodDays, includeCompetitors]),
+            loadLogoCandidates(businessPartnerId)
+        ]);
+
+        const rows = accountResult.rows;
 
         const enrichedRows = rows.map((account) => ({
             ...account,
+            ...findReusableAccountLogo(account, logoCandidates),
+            competitors: includeCompetitors && Array.isArray(account.competitors) ? account.competitors : [],
             account_news: Array.isArray(account.account_news)
                 ? account.account_news.map((article) => classifyAccountIntelligenceArticle(article, 'account'))
                 : [],
-            competitor_news: Array.isArray(account.competitor_news)
+            competitor_news: includeCompetitors && Array.isArray(account.competitor_news)
                 ? account.competitor_news.map((article) => classifyAccountIntelligenceArticle(article, 'competitor'))
                 : []
         }));
@@ -1685,6 +1870,643 @@ exports.updateAccountIntelligenceStatus = async (req, res) => {
     } catch (err) {
         console.error('Error updating account intelligence status:', err.message);
         res.status(500).json({ message: 'Status konnte nicht gespeichert werden.' });
+    }
+};
+
+const ACCOUNT_INTELLIGENCE_ACTION_TYPES = new Set(['contact_planned', 'follow_up']);
+const ACCOUNT_RADAR_TASK_STATUSES = new Set(['open', 'done']);
+const ACCOUNT_RADAR_SALES_STAGES = new Set(['contacted', 'meeting', 'offer', 'won', 'lost']);
+const ACCOUNT_RADAR_CONTACT_CHANNELS = new Set([
+    'email',
+    'phone',
+    'linkedin',
+    'video_call',
+    'in_person',
+    'contact_form',
+    'other',
+]);
+const ACCOUNT_RADAR_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
+const ACCOUNT_RADAR_RELEVANCE_REASONS = new Set([
+    'false_positive',
+    'outdated',
+    'duplicate',
+    'wrong_account',
+    'no_sales_relevance',
+    'other',
+]);
+
+exports.updateAccountRadarRelevance = async (req, res) => {
+    const { id: userId, business_partner_id: businessPartnerId } = req.user;
+    const { articleId } = req.params;
+    const relevanceStatus = String(req.body?.relevance_status || '');
+    const reason = req.body?.reason === null || req.body?.reason === '' ? null : String(req.body?.reason || '');
+    const note = String(req.body?.note || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!userId || !businessPartnerId) return res.status(401).json({ message: 'Authentifizierung erforderlich.' });
+    if (!isValidUUID(articleId)) return res.status(400).json({ message: 'Ungültige Artikel-ID.' });
+    if (!['relevant', 'irrelevant'].includes(relevanceStatus)) return res.status(400).json({ message: 'Ungültige Relevanzbewertung.' });
+    if (relevanceStatus === 'irrelevant' && !ACCOUNT_RADAR_RELEVANCE_REASONS.has(reason)) {
+        return res.status(400).json({ message: 'Bitte einen Grund für den irrelevanten Treffer auswählen.' });
+    }
+    if (reason && !ACCOUNT_RADAR_RELEVANCE_REASONS.has(reason)) return res.status(400).json({ message: 'Ungültiger Relevanzgrund.' });
+    if (note.length > 500) return res.status(400).json({ message: 'Der Hinweis darf maximal 500 Zeichen lang sein.' });
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const ownership = await client.query(
+            `SELECT article.id
+             FROM business_partner_tracked_articles article
+             JOIN business_partner_accounts account ON account.id = article.account_id
+             WHERE article.id = $1 AND account.business_partner_id = $2
+             LIMIT 1`,
+            [articleId, businessPartnerId]
+        );
+        if (!ownership.rows[0]) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Signal nicht gefunden oder nicht für diesen Mandanten freigegeben.' });
+        }
+        const result = await client.query(
+            `INSERT INTO account_radar_signal_feedback
+                (business_partner_id, tracked_article_id, relevance_status, reason, note, created_by_user_id, updated_by_user_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $6)
+             ON CONFLICT (business_partner_id, tracked_article_id)
+             DO UPDATE SET relevance_status = EXCLUDED.relevance_status,
+                           reason = EXCLUDED.reason,
+                           note = EXCLUDED.note,
+                           updated_by_user_id = EXCLUDED.updated_by_user_id,
+                           updated_at = CURRENT_TIMESTAMP
+             RETURNING relevance_status, reason AS relevance_reason, note AS relevance_note, updated_at`,
+            [businessPartnerId, articleId, relevanceStatus, relevanceStatus === 'irrelevant' ? reason : null, note || null, userId]
+        );
+        const personalStatus = relevanceStatus === 'irrelevant' ? 'ignored' : 'read';
+        await client.query(
+            `INSERT INTO account_intelligence_item_status (user_id, tracked_article_id, status, updated_at)
+             VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+             ON CONFLICT (user_id, tracked_article_id)
+             DO UPDATE SET status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP`,
+            [userId, articleId, personalStatus]
+        );
+        await client.query('COMMIT');
+        return res.json({ article_id: articleId, status: personalStatus, ...result.rows[0] });
+    } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('Error updating account radar relevance:', error.message);
+        return res.status(500).json({ message: 'Die Relevanzbewertung konnte nicht gespeichert werden.' });
+    } finally {
+        client.release();
+    }
+};
+
+exports.getAccountRadarTeam = async (req, res) => {
+    const { id: userId, business_partner_id: businessPartnerId } = req.user;
+    if (!userId || !businessPartnerId) {
+        return res.status(401).json({ message: 'Authentifizierung erforderlich.' });
+    }
+
+    try {
+        const { rows } = await db.query(`
+            SELECT
+                app_user.id::text,
+                COALESCE(
+                    NULLIF(TRIM(CONCAT_WS(' ', app_user.first_name, app_user.last_name)), ''),
+                    app_user.username
+                ) AS name,
+                app_user.email,
+                app_user.role,
+                app_user.profile_image_url
+            FROM users app_user
+            WHERE app_user.business_partner_id = $1
+              AND app_user.is_active = TRUE
+              AND LOWER(app_user.role) IN ('admin', 'assistenz', 'sales_manager', 'sales_user')
+            ORDER BY
+                CASE WHEN app_user.id = $2 THEN 0 ELSE 1 END,
+                app_user.last_name NULLS LAST,
+                app_user.first_name NULLS LAST,
+                app_user.username
+        `, [businessPartnerId, userId]);
+        return res.json(rows);
+    } catch (err) {
+        console.error('Error fetching account radar team:', err.message);
+        return res.status(500).json({ message: 'Das Radar-Team konnte nicht geladen werden.' });
+    }
+};
+
+exports.getAccountRadarTaskActivity = async (req, res) => {
+    const { business_partner_id: businessPartnerId } = req.user;
+    const { articleId } = req.params;
+    if (!businessPartnerId) return res.status(401).json({ message: 'Authentifizierung erforderlich.' });
+    if (!isValidUUID(articleId)) return res.status(400).json({ message: 'Ungültige Artikel-ID.' });
+
+    try {
+        const taskResult = await db.query(`
+            SELECT task.id
+            FROM account_radar_tasks task
+            JOIN business_partner_tracked_articles article ON article.id = task.tracked_article_id
+            JOIN business_partner_accounts account ON account.id = article.account_id
+            WHERE task.tracked_article_id = $1
+              AND task.business_partner_id = $2
+              AND account.business_partner_id = $2
+            LIMIT 1
+        `, [articleId, businessPartnerId]);
+        if (!taskResult.rows[0]) return res.json([]);
+
+        const { rows } = await db.query(`
+            SELECT
+                event.id::text,
+                event.event_type,
+                event.event_data,
+                event.created_at,
+                actor.id::text AS actor_user_id,
+                COALESCE(
+                    NULLIF(TRIM(CONCAT_WS(' ', actor.first_name, actor.last_name)), ''),
+                    actor.username,
+                    'Ehemaliger Nutzer'
+                ) AS actor_name,
+                actor.profile_image_url AS actor_profile_image_url
+            FROM account_radar_task_events event
+            LEFT JOIN users actor ON actor.id = event.actor_user_id
+            WHERE event.task_id = $1
+              AND event.business_partner_id = $2
+            ORDER BY event.created_at DESC
+            LIMIT 50
+        `, [taskResult.rows[0].id, businessPartnerId]);
+        return res.json(rows);
+    } catch (err) {
+        console.error('Error fetching account radar activity:', err.message);
+        return res.status(500).json({ message: 'Der Aktivitätsverlauf konnte nicht geladen werden.' });
+    }
+};
+
+exports.updateAccountIntelligenceWorkflow = async (req, res) => {
+    const { id: userId, business_partner_id: businessPartnerId } = req.user;
+    const { articleId } = req.params;
+    const rawActionType = req.body?.action_type;
+    const actionType = rawActionType === null || rawActionType === '' ? null : String(rawActionType);
+    const rawFollowUpAt = req.body?.follow_up_at;
+    const hasAssigneeField = Object.prototype.hasOwnProperty.call(req.body || {}, 'assigned_user_id');
+    const rawAssigneeUserId = req.body?.assigned_user_id;
+    const hasSalesStageField = Object.prototype.hasOwnProperty.call(req.body || {}, 'sales_stage');
+    const rawSalesStage = req.body?.sales_stage;
+    const requestedSalesStage = rawSalesStage === null || rawSalesStage === '' ? null : String(rawSalesStage || '');
+    const hasPriorityField = Object.prototype.hasOwnProperty.call(req.body || {}, 'priority');
+    const requestedPriority = req.body?.priority === null || req.body?.priority === ''
+        ? 'normal'
+        : String(req.body?.priority || 'normal');
+    const hasOpportunityValueField = Object.prototype.hasOwnProperty.call(req.body || {}, 'opportunity_value_eur');
+    const rawOpportunityValue = req.body?.opportunity_value_eur;
+    const requestedOpportunityValue = rawOpportunityValue === null || rawOpportunityValue === ''
+        ? null
+        : Number(rawOpportunityValue);
+    const hasOpportunityProbabilityField = Object.prototype.hasOwnProperty.call(req.body || {}, 'opportunity_probability');
+    const rawOpportunityProbability = req.body?.opportunity_probability;
+    const requestedOpportunityProbability = rawOpportunityProbability === null || rawOpportunityProbability === ''
+        ? null
+        : Number(rawOpportunityProbability);
+    const hasContactField = Object.prototype.hasOwnProperty.call(req.body || {}, 'contact_id');
+    const rawContactId = req.body?.contact_id;
+    const requestedContactId = rawContactId === null || rawContactId === '' ? null : String(rawContactId || '');
+    const hasContactChannelField = Object.prototype.hasOwnProperty.call(req.body || {}, 'contact_channel');
+    const rawContactChannel = req.body?.contact_channel;
+    const requestedContactChannel = rawContactChannel === null || rawContactChannel === ''
+        ? null
+        : String(rawContactChannel || '').toLowerCase();
+    const workflowNote = String(req.body?.note || '')
+        .replace(/[\u0000-\u001f\u007f]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!userId || !businessPartnerId) {
+        return res.status(401).json({ message: 'Authentifizierung erforderlich.' });
+    }
+    if (!isValidUUID(articleId)) {
+        return res.status(400).json({ message: 'Ungültige Artikel-ID.' });
+    }
+    if (actionType && !ACCOUNT_INTELLIGENCE_ACTION_TYPES.has(actionType)) {
+        return res.status(400).json({ message: 'Ungültige Radar-Aktion.' });
+    }
+    if (hasSalesStageField && requestedSalesStage && !ACCOUNT_RADAR_SALES_STAGES.has(requestedSalesStage)) {
+        return res.status(400).json({ message: 'Ungültige Vertriebsphase.' });
+    }
+    if (hasPriorityField && !ACCOUNT_RADAR_PRIORITIES.has(requestedPriority)) {
+        return res.status(400).json({ message: 'Ungültige Priorität.' });
+    }
+    if (hasOpportunityValueField && requestedOpportunityValue !== null
+        && (!Number.isFinite(requestedOpportunityValue) || requestedOpportunityValue < 0 || requestedOpportunityValue > 100000000)) {
+        return res.status(400).json({ message: 'Der Opportunity-Wert muss zwischen 0 und 100.000.000 Euro liegen.' });
+    }
+    if (hasOpportunityProbabilityField && requestedOpportunityProbability !== null
+        && (!Number.isInteger(requestedOpportunityProbability) || requestedOpportunityProbability < 0 || requestedOpportunityProbability > 100)) {
+        return res.status(400).json({ message: 'Die Abschlusswahrscheinlichkeit muss zwischen 0 und 100 Prozent liegen.' });
+    }
+    if (hasContactField && requestedContactId && !isValidUUID(requestedContactId)) {
+        return res.status(400).json({ message: 'Bitte einen gültigen Ansprechpartner auswählen.' });
+    }
+    if (hasContactChannelField && requestedContactChannel && !ACCOUNT_RADAR_CONTACT_CHANNELS.has(requestedContactChannel)) {
+        return res.status(400).json({ message: 'Bitte einen gültigen Kontaktkanal auswählen.' });
+    }
+    if (workflowNote.length > 1500) {
+        return res.status(400).json({ message: 'Die Notiz darf maximal 1.500 Zeichen lang sein.' });
+    }
+
+    let followUpAt = null;
+    if (actionType) {
+        followUpAt = new Date(rawFollowUpAt);
+        const earliestAllowed = new Date();
+        earliestAllowed.setFullYear(earliestAllowed.getFullYear() - 3);
+        const latestAllowed = new Date();
+        latestAllowed.setFullYear(latestAllowed.getFullYear() + 3);
+        if (!rawFollowUpAt || Number.isNaN(followUpAt.getTime())) {
+            return res.status(400).json({ message: 'Bitte einen gültigen Termin auswählen.' });
+        }
+        if (followUpAt < earliestAllowed) {
+            return res.status(400).json({ message: 'Der Termin liegt außerhalb des zulässigen Zeitraums.' });
+        }
+        if (followUpAt > latestAllowed) {
+            return res.status(400).json({ message: 'Der Termin darf höchstens drei Jahre in der Zukunft liegen.' });
+        }
+    }
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const ownershipCheck = await client.query(`
+            SELECT tracked.id, tracked.account_id
+            FROM business_partner_tracked_articles tracked
+            JOIN business_partner_accounts account ON account.id = tracked.account_id
+            WHERE tracked.id = $1
+              AND account.business_partner_id = $2
+            LIMIT 1
+        `, [articleId, businessPartnerId]);
+        if (ownershipCheck.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Signal nicht gefunden oder nicht für diesen Mandanten freigegeben.' });
+        }
+        const accountId = ownershipCheck.rows[0].account_id;
+
+        const existingResult = await client.query(`
+            SELECT id, assigned_user_id, action_type, follow_up_at, note, task_status, sales_stage,
+                   contact_id, contact_channel, priority, opportunity_value_eur,
+                   opportunity_probability, first_contact_at
+            FROM account_radar_tasks
+            WHERE tracked_article_id = $1 AND business_partner_id = $2
+            FOR UPDATE
+        `, [articleId, businessPartnerId]);
+        const existingTask = existingResult.rows[0] || null;
+
+        let assignedUserId = existingTask?.assigned_user_id || null;
+        if (hasAssigneeField) {
+            assignedUserId = rawAssigneeUserId === null || rawAssigneeUserId === '' ? null : String(rawAssigneeUserId);
+        } else if (!existingTask && (actionType || workflowNote || requestedSalesStage)) {
+            assignedUserId = userId;
+        }
+
+        const salesStage = hasSalesStageField ? requestedSalesStage : (existingTask?.sales_stage || null);
+        const priority = hasPriorityField ? requestedPriority : (existingTask?.priority || 'normal');
+        const opportunityValue = hasOpportunityValueField
+            ? requestedOpportunityValue
+            : (existingTask?.opportunity_value_eur === null || existingTask?.opportunity_value_eur === undefined
+                ? null : Number(existingTask.opportunity_value_eur));
+        const defaultProbabilityByStage = { contacted: 20, meeting: 40, offer: 70, won: 100, lost: 0 };
+        let opportunityProbability = hasOpportunityProbabilityField
+            ? requestedOpportunityProbability
+            : (existingTask?.opportunity_probability === null || existingTask?.opportunity_probability === undefined
+                ? (salesStage ? defaultProbabilityByStage[salesStage] : null)
+                : Number(existingTask.opportunity_probability));
+        if (salesStage === 'won') opportunityProbability = 100;
+        if (salesStage === 'lost') opportunityProbability = 0;
+
+        let contactId = hasContactField ? requestedContactId : (existingTask?.contact_id || null);
+        let contactChannel = hasContactChannelField
+            ? requestedContactChannel
+            : (existingTask?.contact_channel || null);
+        if (actionType !== 'contact_planned') {
+            contactId = null;
+            contactChannel = null;
+        } else if (!contactChannel) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: 'Bitte einen Kontaktkanal auswählen.' });
+        }
+
+        let selectedContact = null;
+        if (contactId) {
+            const contactResult = await client.query(`
+                SELECT
+                    contact.id::text,
+                    contact.name,
+                    contact.job_title,
+                    contact.email,
+                    contact.phone,
+                    contact.linkedin_url
+                FROM business_partner_account_contacts contact
+                JOIN business_partner_accounts account ON account.id = contact.account_id
+                WHERE contact.id = $1
+                  AND contact.account_id = $2
+                  AND account.business_partner_id = $3
+                LIMIT 1
+            `, [contactId, accountId, businessPartnerId]);
+            if (!contactResult.rows[0]) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ message: 'Der Ansprechpartner gehört nicht zu diesem Account.' });
+            }
+            selectedContact = contactResult.rows[0];
+        }
+
+        let assignedUserName = null;
+        let assignedUserProfileImageUrl = null;
+        if (assignedUserId) {
+            if (!isValidUUID(assignedUserId)) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ message: 'Bitte eine gültige verantwortliche Person auswählen.' });
+            }
+            const assigneeResult = await client.query(`
+                SELECT COALESCE(
+                    NULLIF(TRIM(CONCAT_WS(' ', first_name, last_name)), ''),
+                    username
+                ) AS name,
+                profile_image_url
+                FROM users
+                WHERE id = $1
+                  AND business_partner_id = $2
+                  AND is_active = TRUE
+                  AND LOWER(role) IN ('admin', 'assistenz', 'sales_manager', 'sales_user')
+                LIMIT 1
+            `, [assignedUserId, businessPartnerId]);
+            if (!assigneeResult.rows[0]) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ message: 'Die ausgewählte Person gehört nicht zum berechtigten Radar-Team dieses Mandanten.' });
+            }
+            assignedUserName = assigneeResult.rows[0].name;
+            assignedUserProfileImageUrl = assigneeResult.rows[0].profile_image_url || null;
+        }
+
+        const hasTaskContent = Boolean(actionType || workflowNote || salesStage || opportunityValue !== null || priority !== 'normal');
+        let task;
+        let eventType;
+        if (!hasTaskContent) {
+            if (existingTask) {
+                const cancelledResult = await client.query(`
+                    UPDATE account_radar_tasks
+                    SET assigned_user_id = NULL,
+                        action_type = NULL,
+                        follow_up_at = NULL,
+                        contact_id = NULL,
+                        contact_channel = NULL,
+                        note = NULL,
+                        sales_stage = NULL,
+                        priority = 'normal',
+                        opportunity_value_eur = NULL,
+                        opportunity_probability = NULL,
+                        sales_stage_updated_at = CASE WHEN sales_stage IS NOT NULL THEN CURRENT_TIMESTAMP ELSE sales_stage_updated_at END,
+                        task_status = 'cancelled',
+                        completed_at = NULL,
+                        updated_by_user_id = $3,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE tracked_article_id = $1 AND business_partner_id = $2
+                    RETURNING *
+                `, [articleId, businessPartnerId, userId]);
+                task = cancelledResult.rows[0];
+                eventType = 'cancelled';
+            }
+        } else {
+            const taskResult = await client.query(`
+                INSERT INTO account_radar_tasks (
+                    business_partner_id, tracked_article_id, assigned_user_id, action_type,
+                    follow_up_at, contact_id, contact_channel, note, sales_stage, sales_stage_updated_at,
+                    priority, opportunity_value_eur, opportunity_probability, first_contact_at,
+                    task_status, created_by_user_id, updated_by_user_id, completed_at
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+                    CASE WHEN $9::text IS NOT NULL THEN CURRENT_TIMESTAMP ELSE NULL END,
+                    $10, $11, $12,
+                    CASE WHEN $9::text IS NOT NULL THEN CURRENT_TIMESTAMP ELSE NULL END,
+                    CASE WHEN $9::text IN ('won', 'lost') THEN 'done' ELSE 'open' END,
+                    $13, $13,
+                    CASE WHEN $9::text IN ('won', 'lost') THEN CURRENT_TIMESTAMP ELSE NULL END
+                )
+                ON CONFLICT (tracked_article_id)
+                DO UPDATE SET
+                    assigned_user_id = EXCLUDED.assigned_user_id,
+                    action_type = EXCLUDED.action_type,
+                    follow_up_at = EXCLUDED.follow_up_at,
+                    contact_id = EXCLUDED.contact_id,
+                    contact_channel = EXCLUDED.contact_channel,
+                    note = EXCLUDED.note,
+                    sales_stage = EXCLUDED.sales_stage,
+                    priority = EXCLUDED.priority,
+                    opportunity_value_eur = EXCLUDED.opportunity_value_eur,
+                    opportunity_probability = EXCLUDED.opportunity_probability,
+                    first_contact_at = CASE
+                        WHEN account_radar_tasks.first_contact_at IS NULL AND EXCLUDED.sales_stage IS NOT NULL THEN CURRENT_TIMESTAMP
+                        ELSE account_radar_tasks.first_contact_at
+                    END,
+                    sales_stage_updated_at = CASE
+                        WHEN account_radar_tasks.sales_stage IS DISTINCT FROM EXCLUDED.sales_stage THEN CURRENT_TIMESTAMP
+                        ELSE account_radar_tasks.sales_stage_updated_at
+                    END,
+                    task_status = CASE WHEN EXCLUDED.sales_stage IN ('won', 'lost') THEN 'done' ELSE 'open' END,
+                    completed_at = CASE WHEN EXCLUDED.sales_stage IN ('won', 'lost') THEN CURRENT_TIMESTAMP ELSE NULL END,
+                    updated_by_user_id = EXCLUDED.updated_by_user_id,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING *
+            `, [
+                businessPartnerId,
+                articleId,
+                assignedUserId,
+                actionType,
+                actionType ? followUpAt.toISOString() : null,
+                contactId,
+                contactChannel,
+                workflowNote || null,
+                salesStage,
+                priority,
+                opportunityValue,
+                opportunityProbability,
+                userId,
+            ]);
+            task = taskResult.rows[0];
+            if (!existingTask || existingTask.task_status === 'cancelled') eventType = 'created';
+            else if (String(existingTask.sales_stage || '') !== String(salesStage || '')) eventType = 'stage_changed';
+            else if (existingTask.task_status === 'done' && task.task_status === 'open') eventType = 'reopened';
+            else if (String(existingTask.assigned_user_id || '') !== String(assignedUserId || '')) eventType = 'assigned';
+            else eventType = 'updated';
+        }
+
+        await client.query(`
+            INSERT INTO account_intelligence_item_status
+                (user_id, tracked_article_id, status, action_type, follow_up_at, note, action_updated_at, updated_at)
+            VALUES ($1, $2, 'read', NULL, NULL, NULL, NOW(), NOW())
+            ON CONFLICT (user_id, tracked_article_id)
+            DO UPDATE SET
+                status = CASE
+                    WHEN account_intelligence_item_status.status = 'new' THEN 'read'
+                    ELSE account_intelligence_item_status.status
+                END,
+                action_type = NULL,
+                follow_up_at = NULL,
+                note = NULL,
+                action_updated_at = NOW(),
+                updated_at = NOW()
+        `, [userId, articleId]);
+
+        if (task && eventType) {
+            await client.query(`
+                INSERT INTO account_radar_task_events
+                    (task_id, business_partner_id, actor_user_id, event_type, event_data)
+                VALUES ($1, $2, $3, $4, $5::jsonb)
+            `, [task.id, businessPartnerId, userId, eventType, JSON.stringify({
+                action_type: task.action_type,
+                follow_up_at: task.follow_up_at,
+                assigned_user_id: task.assigned_user_id,
+                assigned_user_name: assignedUserName,
+                contact_id: task.contact_id,
+                contact_name: selectedContact?.name || null,
+                contact_channel: task.contact_channel,
+                sales_stage: task.sales_stage,
+                priority: task.priority,
+                opportunity_value_eur: task.opportunity_value_eur,
+                opportunity_probability: task.opportunity_probability,
+                note_changed: String(existingTask?.note || '') !== String(task.note || ''),
+            })]);
+        }
+
+        await client.query('COMMIT');
+        if (!task || task.task_status === 'cancelled') {
+            return res.json({
+                article_id: articleId,
+                status: 'read',
+                task_id: null,
+                task_status: null,
+                action_type: null,
+                follow_up_at: null,
+                workflow_note: null,
+                assigned_user_id: null,
+                assigned_user_name: null,
+                assigned_user_profile_image_url: null,
+                contact_id: null,
+                contact_channel: null,
+                contact_name: null,
+                contact_job_title: null,
+                contact_email: null,
+                contact_phone: null,
+                contact_linkedin_url: null,
+                sales_stage: null,
+                priority: 'normal',
+                opportunity_value_eur: null,
+                opportunity_probability: null,
+                first_contact_at: task?.first_contact_at || null,
+                completed_at: null,
+                sales_stage_updated_at: task?.sales_stage_updated_at || null,
+                action_updated_at: task?.updated_at || new Date().toISOString(),
+            });
+        }
+        return res.json({
+            article_id: articleId,
+            status: task.task_status === 'done' ? 'done' : 'read',
+            task_id: task.id,
+            task_status: task.task_status,
+            action_type: task.action_type,
+            follow_up_at: task.follow_up_at,
+            workflow_note: task.note,
+            assigned_user_id: task.assigned_user_id,
+            assigned_user_name: assignedUserName,
+            assigned_user_profile_image_url: assignedUserProfileImageUrl,
+            contact_id: task.contact_id,
+            contact_channel: task.contact_channel,
+            contact_name: selectedContact?.name || null,
+            contact_job_title: selectedContact?.job_title || null,
+            contact_email: selectedContact?.email || null,
+            contact_phone: selectedContact?.phone || null,
+            contact_linkedin_url: selectedContact?.linkedin_url || null,
+            sales_stage: task.sales_stage,
+            sales_stage_updated_at: task.sales_stage_updated_at,
+            priority: task.priority,
+            opportunity_value_eur: task.opportunity_value_eur === null ? null : Number(task.opportunity_value_eur),
+            opportunity_probability: task.opportunity_probability,
+            first_contact_at: task.first_contact_at,
+            completed_at: task.completed_at,
+            action_updated_at: task.updated_at,
+        });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('Error updating account intelligence workflow:', err.message);
+        return res.status(500).json({ message: 'Die Radar-Aktion konnte nicht gespeichert werden.' });
+    } finally {
+        client.release();
+    }
+};
+
+exports.updateAccountRadarTaskStatus = async (req, res) => {
+    const { id: userId, business_partner_id: businessPartnerId } = req.user;
+    const { articleId } = req.params;
+    const taskStatus = String(req.body?.task_status || '');
+    if (!userId || !businessPartnerId) return res.status(401).json({ message: 'Authentifizierung erforderlich.' });
+    if (!isValidUUID(articleId)) return res.status(400).json({ message: 'Ungültige Artikel-ID.' });
+    if (!ACCOUNT_RADAR_TASK_STATUSES.has(taskStatus)) return res.status(400).json({ message: 'Ungültiger Aufgabenstatus.' });
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const result = await client.query(`
+            UPDATE account_radar_tasks task
+            SET task_status = $3,
+                completed_at = CASE WHEN $3 = 'done' THEN CURRENT_TIMESTAMP ELSE NULL END,
+                sales_stage_updated_at = CASE
+                    WHEN $3 = 'open' AND task.sales_stage IN ('won', 'lost') THEN CURRENT_TIMESTAMP
+                    ELSE task.sales_stage_updated_at
+                END,
+                sales_stage = CASE
+                    WHEN $3 = 'open' AND task.sales_stage IN ('won', 'lost') THEN NULL
+                    ELSE task.sales_stage
+                END,
+                updated_by_user_id = $4,
+                updated_at = CURRENT_TIMESTAMP
+            FROM business_partner_tracked_articles article
+            JOIN business_partner_accounts account ON account.id = article.account_id
+            WHERE task.tracked_article_id = $1
+              AND task.business_partner_id = $2
+              AND article.id = task.tracked_article_id
+              AND account.business_partner_id = $2
+              AND task.task_status <> 'cancelled'
+            RETURNING task.id, task.task_status, task.sales_stage, task.sales_stage_updated_at, task.completed_at, task.updated_at
+        `, [articleId, businessPartnerId, taskStatus, userId]);
+        if (!result.rows[0]) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Die gemeinsame Radar-Aufgabe wurde nicht gefunden.' });
+        }
+
+        const personalStatus = taskStatus === 'done' ? 'done' : 'read';
+        await client.query(`
+            INSERT INTO account_intelligence_item_status (user_id, tracked_article_id, status, updated_at)
+            VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id, tracked_article_id)
+            DO UPDATE SET status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP
+        `, [userId, articleId, personalStatus]);
+        await client.query(`
+            INSERT INTO account_radar_task_events
+                (task_id, business_partner_id, actor_user_id, event_type, event_data)
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+        `, [result.rows[0].id, businessPartnerId, userId, taskStatus === 'done' ? 'completed' : 'reopened', JSON.stringify({
+            task_status: taskStatus,
+            sales_stage: result.rows[0].sales_stage,
+        })]);
+        await client.query('COMMIT');
+        return res.json({
+            article_id: articleId,
+            task_id: result.rows[0].id,
+            task_status: result.rows[0].task_status,
+            status: personalStatus,
+            sales_stage: result.rows[0].sales_stage,
+            sales_stage_updated_at: result.rows[0].sales_stage_updated_at,
+            completed_at: result.rows[0].completed_at,
+            action_updated_at: result.rows[0].updated_at,
+        });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('Error updating account radar task status:', err.message);
+        return res.status(500).json({ message: 'Der Aufgabenstatus konnte nicht gespeichert werden.' });
+    } finally {
+        client.release();
     }
 };
 
@@ -3150,6 +3972,9 @@ exports.getDashboardConfig = async (req, res) => {
         bp.newsletter_external_signup_url,
         bp.newsletter_recipient_limit,
         bp.dashboard_focus,
+        bp.enabled_modules,
+        bp.default_workspace,
+        bp.sales_plan,
         
         cs.id as cs_id, cs.name as cs_name,
         cs.primary_color, cs.primary_text_color,
@@ -3224,6 +4049,9 @@ exports.getDashboardConfig = async (req, res) => {
         newsletter_external_signup_url: r.newsletter_external_signup_url,
         newsletter_recipient_limit: r.newsletter_recipient_limit,
         dashboard_focus: r.dashboard_focus,
+        enabled_modules: r.enabled_modules || ['content'],
+        default_workspace: r.default_workspace || 'content',
+        sales_plan: r.sales_plan || 'basic',
         
         color_scheme,
       },
@@ -3720,10 +4548,71 @@ exports.getDailyBriefing = async (req, res) => {
             ) as "hasVotedToday"
         `;
 
-        const [briefingRes, sentimentRes] = await Promise.all([
+        const salesTriggersQuery = `
+            SELECT
+                bpta.id::text,
+                bpta.account_id::text,
+                bpta.article_title,
+                bpta.article_url,
+                bpta.source_name,
+                bpta.published_at,
+                bpta.summary,
+                bpta.competitor_name,
+                bpa.name AS account_name,
+                COALESCE(ais.status, 'new') AS status
+            FROM business_partner_tracked_articles bpta
+            JOIN business_partner_accounts bpa ON bpa.id = bpta.account_id
+            LEFT JOIN account_intelligence_item_status ais
+              ON ais.tracked_article_id = bpta.id
+             AND ais.user_id = $2
+            WHERE bpa.business_partner_id = $1
+              AND COALESCE(bpa.is_active, TRUE) = TRUE
+              AND COALESCE(ais.status, 'new') IN ('new', 'read')
+              AND COALESCE(bpta.published_at, bpta.created_at) >= NOW() - INTERVAL '30 days'
+            ORDER BY bpta.published_at DESC NULLS LAST, bpta.created_at DESC
+            LIMIT 5
+        `;
+
+        const linkableNamesQuery = `
+            SELECT name
+            FROM business_partner_accounts
+            WHERE business_partner_id = $1 AND COALESCE(is_active, TRUE) = TRUE
+            UNION
+            SELECT bpc.name
+            FROM business_partner_competitors bpc
+            JOIN business_partner_accounts bpa ON bpc.account_id = bpa.id
+            WHERE bpa.business_partner_id = $1
+        `;
+
+        const canAccessAccountRadar = hasTenantModule(req.user, 'sales')
+            && ['admin', 'assistenz', 'sales_manager', 'sales_user'].includes(String(req.user?.role || '').toLowerCase());
+        const emptyRows = () => Promise.resolve({ rows: [] });
+
+        const [briefingRes, sentimentRes, salesTriggersRes, linkableNamesRes] = await Promise.all([
             db.query(briefingQuery, [bpId]),
-            db.query(sentimentQuery, [userId, bpId])
+            db.query(sentimentQuery, [userId, bpId]),
+            canAccessAccountRadar ? db.query(salesTriggersQuery, [bpId, userId]) : emptyRows(),
+            canAccessAccountRadar ? db.query(linkableNamesQuery, [bpId]) : emptyRows()
         ]);
+
+        const salesTriggers = salesTriggersRes.rows.map((article) => {
+            const classified = classifyAccountIntelligenceArticle(
+                article,
+                article.competitor_name ? 'competitor' : 'account'
+            );
+            return {
+                id: classified.id,
+                headline: classified.article_title,
+                analysis_summary: classified.summary || 'Keine Zusammenfassung verfügbar.',
+                talking_point: classified.recommended_action,
+                account_name: article.account_name,
+                article_url: classified.article_url,
+                signal_type: classified.signal_type,
+                relevance_score: classified.relevance_score
+            };
+        });
+
+        const linkableNames = linkableNamesRes.rows.map((row) => row.name);
 
         console.log(`[getDailyBriefing] Sende ${briefingRes.rows.length} PUBLISHED Items an das Frontend.`);
         console.log(`-------------------------------------------------\n`);
@@ -3731,8 +4620,8 @@ exports.getDailyBriefing = async (req, res) => {
         res.json({
             items: briefingRes.rows, 
             hasVotedToday: sentimentRes.rows[0]?.hasVotedToday || false,
-            sales_triggers: [], 
-            linkable_names: []  
+            sales_triggers: salesTriggers,
+            linkable_names: linkableNames
         });
 
     } catch (err) {
@@ -3743,47 +4632,39 @@ exports.getDailyBriefing = async (req, res) => {
 };
 
 
-async function retrieveInternalDocuments(searchTerm) {
-    if (!searchTerm || searchTerm.trim().length < 3) return [];
-    
-    // Wir suchen nach Schlagworten in Inhalten UND Experten-Tags
-    const formattedTerm = searchTerm.trim().split(/\s+/).join(' & ');
+exports.deleteAiChatSession = async (req, res) => {
+    const sessionId = String(req.params.sessionId || '').trim();
+    const userId = req.user?.id;
 
-    try {
-        const query = `
-            SELECT id, title, summary, type, url, relevance
-            FROM (
-                -- Bestehende Suche (Scraped/AI/News)
-                SELECT id, title, summary, 'scraped' as type, original_url as url, 
-                       ts_rank(to_tsvector('german', title || ' ' || summary), to_tsquery('german', $1)) as relevance
-                FROM scraped_content WHERE to_tsvector('german', title || ' ' || summary) @@ to_tsquery('german', $1)
-                
-                UNION ALL
-                SELECT 
-                    u.id::text, 
-                    'Experte: ' || u.first_name || ' ' || u.last_name as title,
-                    'Expertise in: ' || string_agg(ust.tag_name, ', ') || 
-                    '. Kontakt: ' || COALESCE(u.phone, 'Keine Nummer hinterlegt') || 
-                    ' (' || u.email || ')' as summary,
-                    'user' as type,
-                    '/community' as url,
-                    10.0 as relevance
-                FROM users u
-                JOIN user_saved_tags ust ON u.id = ust.user_id
-                WHERE ust.tag_name ILIKE $2
-                GROUP BY u.id
-            ) as search_results
-            ORDER BY relevance DESC
-            LIMIT 6;
-        `;
-        const { rows } = await db.query(query, [formattedTerm, `%${searchTerm}%`]);
-        return rows;
-    } catch (err) {
-        console.error('Fehler bei der Experten-Suche:', err.message);
-        return [];
+    if (!isValidUUID(sessionId)) {
+        return res.status(400).json({ message: 'Ungültige KI-Sitzung.' });
     }
-}
 
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        const ownedSession = await client.query(
+            'SELECT id FROM ai_chat_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE',
+            [sessionId, userId]
+        );
+
+        if (ownedSession.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'KI-Unterhaltung nicht gefunden.' });
+        }
+
+        await client.query('DELETE FROM ai_chat_messages WHERE session_id = $1', [sessionId]);
+        await client.query('DELETE FROM ai_chat_sessions WHERE id = $1 AND user_id = $2', [sessionId, userId]);
+        await client.query('COMMIT');
+        return res.status(204).send();
+    } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_rollbackError) {}
+        console.error('Fehler beim Löschen der KI-Unterhaltung:', err.message);
+        return res.status(500).json({ message: 'KI-Unterhaltung konnte nicht gelöscht werden.' });
+    } finally {
+        client.release();
+    }
+};
 
 exports.handleAiQuestion = async (req, res) => {
     if (req.user.role === 'demo') {
@@ -3791,14 +4672,34 @@ exports.handleAiQuestion = async (req, res) => {
     }    
     
     // NEU: sessionId wird aus dem Frontend erwartet
-    const { question, history, sessionId } = req.body;
+    const { question: rawQuestion, history, sessionId } = req.body || {};
     const { id: userId, business_partner_id: businessPartnerId } = req.user;
+    const question = String(rawQuestion || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+    const cleanHistory = Array.isArray(history)
+        ? history.slice(-8).map((entry) => ({
+            role: entry?.role === 'assistant' ? 'assistant' : 'user',
+            content: String(entry?.content || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 1200),
+        })).filter((entry) => entry.content)
+        : [];
 
-    if (!question) {
-        return res.status(400).json({ message: 'Eine Frage (question) ist erforderlich.' });
+    if (question.length < 3 || question.length > 500) {
+        return res.status(400).json({ message: 'Die Frage muss zwischen 3 und 500 Zeichen lang sein.' });
     }
     if (!businessPartnerId) {
         return res.status(403).json({ message: 'Benutzer ist keinem Business Partner zugeordnet.' });
+    }
+    if (sessionId && !isValidUUID(sessionId)) {
+        return res.status(400).json({ message: 'Ungültige KI-Sitzung.' });
+    }
+
+    const internalDailyLimit = Math.max(1, Math.min(Number(process.env.AI_INTERNAL_DAILY_LIMIT || 50), 1000));
+    const dailyUsage = await db.query(`
+        SELECT COUNT(*)::int AS count
+        FROM ai_usage_logs
+        WHERE user_id = $1 AND created_at >= CURRENT_DATE
+    `, [userId]);
+    if (Number(dailyUsage.rows[0]?.count || 0) >= internalDailyLimit) {
+        return res.status(429).json({ message: `Das tägliche KI-Limit von ${internalDailyLimit} Fragen ist erreicht.` });
     }
 
     let jobId;
@@ -3808,8 +4709,17 @@ exports.handleAiQuestion = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // 1. Session-Management: Wenn keine Session-ID da ist, erstelle eine neue
-        if (!currentSessionId) {
+        // Session-Management: Eine bestehende Session darf nur ihrem Eigentümer gehören.
+        if (currentSessionId) {
+            const ownedSession = await client.query(
+                'SELECT id FROM ai_chat_sessions WHERE id = $1 AND user_id = $2 LIMIT 1',
+                [currentSessionId, userId]
+            );
+            if (ownedSession.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ message: 'Diese KI-Sitzung gehört nicht zum angemeldeten Benutzer.' });
+            }
+        } else {
             const sessionRes = await client.query(
                 `INSERT INTO ai_chat_sessions (user_id) VALUES ($1) RETURNING id`,
                 [userId]
@@ -3844,10 +4754,13 @@ exports.handleAiQuestion = async (req, res) => {
 
         await client.query('COMMIT');
 
-        // 4. Partner-Daten abrufen (inkl. Homepage)
+        // Partner-Daten abrufen. Der Homepage-Inhalt stammt ausschließlich aus
+        // dem freigegebenen, mandantenspezifischen Public-Assistant-Index.
         const partnerRes = await client.query(
             `SELECT 
                 bp.dashboard_focus,
+                bp.enabled_modules,
+                bp.sales_plan,
                 bp.url_businesspartner,
                 (
                     SELECT COALESCE(json_agg(c.name), '[]'::json)
@@ -3863,10 +4776,16 @@ exports.handleAiQuestion = async (req, res) => {
         if (partnerRes.rows.length === 0) throw new Error('Business Partner nicht gefunden.');
         const partner = partnerRes.rows[0];
         const industryNames = partner.industries.length > 0 ? partner.industries.join(', ') : 'allgemeine Mobilität';
+        const canAccessSalesContext = Array.isArray(partner.enabled_modules)
+            && partner.enabled_modules.includes('sales')
+            && ['admin', 'assistenz', 'sales_manager', 'sales_user'].includes(String(req.user.role || '').toLowerCase())
+            && hasSalesFeature({ role: req.user.role, tenant_sales_plan: partner.sales_plan }, 'aiSalesContext');
 
         // 5. Dokumenten-Retrieval
-        const documents = await retrieveInternalDocuments(question);
-        let context = 'Keine relevanten internen Dokumente gefunden.';
+        const documents = await retrieveTenantInternalDocuments(question, businessPartnerId, 8, {
+            includeSalesSources: canAccessSalesContext,
+        });
+        let context = 'Keine relevanten mandantenspezifischen Dokumente gefunden.';
         if (documents.length > 0) {
             context = documents.map(doc => 
                 `--- DOKUMENT (ID: ${doc.id}, Typ: ${doc.type}) ---\nTITEL: ${doc.title}\nINHALT: ${doc.summary || ''}\nQUELLE: ${doc.url || 'Intern'}\n---`
@@ -3874,12 +4793,16 @@ exports.handleAiQuestion = async (req, res) => {
         }
 
         const promptTemplate = `
-          Du bist ein hochqualifizierter KI-Assistent, spezialisiert auf die Branchen: ${industryNames}.
+          Du bist ein hochqualifizierter ${canAccessSalesContext ? 'Sales-Assistent für Account-Signale, Vertriebsaufgaben und nächste Schritte' : 'Branchenassistent'}, spezialisiert auf die Branchen: ${industryNames}.
           BEANTWORTE DIE FRAGE DES BENUTZERS: "${question}"
-          BASIERE DEINE ANTWORT AUF DEINEM ALLGEMEINEN WISSEN UND DEN FOLGENDEN INTERNEN DOKUMENTEN.
-          BEZIEHE DICH WO IMMER MÖGLICH AUF DIESE DOKUMENTE, ABER ERWÄHNE NICHT DIE "DOKUMENT-ID".
-          Formatiere deine Antwort als klares, lesbares Markdown.
-          --- INTERNE DOKUMENTE ALS KONTEXT ---
+          BASIERE DEINE ANTWORT VORRANGIG AUF DEN FOLGENDEN MANDANTENSPEZIFISCH FREIGEGEBENEN ODER GLOBALEN DOKUMENTEN.
+          DIE DOKUMENTE VOM TYP "tenant_homepage" STAMMEN AUS DEM FREIGEGEBENEN HOMEPAGE-INDEX DES MANDANTEN UND DÜRFEN WIE INTERNE QUELLEN VERWENDET WERDEN.
+          ${canAccessSalesContext ? 'DOKUMENTE VOM TYP "tracked_account_news" UND "account_radar_task" SIND VERTRAULICHE, MANDANTENSPEZIFISCHE SALES-INHALTE. FASSE SIE HANDLUNGSORIENTIERT ZUSAMMEN.' : ''}
+          WENN DU ERGÄNZEND ALLGEMEINES WISSEN NUTZT, KENNZEICHNE DIES KLAR. ERWÄHNE KEINE "DOKUMENT-ID".
+          ANTWORTE OHNE EINLEITUNG IN HÖCHSTENS 100 WÖRTERN. NUTZE MAXIMAL FÜNF KURZE AUFZÄHLUNGSPUNKTE.
+          QUELLEN WERDEN TECHNISCH UNTER DER ANTWORT ANGEZEIGT UND SOLLEN NICHT IM ANTWORTTEXT WIEDERHOLT WERDEN.
+          Formatiere deine Antwort als klares, kompaktes Markdown.
+          --- MANDANTENSPEZIFISCHE INTERNE UND HOMEPAGE-DOKUMENTE ALS KONTEXT ---
           {{data}}
           --- ENDE DES KONTEXTES ---
         `;
@@ -3888,11 +4811,13 @@ exports.handleAiQuestion = async (req, res) => {
         const { aiResultString } = await generateAIContent({
             promptTemplate,
             inputText: context,
-            history: history,
+            history: cleanHistory,
             ai_provider: 'OpenAI GPT-4o',
             jobId: jobId,
             userId: userId,
-            bpHomepage: partner.url_businesspartner // Homepage als Quelle!
+            bpHomepage: partner.url_businesspartner,
+            maxOutputTokens: 250,
+            temperature: 0.2,
         });
 
         // 7. KI-Antwort in der Datenbank speichern
@@ -3904,15 +4829,20 @@ exports.handleAiQuestion = async (req, res) => {
         await client.query(`UPDATE ai_jobs SET status = 'completed' WHERE id = $1`, [jobId]);
 
         // 8. Antwort inkl. Session-ID ans Frontend senden
-        res.json({
-            sessionId: currentSessionId,
-            answer: aiResultString,
-            sources: documents.map(doc => ({
+        const uniqueSources = Array.from(new Map(documents.map((doc) => {
+            const url = doc.url || `/search?term=${encodeURIComponent(doc.title)}`;
+            return [url, {
                 id: doc.id,
                 title: doc.title,
                 type: doc.type,
-                url: doc.url || `/search?term=${encodeURIComponent(doc.title)}`
-            }))
+                url,
+            }];
+        })).values()).slice(0, 5);
+
+        res.json({
+            sessionId: currentSessionId,
+            answer: aiResultString,
+            sources: uniqueSources,
         });
 
     } catch (err) {
@@ -3949,7 +4879,7 @@ exports.getNotificationCounts = async (req, res) => {
         const changeSince = previousLoginAt || tokenIssuedAt || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
         const isAdmin = role === 'admin';
 
-        const [scrapedNew, aiNew, actionsNew, communityNew, filesNew, directoryNew, sourcesNew] = await Promise.all([
+        const [scrapedNew, aiNew, actionsNew, communityNew, filesNew, directoryNew, sourcesNew, salesLeadsNew] = await Promise.all([
             // 1. Scraped Content: Zählt die letzten 30 Tage, falls nicht explizit gelesen!
             db.query(`
                 SELECT COUNT(sc.id) as cnt 
@@ -4015,8 +4945,30 @@ exports.getNotificationCounts = async (req, res) => {
                   `, [businessPartnerId, changeSince])
                 : Promise.resolve({ rows: [{ cnt: 0 }] }),
 
-            // 7. Quellen
-            db.query(`SELECT COUNT(id) as cnt FROM sources WHERE status = 'approved' AND COALESCE(updated_at, created_at) > $1`, [changeSince])
+            // 7. Quellen: Das Badge ist eine konkrete Aufgabe, kein bloßer Zeitstempel.
+            // Es verschwindet pro Nutzer, sobald die jeweilige Quelle bewertet wurde.
+            db.query(`
+                SELECT COUNT(source.id) AS cnt
+                FROM sources source
+                WHERE source.status IN ('pending_review', 'approved')
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM source_votes vote
+                      WHERE vote.source_id = source.id
+                        AND vote.user_id = $1
+                  )
+            `, [userId]),
+
+            // 8. Account-Radar-Anfragen sind ausschließlich eine Admin-Aufgabe.
+            isAdmin
+                ? db.query(`
+                    SELECT COUNT(*) AS cnt
+                    FROM feedback_items
+                    WHERE type IN ('demo_request', 'callback_request')
+                      AND COALESCE(audience, '') ILIKE 'Account-Radar%'
+                      AND status = 'new'
+                `)
+                : Promise.resolve({ rows: [{ cnt: 0 }] })
         ]);
 
         const counts = {
@@ -4026,7 +4978,8 @@ exports.getNotificationCounts = async (req, res) => {
             community: parseInt(communityNew.rows[0].cnt, 10),
             files: parseInt(filesNew.rows[0].cnt, 10),
             directory: parseInt(directoryNew.rows[0].cnt, 10),
-            sources: parseInt(sourcesNew.rows[0].cnt, 10)
+            sources: parseInt(sourcesNew.rows[0].cnt, 10),
+            salesLeads: parseInt(salesLeadsNew.rows[0].cnt, 10)
         };
 
         const totalCount = Object.values(counts).reduce((sum, value) => sum + value, 0);

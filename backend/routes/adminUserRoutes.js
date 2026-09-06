@@ -26,6 +26,7 @@ router.use(tenantManagerAuth);
 router.get('/import/template', adminUserController.getImportTemplate);
 router.get('/export/csv', adminUserController.exportUsersToCSV);
 router.post('/import/csv', upload.single('csvfile'), adminUserController.importUsersFromCSV);
+router.get('/membership-levels', adminUserController.getManagedMembershipLevels);
 
 
 // ==========================================

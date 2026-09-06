@@ -13,6 +13,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
+import { useAuth } from '../context/AuthContext';
 
 // --- Interfaces ---
 interface Competitor {
@@ -53,6 +54,8 @@ function getComparator<Key extends keyof any>(
 const AdminAccountCompetitorsPage: React.FC = () => {
     const { accountId } = useParams<{ accountId: string }>();
     const navigate = useNavigate();
+    const { user, businessPartner: authenticatedBusinessPartner } = useAuth();
+    const isAssistant = user?.role === 'assistenz';
 
     const [account, setAccount] = useState<Account | null>(null);
     const [businessPartner, setBusinessPartner] = useState<BusinessPartner | null>(null);
@@ -89,7 +92,11 @@ useEffect(() => {
             // KORREKTUR: Sicherstellen, dass wir immer ein Array setzen
             setCompetitors(Array.isArray(compRes.data) ? compRes.data : []);
 
-            if (fetchedAccount.business_partner_id) {
+            if (isAssistant) {
+                setBusinessPartner(authenticatedBusinessPartner
+                    ? { id: authenticatedBusinessPartner.id, name: authenticatedBusinessPartner.name }
+                    : { id: fetchedAccount.business_partner_id, name: user?.business_partner_name || 'Eigener Mandant' });
+            } else if (fetchedAccount.business_partner_id) {
                 const bpRes = await apiClient.get(`/api/admin/business-partners/${fetchedAccount.business_partner_id}`);
                 setBusinessPartner(bpRes.data);
             }
@@ -102,7 +109,7 @@ useEffect(() => {
         }
     };
     fetchData();
-}, [accountId]);
+}, [accountId, authenticatedBusinessPartner, isAssistant, user?.business_partner_name]);
 
     const handleOpenAddDialog = () => {
         setEditingCompetitor(null);
@@ -189,8 +196,8 @@ const handleSubmit = async () => {
         <DashboardLayout>
             <Container maxWidth={false} sx={{ mt: 4, mb: 4 }}>
                 <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />} sx={{ mb: 2 }}>
-                    <MuiLink component={RouterLink} underline="hover" color="inherit" to="/admin">Admin</MuiLink>
-                    <MuiLink component={RouterLink} underline="hover" color="inherit" to="/admin/business-partners">Business Partners</MuiLink>
+                    <MuiLink component={RouterLink} underline="hover" color="inherit" to="/radar">Account-Radar</MuiLink>
+                    {!isAssistant && <MuiLink component={RouterLink} underline="hover" color="inherit" to="/admin/business-partners">Mandanten</MuiLink>}
                     <MuiLink component={RouterLink} underline="hover" color="inherit" to={`/admin/business-partners/${businessPartner?.id}/accounts`}>{businessPartner?.name || '...'}</MuiLink>
                     <Typography color="text.primary">{account?.name || '...'}</Typography>
                 </Breadcrumbs>

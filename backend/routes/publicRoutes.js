@@ -5,6 +5,8 @@ const router = express.Router();
 const publicController = require('../controllers/publicController');
 const fileController = require('../controllers/fileController');
 const softwareController = require('../controllers/softwareController');
+const publicAiAssistantController = require('../controllers/publicAiAssistantController');
+const accountRadarController = require('../controllers/accountRadarController');
 
 const contactFormLimiter = rateLimit({
     // Kontaktformular bewusst strenger als die übrigen Public-Routen:
@@ -38,8 +40,22 @@ const publicFileDownloadLimiter = rateLimit({
         .send('Zu viele Download-Anfragen. Bitte versuchen Sie es später erneut.'),
 });
 
+const publicAssistantConfigLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { message: 'Zu viele Assistent-Anfragen. Bitte kurz warten.' },
+});
+
 // --- 1. BRANDING & KONTEXT ---
 router.get('/context', publicController.getPublicContext);
+
+// Homepagebasierter, strikt mandantenspezifischer Public-Assistent.
+// Das eigentliche Fragen-/Tokenbudget wird transaktionssicher je Mandant,
+// gehashter IP und anonymer Sitzung im Service geprüft.
+router.get('/assistant/:siteKey/config', publicAssistantConfigLimiter, publicAiAssistantController.getPublicAssistantConfig);
+router.post('/assistant/:siteKey/ask', publicAiAssistantController.askPublicAssistant);
 
 // --- 2. PUBLIC PARTNER CARD (HIER IST DIE NEUE ROUTE!) ---
 router.get('/partner-card/:id', publicController.getPublicPartnerCard);
@@ -50,6 +66,7 @@ router.post('/contact', contactFormLimiter, publicController.submitContactForm);
 // --- 4. PUBLIC EVENT FEEDS (RSS/JSON für Drittanbieter) ---
 router.get('/v1/event-feed/:token.rss', publicController.getPublicEventFeedRss);
 router.get('/v1/event-feed/:token.json', publicController.getPublicEventFeedJson);
+router.get('/v1/account-radar-calendar/:token.ics', publicFileDownloadLimiter, accountRadarController.getPublicCalendarFeed);
 
 
 // --- 5. PUBLIC DATEI-DOWNLOADS (geheime Direktlinks, keine öffentliche Liste) ---

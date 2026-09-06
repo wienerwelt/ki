@@ -5,7 +5,7 @@ import { Typography, Box, Stack, Link } from '@mui/material';
 // --- ZENTRALE KONFIGURATION ---
 // Vor Go-Live bitte vollständig befüllen und rechtlich prüfen.
 const config = {
-    serviceName: "mobiliti KI-Dashboard",
+    serviceName: "Mobiliti AI Plattform",
     companyName: "mobiliti", // TODO: echte juristische Person / Rechtsform ergänzen
     companyAddress: "Davidgasse 39, 1100 Wien",
     companyEmail: "hello@mobiliti.at",
@@ -36,7 +36,7 @@ export const PrivacyContent: React.FC = () => {
             </Typography>
 
             <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 3 }}>
-                Stand: 18. März 2026
+                Stand: 5. September 2026
             </Typography>
 
             <Stack spacing={3}>
@@ -58,9 +58,9 @@ export const PrivacyContent: React.FC = () => {
                 <Section title="2. Umfang der Verarbeitung">
                     <Typography variant="body1">
                         Wir verarbeiten personenbezogene Daten nur, soweit dies für die Bereitstellung unseres
-                        mandantenfähigen SaaS-Dienstes, die Sicherheit unserer Systeme, die Kommunikation mit
-                        Nutzern sowie – bei gesonderter Einwilligung – für optionale Analyse- und Werbefunktionen
-                        erforderlich ist.
+                        mandantenfähigen SaaS-Dienstes mit den Arbeitsbereichen Content und Sales, die Sicherheit
+                        unserer Systeme, die Kommunikation mit Nutzern sowie – bei gesonderter Einwilligung – für
+                        optionale Analyse- und Werbefunktionen erforderlich ist.
                     </Typography>
                 </Section>
 
@@ -84,6 +84,14 @@ export const PrivacyContent: React.FC = () => {
                                 Dateien, Dokumente, Kommentare, Metadaten, generierte oder bearbeitete Inhalte.
                                 Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO sowie – soweit wir im Auftrag eines
                                 Mandanten handeln – dessen Weisungen und vertragliche Vereinbarungen.
+                            </li>
+                            <li>
+                                <strong>Account-Radar und Sales-Arbeitsbereich</strong>: Account- und
+                                Unternehmensstammdaten, öffentliche Quellen und URLs, Wettbewerberzuordnungen,
+                                Relevanzbewertungen sowie von berechtigten Nutzern gepflegte Kontakte, Notizen,
+                                Aufgaben, Termine, Statusangaben und Ergebnisse. Welche Rechtsgrundlage im Einzelfall
+                                gilt, hängt von der konkreten Nutzung und der datenschutzrechtlichen Rolle des
+                                jeweiligen Mandanten ab.
                             </li>
                             <li>
                                 <strong>Support und Kommunikation</strong>: Anfragen, E-Mails, Support-Historie,
@@ -116,6 +124,12 @@ export const PrivacyContent: React.FC = () => {
                         Auftragsverarbeiter sein. Betroffenenrechte bezüglich mandantenspezifischer Inhalte sind
                         daher gegebenenfalls zunächst gegenüber dem jeweiligen Mandanten geltend zu machen.
                     </Typography>
+                    <Typography variant="body1" sx={{ mt: 1 }}>
+                        Content- und Sales-Daten werden innerhalb des jeweiligen Mandanten-Arbeitsbereichs verarbeitet
+                        und anhand der vergebenen Rollen und Berechtigungen angezeigt. Geschützte Account-, Kontakt-,
+                        Notiz-, Aktivitäts- und Ergebnisdaten des Account-Radars werden nicht auf öffentlichen
+                        Mandantenseiten oder öffentlichen Produktseiten ausgegeben.
+                    </Typography>
                 </Section>
 
                 <Section title="5. Einsatz externer KI-Dienste">
@@ -124,6 +138,12 @@ export const PrivacyContent: React.FC = () => {
                         dienstleister einsetzen, etwa OpenAI, Google Gemini und vergleichbare Anbieter.
                         Dabei können Prompts, hochgeladene Dateien, Kontextinformationen und daraus erzeugte
                         Inhalte verarbeitet werden, soweit dies zur gewünschten Funktion erforderlich ist.
+                    </Typography>
+                    <Typography variant="body1" sx={{ mt: 1 }}>
+                        Bei aktivierten Sales-KI-Funktionen können auch ausgewählte Account-, Quellen- und
+                        Aktivitätsinformationen als Kontext verarbeitet werden. KI-Ausgaben dienen als Unterstützung
+                        und sind vor einer geschäftlichen Entscheidung oder externen Verwendung durch einen Menschen
+                        zu prüfen.
                     </Typography>
                     <Typography variant="body1" sx={{ mt: 1 }}>
                         Bitte geben Sie keine besonderen Kategorien personenbezogener Daten, Berufsgeheimnisse
@@ -211,6 +231,12 @@ export const PrivacyContent: React.FC = () => {
                                 <strong>Mandanteninhalte, Prompts, Uploads und KI-Ausgaben</strong>: grundsätzlich
                                 bis zur Löschung durch Nutzer/Mandant oder bis zur Beendigung des Mandats bzw.
                                 Nutzerverhältnisses, vorbehaltlich abweichender Weisungen und gesetzlicher Pflichten.
+                            </li>
+                            <li>
+                                <strong>Account-, Kontakt- und Aktivitätsdaten im Sales-Arbeitsbereich</strong>:
+                                grundsätzlich bis zur Löschung durch einen berechtigten Nutzer oder Mandanten bzw.
+                                bis zur Beendigung des Mandats, vorbehaltlich gesetzlicher Pflichten und vereinbarter
+                                Aufbewahrungsregeln.
                             </li>
                             <li>
                                 <strong>Sicherheits- und Fehlerlogs</strong>: in der Regel nur für einen begrenzten

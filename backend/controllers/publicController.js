@@ -260,6 +260,7 @@ exports.getPublicContext = async (req, res) => {
         let allowedWidgets = []; 
         let defaultRegionCode = 'AT'; 
         let stats = { total_directory_entries: 0, total_software_entries: 0, community_members: 0, community_activity: 0 };
+        let assistant = null;
 
         if (partnerCode && partnerCode !== 'undefined' && partnerCode !== 'null') {
             partnerData = await resolvePartnerIdByCode(partnerCode);
@@ -342,6 +343,35 @@ exports.getPublicContext = async (req, res) => {
                 } catch(e) { 
                     console.error('Fehler beim Zählen der Community-Aktivität:', e.message); 
                 }
+
+                try {
+                    const assistantResult = await db.query(`
+                        SELECT
+                            paas.site_key,
+                            paas.assistant_name,
+                            paas.welcome_message,
+                            EXISTS (
+                                SELECT 1 FROM public_ai_documents pad
+                                WHERE pad.business_partner_id = paas.business_partner_id
+                                  AND pad.is_active = true
+                            ) AS ready
+                        FROM public_ai_assistant_settings paas
+                        WHERE paas.business_partner_id = $1
+                          AND paas.is_enabled = true
+                        LIMIT 1
+                    `, [partnerData.id]);
+                    if (assistantResult.rows[0]) {
+                        assistant = {
+                            enabled: true,
+                            siteKey: assistantResult.rows[0].site_key,
+                            name: assistantResult.rows[0].assistant_name,
+                            welcomeMessage: assistantResult.rows[0].welcome_message,
+                            ready: assistantResult.rows[0].ready,
+                        };
+                    }
+                } catch (e) {
+                    console.error('Public-Assistant-Kontext:', e.message);
+                }
             }
         }
 
@@ -351,6 +381,7 @@ exports.getPublicContext = async (req, res) => {
             stats: stats,
             allowedWidgets: allowedWidgets,
             defaultRegion: defaultRegionCode,
+            assistant,
             newsPreview: [
                 { id: '1', title: 'E-Mobilitätsoffensive startet', published_date: new Date().toISOString(), relevance_score: 95 },
                 { id: '2', title: 'Neue Förderrichtlinien 2026', published_date: new Date().toISOString(), relevance_score: 88 }
@@ -358,7 +389,7 @@ exports.getPublicContext = async (req, res) => {
         });
     } catch (err) {
         console.error('Public Context Error:', err);
-        res.status(500).json({ partner: null, theme: null, stats: { total_directory_entries: 0, total_software_entries: 0, community_members: 0 }, allowedWidgets: [], defaultRegion: 'AT' });
+        res.status(500).json({ partner: null, theme: null, stats: { total_directory_entries: 0, total_software_entries: 0, community_members: 0 }, allowedWidgets: [], defaultRegion: 'AT', assistant: null });
     }
 };
 
@@ -430,6 +461,7 @@ exports.submitContactForm = async (req, res) => {
     const cleanAudience = normalizeOptionalField(audience, 200);
     const cleanMessage = normalizeOptionalField(message, 5000);
     const cleanType = normalizeOptionalField(type, 100) || 'contact';
+    const isAccountRadarRequest = cleanAudience.startsWith('Account-Radar');
 
     if (!CONTACT_ALLOWED_TYPES.has(cleanType)) {
         console.warn(`[Spam-Schutz] Ungültiger Formular-Typ geblockt: ${cleanType}`);
@@ -447,10 +479,22 @@ exports.submitContactForm = async (req, res) => {
         });
     }
 
+    if (isAccountRadarRequest && String(message || '').trim().length > 1400) {
+        return res.status(400).json({
+            message: 'Die Account-Radar-Nachricht ist zu lang.'
+        });
+    }
+
     // Pflichtfelder
     if (!cleanName || !cleanEmail || !cleanMessage) {
         return res.status(400).json({
             message: 'Bitte füllen Sie alle Pflichtfelder aus.'
+        });
+    }
+
+    if (isAccountRadarRequest && !cleanOrg) {
+        return res.status(400).json({
+            message: 'Bitte geben Sie für die Account-Radar-Anfrage Ihre Organisation an.'
         });
     }
 
@@ -756,8 +800,13 @@ exports.submitContactForm = async (req, res) => {
         };
 
         // 3. Automatische Bestätigung an den Interessenten
-        const confirmationSubject =
-            'Vielen Dank für Ihre Anfrage bei Mobiliti';
+        const confirmationContext = cleanAudience
+            .replace(/^Account-Radar\s*·\s*/, '')
+            .replace(/[\r\n]+/g, ' ')
+            .slice(0, 120);
+        const confirmationSubject = isAccountRadarRequest
+            ? `Kopie Ihrer Account-Radar-Anfrage${confirmationContext ? ` · ${confirmationContext}` : ''}`
+            : 'Vielen Dank für Ihre Anfrage bei Mobiliti';
 
         const confirmationHtml = `
             <div style="
@@ -789,7 +838,7 @@ exports.submitContactForm = async (req, res) => {
 
                     <p>
                         vielen Dank für Ihr Interesse an Mobiliti.
-                        Ihre Anfrage ist bei uns eingegangen.
+                        Ihre Anfrage ist bei uns eingegangen. Diese E-Mail ist Ihre persönliche Kopie.
                     </p>
 
                     <p>
@@ -829,6 +878,7 @@ exports.submitContactForm = async (req, res) => {
             '',
             'vielen Dank für Ihr Interesse an mobiliti.',
             'Ihre Anfrage ist bei uns eingegangen.',
+            'Diese E-Mail ist Ihre persönliche Kopie.',
             '',
             'Wir prüfen Ihr Anliegen und melden uns so bald wie möglich.',
             '',

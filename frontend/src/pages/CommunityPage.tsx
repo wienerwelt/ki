@@ -46,6 +46,11 @@ import { useSnackbar } from '../context/SnackbarContext';
 import { formatDistanceToNow } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { ProfileCard, UserAvatarWithStatus, UserProfileData } from '../components/ProfileCard';
+import {
+    EXPERIENCE_LEVEL_OPTIONS,
+    ExperienceLevel,
+    getExperienceLevelLabel,
+} from '../utils/experienceLevel';
 
 // --- TYPES ---
 interface ExpertUser extends UserProfileData {
@@ -84,6 +89,7 @@ interface CommunityPost extends UserProfileData {
     poll_options?: PollOption[];
     software_tool_id?: string;
     software_rating?: number | null;
+    software_experience_level?: ExperienceLevel | null;
     software_tool_name?: string;
     software_provider_name?: string;
     software_tool_url?: string;
@@ -232,6 +238,7 @@ const CommunityPage: React.FC = () => {
   const [softwareOptions, setSoftwareOptions] = useState<SoftwareOption[]>([]);
   const [selectedSoftwareToolId, setSelectedSoftwareToolId] = useState('');
   const [softwareRating, setSoftwareRating] = useState<number | null>(null);
+  const [softwareExperienceLevel, setSoftwareExperienceLevel] = useState<ExperienceLevel | ''>('');
   
   const [isPollMode, setIsPollMode] = useState(false);
   const [pollOptions, setPollOptions] = useState(['', '']);
@@ -354,6 +361,10 @@ const CommunityPage: React.FC = () => {
         return;
     }
     if (!selectedCategory && !selectedSoftwareToolId) { showSnackbar('Bitte eine Kategorie wählen.', 'warning'); return; }
+    if (selectedSoftwareToolId && !softwareExperienceLevel) {
+        showSnackbar('Bitte angeben, worauf Ihre Software-Erfahrung beruht.', 'warning');
+        return;
+    }
 
     setCreateLoading(true);
     const formData = new FormData();
@@ -361,6 +372,7 @@ const CommunityPage: React.FC = () => {
     formData.append('categoryId', selectedCategory);
     if (selectedSoftwareToolId) formData.append('softwareToolId', selectedSoftwareToolId);
     if (softwareRating) formData.append('softwareRating', String(softwareRating));
+    if (selectedSoftwareToolId) formData.append('softwareExperienceLevel', softwareExperienceLevel);
     if (selectedImage) formData.append('image', selectedImage);
 
     if (isPollMode) {
@@ -382,6 +394,7 @@ const CommunityPage: React.FC = () => {
       setSelectedCategory('');
       setSelectedSoftwareToolId('');
       setSoftwareRating(null);
+      setSoftwareExperienceLevel('');
       setIsPollMode(false);
       setPollOptions(['', '']);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -645,6 +658,15 @@ const CommunityPage: React.FC = () => {
                             <Typography variant="subtitle2" fontWeight={900}>{post.software_tool_name}</Typography>
                             <Typography variant="caption" color="text.secondary">{post.software_provider_name}</Typography>
                             {post.software_rating && <Rating value={post.software_rating} readOnly size="small" sx={{ display: 'block', mt: 0.5 }} />}
+                            {getExperienceLevelLabel(post.software_experience_level) && (
+                                <Chip
+                                    size="small"
+                                    label={getExperienceLevelLabel(post.software_experience_level)}
+                                    color={post.software_experience_level === 'in_use' ? 'success' : post.software_experience_level === 'evaluated' ? 'info' : 'default'}
+                                    variant="outlined"
+                                    sx={{ mt: 0.7 }}
+                                />
+                            )}
                         </Box>
                         {post.software_tool_url && <Button size="small" href={post.software_tool_url} target="_blank" rel="noopener noreferrer">Produktseite</Button>}
                     </Stack>
@@ -856,6 +878,7 @@ const CommunityPage: React.FC = () => {
                                                     const softwareId = e.target.value;
                                                     setSelectedSoftwareToolId(softwareId);
                                                     setSoftwareRating(null);
+                                                    setSoftwareExperienceLevel('');
                                                     if (softwareId) {
                                                         const softwareCategory = categories.find(c => c.name.toLowerCase() === 'software & tools');
                                                         if (softwareCategory) setSelectedCategory(softwareCategory.id);
@@ -873,6 +896,27 @@ const CommunityPage: React.FC = () => {
                                             <Rating value={softwareRating} disabled={!selectedSoftwareToolId || isDemo} onChange={(_, value) => setSoftwareRating(value)} />
                                         </Stack>
                                     </Grid>
+                                    {selectedSoftwareToolId && (
+                                        <Grid item xs={12}>
+                                            <FormControl fullWidth size="small" disabled={isDemo} required>
+                                                <InputLabel>Erfahrung basiert auf</InputLabel>
+                                                <Select
+                                                    value={softwareExperienceLevel}
+                                                    label="Erfahrung basiert auf"
+                                                    onChange={(event) => setSoftwareExperienceLevel(event.target.value as ExperienceLevel)}
+                                                >
+                                                    {EXPERIENCE_LEVEL_OPTIONS.map((option) => (
+                                                        <MenuItem key={option.value} value={option.value}>
+                                                            <Box>
+                                                                <Typography variant="body2" fontWeight="bold">{option.label}</Typography>
+                                                                <Typography variant="caption" color="text.secondary">{option.description}</Typography>
+                                                            </Box>
+                                                        </MenuItem>
+                                                    ))}
+                                                </Select>
+                                            </FormControl>
+                                        </Grid>
+                                    )}
                                 </Grid>
                                 <Typography variant="caption" color="text.secondary">Der Beitrag erscheint automatisch in „Software & Tools“. Öffentlich werden nur Anzahl und Bewertungsdurchschnitt gezeigt.</Typography>
                             </Paper>
@@ -1266,7 +1310,17 @@ const CommunityPage: React.FC = () => {
       >
         {profileLoading && <LinearProgress />}
         {selectedUser && (
-            <ProfileCard user={selectedUser as UserProfileData} />
+            <Box sx={{ position: 'relative' }}>
+                <IconButton
+                    aria-label="Profilfenster schließen"
+                    onClick={handlePopoverClose}
+                    size="small"
+                    sx={{ position: 'absolute', top: 8, right: 8, zIndex: 2, bgcolor: 'background.paper', boxShadow: 1, '&:hover': { bgcolor: 'action.hover' } }}
+                >
+                    <CloseIcon fontSize="small" />
+                </IconButton>
+                <ProfileCard user={selectedUser as UserProfileData} />
+            </Box>
         )}
       </Popover>
 

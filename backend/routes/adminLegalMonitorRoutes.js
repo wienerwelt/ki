@@ -1,7 +1,7 @@
 // backend/routes/adminLegalMonitorRoutes.js
 const express = require('express');
 const router = express.Router();
-const tenantManagerAuth = require('../middleware/tenantManagerAuth');
+const tenantManagerAuth = require('../middleware/contentManagerAuth');
 const adminLegalMonitorController = require('../controllers/adminLegalMonitorController');
 
 const multer = require('multer');

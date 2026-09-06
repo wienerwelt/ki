@@ -20,6 +20,7 @@ const { dispatchAutomatedNewsletters } = require('../services/marketBriefingServ
 
 const { processSavedSearchNotifications } = require('../services/notificationService');
 const { processMemberNewsletterCampaign } = require('../services/memberNewsletterService');
+const { dispatchAccountRadarDigests } = require('../services/accountRadarDigestService');
 
 function logWorkerBoot() {
   console.log('==================================================');
@@ -68,6 +69,11 @@ async function startWorker() {
             if (!job.data?.campaignId) throw new Error('campaignId fehlt.');
             console.log(`[mail] Starte Mitglieder-Mail ${job.data.campaignId}...`);
             await processMemberNewsletterCampaign(job.data.campaignId);
+            break;
+
+          case 'account-radar-digest':
+            console.log('[mail] Starte mandantenspezifischen Account-Radar-Versand...');
+            await dispatchAccountRadarDigests();
             break;
 
           default:

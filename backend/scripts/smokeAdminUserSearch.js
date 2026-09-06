@@ -43,10 +43,14 @@ const main = async () => {
 
     const baseUrl = process.env.SMOKE_API_URL || 'http://127.0.0.1:5000';
     const assistantToken = createToken(assistant);
-    const [firstPage, secondPage] = await Promise.all([
+    const [firstPage, secondPage, membershipLevels] = await Promise.all([
         getJson(`${baseUrl}/api/admin/users?page=1&limit=50`, assistantToken),
         getJson(`${baseUrl}/api/admin/users?page=2&limit=50`, assistantToken),
+        getJson(`${baseUrl}/api/admin/users/membership-levels?businessPartnerId=00000000-0000-4000-8000-000000000000`, assistantToken),
     ]);
+    if (membershipLevels.business_partner_id !== assistant.business_partner_id || !Array.isArray(membershipLevels.levels)) {
+        throw new Error('Die Assistenz erhält die Mitgliedslevel nicht mandantensicher aus ihrem eigenen Mandanten.');
+    }
     const target = secondPage.users?.[0];
     if (!target?.id || !target?.email) {
         throw new Error('Der Assistenz-Mandant benÃ¶tigt mehr als 50 Benutzer fÃ¼r diesen Suchtest.');
@@ -78,6 +82,7 @@ const main = async () => {
         foundUserId: target.id,
         targetWasBeyondFirstPage: true,
         crossTenantResultCount: outsideResult.total_count,
+        membershipLevelsAvailable: membershipLevels.levels.length,
     }, null, 2));
 };
 

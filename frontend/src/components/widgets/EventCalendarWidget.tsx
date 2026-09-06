@@ -191,6 +191,31 @@ const getDomainSafely = (url: string | null | undefined): string | null => {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url.split('/')[0] ?? null; }
 };
 
+const normalizeEventCategoryKey = (value: unknown): string => {
+  const rawValue = typeof value === 'object' && value !== null
+    ? String((value as any).name || (value as any).category_name || (value as any).category_key || '')
+    : String(value || '');
+  const raw = rawValue.trim();
+  if (!raw) return '';
+
+  const withoutSuffix = raw.toLowerCase().endsWith('_events') ? raw.slice(0, -7) : raw;
+  const normalized = withoutSuffix
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  if (!normalized) return '';
+  return normalized === 'events' ? 'events' : `${normalized}_events`;
+};
+
+const normalizeEventCategories = (value: unknown): string[] => {
+  const values = Array.isArray(value) ? value : String(value || '').split(',');
+  return Array.from(new Set(values.map(normalizeEventCategoryKey).filter(Boolean)));
+};
+
 const ParticipantsPreview: React.FC<{ yes: Participant[]; maybe: Participant[] }> = ({ yes, maybe }) => {
     if (yes.length === 0 && maybe.length === 0) return null;
 
@@ -296,17 +321,23 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
   }, [isPublic]);
 
   const fetchEventsAndHolidays = useCallback(async () => {
-    let queryCategories = category || 'events';
+    const configuredCategories = normalizeEventCategories(category || 'events');
+    const tenantCategories = !isPublic
+      ? normalizeEventCategories(user?.business_partner_category)
+      : [];
 
-    if (user?.business_partner_category && !isPublic) {
-        const bpIndustryCat = user.business_partner_category.endsWith('_events') 
-            ? user.business_partner_category 
-            : `${user.business_partner_category}_events`;
-        
-        if (!queryCategories.includes(bpIndustryCat)) {
-            queryCategories += `,${bpIndustryCat}`;
-        }
-    }
+    // Die alte Standardkonfiguration "industry_events" ist nur ein Platzhalter.
+    // Sobald die konkrete Mandantenbranche bekannt ist, verwenden Public Page und
+    // internes Widget dieselben echten Kategorien plus Mandantenveranstaltungen.
+    const baseCategories = tenantCategories.length > 0
+      ? configuredCategories.filter((item) => item !== 'industry_events' && item !== 'events')
+      : configuredCategories;
+    const queryCategoryList = Array.from(new Set([
+      ...baseCategories,
+      ...tenantCategories,
+      ...(partnerId || user?.business_partner_id ? ['businesspartner_events'] : []),
+    ]));
+    const queryCategories = queryCategoryList.join(',');
 
     if (!queryCategories || queryCategories.trim().length === 0) {
       setError('Keine Kategorie im Widget-Typ konfiguriert.');
@@ -328,7 +359,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
         }), 
         apiClient.get(isPublic ? '/api/public/holidays' : '/api/data/holidays'),
         apiClient.get(isPublic ? '/api/public/actions' : '/api/data/actions', {
-            params: { page: 1, limit: 10 }
+            params: { page: 1, limit: 10, ...(isPublic && partnerId ? { partnerId } : {}) }
         }).catch(() => ({ data: [] })) 
       ]);
 
@@ -353,7 +384,13 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
         }));
 
       const rawActions = Array.isArray(actionsRes.data?.data) ? actionsRes.data.data : (Array.isArray(actionsRes.data) ? actionsRes.data : []);
-      const relevantActions = rawActions.filter((a: any) => a.target_widget_category === 'industry_events' || a.target_widget_category === 'events');
+      const relevantActionCategories = new Set([
+        'industry_events',
+        'events',
+        'businesspartner_events',
+        ...queryCategoryList,
+      ]);
+      const relevantActions = rawActions.filter((a: any) => relevantActionCategories.has(String(a.target_widget_category || '').toLowerCase()));
       
       const bpActionsAsEvents: EventData[] = relevantActions.map((a: any) => {
           let actionDate = a.start_date ? new Date(a.start_date) : new Date();
@@ -384,7 +421,7 @@ const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [category, allPossibleRegions, isPublic, partnerId, user?.business_partner_category, businessPartner?.logo_url]);
+  }, [category, allPossibleRegions, isPublic, partnerId, user?.business_partner_category, user?.business_partner_id, businessPartner?.logo_url]);
 
   useEffect(() => { fetchAllRegions(); }, [fetchAllRegions]);
   useEffect(() => { fetchEventsAndHolidays(); }, [fetchEventsAndHolidays]);

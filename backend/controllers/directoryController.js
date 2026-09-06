@@ -1,6 +1,7 @@
 const db = require('../config/db');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
+const ALLOWED_EXPERIENCE_LEVELS = new Set(['in_use', 'evaluated', 'general']);
 
 // @desc    Alle verfügbaren Dienstleister für den aktuellen Mandanten abrufen
 // @route   GET /api/directory/internal
@@ -21,6 +22,9 @@ exports.getInternalDirectory = async (req, res) => {
                 COALESCE(ms.is_recommended, false) as is_recommended,
                 ROUND(COALESCE(r.avg_rating, 0), 1) as average_rating,
                 COALESCE(r.rev_count, 0) as review_count,
+                COALESCE(r.in_use_count, 0)::int as in_use_count,
+                COALESCE(r.evaluated_count, 0)::int as evaluated_count,
+                COALESCE(r.general_count, 0)::int as general_count,
                 (SELECT COUNT(*)::int
                  FROM software_tools st
                  WHERE st.provider_id = p.id
@@ -56,7 +60,12 @@ exports.getInternalDirectory = async (req, res) => {
             INNER JOIN directory_provider_mandant_settings ms 
                 ON p.id = ms.provider_id 
             LEFT JOIN LATERAL (
-                SELECT AVG(rev.rating) as avg_rating, COUNT(rev.id) as rev_count
+                SELECT
+                    AVG(rev.rating) as avg_rating,
+                    COUNT(rev.id) as rev_count,
+                    COUNT(rev.id) FILTER (WHERE rev.experience_level = 'in_use') as in_use_count,
+                    COUNT(rev.id) FILTER (WHERE rev.experience_level = 'evaluated') as evaluated_count,
+                    COUNT(rev.id) FILTER (WHERE rev.experience_level = 'general') as general_count
                 FROM directory_provider_reviews rev
                 JOIN users review_user ON review_user.id = rev.user_id
                 WHERE rev.provider_id = p.id
@@ -109,7 +118,7 @@ exports.getProviderReviews = async (req, res) => {
 
     try {
         const query = `
-            SELECT r.id, r.rating, r.comment, r.created_at, 
+            SELECT r.id, r.user_id, r.rating, r.comment, r.experience_level, r.created_at,
                    COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.username, 'Mitglied') as user_name, 
                    u.profile_image_url as user_avatar
             FROM directory_provider_reviews r
@@ -139,12 +148,15 @@ exports.addProviderReview = async (req, res) => {
     if (req.user.role === 'demo') return res.status(403).json({ message: 'Demo-Benutzer dürfen keine Bewertungen abgeben.' });
 
     const { id } = req.params;
-    const { rating, comment } = req.body;
+    const { rating, comment, experienceLevel } = req.body;
     const userId = req.user.id;
     const bpId = req.user.business_partner_id;
 
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
     if (!rating || rating < 1 || rating > 5) return res.status(400).json({ message: 'Gültiges Rating (1-5) erforderlich.' });
+    if (!ALLOWED_EXPERIENCE_LEVELS.has(experienceLevel)) {
+        return res.status(400).json({ message: 'Bitte den Erfahrungskontext auswählen.' });
+    }
 
     try {
         const providerAccess = await db.query(`
@@ -158,10 +170,10 @@ exports.addProviderReview = async (req, res) => {
         }
 
         const query = `
-            INSERT INTO directory_provider_reviews (provider_id, user_id, rating, comment) 
-            VALUES ($1, $2, $3, $4) RETURNING *
+            INSERT INTO directory_provider_reviews (provider_id, user_id, rating, comment, experience_level)
+            VALUES ($1, $2, $3, $4, $5) RETURNING *
         `;
-        const result = await db.query(query, [id, userId, rating, comment || null]);
+        const result = await db.query(query, [id, userId, rating, comment || null, experienceLevel]);
         res.status(201).json(result.rows[0]);
     } catch (err) {
         console.error('Error adding review:', err.message);

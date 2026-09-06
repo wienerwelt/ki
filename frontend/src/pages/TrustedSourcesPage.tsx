@@ -1,7 +1,7 @@
 // frontend/src/pages/TrustedSourcesPage.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Container, Typography, Box, Paper, Tabs, Tab, Alert, Tooltip } from '@mui/material';
+import { Container, Typography, Box, Paper, Tabs, Tab, Alert, Tooltip, Button, Badge } from '@mui/material';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
@@ -31,6 +31,7 @@ const TrustedSourcesPage: React.FC = () => {
 
     const [tabIndex, setTabIndex] = useState(location.state?.tab || 0);
     const [contributionScore, setContributionScore] = useState(user?.contribution_score || 0);
+    const [openTrustCount, setOpenTrustCount] = useState(0);
 
     const votePower = useMemo(() => {
         return (1 + contributionScore / 100).toFixed(2);
@@ -46,7 +47,23 @@ const TrustedSourcesPage: React.FC = () => {
         }
     };
 
-    useEffect(() => { refreshUserScore(); }, []);
+    const refreshOpenTrustCount = async () => {
+        if (isDemo) {
+            setOpenTrustCount(0);
+            return;
+        }
+        try {
+            const { res, data } = await apiClient.get<{ menuCounts?: { sources?: number } }>('/api/data/notification-counts');
+            if (res.ok) setOpenTrustCount(Number(data?.menuCounts?.sources || 0));
+        } catch (err) {
+            console.error('Fehler beim Laden der offenen Community-Trust-Bewertungen', err);
+        }
+    };
+
+    useEffect(() => {
+        refreshUserScore();
+        refreshOpenTrustCount();
+    }, [isDemo]);
 
 const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTabIndex(newValue);
@@ -76,12 +93,30 @@ const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
             {/* Demo Alert */}
             {isDemo && <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>Einige Funktionen sind im Demo-Modus deaktiviert.</Alert>}
 
+            {!isDemo && (
+                <Alert
+                    severity="info"
+                    sx={{ mb: 3, borderRadius: 2 }}
+                    action={<Button color="inherit" size="small" onClick={() => setTabIndex(1)}>Offene Bewertungen zeigen</Button>}
+                >
+                    Die rote Badge-Zahl in der Navigation zeigt Quellen, die du persönlich noch nicht bewertet hast.
+                    Betroffene Quellen sind im Tab „Community-Trust bewerten“ rot als offen markiert.
+                </Alert>
+            )}
+
             {/* Hauptinhalt */}
             <Paper sx={{ borderRadius: 2, overflow: 'hidden' }}>
                 <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'background.default' }}>
                     <Tabs value={tabIndex} onChange={handleTabChange} centered variant="scrollable" scrollButtons="auto">
                         <Tab label="Quellen durchsuchen" sx={{ fontWeight: 'bold' }} />
-                        <Tab label="Abstimmen" sx={{ fontWeight: 'bold' }} />
+                        <Tab
+                            label={(
+                                <Badge badgeContent={openTrustCount} color="error" max={99}>
+                                    <Box component="span" sx={{ pr: openTrustCount > 0 ? 1.5 : 0 }}>Community-Trust bewerten</Box>
+                                </Badge>
+                            )}
+                            sx={{ fontWeight: 'bold' }}
+                        />
                         <Tab label="Neue Quelle vorschlagen" sx={{ fontWeight: 'bold' }} />
                     </Tabs>
                 </Box>
@@ -94,7 +129,7 @@ const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
                     {isDemo ? (
                         <Alert severity="warning" sx={{ borderRadius: 2 }}>Das Abstimmen über Quellen ist für Demo-Benutzer deaktiviert.</Alert>
                     ) : (
-                        <VoteSourcesList />
+                        <VoteSourcesList onScoreChange={refreshUserScore} onOpenCountChange={setOpenTrustCount} />
                     )}
                 </TabPanel>
                 

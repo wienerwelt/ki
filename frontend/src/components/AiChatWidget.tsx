@@ -6,23 +6,30 @@ import {
   CircularProgress,
   Fab,
   IconButton,
+  Link,
   List,
   ListItem,
   Paper,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import SendIcon from '@mui/icons-material/Send';
+import ReactMarkdown from 'react-markdown';
 import { useAiChat } from './useAiChat';
 import { AI_CONFIG } from './aiConfig';
 import { useAuth } from '../context/AuthContext';
 import AiContentLabel from './AiContentLabel';
 
+const MAX_CHAT_INPUT_LENGTH = 500;
+
 export const AiChatWidget: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
-  const { messages, sendMessage, loading } = useAiChat();
+  const [clearing, setClearing] = useState(false);
+  const { messages, sendMessage, clearConversation, loading } = useAiChat();
   const { user } = useAuth();
   const bottomRef = useRef<HTMLDivElement>(null);
   const [isDashboardWidgetMenuOpen, setIsDashboardWidgetMenuOpen] = useState(false);
@@ -65,8 +72,8 @@ export const AiChatWidget: React.FC = () => {
   }, [isOpen]);
 
   const handleSend = () => {
-    if (!input.trim() || loading || user?.role === 'demo') return;
-    sendMessage(input);
+    if (input.trim().length < 3 || loading || user?.role === 'demo') return;
+    sendMessage(input.trim());
     setInput('');
   };
 
@@ -74,6 +81,19 @@ export const AiChatWidget: React.FC = () => {
     if (e.key !== 'Enter' || e.shiftKey) return;
     e.preventDefault();
     handleSend();
+  };
+
+  const handleClearConversation = async () => {
+    if (messages.length === 0 || loading || clearing) return;
+    if (!window.confirm('Aktuelle KI-Unterhaltung samt gespeichertem Verlauf löschen?')) return;
+
+    setClearing(true);
+    try {
+      const cleared = await clearConversation();
+      if (cleared) setInput('');
+    } finally {
+      setClearing(false);
+    }
   };
 
   return (
@@ -145,22 +165,44 @@ export const AiChatWidget: React.FC = () => {
               </Box>
             </Box>
 
-            <IconButton
-              size="small"
-              onClick={() => setIsOpen(false)}
-              aria-label="AI Chat schließen"
-              sx={{
-                color: 'white',
-                flexShrink: 0,
-                bgcolor: 'rgba(255,255,255,0.14)',
-                position: 'static !important',
-                bottom: 'auto !important',
-                right: 'auto !important',
-                '&:hover': { bgcolor: 'rgba(255,255,255,0.24)' },
-              }}
-            >
-              <CloseIcon />
-            </IconButton>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+              <Tooltip title="Verlauf löschen">
+                <span>
+                  <IconButton
+                    size="small"
+                    onClick={() => void handleClearConversation()}
+                    disabled={messages.length === 0 || loading || clearing}
+                    aria-label="KI-Verlauf löschen"
+                    sx={{
+                      color: 'white',
+                      bgcolor: 'rgba(255,255,255,0.14)',
+                      position: 'static !important',
+                      bottom: 'auto !important',
+                      right: 'auto !important',
+                      '&:hover': { bgcolor: 'rgba(255,255,255,0.24)' },
+                      '&.Mui-disabled': { color: 'rgba(255,255,255,0.45)' },
+                    }}
+                  >
+                    {clearing ? <CircularProgress size={18} color="inherit" /> : <DeleteSweepIcon fontSize="small" />}
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <IconButton
+                size="small"
+                onClick={() => setIsOpen(false)}
+                aria-label="AI Chat schließen"
+                sx={{
+                  color: 'white',
+                  bgcolor: 'rgba(255,255,255,0.14)',
+                  position: 'static !important',
+                  bottom: 'auto !important',
+                  right: 'auto !important',
+                  '&:hover': { bgcolor: 'rgba(255,255,255,0.24)' },
+                }}
+              >
+                <CloseIcon />
+              </IconButton>
+            </Box>
           </Box>
 
           <List
@@ -210,7 +252,42 @@ export const AiChatWidget: React.FC = () => {
                     overflowWrap: 'anywhere',
                   }}
                 >
-                  <Typography variant="body2">{m.content}</Typography>
+                  <Box sx={{ fontSize: '0.875rem', '& p': { m: 0 }, '& ul, & ol': { my: 0.5, pl: 2.25 }, '& li': { mb: 0.25 } }}>
+                    <ReactMarkdown>{m.content}</ReactMarkdown>
+                  </Box>
+                  {m.role === 'assistant' && !!m.sources?.length && (
+                    <Box
+                      sx={{
+                        mt: 1,
+                        pt: 0.75,
+                        borderTop: 1,
+                        borderColor: 'divider',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.6,
+                        overflowX: 'auto',
+                        whiteSpace: 'nowrap',
+                        scrollbarWidth: 'thin',
+                      }}
+                    >
+                      <Typography variant="caption" fontWeight={800} flexShrink={0}>Quellen:</Typography>
+                      {m.sources.map((source, sourceIndex) => (
+                        <React.Fragment key={`${source.type}-${source.id}-${source.url}`}>
+                          {sourceIndex > 0 && <Typography variant="caption" color="text.disabled">·</Typography>}
+                          <Link
+                            href={source.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            variant="caption"
+                            underline="hover"
+                            sx={{ color: 'primary.main', flexShrink: 0 }}
+                          >
+                            {source.title}
+                          </Link>
+                        </React.Fragment>
+                      ))}
+                    </Box>
+                  )}
                 </Paper>
               </ListItem>
             ))}
@@ -234,7 +311,7 @@ export const AiChatWidget: React.FC = () => {
               borderTop: 1,
               borderColor: 'divider',
               display: 'flex',
-              alignItems: 'center',
+              alignItems: 'flex-start',
               gap: 1,
               bgcolor: 'background.paper',
               flexShrink: 0,
@@ -246,8 +323,11 @@ export const AiChatWidget: React.FC = () => {
               placeholder={user?.role === 'demo' ? 'Demo: Chat deaktiviert' : 'Frage...'}
               value={input}
               disabled={user?.role === 'demo'}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => setInput(e.target.value.slice(0, MAX_CHAT_INPUT_LENGTH))}
               onKeyDown={handleKeyDown}
+              helperText={`${input.length}/${MAX_CHAT_INPUT_LENGTH}`}
+              inputProps={{ maxLength: MAX_CHAT_INPUT_LENGTH, 'aria-label': 'Frage an den internen KI-Assistenten' }}
+              FormHelperTextProps={{ sx: { textAlign: 'right', mr: 0, mt: 0.25, lineHeight: 1 } }}
               InputProps={{
                 sx: {
                   borderRadius: 2,
@@ -258,10 +338,12 @@ export const AiChatWidget: React.FC = () => {
             <IconButton
               type="submit"
               color="primary"
-              onClick={handleSend}
-              disabled={user?.role === 'demo' || loading || !input.trim()}
+              disabled={user?.role === 'demo' || loading || input.trim().length < 3}
               aria-label="Nachricht senden"
               sx={{
+                width: 40,
+                height: 40,
+                p: 0,
                 flexShrink: 0,
                 position: 'static !important',
                 bottom: 'auto !important',

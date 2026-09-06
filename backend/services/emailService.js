@@ -24,7 +24,7 @@ const transporter = nodemailer.createTransport({
 
 /** Absenderadresse: Nutzt den Mandantennamen als Anzeigenamen, falls vorhanden */
 function resolveFrom(fromName) {
-  const safeName = fromName || process.env.EMAIL_ADMIN || 'Intelligence Dashboard';
+  const safeName = fromName || process.env.EMAIL_ADMIN || 'Mobiliti Dashboard';
   const user = process.env.EMAIL_USER || 'noreply@example.com';
   return `"${safeName}" <${user}>`;
 }
@@ -34,28 +34,47 @@ function getBaseUrl() {
   return raw.replace(/\/+$/, '');
 }
 
-function resolveLogoAttachment() {
-  const p = (process.env.EMAIL_EMBED_LOGO_PATH || '').trim();
-  if (!p) return null;
-  try {
-    if (fs.existsSync(p)) {
+function resolveLogoAttachment(partner) {
+  const explicitPath = (process.env.EMAIL_EMBED_LOGO_PATH || '').trim();
+  const partnerLogo = String(partner?.logo_url || '').trim();
+  const relativePartnerLogo = partnerLogo && !/^https?:\/\//i.test(partnerLogo)
+    ? `/${partnerLogo.replace(/^\/+/, '')}`
+    : '';
+  const candidates = [
+    explicitPath,
+    relativePartnerLogo ? path.join('/app/public', relativePartnerLogo) : '',
+    relativePartnerLogo ? path.join('/frontend/dist', relativePartnerLogo) : '',
+    relativePartnerLogo ? path.join('/frontend/public', relativePartnerLogo) : '',
+    relativePartnerLogo ? path.resolve(__dirname, '../../frontend/public', relativePartnerLogo.replace(/^\/+/, '')) : '',
+    '/frontend/dist/logos/de-mobiliti.png',
+    '/frontend/public/logos/de-mobiliti.png',
+    path.resolve(__dirname, '../../frontend/public/logos/de-mobiliti.png'),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) continue;
       return {
-        filename: path.basename(p),
-        path: p,
+        filename: path.basename(candidate),
+        path: candidate,
         cid: 'brand-logo',
       };
-    }
-  } catch (_) { /* ignore */ }
+    } catch (_) { /* nächsten sicheren Kandidaten prüfen */ }
+  }
   return null;
 }
 
 /** Niedrig-Level Versand, unterstützt nun partner-Objekt für Reply-To */
 async function sendEmail({ to, subject, html, text, fromName, replyTo, partner, attachments = [], headers }) {
+  const logoAttachment = resolveLogoAttachment(partner);
+  const safeHtml = !logoAttachment && typeof html === 'string'
+    ? html.replace(/cid:brand-logo/g, `${getBaseUrl()}/logos/de-mobiliti.png`)
+    : html;
   const mailOptions = {
     from: resolveFrom(fromName || partner?.name),
     to,
     subject,
-    html,
+    html: safeHtml,
     text,
     headers,
   };
@@ -66,7 +85,6 @@ async function sendEmail({ to, subject, html, text, fromName, replyTo, partner, 
       mailOptions.replyTo = partner.email; // Antworten gehen direkt an den Mandanten
   }
 
-  const logoAttachment = resolveLogoAttachment();
   const allAttachments = [...attachments];
   if (logoAttachment && !allAttachments.some((attachment) => attachment.cid === logoAttachment.cid)) {
     allAttachments.push(logoAttachment);
@@ -176,4 +194,7 @@ module.exports = {
   buildResetUrl,
   buildNewsletterConfirmUrl,
   getBaseUrl,
+  __test: {
+    resolveLogoAttachment,
+  },
 };

@@ -71,9 +71,12 @@ async function resolveBusinessPartnerId(voucher) {
 
   try {
     const r = await db.query(
-      `SELECT id, name, logo_url, dashboard_title, is_active, subscription_end_date
-       FROM business_partners
-       WHERE LOWER(RIGHT(id::text, 8)) = $1
+      `SELECT bp.id, bp.name, bp.logo_url, bp.dashboard_title, bp.address, bp.email,
+              bp.url_businesspartner, bp.is_active, bp.subscription_end_date,
+              cs.primary_color, cs.primary_text_color
+       FROM business_partners bp
+       LEFT JOIN color_schemes cs ON cs.id = bp.color_scheme_id
+       WHERE LOWER(RIGHT(bp.id::text, 8)) = $1
        LIMIT 1`,
       [cleanVoucher]
     );
@@ -98,7 +101,16 @@ async function resolveBusinessPartnerId(voucher) {
       }
     }
 
-    return { partner, error: null };
+    return {
+      partner: {
+        ...partner,
+        color_scheme: {
+          primary_color: partner.primary_color,
+          primary_text_color: partner.primary_text_color,
+        },
+      },
+      error: null,
+    };
   } catch (err) {
     console.error('Fehler bei der Voucher-Auflösung:', err);
     return { partner: null, error: 'Technischer Fehler bei der Überprüfung des Codes.' };
@@ -389,6 +401,7 @@ exports.register = async (req, res) => {
           to: normalizedEmail,
           username: chosenUsername,
           confirmUrl,
+          partner: partner || null,
         });
       } catch (e) {
         console.error('Newsletter-Opt-In-Email fehlgeschlagen:', e);
@@ -423,10 +436,21 @@ exports.login = async (req, res) => {
           u.newsletter_opt_in, u.briefing_email_enabled, u.member_newsletter_enabled,
           u.public_profile_enabled, u.show_email_publicly, u.show_phone_publicly,
           u.show_organization_publicly, u.show_linkedin_publicly,
-          u.business_partner_id, u.has_completed_onboarding,
+          u.business_partner_id, u.has_completed_onboarding, u.preferred_workspace,
           u.is_active, u.active_until, u.auth_version,
           bp.name as business_partner_name,
           bp.dashboard_title,
+          bp.enabled_modules AS tenant_modules,
+          bp.default_workspace AS tenant_default_workspace,
+          bp.sales_plan AS tenant_sales_plan,
+          bp.sales_subscription_status AS tenant_sales_subscription_status,
+          bp.sales_trial_ends_on AS tenant_sales_trial_ends_on,
+          CASE WHEN bp.sales_subscription_status = 'trial'
+              THEN GREATEST(bp.sales_trial_ends_on - CURRENT_DATE, 0)
+              ELSE NULL END AS tenant_sales_trial_days_remaining,
+          CASE WHEN bp.sales_subscription_status = 'active'
+              OR (bp.sales_subscription_status = 'trial' AND bp.sales_trial_ends_on >= CURRENT_DATE)
+              THEN TRUE ELSE FALSE END AS tenant_sales_access_active,
           bp.is_active as business_partner_is_active,
           bp.subscription_end_date as business_partner_subscription_end_date,
           (
@@ -559,6 +583,14 @@ exports.login = async (req, res) => {
         linkedin_url: user.linkedin_url || null,
         phone: user.phone || null,
         membership_level: user.membership_level || null,
+        preferred_workspace: user.preferred_workspace || null,
+        tenant_modules: user.tenant_modules || ['content'],
+        tenant_default_workspace: user.tenant_default_workspace || 'content',
+        tenant_sales_plan: user.tenant_sales_plan || 'basic',
+        tenant_sales_subscription_status: user.tenant_sales_subscription_status || 'active',
+        tenant_sales_trial_ends_on: user.tenant_sales_trial_ends_on || null,
+        tenant_sales_trial_days_remaining: user.tenant_sales_trial_days_remaining === null ? null : Number(user.tenant_sales_trial_days_remaining),
+        tenant_sales_access_active: user.tenant_sales_access_active !== false,
         newsletter_opt_in: user.newsletter_opt_in === true,
         briefing_email_enabled: user.briefing_email_enabled === true,
         member_newsletter_enabled: user.member_newsletter_enabled === true,
@@ -889,7 +921,15 @@ exports.startNewsletterOptIn = async (req, res) => {
 
   try {
     const r = await db.query(
-      'SELECT id, username, newsletter_opt_in FROM users WHERE id = $1 LIMIT 1',
+      `SELECT u.id, u.username, u.newsletter_opt_in, u.business_partner_id,
+              bp.name AS partner_name, bp.logo_url, bp.dashboard_title,
+              bp.address AS partner_address, bp.email AS partner_email, bp.url_businesspartner,
+              cs.primary_color, cs.primary_text_color
+       FROM users u
+       LEFT JOIN business_partners bp ON bp.id = u.business_partner_id
+       LEFT JOIN color_schemes cs ON cs.id = bp.color_scheme_id
+       WHERE u.id = $1
+       LIMIT 1`,
       [req.user.id]
     );
 
@@ -898,6 +938,19 @@ exports.startNewsletterOptIn = async (req, res) => {
     }
 
     const user = r.rows[0];
+    const partner = user.business_partner_id ? {
+      id: user.business_partner_id,
+      name: user.partner_name,
+      logo_url: user.logo_url,
+      dashboard_title: user.dashboard_title,
+      address: user.partner_address,
+      email: user.partner_email,
+      url_businesspartner: user.url_businesspartner,
+      color_scheme: {
+        primary_color: user.primary_color,
+        primary_text_color: user.primary_text_color,
+      },
+    } : null;
     if (user.newsletter_opt_in) {
       await db.query(
         `UPDATE users
@@ -931,6 +984,7 @@ exports.startNewsletterOptIn = async (req, res) => {
         to: normalizedEmail,
         username: user.username,
         confirmUrl,
+        partner,
       });
     } catch (e) {
       console.error('Opt-In E-Mail Fehler:', e);
@@ -949,7 +1003,18 @@ async function handleSSOLoginOrRegister(res, profile, partnerCode) {
         
         // Da du hier "SELECT u.*" nutzt, sind is_active und active_until bereits im Objekt
         const r = await db.query(
-            `SELECT u.*, bp.name as business_partner_name, bp.dashboard_title, bp.is_active as business_partner_is_active,
+            `SELECT u.*, bp.name as business_partner_name, bp.dashboard_title,
+             bp.enabled_modules AS tenant_modules, bp.default_workspace AS tenant_default_workspace,
+             bp.sales_plan AS tenant_sales_plan,
+             bp.sales_subscription_status AS tenant_sales_subscription_status,
+             bp.sales_trial_ends_on AS tenant_sales_trial_ends_on,
+             CASE WHEN bp.sales_subscription_status = 'trial'
+                 THEN GREATEST(bp.sales_trial_ends_on - CURRENT_DATE, 0)
+                 ELSE NULL END AS tenant_sales_trial_days_remaining,
+             CASE WHEN bp.sales_subscription_status = 'active'
+                 OR (bp.sales_subscription_status = 'trial' AND bp.sales_trial_ends_on >= CURRENT_DATE)
+                 THEN TRUE ELSE FALSE END AS tenant_sales_access_active,
+             bp.is_active as business_partner_is_active,
              (
                  SELECT c.name 
                  FROM business_partner_categories bpc
@@ -1035,9 +1100,9 @@ async function handleSSOLoginOrRegister(res, profile, partnerCode) {
         setSessionCookies(res, token);
 
         if (isNewUser) {
-            return safeFrontendRedirect(res, '/dashboard');
+            return safeFrontendRedirect(res, '/home');
         } else {
-            return safeFrontendRedirect(res, '/dashboard');
+            return safeFrontendRedirect(res, '/home');
         }
 
     } catch (err) {

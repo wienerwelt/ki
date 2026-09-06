@@ -93,7 +93,12 @@ const updateLastActive = require('./middleware/activityLogger');
 const adminBriefingRoutes = require('./routes/adminBriefingEditorialRoutes');
 const directoryRoutes = require('./routes/directoryRoutes');
 const adminDirectoryRoutes = require('./routes/adminDirectoryRoutes');
+const adminPublicAiAssistantRoutes = require('./routes/adminPublicAiAssistantRoutes');
+const adminSalesLeadRoutes = require('./routes/adminSalesLeadRoutes');
+const { resolvePublicAssistant, syncDuePublicAssistants, expandOriginVariants } = require('./services/publicAiAssistantService');
 const softwareRoutes = require('./routes/softwareRoutes');
+const accountRadarRoutes = require('./routes/accountRadarRoutes');
+const accountRadarIntegrationRoutes = require('./routes/accountRadarIntegrationRoutes');
 
 
 
@@ -236,12 +241,14 @@ app.use('/api/admin/jobs', serverAdapter.getRouter());
 app.use('/api/public', publicRoutes);
 
 app.use('/api/auth', authRoutes);
+app.use('/api/integrations/account-radar/v1', accountRadarIntegrationRoutes);
 app.use(updateLastActive);
 app.use('/api/session', sessionRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.get('/api/data/active-advertisement', auth, dataController.getActiveAdvertisement);
 app.use('/api/data', dataRoutes);
+app.use('/api/account-radar', accountRadarRoutes);
 app.use('/api/business-partner', businessPartnerRoutes);
 app.use('/api/widgets', widgetRoutes);
 app.use('/api/sources', sourcesRoutes);
@@ -279,6 +286,8 @@ app.use('/api/admin/briefing', adminBriefingRoutes);
 app.use('/api/onboarding', require('./routes/onboardingRoutes'));
 app.use('/api/admin/social-media', require('./routes/adminSocialMediaRoutes'));
 app.use('/api/admin/directory', adminDirectoryRoutes);
+app.use('/api/admin/public-assistant', adminPublicAiAssistantRoutes);
+app.use('/api/admin/sales-leads', adminSalesLeadRoutes);
 app.use('/api/directory', directoryRoutes);
 app.use('/api/software', softwareRoutes);
 
@@ -301,6 +310,34 @@ const escapeSeoHtml = (value = '') => String(value)
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#039;');
+
+// Isolierte Einbettungsseite für WordPress und andere freigegebene
+// Mandanten-Websites. Nur diese Route darf in den konfigurierten Origins
+// gerahmt werden; alle übrigen Dashboard-Seiten bleiben gegen Framing gesperrt.
+app.get('/assistant/:siteKey', async (req, res, next) => {
+  try {
+    const assistant = await resolvePublicAssistant(req.params.siteKey);
+    if (!assistant) return res.status(404).type('text/plain').send('Assistent nicht gefunden.');
+    const configuredOrigins = Array.isArray(assistant.allowed_origins)
+      ? Array.from(new Set(assistant.allowed_origins.flatMap((origin) => {
+          try { return expandOriginVariants(origin, assistant.url_businesspartner); } catch (_error) { return []; }
+        }))).filter((origin) => /^https?:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(String(origin)))
+      : [];
+    const ancestors = ["'self'", ...configuredOrigins].join(' ');
+    const currentCsp = String(res.getHeader('Content-Security-Policy') || '');
+    const nextCsp = /frame-ancestors\s+[^;]+/i.test(currentCsp)
+      ? currentCsp.replace(/frame-ancestors\s+[^;]+/i, `frame-ancestors ${ancestors}`)
+      : `${currentCsp}${currentCsp && !currentCsp.endsWith(';') ? ';' : ''}frame-ancestors ${ancestors};`;
+    res.setHeader('Content-Security-Policy', nextCsp);
+    res.removeHeader('X-Frame-Options');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    res.setHeader('Cache-Control', 'no-cache');
+    const html = await fs.promises.readFile(frontendIndexPath, 'utf8');
+    return res.type('html').send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
 
 app.get('/sitemap.xml', async (req, res, next) => {
   try {
@@ -437,6 +474,16 @@ async function startServer() {
         console.error('[Scheduler] Fehler im Minutentakt:', err);
       }
     });
+
+    console.log('[Public AI] Plane tägliche Homepage-Synchronisierung...');
+    cron.schedule('17 3 * * *', async () => {
+      try {
+        const count = await syncDuePublicAssistants();
+        console.log(`[Public AI] Homepage-Synchronisierung abgeschlossen (${count} fällige Mandanten).`);
+      } catch (err) {
+        console.error('[Public AI] Fehler bei der Homepage-Synchronisierung:', err);
+      }
+    }, { timezone: 'Europe/Vienna' });
     
     app.listen(PORT, () => {
       console.log('==================================================');

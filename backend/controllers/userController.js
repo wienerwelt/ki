@@ -37,6 +37,20 @@ exports.getProfile = async (req, res) => {
                 u.last_login_at,
                 u.phone,
                 u.created_at,
+                u.preferred_workspace,
+                bp.name AS business_partner_name,
+                bp.dashboard_title,
+                bp.enabled_modules AS tenant_modules,
+                bp.default_workspace AS tenant_default_workspace,
+                bp.sales_plan AS tenant_sales_plan,
+                bp.sales_subscription_status AS tenant_sales_subscription_status,
+                bp.sales_trial_ends_on AS tenant_sales_trial_ends_on,
+                CASE WHEN bp.sales_subscription_status = 'trial'
+                    THEN GREATEST(bp.sales_trial_ends_on - CURRENT_DATE, 0)
+                    ELSE NULL END AS tenant_sales_trial_days_remaining,
+                CASE WHEN bp.sales_subscription_status = 'active'
+                    OR (bp.sales_subscription_status = 'trial' AND bp.sales_trial_ends_on >= CURRENT_DATE)
+                    THEN TRUE ELSE FALSE END AS tenant_sales_access_active,
 
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
@@ -48,6 +62,7 @@ exports.getProfile = async (req, res) => {
                 ) AS regions
                 
              FROM users u
+             LEFT JOIN business_partners bp ON bp.id = u.business_partner_id
              WHERE u.id = $1`,
             [userId]
         );
@@ -108,7 +123,8 @@ exports.updateProfile = async (req, res) => {
             'preferred_language', 'newsletter_opt_in', 'briefing_email_enabled',
             'member_newsletter_enabled', 'phone', 'public_profile_enabled',
             'show_email_publicly', 'show_phone_publicly',
-            'show_organization_publicly', 'show_linkedin_publicly'
+            'show_organization_publicly', 'show_linkedin_publicly',
+            'preferred_workspace'
         ];
         const booleanFields = new Set([
             'newsletter_opt_in', 'briefing_email_enabled', 'member_newsletter_enabled',
@@ -129,6 +145,23 @@ exports.updateProfile = async (req, res) => {
                 return res.status(400).json({ message: `Ungültiger Wert für ${field}.` });
             }
             if (field === 'phone') value = value ? String(value).trim() : null;
+            if (field === 'preferred_workspace') {
+                value = String(value || '').trim().toLowerCase();
+                if (!['content', 'sales'].includes(value)) {
+                    return res.status(400).json({ message: 'Ungültiger Arbeitsbereich.' });
+                }
+                const moduleResult = await db.query(
+                    `SELECT bp.enabled_modules
+                     FROM users app_user
+                     LEFT JOIN business_partners bp ON bp.id = app_user.business_partner_id
+                     WHERE app_user.id = $1`,
+                    [userId]
+                );
+                const enabledModules = moduleResult.rows[0]?.enabled_modules || ['content'];
+                if (!enabledModules.includes(value) && req.user.role !== 'admin') {
+                    return res.status(403).json({ message: 'Dieser Arbeitsbereich ist für den Mandanten nicht freigeschaltet.' });
+                }
+            }
             addValue(field, value);
         }
 
@@ -168,6 +201,20 @@ exports.updateProfile = async (req, res) => {
                 u.show_organization_publicly,
                 u.show_linkedin_publicly,
                 u.phone,
+                u.preferred_workspace,
+                bp.name AS business_partner_name,
+                bp.dashboard_title,
+                bp.enabled_modules AS tenant_modules,
+                bp.default_workspace AS tenant_default_workspace,
+                bp.sales_plan AS tenant_sales_plan,
+                bp.sales_subscription_status AS tenant_sales_subscription_status,
+                bp.sales_trial_ends_on AS tenant_sales_trial_ends_on,
+                CASE WHEN bp.sales_subscription_status = 'trial'
+                    THEN GREATEST(bp.sales_trial_ends_on - CURRENT_DATE, 0)
+                    ELSE NULL END AS tenant_sales_trial_days_remaining,
+                CASE WHEN bp.sales_subscription_status = 'active'
+                    OR (bp.sales_subscription_status = 'trial' AND bp.sales_trial_ends_on >= CURRENT_DATE)
+                    THEN TRUE ELSE FALSE END AS tenant_sales_access_active,
                 (SELECT COALESCE(json_agg(
                     jsonb_build_object('id', r.id, 'name', r.name, 'code', r.code, 'is_default', bpr.is_default)
                     ORDER BY bpr.is_default DESC, r.name ASC
@@ -178,6 +225,7 @@ exports.updateProfile = async (req, res) => {
                 ) AS regions,
                 u.profile_image_url
              FROM users u
+             LEFT JOIN business_partners bp ON bp.id = u.business_partner_id
              WHERE u.id = $1`,
             [userId]
         );

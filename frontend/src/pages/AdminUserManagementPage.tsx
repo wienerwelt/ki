@@ -256,8 +256,13 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setMembershipLevels(null); setFormMembershipLevel(''); return;
       }
       try {
-        const res = await apiClient.get(`/api/admin/business-partners/${bpId}/levels`);
-        setMembershipLevels(res.data || null);
+        const res = await apiClient.get('/api/admin/users/membership-levels', { params: { businessPartnerId: bpId } });
+        const levels = asArray<string>(res.data?.levels);
+        setMembershipLevels({
+          level_1_name: levels[0],
+          level_2_name: levels[1],
+          level_3_name: levels[2],
+        });
       } catch (err) {
         setMembershipLevels(null);
       }
@@ -286,7 +291,7 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
   };
 
   const filteredRoleOptions = useMemo(() => {
-    return isAssistant ? roleOptions.filter((role) => !['admin', 'assistenz'].includes(role.name)) : roleOptions;
+    return isAssistant ? roleOptions.filter((role) => ['user', 'demo', 'sales_user'].includes(role.name)) : roleOptions;
   }, [roleOptions, isAssistant]);
 
   const handleOpenAddDialog = () => {
@@ -305,7 +310,7 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setDialogError(null);
     const userData = {
       username: formUsername, 
-      email: formEmail, 
+      email: formEmail.trim().toLowerCase(),
       password: formPassword || undefined, 
       first_name: formFirstName || null, 
       last_name: formLastName || null, 
@@ -770,7 +775,7 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
               </TextField>
             )}
 
-            <TextField select margin="dense" label="Mitgliedslevel" fullWidth value={formMembershipLevel} onChange={(e) => setFormMembershipLevel(e.target.value)} sx={{ mt: 2 }} disabled={!formBusinessPartnerId}>
+            <TextField select margin="dense" label="Mitgliedslevel" fullWidth value={formMembershipLevel} onChange={(e) => setFormMembershipLevel(e.target.value)} sx={{ mt: 2 }} disabled={!formBusinessPartnerId} helperText={formBusinessPartnerId && !membershipLevels ? 'Für diesen Mandanten sind noch keine Mitgliedslevel definiert.' : 'Aus den bestehenden Leveln des Mandanten auswählen.'}>
               <MenuItem value=""><em>Kein Level</em></MenuItem>
               {membershipLevels && Object.values(membershipLevels).map((level) => level && (<MenuItem key={level} value={level}>{level}</MenuItem>))}
             </TextField>

@@ -6,22 +6,26 @@ const auth = require('../middleware/authMiddleware'); // Standard-Authentifizier
 const {
     getAllApprovedSources,
     getPendingSourcesForVote,
+    getCommunityTrustSources,
     getSourceCategories,
     getSourceById,
     createSource,
     voteOnSource,
     reportSource
 } = require('../controllers/sourcesController');
+const { requireTenantModule } = require('../services/tenantModuleService');
+const requireContentModule = requireTenantModule('content');
 
 // Routen, die öffentlich sind (keine Anmeldung erforderlich)
 router.get('/', getAllApprovedSources);
-router.get('/pending', getPendingSourcesForVote);
+router.get('/pending', auth, requireContentModule, getPendingSourcesForVote);
+router.get('/community-trust', auth, requireContentModule, getCommunityTrustSources);
 router.get('/categories', getSourceCategories);
-router.get('/:id', getSourceById);
+router.get('/:id', auth, requireContentModule, getSourceById);
 
 // Routen, die eine Anmeldung erfordern (auth Middleware)
-router.post('/', auth, createSource);
-router.post('/:id/vote', auth, voteOnSource);
-router.post('/:id/report', auth, reportSource);
+router.post('/', auth, requireContentModule, createSource);
+router.post('/:id/vote', auth, requireContentModule, voteOnSource);
+router.post('/:id/report', auth, requireContentModule, reportSource);
 
 module.exports = router;

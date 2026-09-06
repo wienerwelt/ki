@@ -1,4 +1,7 @@
 const LAST_PARTNER_SLUG_KEY = 'last_business_partner_slug';
+const MOBILITI_MARKETING_URL = 'https://www.mobiliti.at';
+
+export type LogoutWorkspace = 'content' | 'sales';
 
 const normalizePartnerSlug = (value?: string | null): string | null => {
   const slug = String(value || '').trim().replace(/^\/+|\/+$/g, '');
@@ -30,3 +33,17 @@ export const getPartnerPublicPath = (currentSlug?: string | null): string => {
   const slug = normalizePartnerSlug(currentSlug) || getRememberedPartnerSlug();
   return slug ? `/${encodeURIComponent(slug)}` : '/';
 };
+
+export const getLogoutTarget = (
+  workspace: LogoutWorkspace,
+  currentSlug?: string | null,
+  useRememberedSlug = true
+): string => {
+  if (workspace === 'sales') return `${MOBILITI_MARKETING_URL}/#sales`;
+
+  const slug = normalizePartnerSlug(currentSlug)
+    || (useRememberedSlug ? getRememberedPartnerSlug() : null);
+  return slug ? `/${encodeURIComponent(slug)}` : `${MOBILITI_MARKETING_URL}/`;
+};
+
+export const isExternalLogoutTarget = (target: string): boolean => /^https?:\/\//i.test(target);

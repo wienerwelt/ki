@@ -301,6 +301,16 @@ const AdminScrapedContentPage: React.FC = () => {
 
     const handleClearFilter = () => { navigate('/admin/scraped-content'); };
 
+    const handleSourceFilter = (event: React.MouseEvent, sourceIdentifier?: string | null) => {
+        event.stopPropagation();
+        const normalizedSource = String(sourceIdentifier || '').trim();
+        if (!normalizedSource) return;
+
+        setSelected([]);
+        setContent([]);
+        navigate(`/admin/scraped-content?source_identifier=${encodeURIComponent(normalizedSource)}`);
+    };
+
     const sortedAndFilteredContent = useMemo(() => {
         // FIX 4: Sicherstellen, dass content immer iterierbar ist
         let filtered = Array.isArray(content) ? [...content] : [];
@@ -476,7 +486,17 @@ const AdminScrapedContentPage: React.FC = () => {
                                                                 {item.title}
                                                             </Typography>
                                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                                <Chip label={item.source_identifier || 'Unbekannt'} size="small" variant="outlined" color={item.data_type === 'traffic' ? 'secondary' : 'default'} sx={{ height: 20, fontSize: '0.7rem' }} />
+                                                                <Tooltip title={item.source_identifier ? 'Nur Inhalte dieser Quelle anzeigen' : ''}>
+                                                                    <Chip
+                                                                        label={item.source_identifier || 'Unbekannt'}
+                                                                        size="small"
+                                                                        variant="outlined"
+                                                                        clickable={Boolean(item.source_identifier)}
+                                                                        onClick={(event) => handleSourceFilter(event, item.source_identifier)}
+                                                                        color={sourceIdentifierFilter === item.source_identifier ? 'primary' : item.data_type === 'traffic' ? 'secondary' : 'default'}
+                                                                        sx={{ height: 20, fontSize: '0.7rem', fontWeight: sourceIdentifierFilter === item.source_identifier ? 800 : 500 }}
+                                                                    />
+                                                                </Tooltip>
                                                                 {item.region && <Typography variant="caption" color="text.secondary">• {item.region}</Typography>}
                                                             </Box>
                                                         </Box>

@@ -3,8 +3,10 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
 const fundingController = require('../controllers/fundingController');
+const { requireTenantModule } = require('../services/tenantModuleService');
 
 router.use(authMiddleware);
+router.use(requireTenantModule('content'));
 
 router.get('/top-opportunities', fundingController.getTopOpportunities);
 router.get('/search', fundingController.searchFunding);

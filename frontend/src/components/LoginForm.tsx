@@ -30,6 +30,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import { useSnackbar } from '../context/SnackbarContext';
 import zxcvbn from 'zxcvbn';
 import apiClient from '../apiClient';
+import { getDefaultWorkspacePath } from '../utils/workspaceAccess';
 
 const TermsContent = React.lazy(() => import('../components/TermsContent').then(m => ({ default: m.TermsContent })));
 const PrivacyContent = React.lazy(() => import('../components/PrivacyContent').then(m => ({ default: m.PrivacyContent })));
@@ -45,7 +46,7 @@ type LegalDialogContent = 'terms' | 'privacy' | 'disclaimer' | null;
 
 const LEGAL_VERSIONS = {
   terms: '2026-03-18',
-  privacy: '2026-03-18',
+  privacy: '2026-09-05',
   disclaimer: '2026-03-18',
 };
 
@@ -224,9 +225,13 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
         if (!data?.user) {
           throw new Error('Ungültige Serverantwort');
         }
-        login(data.user as UserPayload, data.session_expires_at || null);
+        const authenticatedUser = data.user as UserPayload;
+        login(authenticatedUser, data.session_expires_at || null);
         showSnackbar('Erfolgreich angemeldet.', 'success');
-        navigate('/dashboard');
+        navigate(
+          getDefaultWorkspacePath(authenticatedUser, null),
+          { replace: true }
+        );
       }
     } catch (err: any) {
       const status = err.status;
