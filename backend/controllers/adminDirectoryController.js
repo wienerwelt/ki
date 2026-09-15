@@ -48,6 +48,117 @@ const safeParseJsonArray = (value) => {
     }
 };
 
+const normalizeProviderMandantSettings = (rawSettings) => {
+    const settingsByPartner = new Map();
+
+    for (const rawSetting of rawSettings) {
+        const businessPartnerId = normalizeOptionalText(rawSetting?.business_partner_id);
+        // Eine neu angelegte, aber noch nicht ausgewählte Formularzeile wird ignoriert.
+        if (!businessPartnerId) continue;
+        if (!isValidUUID(businessPartnerId)) {
+            const error = new Error('Eine Mandanten-Zuordnung enthält eine ungültige ID.');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        const status = rawSetting?.status === 'blacklisted' ? 'blacklisted' : 'active';
+        settingsByPartner.set(businessPartnerId, {
+            business_partner_id: businessPartnerId,
+            status,
+            is_recommended: status !== 'blacklisted' && rawSetting?.is_recommended === true,
+            is_tenant_entry: status !== 'blacklisted' && rawSetting?.is_tenant_entry === true,
+        });
+    }
+
+    return Array.from(settingsByPartner.values());
+};
+
+const syncProviderMandantSettings = async (client, providerId, rawSettings) => {
+    const mandantSettings = normalizeProviderMandantSettings(rawSettings);
+
+    // Bestehende Relationen bleiben erhalten und werden aktualisiert. Ein vorheriges
+    // DELETE aller Zeilen würde an Software-/Action-Fremdschlüsseln scheitern.
+    for (const setting of mandantSettings) {
+        if (setting.is_tenant_entry) {
+            await client.query(
+                `UPDATE directory_provider_mandant_settings
+                 SET is_tenant_entry = FALSE
+                 WHERE business_partner_id = $1
+                   AND provider_id <> $2`,
+                [setting.business_partner_id, providerId]
+            );
+        }
+
+        await client.query(
+            `INSERT INTO directory_provider_mandant_settings (
+                provider_id, business_partner_id, status, is_recommended, is_tenant_entry
+             ) VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (provider_id, business_partner_id) DO UPDATE
+             SET status = EXCLUDED.status,
+                 is_recommended = EXCLUDED.is_recommended,
+                 is_tenant_entry = EXCLUDED.is_tenant_entry`,
+            [
+                providerId,
+                setting.business_partner_id,
+                setting.status,
+                setting.is_recommended,
+                setting.is_tenant_entry,
+            ]
+        );
+    }
+
+    const retainedPartnerIds = mandantSettings.map((setting) => setting.business_partner_id);
+    const removedRelations = await client.query(
+        `SELECT
+            dpm.business_partner_id,
+            COALESCE(bp.name, dpm.business_partner_id::text) AS business_partner_name,
+            (
+                SELECT COUNT(*)::int
+                FROM software_tools st
+                WHERE st.provider_id = dpm.provider_id
+                  AND st.business_partner_id = dpm.business_partner_id
+            ) AS software_count,
+            (
+                SELECT COUNT(*)::int
+                FROM business_partner_actions bpa
+                WHERE bpa.directory_provider_id = dpm.provider_id
+                  AND bpa.business_partner_id = dpm.business_partner_id
+            ) AS action_count
+         FROM directory_provider_mandant_settings dpm
+         LEFT JOIN business_partners bp ON bp.id = dpm.business_partner_id
+         WHERE dpm.provider_id = $1
+           AND NOT (dpm.business_partner_id = ANY($2::uuid[]))`,
+        [providerId, retainedPartnerIds]
+    );
+
+    const usedRelations = removedRelations.rows.filter(
+        (relation) => Number(relation.software_count || 0) > 0 || Number(relation.action_count || 0) > 0
+    );
+    if (usedRelations.length > 0) {
+        const affected = usedRelations.map((relation) => {
+            const usages = [];
+            if (Number(relation.software_count || 0) > 0) usages.push(`${relation.software_count} Software-Eintrag/Einträge`);
+            if (Number(relation.action_count || 0) > 0) usages.push(`${relation.action_count} Action(s)`);
+            return `${relation.business_partner_name} (${usages.join(', ')})`;
+        }).join('; ');
+        const error = new Error(
+            `Die Mandanten-Zuordnung kann nicht entfernt werden, weil sie noch verwendet wird: ${affected}. `
+            + 'Bitte die verknüpften Inhalte zuerst einem anderen Anbieter zuordnen oder löschen.'
+        );
+        error.code = 'DIRECTORY_RELATION_IN_USE';
+        throw error;
+    }
+
+    await client.query(
+        `DELETE FROM directory_provider_mandant_settings
+         WHERE provider_id = $1
+           AND NOT (business_partner_id = ANY($2::uuid[]))`,
+        [providerId, retainedPartnerIds]
+    );
+
+    return mandantSettings;
+};
+
 // Hilfsfunktion: Domain/Namen für den Dateinamen säubern
 const extractName = (nameStr) => {
     try {
@@ -386,20 +497,7 @@ if (req.file) {
             await client.query(`INSERT INTO directory_provider_tags (provider_id, tag_id) VALUES ($1, $2)`, [id, tagId]);
         }
 
-        await client.query('DELETE FROM directory_provider_mandant_settings WHERE provider_id = $1', [id]);
-        for (const ms of mandantSettings) {
-            const isTenantEntry = ms.status !== 'blacklisted' && ms.is_tenant_entry === true;
-            if (isTenantEntry) {
-                await client.query(
-                    'UPDATE directory_provider_mandant_settings SET is_tenant_entry = FALSE WHERE business_partner_id = $1',
-                    [ms.business_partner_id]
-                );
-            }
-            await client.query(
-                `INSERT INTO directory_provider_mandant_settings (provider_id, business_partner_id, status, is_recommended, is_tenant_entry) VALUES ($1, $2, $3, $4, $5)`,
-                [id, ms.business_partner_id, ms.status || 'active', ms.is_recommended || false, isTenantEntry]
-            );
-        }
+        await syncProviderMandantSettings(client, id, mandantSettings);
 
         await client.query('COMMIT');
 
@@ -412,6 +510,17 @@ if (req.file) {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error updating provider:', err.message);
+        if (err.statusCode === 400) return res.status(400).json({ message: err.message });
+        if (err.code === 'DIRECTORY_RELATION_IN_USE' || err.code === '23503') {
+            return res.status(409).json({
+                message: err.code === 'DIRECTORY_RELATION_IN_USE'
+                    ? err.message
+                    : 'Eine Mandanten-Zuordnung wird noch von Software oder Actions verwendet und kann nicht entfernt werden.'
+            });
+        }
+        if (err.code === '23505') {
+            return res.status(409).json({ message: 'Ein Dienstleister mit diesem Namen oder dieser Mandanten-Zuordnung existiert bereits.' });
+        }
         res.status(500).json({ message: 'DB-Fehler beim Speichern: ' + err.message });
     } finally {
         client.release();

@@ -202,6 +202,7 @@ try {
         $smokeScripts = @(
             'smoke:software-rating',
             'smoke:software-delete',
+            'smoke:admin-directory-update',
             'smoke:monthly-report',
             'smoke:monthly-report-preview',
             'smoke:monthly-report-monitor',

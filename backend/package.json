@@ -23,6 +23,7 @@
     "seed:career-demo": "node scripts/seedCareerDemo.js",
     "smoke:software-rating": "node scripts/smokeSoftwareRating.js",
     "smoke:software-delete": "node scripts/smokeSoftwareDelete.js",
+    "smoke:admin-directory-update": "node scripts/smokeAdminDirectoryUpdate.js",
     "smoke:monthly-report": "node scripts/smokeMonthlyReport.js",
     "smoke:monthly-report-preferences": "node scripts/smokeMonthlyReportPreferences.js",
     "smoke:monthly-report-preview": "node scripts/smokeMonthlyReportPreview.js",

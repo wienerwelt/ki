@@ -275,16 +275,20 @@ const AdminDirectoryPage: React.FC = () => {
         if (deleteLogo) formData.append('delete_logo', 'true');
 
         try {
+            let response;
             if (isEditMode && currentProvider.id) {
-                await apiClient.put(`/api/admin/directory/${currentProvider.id}`, formData);
+                response = await apiClient.put(`/api/admin/directory/${currentProvider.id}`, formData);
             } else {
-                await apiClient.post('/api/admin/directory', formData);
+                response = await apiClient.post('/api/admin/directory', formData);
+            }
+            if (!response.res.ok) {
+                throw new Error(response.data?.message || 'Dienstleister konnte nicht gespeichert werden.');
             }
             setDialogOpen(false);
             fetchData();
             showSnackbar('Dienstleister erfolgreich gespeichert.', 'success');
         } catch (err: any) {
-            showSnackbar('Fehler beim Speichern des Dienstleisters.', 'error');
+            showSnackbar(err?.message || 'Fehler beim Speichern des Dienstleisters.', 'error');
         }
     };
 
