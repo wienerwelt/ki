@@ -38,7 +38,6 @@ async function run() {
     const result = await generateAndSendMonthlyReport({
         dryRun: true,
         targetBusinessPartnerId: admin.business_partner_id,
-        includeUnsubscribedRecipients: false,
         collectPreviewDetails: true,
     });
     const preview = result.previews?.[0];

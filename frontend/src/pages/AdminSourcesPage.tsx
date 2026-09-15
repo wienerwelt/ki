@@ -42,6 +42,23 @@ interface Category {
     name: string;
 }
 
+interface LogoSuggestion {
+    url: string;
+    label: string;
+    source: string;
+    match: 'domain' | 'name';
+    matchLabel: string;
+}
+
+interface SourceFormState {
+    url: string;
+    description: string;
+    category_id: string;
+    logo: File | null;
+    deleteLogo: boolean;
+    selectedLogo: LogoSuggestion | null;
+}
+
 const statusMapping = {
     pending_review: { label: 'Ausstehend', color: 'warning', icon: <HourglassEmptyIcon fontSize="small" /> },
     approved: { label: 'Genehmigt', color: 'success', icon: <CheckCircleIcon fontSize="small" /> },
@@ -61,13 +78,69 @@ const AdminSourcesPage: React.FC = () => {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [isAddMode, setIsAddMode] = useState(false);
     const [editingSource, setEditingSource] = useState<Source | null>(null);
-    const [formState, setFormState] = useState<{ url: string, description: string, category_id: string, logo: File | null, deleteLogo: boolean }>({ 
-        url: '', description: '', category_id: '', logo: null, deleteLogo: false 
+    const [formState, setFormState] = useState<SourceFormState>({
+        url: '', description: '', category_id: '', logo: null, deleteLogo: false, selectedLogo: null
     });
+    const [logoSuggestions, setLogoSuggestions] = useState<LogoSuggestion[]>([]);
+    const [logoSuggestionsLoading, setLogoSuggestionsLoading] = useState(false);
+    const [logoPreviewUrl, setLogoPreviewUrl] = useState('');
 
     const getImageUrl = (url: string | null) => {
         return resolveAssetUrl(url);
     };
+
+    useEffect(() => {
+        if (!formState.logo) {
+            setLogoPreviewUrl('');
+            return undefined;
+        }
+
+        const objectUrl = URL.createObjectURL(formState.logo);
+        setLogoPreviewUrl(objectUrl);
+        return () => URL.revokeObjectURL(objectUrl);
+    }, [formState.logo]);
+
+    useEffect(() => {
+        if (!dialogOpen) {
+            setLogoSuggestions([]);
+            setLogoSuggestionsLoading(false);
+            return undefined;
+        }
+
+        const rawUrl = formState.url.trim();
+        try {
+            const parsed = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`);
+            if (!parsed.hostname || !rawUrl.includes('.')) throw new Error('incomplete');
+        } catch {
+            setLogoSuggestions([]);
+            setLogoSuggestionsLoading(false);
+            return undefined;
+        }
+
+        let active = true;
+        const timer = window.setTimeout(async () => {
+            setLogoSuggestionsLoading(true);
+            try {
+                const { res, data } = await apiClient.get<{ suggestions?: LogoSuggestion[]; message?: string }>('/api/admin/sources/logo-suggestions', {
+                    params: {
+                        url: rawUrl,
+                        sourceId: editingSource?.id || undefined,
+                    },
+                });
+                if (!res.ok) throw new Error(data?.message || 'Logo-Vorschläge konnten nicht geladen werden.');
+                if (active) setLogoSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
+            } catch {
+                if (active) setLogoSuggestions([]);
+            } finally {
+                if (active) setLogoSuggestionsLoading(false);
+            }
+        }, 450);
+
+        return () => {
+            active = false;
+            window.clearTimeout(timer);
+        };
+    }, [dialogOpen, editingSource?.id, formState.url]);
 
     const handleCopyUrl = (url: string) => {
         const fullUrl = getImageUrl(url);
@@ -148,7 +221,8 @@ const AdminSourcesPage: React.FC = () => {
             description: source.description || '', 
             category_id: source.category_id || '', 
             logo: null, 
-            deleteLogo: false 
+            deleteLogo: false,
+            selectedLogo: null,
         });
         setDialogOpen(true);
     };
@@ -157,20 +231,38 @@ const AdminSourcesPage: React.FC = () => {
         setIsAddMode(true);
         setEditingSource(null);
         setFormState({ 
-            url: '', description: '', category_id: '', logo: null, deleteLogo: false 
+            url: '', description: '', category_id: '', logo: null, deleteLogo: false, selectedLogo: null
         });
         setDialogOpen(true);
     };
 
     const handleFormChange = (event: React.ChangeEvent<HTMLInputElement | { name?: string; value: unknown }>) => {
         const { name, value } = event.target;
-        setFormState(prevState => ({ ...prevState, [name as string]: value }));
+        setFormState(prevState => ({
+            ...prevState,
+            [name as string]: value,
+            ...(name === 'url' ? { selectedLogo: null } : {}),
+        }));
     };
 
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         if (event.target.files && event.target.files[0]) {
-            setFormState(prevState => ({ ...prevState, logo: event.target.files![0], deleteLogo: false }));
+            setFormState(prevState => ({
+                ...prevState,
+                logo: event.target.files![0],
+                deleteLogo: false,
+                selectedLogo: null,
+            }));
         }
+    };
+
+    const handleSelectSuggestedLogo = (suggestion: LogoSuggestion) => {
+        setFormState((previous) => ({
+            ...previous,
+            logo: null,
+            deleteLogo: false,
+            selectedLogo: suggestion,
+        }));
     };
 
     const handleEditSubmit = async () => {
@@ -187,6 +279,7 @@ const AdminSourcesPage: React.FC = () => {
         if (formState.description) formData.append('description', formState.description.trim());
         if (formState.category_id) formData.append('category_id', formState.category_id);
         if (formState.logo) formData.append('logo', formState.logo);
+        if (!formState.logo && formState.selectedLogo) formData.append('logo_reference_url', formState.selectedLogo.url);
         if (formState.deleteLogo && !isAddMode) formData.append('delete_logo', 'true');
         
         if (isAddMode) {
@@ -358,12 +451,12 @@ const AdminSourcesPage: React.FC = () => {
                         <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                             Quellen-Logo (wird auf 50px Höhe formatiert & als WebP gespeichert)
                         </Typography>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1, mb: 2 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1, mb: 2, flexWrap: 'wrap' }}>
                             <Button variant="outlined" component="label" startIcon={<UploadFileIcon />} disabled={formState.deleteLogo}>
                                 {formState.logo ? 'Anderes Bild' : 'Bild auswählen'}
                                 <input type="file" hidden accept="image/*" onChange={handleFileChange} />
                             </Button>
-                            
+
                             {formState.deleteLogo && !isAddMode ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                     <Typography variant="body2" color="error" sx={{ fontStyle: 'italic' }}>Wird gelöscht</Typography>
@@ -371,18 +464,49 @@ const AdminSourcesPage: React.FC = () => {
                                 </Box>
                             ) : formState.logo ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    {logoPreviewUrl && (
+                                        <Box component="img" src={logoPreviewUrl} alt="Logo-Vorschau" sx={{ width: 52, height: 40, objectFit: 'contain', bgcolor: 'grey.50', p: 0.5, borderRadius: 1, border: '1px solid', borderColor: 'divider' }} />
+                                    )}
                                     <Typography variant="body2" color="primary" noWrap sx={{ maxWidth: 150 }}>{formState.logo.name}</Typography>
                                     <IconButton size="small" onClick={() => setFormState(p => ({ ...p, logo: null }))} color="error"><DeleteOutlineIcon /></IconButton>
                                 </Box>
+                            ) : formState.selectedLogo ? (
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                                    <Box
+                                        component="img"
+                                        src={getImageUrl(formState.selectedLogo.url)}
+                                        alt={formState.selectedLogo.label}
+                                        onError={(event: React.SyntheticEvent<HTMLImageElement>) => {
+                                            event.currentTarget.onerror = null;
+                                            event.currentTarget.src = '/logos/default-company.svg';
+                                        }}
+                                        sx={{ width: 52, height: 40, objectFit: 'contain', bgcolor: 'grey.50', p: 0.5, borderRadius: 1, border: '1px solid', borderColor: 'success.light' }}
+                                    />
+                                    <Box sx={{ minWidth: 0 }}>
+                                        <Typography variant="body2" color="success.main" fontWeight={700} noWrap>{formState.selectedLogo.label}</Typography>
+                                        <Typography variant="caption" color="text.secondary">Wird beim Speichern übernommen</Typography>
+                                    </Box>
+                                    <IconButton size="small" onClick={() => setFormState(p => ({ ...p, selectedLogo: null }))} color="error"><DeleteOutlineIcon /></IconButton>
+                                </Box>
                             ) : editingSource?.logo_url && !isAddMode ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <Box component="img" src={getImageUrl(editingSource.logo_url)} alt="Current Logo" sx={{ height: 40, objectFit: 'contain', bgcolor: 'grey.100', p: 0.5, borderRadius: 1 }} />
-                                    <IconButton size="small" onClick={() => setFormState(p => ({ ...p, deleteLogo: true }))} color="error"><DeleteOutlineIcon /></IconButton>
+                                    <Box
+                                        component="img"
+                                        src={getImageUrl(editingSource.logo_url)}
+                                        alt="Aktuelles Logo"
+                                        onError={(event: React.SyntheticEvent<HTMLImageElement>) => {
+                                            event.currentTarget.onerror = null;
+                                            event.currentTarget.src = '/logos/default-company.svg';
+                                        }}
+                                        sx={{ height: 40, width: 52, objectFit: 'contain', bgcolor: 'grey.100', p: 0.5, borderRadius: 1 }}
+                                    />
+                                    <Chip label="Direkt bei der Quelle hinterlegt" size="small" color="success" variant="outlined" />
+                                    <IconButton size="small" onClick={() => setFormState(p => ({ ...p, deleteLogo: true, selectedLogo: null }))} color="error"><DeleteOutlineIcon /></IconButton>
                                 </Box>
                             ) : null}
                         </Box>
-                        
-                        {editingSource?.logo_url && !formState.deleteLogo && !formState.logo && !isAddMode && (
+
+                        {editingSource?.logo_url && !formState.deleteLogo && !formState.logo && !formState.selectedLogo && !isAddMode && (
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, bgcolor: 'action.hover', p: 1, borderRadius: 1 }}>
                                 <TextField size="small" value={getImageUrl(editingSource.logo_url)} InputProps={{ readOnly: true }} variant="standard" fullWidth sx={{ input: { fontSize: '0.75rem' } }} />
                                 <Tooltip title="Link kopieren">
@@ -390,6 +514,66 @@ const AdminSourcesPage: React.FC = () => {
                                 </Tooltip>
                             </Box>
                         )}
+
+                        <Box sx={{ mt: 2 }}>
+                            <Typography variant="subtitle2" fontWeight={700}>
+                                Passende vorhandene Logos
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                                Die Vorschläge werden aus der eingegebenen Domain ermittelt und erst nach Ihrer Auswahl gespeichert.
+                            </Typography>
+
+                            {logoSuggestionsLoading ? (
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 2 }}>
+                                    <CircularProgress size={18} />
+                                    <Typography variant="body2" color="text.secondary">Vorhandene Logos werden geprüft …</Typography>
+                                </Box>
+                            ) : logoSuggestions.length > 0 ? (
+                                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 1, mt: 1.5 }}>
+                                    {logoSuggestions.map((suggestion) => {
+                                        const isSelected = formState.selectedLogo?.url === suggestion.url;
+                                        const isCurrent = !formState.selectedLogo && !formState.logo && !formState.deleteLogo && editingSource?.logo_url === suggestion.url;
+                                        return (
+                                            <Paper key={suggestion.url} variant="outlined" sx={{ p: 1.25, display: 'flex', gap: 1.25, alignItems: 'center', minWidth: 0, borderColor: isSelected ? 'success.main' : 'divider' }}>
+                                                <Box
+                                                    component="img"
+                                                    src={getImageUrl(suggestion.url)}
+                                                    alt={suggestion.label}
+                                                    onError={(event: React.SyntheticEvent<HTMLImageElement>) => {
+                                                        event.currentTarget.onerror = null;
+                                                        event.currentTarget.src = '/logos/default-company.svg';
+                                                    }}
+                                                    sx={{ width: 56, height: 44, objectFit: 'contain', bgcolor: 'grey.50', borderRadius: 1, p: 0.5, flexShrink: 0 }}
+                                                />
+                                                <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+                                                    <Typography variant="body2" fontWeight={700} noWrap title={suggestion.label}>{suggestion.label}</Typography>
+                                                    <Typography variant="caption" color="text.secondary" display="block" noWrap>{suggestion.source}</Typography>
+                                                    <Chip label={suggestion.matchLabel} size="small" variant="outlined" sx={{ mt: 0.5, height: 20, maxWidth: '100%', '& .MuiChip-label': { px: 0.75 } }} />
+                                                </Box>
+                                                <Button
+                                                    size="small"
+                                                    variant={isSelected ? 'contained' : 'outlined'}
+                                                    color={isSelected ? 'success' : 'primary'}
+                                                    disabled={isSelected || isCurrent}
+                                                    onClick={() => handleSelectSuggestedLogo(suggestion)}
+                                                    sx={{ flexShrink: 0, minWidth: 0 }}
+                                                >
+                                                    {isSelected ? 'Ausgewählt' : isCurrent ? 'Aktiv' : 'Übernehmen'}
+                                                </Button>
+                                            </Paper>
+                                        );
+                                    })}
+                                </Box>
+                            ) : formState.url.trim().includes('.') ? (
+                                <Alert severity="info" sx={{ mt: 1.5, py: 0 }}>
+                                    Für diese Domain wurde noch kein passendes Logo gefunden. Sie können ein neues Bild hochladen.
+                                </Alert>
+                            ) : (
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+                                    Geben Sie zuerst die vollständige Quellen-URL ein.
+                                </Typography>
+                            )}
+                        </Box>
                     </Box>
 
                     <TextField margin="dense" name="description" label="Beschreibung (Optional)" fullWidth multiline rows={3} variant="outlined" value={formState.description} onChange={handleFormChange} sx={{ mt: 2 }} />

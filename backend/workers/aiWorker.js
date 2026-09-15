@@ -42,6 +42,10 @@ async function startWorker() {
 
         try {
           switch (job.name) {
+            case 'career-scan': {
+              await require('../services/careerService').scan(job.data);
+              break;
+            }
             case 'manual-generation': {
               const { jobId, ruleToExecute, inputText, region, categoryId, focus_page, userId } = job.data;
               await generateAndSaveContentForManualJob(

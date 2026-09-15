@@ -60,6 +60,8 @@ Keine einzelnen Quellcodedateien mehr per SFTP verteilen. Im normalen Ablauf wer
 
 ### Lokal
 
+- Vor dem Preflight mindestens **5 GiB auf dem Windows-Systemlaufwerk und Projektlaufwerk freihalten**, für den ersten neuen Docker-Image-Build möglichst **10 GiB**. Der Preflight stoppt bei weniger Platz vor dem Build. Bei ausgelagerter Docker-Disk deren Laufwerk zusätzlich prüfen. Wird Docker Desktop unerreichbar, keinen Test überspringen und kein ungeprüftes Release erstellen. Erst lokal Speicher freigeben und Docker Desktop kontrolliert wieder verfügbar machen; keine Datenbank-Volumes löschen und andere lokale Projekte beachten. Das betrifft nicht den PROD-Server.
+
 - Docker Desktop läuft.
 - Git, Node.js/npm und Git Bash sind installiert.
 - Das Projekt liegt unter `C:\DATEN\WWW\projekte-App\dashboard`.
@@ -208,6 +210,13 @@ Invoke-RestMethod 'http://127.0.0.1:5001/api/health'
 ```powershell
 docker compose exec -T api npm run migrate
 ```
+
+   Die Docker-Backend-Dienste laufen unter Windows bewusst ohne Dateiwächter. Nach Änderungen an Backend-Dateien ausschließlich die Dashboard-Dienste neu starten:
+
+   ```powershell
+   docker compose restart api worker-ai worker-scrape worker-mail worker-data worker-funding
+   Invoke-RestMethod 'http://127.0.0.1:5001/api/health'
+   ```
 
 3. Frontend für die Entwicklung starten:
 
@@ -486,8 +495,12 @@ In dieser Reihenfolge kontrollieren:
 10. Unter **Admin → Business Partner → Bearbeiten → Newsletter-Versand** kontrollieren: Versandmodus, zentrale Newsletter-Adresse, externen Anmeldelink und direktes Empfängerlimit. Bestehende Mandanten starten sicher mit `Direkt über Mobiliti` und einem Limit von `250`; bei mehr Empfängern wird nur mit hinterlegter zentraler Adresse ein Export erzeugt.
 11. Unter **Briefing Redaktion** die gewünschte Versandfrequenz prüfen. `Nie` bedeutet: Das Briefing bleibt im Dashboard und es wird keine automatische E-Mail versendet.
 12. Im Daily Cockpit kontrollieren: Mobiliti-Modus zeigt den Opt-in-Schalter, Export-Modus zeigt zentralen Versand, externer Modus verlinkt zur externen Anmeldung. Im Produktionstest keinen echten Massenversand auslösen.
-13. Admin-Aktivitätsmonitor und Monatsreport-Status öffnen.
-14. Browser-Konsole auf neue Fehler prüfen.
+13. Admin-Aktivitätsmonitor → **Monatlicher E-Mail-Report** öffnen: **Report simulieren** erzeugt nur eine Vorschau, keine E-Mail. Empfängerliste und letzten Versandstatus prüfen; „Versendet“ bestätigt die Übergabe an den Mailserver, nicht den Posteingang.
+    Unter **Business Partner → Bearbeiten** ist **Monatliche Mandantenstatistik versenden** unabhängig von automatisierten Newslettern einstellbar. Unter **Benutzerverwaltung → Nutzer bearbeiten → E-Mail-Empfang** aktiviert Admin die **Monatliche Mandantenstatistik** für Admin/Assistenz.
+    Migration 035 übernimmt bestehende Freigaben und bisherige Opt-in-Empfänger; neue Empfänger werden nicht automatisch aktiviert. Danach beeinflusst eine Newsletter-Abmeldung den Verwaltungsreport nicht mehr.
+    Im selben Nutzerformular kann Admin **Newsletter-Empfang aktiv/inaktiv** setzen. Aktiv ersetzt keine Einwilligung und keine individuellen Abonnements. Inaktiv verhindert Branchenbriefings und Mitglieder-Newsletter; Sicherheits-/Kontomails bleiben unberührt.
+14. **Scraping-Regeln:** Bei RSS/Atom bleiben HTML-Selektoren und Datumformat leer; Headless-Browser ausschalten, Quellenkennung und Kategorie setzen. **Regel testen ohne Speichern** zeigt nur eine Stichprobe (max. 10 Einträge), Gesamtzahl, Dubletten und Überspringgründe; es wird nichts importiert. Danach speichern und **Scraping jetzt starten** oder einen Zeitplan setzen. Fehler wie HTTP 403/429 stehen direkt unter dem Testbutton; Zugriffssperren müssen beim Anbieter geklärt werden. **Regel duplizieren** öffnet eine deaktivierte Kopie ohne Zeitplan; **Konfiguration kopieren** kopiert die Formulardaten als JSON.
+    Browser-Konsole auf neue Fehler prüfen.
 15. Kontaktformular nur bei gewünschtem Ende-zu-Ende-Test einmal absenden und Eingang von interner Mail sowie Bestätigung kontrollieren.
 16. Nach einer Passwortänderung kontrollieren, dass eine vorherige Sitzung dieses Nutzers nicht weiterverwendet werden kann.
 
@@ -650,6 +663,13 @@ docker compose ps
 Assert-NativeSuccess 'Docker-Status konnte nicht gelesen werden.'
 docker compose exec -T api npm run migrate
 Assert-NativeSuccess 'Lokale Migrationen sind fehlgeschlagen.'
+Invoke-RestMethod 'http://127.0.0.1:5001/api/health'
+```
+
+Nach Änderungen an Backend-Dateien die sechs Dashboard-Dienste gezielt neu starten; Datenbank, Redis und fremde Projekte bleiben dabei unberührt:
+
+```powershell
+docker compose restart api worker-ai worker-scrape worker-mail worker-data worker-funding
 Invoke-RestMethod 'http://127.0.0.1:5001/api/health'
 ```
 
@@ -1126,3 +1146,41 @@ Abschließend im Browser testen:
 4. Beim Content-CTA muss **Content Dashboard** vorausgewählt sein.
 5. Eine einzige kontrollierte Testanfrage senden und in **Admin → Account-Radar Anfragen** prüfen. Sales-Anfragen müssen dort als neue Anfrage erscheinen.
 6. Im Dashboard einmal aus Content und einmal aus Sales abmelden: Content führt zur Mandanten-Publicpage, Sales zu `https://www.mobiliti.at/#sales`.
+
+## Menschen & Karriere: Aktivierung und Abnahme nach einem Update
+
+**Release v2026.09.14.1 – technische Abnahme:** Das Backend und alle Dashboard-Worker verwenden Node 24 LTS (`node:24-bookworm-slim`). Der Node-Heap ist auf 512 MiB pro Dienst begrenzt, damit die Prozesse auch auf kleinen Docker-Hosts zuverlässig starten. Der Scraping-Worker erhält `init: true`, damit Chromium-Kindprozesse geordnet aufgeräumt werden. Diese Änderungen betreffen ausschließlich die Dashboard-Container, nicht Node-Installationen, Plesk oder andere Serverprojekte. Nach dem Update im Projektroot prüfen:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api node --version
+docker inspect --format '{{.HostConfig.Init}}' mobiliti-worker-scrape
+docker stats --no-stream mobiliti-worker-scrape
+```
+
+Erwartet: Node `v24.x`, Init `true`. Zombie-Prozesse und PID-Anzahl des Scraping-Workers nach einigen regulären Scraping-Läufen erneut prüfen; Init ersetzt nicht den Browser-Cleanup und ist keine Garantie gegen sämtliche Prozessprobleme. Keine serverweiten Neustarts oder Docker-Bereinigungen ausführen.
+
+Karriere-Freigabehinweise in den Benachrichtigungen öffnen direkt die betreffende Personalie inklusive Mandant und Tab „Freigaben“. Auch ein bereits geöffnetes Karriere-Fenster übernimmt den neuen Mandanten aus dem Link. Assistenz erhält ausschließlich Links zum eigenen Mandanten; fehlende oder zurückgezogene Personalien führen zur Freigabenübersicht statt zu einem ungültigen Detailfenster. Der Navigations-Test gehört zum vollständigen Preflight.
+
+Die regulären Dev→Prod-Schritte in dieser Datei gelten unverändert. Migration 036 ist additiv: Originalartikel, Nutzer, bestehende Logs und Uploads bleiben erhalten. Keine DEV-Datenbank über die PROD-Datenbank kopieren.
+
+1. **Community → Menschen & Karriere → Karriere-Seite öffnen** bzw. `/career` öffnen. Admins erreichen die Seite zusätzlich über **Navigation → Admin-Bereich → Redaktion & Inhalte → Menschen & Karriere** im Content-Bereich. Der ausgewählte Mandant bleibt beim Seitenwechsel aus der Community erhalten. Mitglieder können „Karriere-Update teilen“ nutzen; manuelle Einreichungen und Kommentare verbrauchen keine KI-Tokens. Einreichungen werden erst nach Prüfung sichtbar.
+2. Assistenz und Admin sehen auf der Seite den Status **Automatische Branchen-Personalien** unter der Mandantenauswahl und oberhalb der Personalien-Tabs. Links unten in diesem Kasten über **Automatik einrichten / Automatik verwalten** oder oben rechts über das Zahnrad neben **Karriere-Update teilen** die Einstellungen öffnen. Assistenz kann ausschließlich den eigenen Mandanten konfigurieren und freigeben; Admin wählt den Mandanten. Demo kann nichts ändern.
+   Die Zahl hinter dem Mandantennamen zählt alle Personalien außer zurückgezogenen Einträgen, unabhängig von Suche, Tab oder Seitenlimit. **Mandanten-Einstellungen** (Erkennung, Kategorien, Publicpage-Teaser) gelten nur für den benannten Mandanten. **Plattformweite KI-Freischaltung & Budgets** gelten gemeinsam für alle Mandanten und sind ausschließlich für Admins änderbar. Die Archiv-Prüfung betrifft nur den ausgewählten Mandanten, nutzt aber dieselben globalen KI-Limits. Beim Speichern werden unveränderte globale Werte nicht erneut übertragen.
+3. Für automatische Personalien relevante **Artikelkategorien** wählen und die mandantenspezifische Erkennung aktivieren. Der Admin muss zusätzlich die **globale KI-Erkennung** einschalten. Im Ausgangszustand ist sie aus, damit ein Update nicht ungefragt KI-Kosten auslöst.
+4. Startbudgets: maximal **20 Analysen pro Tag / 120.000 Tokens pro Monat, gemeinsam für alle Mandanten**. Alle 15 Minuten werden neue Artikel geprüft. Ein kostenloser Keyword-Filter und ein versionierter Inhaltscache verhindern unnötige Aufrufe. Eingangstext und Antwort sind begrenzt. Budget wird vor dem Aufruf reserviert; fehlgeschlagene/unklare Aufrufe werden nicht automatisch wiederholt und bleiben konservativ reserviert. Anzeigen und Lesen lösen keine KI-Aufrufe aus.
+5. **Freigaben** prüfen: Name, Organisation, Funktion, tatsächliches Startdatum und Originalquelle kontrollieren. Das Meldungsdatum ist nicht das Startdatum. Ähnliche Meldungen werden markiert, nicht automatisch zusammengeführt. Artikelbilder werden nie automatisch als Personenporträt verwendet.
+6. **Publicpage-Teaser** separat aktivieren. Eine manuelle Einreichung muss öffentlich beantragt worden sein; automatische Vorschläge besitzen einen öffentlichen Originalbeleg. Bei der Prüfung „Zusätzlich öffentlich freigeben“ ausdrücklich wählen. Intern freigegeben bedeutet nicht öffentlich! Öffentlich erscheinen maximal drei Kurzmeldungen; Kommentare, Autoren-IDs und interne Prüfhinweise bleiben intern. Fotoabrufe prüfen die Freigabe erneut.
+7. **Dashboard anpassen → Menschen & Karriere** hinzufügen. Das Widget verweist zur vollständigen Seite. Einen öffentlichen Link teilen/kopieren und anonym testen; der Mitglieder-Login muss zum richtigen Mandanten und zur Karriere-Seite führen.
+8. Für Bestandsartikel ausschließlich **Einstellungen → Archiv kontrolliert prüfen** verwenden: Datum und maximal 1–100 Artikel wählen, den Umfang kostenlos vorprüfen, anschließend ausdrücklich starten. Globale Budgets gelten auch hier; gemeinsame Analysen werden wiederverwendet.
+9. Token-Erfassung: `ai_call_usage` enthält Provider, Modell, Feature, Quelle, Status, Nutzer/Mandant bzw. gemeinsamen/System-Scope und Eingabe-/Ausgabe-Tokens. `ai_usage_events` ist die kanonische Statistikansicht; bekannte historische Job-/Aktivitäts-Doppelzählungen werden ohne Löschung der alten Logs ausgeblendet. Hintergrundaufrufe ohne Nutzer werden nicht mehr unterschlagen. Unklare Aufrufe besitzen keine bestätigte Tokenzahl und dürfen nicht als kostenfrei interpretiert werden.
+
+**DEV-Test (PowerShell, Projektroot; lokale API muss laufen):**
+
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+docker compose exec -T api npm run smoke:career
+```
+
+Dieser Test ist für PROD gesperrt. Er prüft Parsing, Cache/Parallelität, Budgetgrenzen, Rollen und Mandantengrenzen, Freigabe, öffentliche Datentrennung, Kommentare, Zurückziehen und Token-Statistiken mit temporären Testdatensätzen und simulierten KI-Antworten. Keine kostenpflichtigen KI-Aufrufe, keine E-Mail-Versände; Testdatensätze werden gezielt entfernt. Der Test ist in den normalen Preflight integriert.
+
+**Optionale DEV-Demodaten:** `docker compose exec -T api npm run seed:career-demo` legt beim Fuhrparkverband Austria genau fünf klar fiktive Personalien an: drei intern freigegeben und zwei unter „Freigaben“. Keine öffentliche Freigabe, keine KI-Aufrufe, keine zusätzlichen Nutzer oder Benachrichtigungen. Wiederholtes Ausführen erzeugt keine Duplikate und überschreibt keine bearbeiteten oder zurückgezogenen Dummies. Einträge lassen sich im Detailfenster über „Eintrag zurückziehen“ ausblenden. Der Befehl ist für PROD gesperrt und läuft niemals automatisch bei einem Release.

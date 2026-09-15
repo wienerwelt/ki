@@ -1,5 +1,6 @@
 // frontend/src/pages/CommunityPage.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import CareerPanel from '../components/CareerPanel';
 import {
     Container, Grid, Paper, Typography, Box, Button, Stack,
     Card, CardHeader, CardContent, CardMedia, CardActions, IconButton,
@@ -207,7 +208,7 @@ const CommunityPage: React.FC = () => {
 
   const isDemo = user?.role === 'demo';
 
-  const [currentTab, setCurrentTab] = useState<'feed' | 'members' | 'experts'>('feed');
+  const [currentTab, setCurrentTab] = useState<'feed' | 'members' | 'experts' | 'career'>('feed');
   
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -771,7 +772,7 @@ const CommunityPage: React.FC = () => {
       <Grid container spacing={isMobile ? 2 : 4}>
         
         {/* LINKS: Hauptinhalt (Feed, Mitglieder, Experten) */}
-        <Grid item xs={12} md={8}>
+        <Grid item xs={12} md={currentTab === 'career' ? 12 : 8}>
           <Box sx={{ mb: 3 }}>
              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant={isMobile ? 'h5' : 'h4'} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, fontWeight: 'bold' }}>
@@ -785,19 +786,22 @@ const CommunityPage: React.FC = () => {
                  <Tabs 
                     value={currentTab} 
                     onChange={(_, val) => setCurrentTab(val)} 
-                    variant="fullWidth" 
+                    variant="scrollable"
+                    scrollButtons="auto"
                     indicatorColor="primary" 
                     textColor="primary"
-                    sx={{ '& .MuiTab-root': { py: 2, fontWeight: 'bold' } }}
+                    sx={{ '& .MuiTab-root': { py: 2, fontWeight: 'bold', whiteSpace: 'nowrap', maxWidth: 'none', minHeight: 64 } }}
                  >
                      <Tab icon={<DynamicFeedIcon />} iconPosition="start" label="Feed" value="feed" />
                      <Tab icon={<PersonSearchIcon />} iconPosition="start" label="Mitglieder" value="members" />
                      <Tab icon={<SchoolIcon />} iconPosition="start" label="Experten" value="experts" />
+                     <Tab icon={<GroupIcon />} iconPosition="start" label="Menschen & Karriere" value="career" />
                  </Tabs>
              </Paper>
           </Box>
 
           {/* TAB: FEED */}
+          {currentTab === 'career' && <CareerPanel embedded />}
           {currentTab === 'feed' && (
             <Box sx={{ animation: 'fadeIn 0.3s ease-in-out' }}>
                 <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
@@ -1173,7 +1177,7 @@ const CommunityPage: React.FC = () => {
         </Grid>
 
         {/* RECHTS: Sidebar (Stats, Leaderboard) */}
-        {!isMobile && (
+        {!isMobile && currentTab !== 'career' && (
         <Grid item md={4}>
             
             <Paper sx={{ p: 3, mb: 4, borderRadius: 3, bgcolor: theme.palette.primary.main, color: 'white', position: 'relative', overflow: 'hidden', boxShadow: theme.shadows[4] }}>

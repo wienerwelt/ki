@@ -147,6 +147,7 @@ async function dispatchBriefing({ partner, items, briefing, nextEvent, frequency
        WHERE business_partner_id = $1
          AND is_active = TRUE
          AND newsletter_opt_in = TRUE
+         AND newsletter_email_enabled = TRUE
          AND briefing_email_enabled = TRUE
          AND ${ACTIVE_MEMBERSHIP_SQL}
          AND email IS NOT NULL

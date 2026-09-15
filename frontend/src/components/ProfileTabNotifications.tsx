@@ -63,6 +63,9 @@ const ProfileTabNotifications: React.FC<{ user: any; isDemoUser: boolean }> = ({
 
   return (
     <Stack spacing={3}>
+      {user.newsletter_email_enabled === false && (
+        <Alert severity="info">Der Newsletter-Empfang ist administrativ pausiert. Ihre Einwilligung und Abonnements bleiben gespeichert. Bitte wenden Sie sich für die Freigabe an den Admin.</Alert>
+      )}
       <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 3 }}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }}>
           <Stack direction="row" spacing={1.5} alignItems="center">

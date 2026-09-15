@@ -516,6 +516,14 @@ function renderMonthlyPartnerReportEmail({ stats, partner, user }) {
         <td><strong>Community-Beiträge</strong><br><span style="font-size:12px; color:#64748b;">Neue Diskussionen & Fragen</span></td>
         <td align="right"><span style="font-size: 18px; font-weight: bold;">${stats.community.current}</span><br>${renderTrend(stats.community.current, stats.community.prev)}</td>
       </tr>
+      <tr style="background-color: #f8fafc; border-bottom: 1px solid #e2e8f0;">
+        <td><strong>Nutzer mit Login</strong><br><span style="font-size:12px; color:#64748b;">Jeder Nutzer zählt pro Monat einmal</span></td>
+        <td align="right"><span style="font-size: 18px; font-weight: bold;">${stats.activeUsers?.current || 0}</span><br>${renderTrend(stats.activeUsers?.current || 0, stats.activeUsers?.prev || 0)}</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #e2e8f0;">
+        <td><strong>Nutzungsquote aktiver Konten</strong><br><span style="font-size:12px; color:#64748b;">Aktueller aktiver Nutzerbestand mit mindestens einem Login im Berichtsmonat; alle Rollen</span></td>
+        <td align="right"><span style="font-size: 18px; font-weight: bold;">${stats.participation?.percent == null ? '–' : `${stats.participation.percent}%`}</span><br><span style="font-size:12px; color:#64748b;">${stats.participation?.participatingAccounts || 0} von ${stats.participation?.activeAccounts || 0} Konten</span></td>
+      </tr>
     </table>
 
     <h3 style="color: ${primaryColor}; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-top: 24px;">Wissenstransfer & Dokumente</h3>

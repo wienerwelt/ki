@@ -106,6 +106,7 @@ interface MonthlyReportMonitoring {
         id: string;
         name: string;
         allow_automated_newsletter: boolean;
+        monthly_report_enabled: boolean;
         configured_recipients: number;
         eligible_recipients: number;
         briefing_recipients: number;
@@ -146,6 +147,7 @@ interface MonthlyReportPreview {
         id: string;
         name: string;
         allowAutomatedNewsletter: boolean;
+        monthlyReportEnabled: boolean;
     };
     subject: string;
     reportMonth: string;
@@ -158,6 +160,8 @@ interface MonthlyReportPreview {
     stats: {
         monthName: string;
         logins: { current: number; prev: number };
+        activeUsers: { current: number; prev: number };
+        participation: { activeAccounts: number; participatingAccounts: number; percent: number | null };
         reads: { current: number; prev: number };
         community: { current: number; prev: number };
         downloads: { current: number; prev: number };
@@ -703,7 +707,7 @@ const AdminMonitorPage: React.FC = () => {
         const deliveryModeLabel = (mode: string) => ({ mobiliti: 'Mobiliti direkt', export: 'Zentraler Export', external: 'Extern' }[mode] || mode);
         const formatPeriod = (from: string, toExclusive: string) => {
             const end = new Date(toExclusive);
-            end.setUTCDate(end.getUTCDate() - 1);
+            end.setTime(end.getTime() - 1);
             const formatter = new Intl.DateTimeFormat('de-AT', { dateStyle: 'medium', timeZone: 'Europe/Vienna' });
             return `${formatter.format(new Date(from))} – ${formatter.format(end)}`;
         };
@@ -737,11 +741,12 @@ const AdminMonitorPage: React.FC = () => {
                     </Box>
                 </Box>
 
-                {settings && !settings.allow_automated_newsletter && (
-                    <Alert severity="warning" sx={{ mb: 2 }}>Der automatische Newsletter-Versand ist für {settings.name} deaktiviert.</Alert>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Separater Verwaltungsreport, unabhängig vom Newsletter. „Versendet“ bedeutet an den Mailserver übergeben; die Zustellung im Posteingang ist damit nicht bestätigt.</Typography>
+                {settings && !settings.monthly_report_enabled && (
+                    <Alert severity="warning" sx={{ mb: 2 }}>Der automatische Monatsreport ist für {settings.name} deaktiviert. Freigabe unter Mandantenverwaltung → Mandant bearbeiten.</Alert>
                 )}
-                {settings && settings.allow_automated_newsletter && Number(settings.eligible_recipients) === 0 && (
-                    <Alert severity="info" sx={{ mb: 2 }}>Kein aktiver Admin oder Assistent hat derzeit ein Newsletter-Opt-in. Es wird kein Monatsreport versendet.</Alert>
+                {settings && settings.monthly_report_enabled && Number(settings.eligible_recipients) === 0 && (
+                    <Alert severity="info" sx={{ mb: 2 }}>Kein aktiver Admin oder Assistent ist als Monatsreport-Empfänger aktiviert. Auswahl unter Benutzerverwaltung → Nutzer bearbeiten → E-Mail-Empfang.</Alert>
                 )}
 
                 <Grid container spacing={2} sx={{ mb: 2 }}>
@@ -851,13 +856,27 @@ const AdminMonitorPage: React.FC = () => {
                                 <Typography variant="h6" fontWeight="bold">{monthlyPreview.partner.name}</Typography>
                                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{monthlyPreview.subject}</Typography>
 
-                                {!monthlyPreview.partner.allowAutomatedNewsletter && (
+                                {!monthlyPreview.partner.monthlyReportEnabled && (
                                     <Alert severity="warning" sx={{ mb: 2 }}>
                                         Der automatische Monatsreport ist für diesen Mandanten deaktiviert. Die Vorschau ist trotzdem verfügbar.
                                     </Alert>
                                 )}
 
                                 <Grid container spacing={2} sx={{ mb: 3 }}>
+                                    <Grid item xs={12} sm={6}>
+                                        <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
+                                            <Typography variant="caption" color="text.secondary">Nutzer mit Login · jeder zählt einmal</Typography>
+                                            <Typography variant="h5" fontWeight="bold">{monthlyPreview.stats.activeUsers.current}</Typography>
+                                            <Chip size="small" {...metricDelta(monthlyPreview.stats.activeUsers.current, monthlyPreview.stats.activeUsers.prev)} />
+                                        </Paper>
+                                    </Grid>
+                                    <Grid item xs={12} sm={6}>
+                                        <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
+                                            <Typography variant="caption" color="text.secondary">Nutzungsquote aktiver Konten</Typography>
+                                            <Typography variant="h5" fontWeight="bold">{monthlyPreview.stats.participation.percent == null ? '–' : `${monthlyPreview.stats.participation.percent} %`}</Typography>
+                                            <Typography variant="caption" color="text.secondary">{monthlyPreview.stats.participation.participatingAccounts} von {monthlyPreview.stats.participation.activeAccounts} aktuell aktiven Konten mit Login im Berichtsmonat · alle Rollen.</Typography>
+                                        </Paper>
+                                    </Grid>
                                     <Grid item xs={12} md={6}>
                                         <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
                                             <Typography variant="caption" color="text.secondary">Berichtszeitraum</Typography>
@@ -905,7 +924,7 @@ const AdminMonitorPage: React.FC = () => {
                                 </Grid>
 
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, mb: 1.5 }}>
-                                    <Typography variant="subtitle1" fontWeight="bold">Tatsächliche Opt-in-Empfänger</Typography>
+                                    <Typography variant="subtitle1" fontWeight="bold">Aktivierte Monatsreport-Empfänger</Typography>
                                     <Chip label={`${monthlyPreview.recipients.length} Empfänger`} color={monthlyPreview.recipients.length ? 'success' : 'default'} variant="outlined" />
                                 </Box>
 

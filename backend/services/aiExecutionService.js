@@ -83,24 +83,12 @@ const generateAIContent = async (params) => {
             systemPrompt: systemInstruction,
             maxOutputTokens,
             temperature,
+            usageContext: { userId, jobId, feature: 'content_generation' },
         });
         
         await logToDb(jobId, 'INFO', `Antwort erfolgreich erhalten.`);
         
-        // Token-Logging
-        if (usage && usage.totalTokens > 0) {
-            let businessPartnerId = null;
-            if (userId) {
-                const userRes = await db.query('SELECT business_partner_id FROM users WHERE id = $1', [userId]);
-                businessPartnerId = userRes?.rows[0]?.business_partner_id || null;
-            }
-            
-            await db.query(
-                `INSERT INTO ai_usage_logs (user_id, business_partner_id, job_id, ai_provider, model, prompt_tokens, completion_tokens, total_tokens)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                [userId, businessPartnerId, jobId, ai_provider, model, usage.promptTokens, usage.completionTokens, usage.totalTokens]
-            );
-        }
+        // Usage is recorded once at the provider boundary, including background calls.
 
         await logActivity({
             actionType: 'AI_ANALYSIS_SUCCESS',

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import {
     Box, Typography, CircularProgress, Modal, Fade, MenuItem, Alert, Stack, IconButton, Tooltip, Link as MuiLink,
     Dialog, DialogTitle, DialogContent, Button, DialogActions, Select, FormControl, SelectChangeEvent, Avatar, Chip,
-    TextField, InputAdornment, Paper, useTheme, useMediaQuery, Card, CardMedia, CardContent, CardActionArea, Divider
+    TextField, InputAdornment, Paper, useTheme, useMediaQuery, Card, CardContent, CardActionArea, Divider
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
@@ -24,6 +24,9 @@ import SortIcon from '@mui/icons-material/Sort';
 import { useNavigate } from 'react-router-dom';
 import posthog from 'posthog-js';
 import WidgetPaper from './WidgetPaper';
+import ArticleImage from '../ArticleImage';
+import ArticleOemBadges from '../ArticleOemBadges';
+import { ArticleTag, normalizeArticleWhitespace } from '../../utils/articlePresentation';
 import { BaseWidgetProps } from '../../types/dashboard.types';
 import apiClient from '../../apiClient';
 import { useAuth } from '../../context/AuthContext';
@@ -48,7 +51,7 @@ interface ScrapedContentItem {
     thumbnail_url?: string | null;
     logo_url?: string | null;
     tags?: string[] | null;
-    tag_details?: { name: string; logo_url: string | null }[] | null;
+    tag_details?: ArticleTag[] | null;
 }
 
 interface Tag { name: string; count: number; }
@@ -136,7 +139,7 @@ const NewsItemRow = React.memo(({ item, index, itemsLength, activeGlobalTags, on
         return (
             <Card elevation={0} square sx={{ borderBottom: 1, borderColor: 'divider', mb: 1 }}>
                 <CardActionArea onClick={() => onOpen(item)}>
-                    <CardMedia component="img" image={item.thumbnail_url} alt={item.title} sx={{ width: '100%', height: 'auto', maxHeight: '200px', objectFit: 'cover' }} />
+                    <ArticleImage src={item.thumbnail_url} alt={item.title} badges={<ArticleOemBadges tags={item.tag_details} />} />
                     <CardContent sx={{ pb: 1 }}>
                         <Typography gutterBottom variant="subtitle1" component="div" sx={{ fontWeight: item.is_read ? 500 : 700, lineHeight: 1.3 }}>
                             <HighlightedText text={item.title} keywords={activeGlobalTags} />
@@ -181,12 +184,15 @@ const NewsItemRow = React.memo(({ item, index, itemsLength, activeGlobalTags, on
                 <Box sx={{ position: 'absolute', left: { xs: 6, sm: 12 }, top: 24, width: 6, height: 6, borderRadius: '50%', bgcolor: 'primary.main' }} />
             )}
             {item.thumbnail_url && (
-                <Box component="img" src={item.thumbnail_url} sx={{ width: 60, height: 60, borderRadius: 1, objectFit: 'cover', flexShrink: 0, display: { xs: 'none', sm: 'block' } }} />
+                <ArticleImage src={item.thumbnail_url} alt={item.title} variant="thumbnail" sx={{ display: { xs: 'none', sm: 'flex' } }} />
             )}
             <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                <Typography variant="subtitle2" sx={{ fontWeight: item.is_read ? 500 : 700, lineHeight: 1.3, mb: 0.5 }}>
-                    <HighlightedText text={item.title} keywords={activeGlobalTags} />
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 0.5 }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: item.is_read ? 500 : 700, lineHeight: 1.3, flexGrow: 1, minWidth: 0 }}>
+                        <HighlightedText text={item.title} keywords={activeGlobalTags} />
+                    </Typography>
+                    <ArticleOemBadges tags={item.tag_details} />
+                </Box>
                 {item.summary && (
                     <Typography variant="body2" color="text.secondary" sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.4, mb: 1 }}>
                         {item.summary}
@@ -295,7 +301,11 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
 
         try {
             const contentRes = await apiClient.get(`/api/data/scraped-content?${itemParams.toString()}`, { headers: { 'x-auth-token': token } });
-            const newItems = contentRes.data?.data || [];
+            const newItems = (contentRes.data?.data || []).map((item: ScrapedContentItem) => ({
+                ...item,
+                title: normalizeArticleWhitespace(item.title),
+                summary: item.summary === null ? null : normalizeArticleWhitespace(item.summary),
+            }));
             setItems(prev => loadMore ? [...prev, ...newItems] : newItems);
             setActiveGlobalTags(contentRes.data?.activeFilters?.tags || []);
             setTotalPages(contentRes.data?.totalPages || 0);
@@ -547,7 +557,8 @@ const GenericScrapeWidget: React.FC<GenericScrapeWidgetProps> = ({ onDelete, wid
                 <DialogContent dividers sx={{ p: { xs: 2, sm: 3 }, position: 'relative' }}>
                     {selectedArticle?.thumbnail_url && (
                         <Box sx={{ position: 'relative', mb: 3 }}>
-                            <Box component="img" src={selectedArticle.thumbnail_url} alt={selectedArticle.title} sx={{ width: '100%', maxHeight: '350px', objectFit: 'cover', borderRadius: 2 }} />
+                            <ArticleImage src={selectedArticle.thumbnail_url} alt={selectedArticle.title} variant="detail"
+                                badges={<ArticleOemBadges tags={selectedArticle.tag_details} />} />
                             <IconButton onClick={() => setImageModalOpen(true)} sx={{ position: 'absolute', bottom: 12, right: 12, backgroundColor: 'rgba(0, 0, 0, 0.6)', color: 'white', backdropFilter: 'blur(4px)', '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.8)' } }}><FullscreenIcon /></IconButton>
                         </Box>
                     )}

@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Alert,
     Autocomplete,
+    Badge,
     Box,
     Button,
     Chip,
@@ -63,6 +64,12 @@ interface ActionInfo {
     };
     highlights?: string[];
     legalNote?: string;
+}
+
+interface CatalogStats {
+    partners: Record<string, { actions: number; software: number }>;
+    totalActions: number;
+    totalSoftware: number;
 }
 
 interface BusinessPartnerAction {
@@ -168,6 +175,11 @@ const AdminBpActionsPage: React.FC = () => {
     const [selectedBusinessPartnerId, setSelectedBusinessPartnerId] = useState('');
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: SortDirection }>({ key: 'created_at', direction: 'desc' });
     const [activeSection, setActiveSection] = useState<'actions' | 'software'>('actions');
+    const [catalogStats, setCatalogStats] = useState<CatalogStats>({
+        partners: {},
+        totalActions: 0,
+        totalSoftware: 0,
+    });
 
     const isAssistant = user?.role === 'assistenz';
 
@@ -250,14 +262,17 @@ const AdminBpActionsPage: React.FC = () => {
             const actionsResponse = await apiClient.get('/api/admin/actions', { params });
             setActions(actionsResponse.data);
 
-            const [bpRes, regionsRes, widgetsRes] = await Promise.all([
+            const [bpRes, regionsRes, widgetsRes, catalogStatsRes] = await Promise.all([
                 apiClient.get('/api/admin/business-partners'),
                 apiClient.get('/api/data/regions'),
                 apiClient.get('/api/widgets/types'),
+                apiClient.get('/api/admin/actions/catalog/stats'),
             ]);
             setAllBusinessPartners(bpRes.data);
             setAllRegions(regionsRes.data);
             setAllWidgetTypes(widgetsRes.data.filter((w: WidgetTypeMeta) => w.config?.category));
+            if (!catalogStatsRes.res.ok) throw new Error(catalogStatsRes.data?.message || 'Katalog-Zähler konnten nicht geladen werden.');
+            setCatalogStats(catalogStatsRes.data || { partners: {}, totalActions: 0, totalSoftware: 0 });
             setError(null);
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Laden der Daten.');
@@ -498,8 +513,12 @@ const AdminBpActionsPage: React.FC = () => {
                                 label="Business Partner"
                                 onChange={(e) => setSelectedBusinessPartnerId(e.target.value)}
                             >
-                                <MenuItem value=""><em>Alle Business Partner</em></MenuItem>
-                                {allBusinessPartners.map(bp => <MenuItem key={bp.id} value={bp.id}>{bp.name}</MenuItem>)}
+                                <MenuItem value=""><em>Alle Business Partner ({catalogStats.totalActions})</em></MenuItem>
+                                {allBusinessPartners.map(bp => (
+                                    <MenuItem key={bp.id} value={bp.id}>
+                                        {bp.name} ({catalogStats.partners[bp.id]?.actions || 0})
+                                    </MenuItem>
+                                ))}
                             </Select>
                         </FormControl>
                     )}
@@ -517,8 +536,22 @@ const AdminBpActionsPage: React.FC = () => {
 
             <Paper variant="outlined" sx={{ mb: 3, borderRadius: 2, overflow: 'hidden' }}>
                 <Tabs value={activeSection} onChange={(_, value) => setActiveSection(value)} variant="fullWidth" aria-label="Actions und Software verwalten">
-                    <Tab value="actions" label="Actions / Promotion" />
-                    <Tab value="software" label="Software-Katalog" />
+                    <Tab
+                        value="actions"
+                        label={(
+                            <Badge badgeContent={catalogStats.totalActions} color="primary" max={9999} showZero>
+                                <Box component="span" sx={{ pr: 2 }}>Actions / Promotion</Box>
+                            </Badge>
+                        )}
+                    />
+                    <Tab
+                        value="software"
+                        label={(
+                            <Badge badgeContent={catalogStats.totalSoftware} color="primary" max={9999} showZero>
+                                <Box component="span" sx={{ pr: 2 }}>Software-Katalog</Box>
+                            </Badge>
+                        )}
+                    />
                 </Tabs>
             </Paper>
 
@@ -587,7 +620,15 @@ const AdminBpActionsPage: React.FC = () => {
                 </Table></TableContainer></Paper>
             )}
 
-            {activeSection === 'software' && <SoftwareCatalogAdminPanel />}
+            {activeSection === 'software' && (
+                <SoftwareCatalogAdminPanel
+                    totalEntryCount={catalogStats.totalSoftware}
+                    partnerEntryCounts={Object.fromEntries(
+                        Object.entries(catalogStats.partners).map(([partnerId, counts]) => [partnerId, counts.software])
+                    )}
+                    onCatalogChanged={fetchData}
+                />
+            )}
 
             <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
                 <DialogTitle>{editingAction ? 'Aktion bearbeiten' : 'Neue Aktion erstellen'}</DialogTitle>

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
     Autocomplete,
@@ -32,6 +32,8 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import PhotoLibraryOutlinedIcon from '@mui/icons-material/PhotoLibraryOutlined';
+import SearchIcon from '@mui/icons-material/Search';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 import { resolveAssetUrl } from '../utils/assetUrl';
@@ -50,7 +52,22 @@ interface BusinessPartner { id: string; name: string; }
 interface ProviderOption { id: string; name: string; logo_url?: string; }
 interface CategoryOption { id: string; slug: string; name: string; }
 interface RegionOption { id: string; name: string; code: string; }
-interface LogoLibraryItem { url: string; label: string; source: string; }
+interface LogoLibraryItem {
+    url: string;
+    label: string;
+    source: string;
+    usageCount?: number;
+    usedBy?: string[];
+    deletable?: boolean;
+    storageKind?: 's3' | 'directory';
+    storageKey?: string;
+}
+
+interface SoftwareCatalogAdminPanelProps {
+    partnerEntryCounts?: Record<string, number>;
+    totalEntryCount?: number;
+    onCatalogChanged?: () => void | Promise<void>;
+}
 
 interface SoftwareEntry {
     id: string;
@@ -102,7 +119,11 @@ const emptyForm = (businessPartnerId = ''): SoftwareForm => ({
     category_ids: [],
 });
 
-const SoftwareCatalogAdminPanel: React.FC = () => {
+const SoftwareCatalogAdminPanel: React.FC<SoftwareCatalogAdminPanelProps> = ({
+    partnerEntryCounts = {},
+    totalEntryCount,
+    onCatalogChanged,
+}) => {
     const { user } = useAuth();
     const isAdmin = user?.role === 'admin';
     const [entries, setEntries] = useState<SoftwareEntry[]>([]);
@@ -119,16 +140,40 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
     const [logoLibraryOpen, setLogoLibraryOpen] = useState(false);
     const [logoLibrary, setLogoLibrary] = useState<LogoLibraryItem[]>([]);
     const [logoLibrarySearch, setLogoLibrarySearch] = useState('');
+    const [visibleLogoCount, setVisibleLogoCount] = useState(80);
     const [logoLibraryLoading, setLogoLibraryLoading] = useState(false);
     const [logoLibraryError, setLogoLibraryError] = useState<string | null>(null);
+    const [unavailableLogoUrls, setUnavailableLogoUrls] = useState<Set<string>>(() => new Set());
+    const [catalogSearch, setCatalogSearch] = useState('');
+    const [debouncedCatalogSearch, setDebouncedCatalogSearch] = useState('');
+    const [logoPreviewUrl, setLogoPreviewUrl] = useState('');
+    const logoPreviewUrlRef = useRef('');
     const [error, setError] = useState<string | null>(null);
+
+    const replaceLogoPreview = useCallback((nextUrl = '') => {
+        if (logoPreviewUrlRef.current) URL.revokeObjectURL(logoPreviewUrlRef.current);
+        logoPreviewUrlRef.current = nextUrl;
+        setLogoPreviewUrl(nextUrl);
+    }, []);
+
+    useEffect(() => () => {
+        if (logoPreviewUrlRef.current) URL.revokeObjectURL(logoPreviewUrlRef.current);
+    }, []);
+
+    useEffect(() => {
+        const timeout = window.setTimeout(() => setDebouncedCatalogSearch(catalogSearch.trim()), 350);
+        return () => window.clearTimeout(timeout);
+    }, [catalogSearch]);
 
     const loadEntries = useCallback(async () => {
         if (!user) return;
         setLoading(true);
         try {
             const response = await apiClient.get('/api/admin/actions/software', {
-                params: selectedBusinessPartnerId ? { businessPartnerId: selectedBusinessPartnerId } : {},
+                params: {
+                    ...(selectedBusinessPartnerId ? { businessPartnerId: selectedBusinessPartnerId } : {}),
+                    ...(debouncedCatalogSearch ? { search: debouncedCatalogSearch } : {}),
+                },
             });
             if (!response.res.ok) throw new Error(response.data?.message || 'Software-Katalog konnte nicht geladen werden.');
             setEntries(response.data || []);
@@ -138,7 +183,7 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    }, [selectedBusinessPartnerId, user]);
+    }, [debouncedCatalogSearch, selectedBusinessPartnerId, user]);
 
     useEffect(() => {
         loadEntries();
@@ -171,12 +216,14 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
 
     const openCreate = () => {
         setError(null);
+        replaceLogoPreview('');
         setForm(emptyForm(selectedBusinessPartnerId || user?.business_partner_id || ''));
         setOpen(true);
     };
 
     const openEdit = (entry: SoftwareEntry) => {
         setError(null);
+        replaceLogoPreview('');
         setForm({
             ...emptyForm(entry.business_partner_id),
             ...entry,
@@ -185,13 +232,20 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
         setOpen(true);
     };
 
+    const closeFormDialog = () => {
+        replaceLogoPreview('');
+        setOpen(false);
+    };
+
     const categoryNames = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
     const selectedProvider = useMemo(
         () => providers.find((provider) => provider.id === form.provider_id),
         [form.provider_id, providers]
     );
-    const formLogoUrl = resolveAssetUrl(form.logo_url || selectedProvider?.logo_url || form.provider_logo_url) || DEFAULT_SOFTWARE_LOGO;
-    const formLogoLabel = form.logo_url
+    const formLogoUrl = logoPreviewUrl || resolveAssetUrl(form.logo_url || selectedProvider?.logo_url || form.provider_logo_url) || DEFAULT_SOFTWARE_LOGO;
+    const formLogoLabel = logoPreviewUrl
+        ? 'Neue Datei – Vorschau vor dem Speichern'
+        : form.logo_url
         ? 'Software-Logo'
         : (selectedProvider?.logo_url || form.provider_logo_url) ? 'Anbieterlogo aus dem Branchenverzeichnis' : 'Standardlogo';
     const formProductUrl = useMemo(() => {
@@ -207,6 +261,14 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
         if (!needle) return logoLibrary;
         return logoLibrary.filter((item) => `${item.label} ${item.source} ${item.url}`.toLowerCase().includes(needle));
     }, [logoLibrary, logoLibrarySearch]);
+    const visibleLogoLibrary = useMemo(
+        () => filteredLogoLibrary.slice(0, visibleLogoCount),
+        [filteredLogoLibrary, visibleLogoCount]
+    );
+
+    useEffect(() => {
+        setVisibleLogoCount(80);
+    }, [logoLibraryOpen, logoLibrarySearch]);
 
     const openLogoLibrary = async () => {
         if (!form.business_partner_id) {
@@ -224,6 +286,7 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
             });
             if (!response.res.ok) throw new Error(response.data?.message || 'Bestehende Logos konnten nicht geladen werden.');
             setLogoLibrary(response.data?.items || []);
+            setUnavailableLogoUrls(new Set());
         } catch (err: any) {
             setLogoLibraryError(err?.message || err.response?.data?.message || 'Bestehende Logos konnten nicht geladen werden.');
         } finally {
@@ -236,6 +299,8 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
         if (!form.business_partner_id) return setError('Bitte zuerst einen Business Partner auswählen.');
         if (file.size > 5 * 1024 * 1024) return setError('Das Logo darf maximal 5 MB groß sein.');
 
+        const localPreviewUrl = URL.createObjectURL(file);
+        replaceLogoPreview(localPreviewUrl);
         setUploadingLogo(true);
         setError(null);
         try {
@@ -246,9 +311,37 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
             if (!response.res.ok) throw new Error(response.data?.message || 'Logo konnte nicht hochgeladen werden.');
             setForm((current) => ({ ...current, logo_url: response.data.filePath }));
         } catch (err: any) {
+            replaceLogoPreview('');
             setError(err?.message || err.response?.data?.message || 'Logo konnte nicht hochgeladen werden.');
         } finally {
             setUploadingLogo(false);
+        }
+    };
+
+    const deleteLogoFromLibrary = async (item: LogoLibraryItem) => {
+        if (!item.deletable || !item.storageKind || !item.storageKey) return;
+        if (!window.confirm(`„${item.label}“ dauerhaft aus dem Logo-Archiv löschen?`)) return;
+
+        setLogoLibraryError(null);
+        try {
+            const response = await apiClient.delete('/api/admin/actions/software-logo/library', {
+                body: JSON.stringify({
+                    businessPartnerId: form.business_partner_id,
+                    storageKind: item.storageKind,
+                    storageKey: item.storageKey,
+                    url: item.url,
+                }),
+            });
+            if (!response.res.ok) throw new Error(response.data?.message || 'Logo konnte nicht gelöscht werden.');
+            setLogoLibrary((current) => current.filter((candidate) => candidate.url !== item.url));
+            setUnavailableLogoUrls((current) => {
+                const next = new Set(current);
+                next.delete(item.url);
+                return next;
+            });
+            if (form.logo_url === item.url) setForm((current) => ({ ...current, logo_url: '' }));
+        } catch (err: any) {
+            setLogoLibraryError(err?.message || err.response?.data?.message || 'Logo konnte nicht gelöscht werden.');
         }
     };
 
@@ -270,8 +363,9 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                 ? await apiClient.put(`/api/admin/actions/software/${form.id}`, payload)
                 : await apiClient.post('/api/admin/actions/software', payload);
             if (!response.res.ok) throw new Error(response.data?.message || 'Software konnte nicht gespeichert werden.');
-            setOpen(false);
+            closeFormDialog();
             await loadEntries();
+            await onCatalogChanged?.();
         } catch (err: any) {
             setError(err?.message || err.response?.data?.message || 'Software konnte nicht gespeichert werden.');
         } finally {
@@ -285,6 +379,7 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
             const response = await apiClient.delete(`/api/admin/actions/software/${entry.id}`);
             if (!response.res.ok) throw new Error(response.data?.message || 'Software konnte nicht archiviert werden.');
             await loadEntries();
+            await onCatalogChanged?.();
         } catch (err: any) {
             setError(err?.message || err.response?.data?.message || 'Software konnte nicht archiviert werden.');
         }
@@ -304,6 +399,7 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
             const detachedPosts = Number(response.data?.detachedCommunityPosts || 0);
             setError(null);
             await loadEntries();
+            await onCatalogChanged?.();
             if (detachedActions > 0 || detachedPosts > 0) {
                 window.alert(`Software gelöscht. ${detachedActions} Action(s) und ${detachedPosts} Community-Beitrag/Beiträge wurden entkoppelt.`);
             }
@@ -319,13 +415,26 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                     <Typography variant="h5" fontWeight={900}>Software-Lexikon</Typography>
                     <Typography variant="body2" color="text.secondary">Software ist mandantenspezifisch und benötigt immer einen aktiven Anbieter im Branchenverzeichnis.</Typography>
                 </Box>
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ width: { xs: '100%', md: 'auto' } }}>
+                    <TextField
+                        size="small"
+                        label="Software suchen"
+                        placeholder="Name, Anbieter oder Beschreibung"
+                        value={catalogSearch}
+                        onChange={(event) => setCatalogSearch(event.target.value)}
+                        InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
+                        sx={{ minWidth: { xs: '100%', sm: 280 } }}
+                    />
                     {isAdmin && (
                         <FormControl size="small" sx={{ minWidth: 240 }}>
                             <InputLabel>Business Partner</InputLabel>
                             <Select value={selectedBusinessPartnerId} label="Business Partner" onChange={(event) => setSelectedBusinessPartnerId(event.target.value)}>
-                                <MenuItem value=""><em>Alle Business Partner</em></MenuItem>
-                                {businessPartners.map((partner) => <MenuItem key={partner.id} value={partner.id}>{partner.name}</MenuItem>)}
+                                <MenuItem value=""><em>Alle Business Partner ({totalEntryCount ?? entries.length})</em></MenuItem>
+                                {businessPartners.map((partner) => (
+                                    <MenuItem key={partner.id} value={partner.id}>
+                                        {partner.name} ({partnerEntryCounts[partner.id] || 0})
+                                    </MenuItem>
+                                ))}
                             </Select>
                         </FormControl>
                     )}
@@ -380,7 +489,7 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                 </Grid>
             )}
 
-            <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="md">
+            <Dialog open={open} onClose={closeFormDialog} fullWidth maxWidth="md">
                 <DialogTitle>{form.id ? 'Software bearbeiten' : 'Software eintragen'}</DialogTitle>
                 <DialogContent dividers>
                     <Grid container spacing={2}>
@@ -389,7 +498,11 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                                 <FormControl fullWidth size="small" required>
                                     <InputLabel>Business Partner *</InputLabel>
                                     <Select value={form.business_partner_id} label="Business Partner *" onChange={(event) => setForm((current) => ({ ...current, business_partner_id: event.target.value, provider_id: '' }))}>
-                                        {businessPartners.map((partner) => <MenuItem key={partner.id} value={partner.id}>{partner.name}</MenuItem>)}
+                                        {businessPartners.map((partner) => (
+                                            <MenuItem key={partner.id} value={partner.id}>
+                                                {partner.name} ({partnerEntryCounts[partner.id] || 0})
+                                            </MenuItem>
+                                        ))}
                                     </Select>
                                 </FormControl>
                             </Grid>
@@ -443,7 +556,10 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                                     sx={{ textTransform: 'none', justifyContent: 'flex-start' }}
                                 >
                                     {uploadingLogo ? 'Logo wird optimiert …' : 'Logo hochladen & verkleinern'}
-                                    <input hidden type="file" accept="image/jpeg,image/png,image/webp,image/avif" onChange={(event) => uploadLogo(event.target.files?.[0])} />
+                                    <input hidden type="file" accept="image/jpeg,image/png,image/webp,image/avif" onChange={(event) => {
+                                        void uploadLogo(event.target.files?.[0]);
+                                        event.target.value = '';
+                                    }} />
                                 </Button>
                                 <Button
                                     variant="outlined"
@@ -454,7 +570,10 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                                 >
                                     Bestehende Logos durchsuchen
                                 </Button>
-                                <TextField fullWidth size="small" label="Logo-URL (alternativ)" placeholder="https://…" value={form.logo_url || ''} onChange={(event) => setForm((current) => ({ ...current, logo_url: event.target.value }))} />
+                                <TextField fullWidth size="small" label="Logo-URL (alternativ)" placeholder="https://…" value={form.logo_url || ''} onChange={(event) => {
+                                    replaceLogoPreview('');
+                                    setForm((current) => ({ ...current, logo_url: event.target.value }));
+                                }} />
                                 <Stack direction="row" spacing={1.25} alignItems="center">
                                     <Box component="img" src={formLogoUrl} alt="Logo-Vorschau" onError={(event: React.SyntheticEvent<HTMLImageElement>) => { event.currentTarget.onerror = null; event.currentTarget.src = DEFAULT_SOFTWARE_LOGO; }} sx={{ width: 100, height: 56, objectFit: 'contain', flexShrink: 0, border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 0.5, bgcolor: 'background.paper' }} />
                                     <Typography variant="caption" color="text.secondary">{formLogoLabel}</Typography>
@@ -464,7 +583,10 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                                         color="error"
                                         size="small"
                                         startIcon={<DeleteOutlineIcon />}
-                                        onClick={() => setForm((current) => ({ ...current, logo_url: '' }))}
+                                        onClick={() => {
+                                            replaceLogoPreview('');
+                                            setForm((current) => ({ ...current, logo_url: '' }));
+                                        }}
                                         sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
                                     >
                                         Software-Logo entfernen
@@ -555,7 +677,7 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                     </Grid>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setOpen(false)}>Abbrechen</Button>
+                    <Button onClick={closeFormDialog}>Abbrechen</Button>
                     <Button variant="contained" onClick={save} disabled={saving}>{saving ? 'Speichert …' : 'Speichern'}</Button>
                 </DialogActions>
             </Dialog>
@@ -577,36 +699,91 @@ const SoftwareCatalogAdminPanel: React.FC = () => {
                     {logoLibraryLoading ? (
                         <Box sx={{ display: 'flex', justifyContent: 'center', py: 5 }}><CircularProgress /></Box>
                     ) : (
-                        <Grid container spacing={1.5}>
-                            {filteredLogoLibrary.map((item) => (
-                                <Grid item xs={6} sm={4} md={3} key={item.url}>
-                                    <Button
-                                        variant="outlined"
-                                        onClick={() => {
-                                            setForm((current) => ({ ...current, logo_url: item.url }));
-                                            setLogoLibraryOpen(false);
-                                        }}
-                                        sx={{ width: '100%', height: '100%', minHeight: 132, p: 1.2, textTransform: 'none', display: 'flex', flexDirection: 'column', gap: 0.8, alignItems: 'stretch' }}
-                                    >
-                                        <Box
-                                            component="img"
-                                            src={resolveAssetUrl(item.url) || DEFAULT_SOFTWARE_LOGO}
-                                            alt={`${item.label} Logo`}
-                                            onError={(event: React.SyntheticEvent<HTMLImageElement>) => {
-                                                event.currentTarget.onerror = null;
-                                                event.currentTarget.src = DEFAULT_SOFTWARE_LOGO;
-                                            }}
-                                            sx={{ width: '100%', height: 64, objectFit: 'contain', bgcolor: 'background.paper', borderRadius: 1 }}
-                                        />
-                                        <Typography variant="caption" fontWeight={800} noWrap title={item.label}>{item.label}</Typography>
-                                        <Typography variant="caption" color="text.secondary" noWrap title={item.source}>{item.source}</Typography>
-                                    </Button>
-                                </Grid>
-                            ))}
-                            {filteredLogoLibrary.length === 0 && (
-                                <Grid item xs={12}><Alert severity="info">Keine passenden bestehenden Logos gefunden.</Alert></Grid>
-                            )}
-                        </Grid>
+                        <>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                                {visibleLogoLibrary.length} von {filteredLogoLibrary.length} Treffern angezeigt · insgesamt {logoLibrary.length} Logos
+                                {isAdmin ? ' · mandantenübergreifendes Admin-Archiv' : ' · Archiv des eigenen Mandanten'}
+                            </Typography>
+                            <Grid container spacing={1.5}>
+                                {visibleLogoLibrary.map((item) => (
+                                    <Grid item xs={6} sm={4} md={3} key={item.url}>
+                                        <Box sx={{ position: 'relative', height: '100%' }}>
+                                            <Button
+                                                variant="outlined"
+                                                onClick={() => {
+                                                    replaceLogoPreview('');
+                                                    setForm((current) => ({ ...current, logo_url: item.url }));
+                                                    setLogoLibraryOpen(false);
+                                                }}
+                                                sx={{ width: '100%', height: '100%', minHeight: 168, p: 1.2, textTransform: 'none', display: 'flex', flexDirection: 'column', gap: 0.65, alignItems: 'stretch' }}
+                                            >
+                                                <Box
+                                                    component="img"
+                                                    src={resolveAssetUrl(item.url) || DEFAULT_SOFTWARE_LOGO}
+                                                    alt={`${item.label} Logo`}
+                                                    onError={(event: React.SyntheticEvent<HTMLImageElement>) => {
+                                                        setUnavailableLogoUrls((current) => new Set(current).add(item.url));
+                                                        event.currentTarget.onerror = null;
+                                                        event.currentTarget.src = DEFAULT_SOFTWARE_LOGO;
+                                                    }}
+                                                    sx={{ width: '100%', height: 64, objectFit: 'contain', bgcolor: 'background.paper', borderRadius: 1 }}
+                                                />
+                                                <Typography variant="caption" fontWeight={800} noWrap title={item.label}>{item.label}</Typography>
+                                                <Typography variant="caption" color="text.secondary" noWrap title={item.source}>{item.source}</Typography>
+                                                {Number(item.usageCount || 0) > 0 ? (
+                                                    <Tooltip title={`Verwendet in: ${(item.usedBy || []).join(', ')}`}>
+                                                        <Chip size="small" color="success" variant="outlined" icon={<CheckCircleOutlineIcon />} label={`Verwendet (${item.usageCount})`} />
+                                                    </Tooltip>
+                                                ) : (
+                                                    <Chip size="small" variant="outlined" label="Unbenutzt" />
+                                                )}
+                                                {Number(item.usageCount || 0) > 0 && (
+                                                    <Typography variant="caption" color="success.main" noWrap title={(item.usedBy || []).join(', ')}>
+                                                        {(item.usedBy || []).join(', ')}
+                                                    </Typography>
+                                                )}
+                                                {unavailableLogoUrls.has(item.url) && (
+                                                    <Chip size="small" color="warning" variant="outlined" label="Datei nicht erreichbar" />
+                                                )}
+                                            </Button>
+                                            {item.storageKind && item.storageKey && (
+                                                <Tooltip title={item.deletable ? 'Unbenutztes Logo löschen' : 'Logo wird verwendet und kann nicht gelöscht werden'}>
+                                                    <span style={{ position: 'absolute', top: 4, right: 4 }}>
+                                                        <IconButton
+                                                            size="small"
+                                                            color="error"
+                                                            disabled={!item.deletable}
+                                                            onClick={(event) => {
+                                                                event.stopPropagation();
+                                                                deleteLogoFromLibrary(item);
+                                                            }}
+                                                            aria-label={`${item.label} löschen`}
+                                                            sx={{ bgcolor: 'background.paper', boxShadow: 1, '&:hover': { bgcolor: 'background.paper' } }}
+                                                        >
+                                                            <DeleteOutlineIcon fontSize="small" />
+                                                        </IconButton>
+                                                    </span>
+                                                </Tooltip>
+                                            )}
+                                        </Box>
+                                    </Grid>
+                                ))}
+                                {filteredLogoLibrary.length === 0 && (
+                                    <Grid item xs={12}><Alert severity="info">Keine passenden bestehenden Logos gefunden.</Alert></Grid>
+                                )}
+                                {visibleLogoLibrary.length < filteredLogoLibrary.length && (
+                                    <Grid item xs={12}>
+                                        <Button
+                                            fullWidth
+                                            variant="outlined"
+                                            onClick={() => setVisibleLogoCount((current) => current + 80)}
+                                        >
+                                            Weitere Logos laden
+                                        </Button>
+                                    </Grid>
+                                )}
+                            </Grid>
+                        </>
                     )}
                 </DialogContent>
                 <DialogActions><Button onClick={() => setLogoLibraryOpen(false)}>Schließen</Button></DialogActions>

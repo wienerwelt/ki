@@ -37,7 +37,7 @@ exports.getAllBusinessPartners = async (req, res) => {
                 bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 bp.storage_tier, bp.storage_usage_bytes, bp.storage_limit_bytes,
-                bp.allow_automated_newsletter, bp.dashboard_focus,
+                bp.allow_automated_newsletter, bp.monthly_report_enabled, bp.dashboard_focus,
                 bp.enabled_modules, bp.default_workspace, bp.sales_plan,
                 bp.sales_subscription_status, bp.sales_trial_ends_on,
                 bp.sales_monthly_price_eur, bp.sales_billing_cycle,
@@ -98,7 +98,7 @@ exports.getBusinessPartnerById = async (req, res) => {
                 bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 bp.briefing_frequency,
-                bp.newsletter_frequency, bp.allow_automated_newsletter, bp.dashboard_focus,
+                bp.newsletter_frequency, bp.allow_automated_newsletter, bp.monthly_report_enabled, bp.dashboard_focus,
                 bp.enabled_modules, bp.default_workspace, bp.sales_plan,
                 bp.sales_subscription_status, bp.sales_trial_ends_on,
                 bp.sales_monthly_price_eur, bp.sales_billing_cycle,
@@ -142,7 +142,7 @@ exports.createBusinessPartner = async (req, res) => {
         name, slug, address, logo_url, subscription_start_date, subscription_end_date,
         color_scheme_id, is_active, url_businesspartner, region_ids = [],
         dashboard_title, level_1_name, level_2_name, level_3_name,
-        default_region_id, email, briefing_frequency, allow_automated_newsletter,
+        default_region_id, email, briefing_frequency, allow_automated_newsletter, monthly_report_enabled = false,
         category_ids = [], dashboard_focus, enabled_modules, default_workspace, sales_plan,
         sales_subscription_status, sales_trial_ends_on, sales_monthly_price_eur, sales_billing_cycle,
         newsletter_delivery_mode = 'mobiliti',
@@ -151,6 +151,7 @@ exports.createBusinessPartner = async (req, res) => {
     } = req.body;
 
     if (!name) return res.status(400).json({ message: 'Name is required.' });
+    if (typeof monthly_report_enabled !== 'boolean') return res.status(400).json({ message: 'Ungültige Monatsreport-Einstellung.' });
     if (sales_subscription_status !== undefined && !SALES_SUBSCRIPTION_STATUSES.includes(String(sales_subscription_status).trim().toLowerCase())) {
         return res.status(400).json({ message: 'Ungültiger Sales-Status.' });
     }
@@ -220,8 +221,8 @@ exports.createBusinessPartner = async (req, res) => {
                 newsletter_external_signup_url, newsletter_recipient_limit,
                 enabled_modules, default_workspace, sales_plan,
                 sales_subscription_status, sales_trial_ends_on,
-                sales_monthly_price_eur, sales_billing_cycle
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) RETURNING *`,
+                sales_monthly_price_eur, sales_billing_cycle, monthly_report_enabled
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29) RETURNING *`,
             [
                 name, slug || null, address || null, logo_url || null, subscription_start_date || null,
                 subscription_end_date || null, finalColorSchemeId || null, is_active,
@@ -232,7 +233,7 @@ exports.createBusinessPartner = async (req, res) => {
                 newsletter_external_signup_url || null, Number(newsletter_recipient_limit) || 250,
                 tenantModules, tenantDefaultWorkspace, tenantSalesPlan,
                 tenantSalesSubscriptionStatus, tenantSalesTrialEndsOn,
-                tenantSalesMonthlyPrice, tenantSalesBillingCycle
+                tenantSalesMonthlyPrice, tenantSalesBillingCycle, monthly_report_enabled
             ]
         );
         const newBp = bpResult.rows[0];
@@ -283,7 +284,7 @@ exports.updateBusinessPartner = async (req, res) => {
         color_scheme_id, is_active, url_businesspartner, region_ids,
         dashboard_title, level_1_name, level_2_name, level_3_name,
         default_region_id, email, storage_tier, 
-        allow_automated_newsletter, briefing_frequency, 
+        allow_automated_newsletter, briefing_frequency, monthly_report_enabled,
         category_ids, dashboard_focus, enabled_modules, default_workspace, sales_plan,
         sales_subscription_status, sales_trial_ends_on, sales_monthly_price_eur, sales_billing_cycle,
         newsletter_delivery_mode = 'mobiliti',
@@ -292,6 +293,9 @@ exports.updateBusinessPartner = async (req, res) => {
     } = req.body;
 
     // Storage Tier Logik
+    if (monthly_report_enabled !== undefined && typeof monthly_report_enabled !== 'boolean') {
+        return res.status(400).json({ message: 'Ungültige Monatsreport-Einstellung.' });
+    }
     const validTiers = {
         'free': 0,
         'standard': 104857600,   // 100 MB
@@ -454,6 +458,7 @@ exports.updateBusinessPartner = async (req, res) => {
                 END,
                 sales_monthly_price_eur = CASE WHEN $30::boolean THEN $31 ELSE sales_monthly_price_eur END,
                 sales_billing_cycle = COALESCE($32, sales_billing_cycle),
+                monthly_report_enabled = COALESCE($34, monthly_report_enabled),
                 updated_at = CURRENT_TIMESTAMP
              WHERE id = $33 RETURNING *`,
             [
@@ -489,7 +494,7 @@ exports.updateBusinessPartner = async (req, res) => {
                 salesMonthlyPriceWasProvided,
                 tenantSalesMonthlyPrice,
                 tenantSalesBillingCycle,
-                id 
+                id, monthly_report_enabled ?? null
             ]
         );
 

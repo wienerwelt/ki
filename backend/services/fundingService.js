@@ -53,14 +53,9 @@ const extractAndSaveFunding = async (jobData) => {
         if (!textContent) throw new Error(`Kein Inhalt von ${articleUrl} extrahiert.`);
 
         const prompt = buildFundingPrompt(textContent);
-        const { content, usage, model } = await callOpenAI(prompt, 'gpt-4o');
-
-        if (usage && usage.totalTokens > 0) {
-            await client.query(
-                `INSERT INTO ai_usage_logs (job_id, ai_provider, model, prompt_tokens, completion_tokens, total_tokens) VALUES ($1, $2, $3, $4, $5, $6)`,
-                [aiJobId, 'OpenAI', model, usage.promptTokens, usage.completionTokens, usage.totalTokens]
-            );
-        }
+        const { content } = await callOpenAI(prompt, 'gpt-4o', {
+            usageContext: { jobId: aiJobId, sourceId: articleUrl, feature: 'funding_extraction', scope: 'shared' },
+        });
 
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (!jsonMatch) throw new Error("Kein valides JSON-Objekt im KI-Output gefunden.");

@@ -474,20 +474,20 @@ const AdminStatisticsPage: React.FC = () => {
         </Grid>
         <Grid item xs={12} md={4}>
           <StatCard
-            title="Tokens (Redactional)"
+            title="Tokens (ältere Aktivitäten)"
             value={fmtTokens(k.total_redactional_tokens)}
             deltaValue={getDelta(k.total_redactional_tokens, pk?.total_redactional_tokens)}
             inverseColors={true}
-            description="Aktivitäten in der App (AI_SUCCESS)"
+            description="Historische Aktivitäten ohne zugehörigen Usage-Eintrag"
           />
         </Grid>
         <Grid item xs={12} md={4}>
           <StatCard
-            title="Tokens (Background)"
+            title="Tokens (erfasste KI-Aufrufe)"
             value={fmtTokens(k.total_usage_log_tokens)}
             deltaValue={getDelta(k.total_usage_log_tokens, pk?.total_usage_log_tokens)}
             inverseColors={true}
-            description="Worker / Hintergund-Jobs"
+            description="Eindeutige KI-Aufrufe, einschließlich Hintergrundjobs"
           />
         </Grid>
 

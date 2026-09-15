@@ -22,6 +22,7 @@ const DashboardLayout = lazy(() => import('./components/DashboardLayout'));
 
 // Öffentliche Seiten – lazy, damit sie nicht alle im Hauptbundle landen.
 const PublicPortalPage = lazy(() => import('./pages/PublicPortalPage'));
+const CareerPage = lazy(() => import('./pages/CareerPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
@@ -293,6 +294,7 @@ function App() {
               <Route path="/funding-search" element={lazyRoute(<FundingSearchPage />)} />
               <Route path="/funding-detail/:id" element={lazyRoute(<FundingDetailPage />)} />
               <Route path="/community" element={lazyRoute(<CommunityPage />)} />
+              <Route path="/career" element={lazyRoute(<CareerPage />)} />
               <Route path="/directory" element={lazyRoute(<IndustrySolutionsPage />)} />
             </Route>
 

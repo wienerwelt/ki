@@ -15,7 +15,7 @@ async function closeResources() {
     await db.end();
 }
 
-generateAndSendMonthlyReport({ dryRun: true, includeUnsubscribedRecipients: true })
+generateAndSendMonthlyReport({ dryRun: true })
     .then((result) => {
         console.log(JSON.stringify(result, null, 2));
     })

@@ -71,6 +71,7 @@ interface BusinessPartner {
     storage_limit_bytes: string;
     file_count: string;
     allow_automated_newsletter: boolean;
+    monthly_report_enabled: boolean;
     account_count: string;
     industries: Category[];
     dashboard_focus: 'information' | 'sales';
@@ -177,6 +178,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     const [formLevel3Name, setFormLevel3Name] = useState('');
     const [formStorageTier, setFormStorageTier] = useState<StorageTier>('free');
     const [formAllowNewsletter, setFormAllowNewsletter] = useState(false);
+    const [formMonthlyReportEnabled, setFormMonthlyReportEnabled] = useState(false);
     const [formNewsletterDeliveryMode, setFormNewsletterDeliveryMode] = useState<'mobiliti' | 'export' | 'external'>('mobiliti');
     const [formNewsletterExportEmail, setFormNewsletterExportEmail] = useState('');
     const [formNewsletterExternalUrl, setFormNewsletterExternalUrl] = useState('');
@@ -223,6 +225,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     useEffect(() => { fetchData(); }, []);
     
     const handleOpenAddDialog = () => {
+        setFormMonthlyReportEnabled(false);
         setEditingBp(null); setFormName(''); setFormSlug(''); setFormDashboardTitle(''); setFormAddress(''); setFormEmail(''); setFormLogoUrl('');
         setFormSubscriptionStartDate(''); setFormSubscriptionEndDate(''); setFormRegionIds([]); setFormDefaultRegionId(null);
         setFormIsActive(true); setFormUrlBusinessPartner(''); setFormLevel1Name(''); setFormLevel2Name(''); setFormLevel3Name('');
@@ -240,6 +243,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
     };
 
     const handleOpenEditDialog = (bp: BusinessPartner) => {
+        setFormMonthlyReportEnabled(bp.monthly_report_enabled === true);
         setEditingBp(bp); setFormName(bp.name); setFormSlug(bp.slug || ''); setFormDashboardTitle(bp.dashboard_title || ''); setFormAddress(bp.address || '');
         setFormEmail(bp.email || ''); setFormLogoUrl(bp.logo_url || ''); setFormSubscriptionStartDate(bp.subscription_start_date ? bp.subscription_start_date.split('T')[0] : '');
         setFormSubscriptionEndDate(bp.subscription_end_date ? bp.subscription_end_date.split('T')[0] : ''); setFormRegionIds(bp.regions.map(r => r.id));
@@ -312,7 +316,7 @@ const AdminBusinessPartnersPage: React.FC = () => {
             logo_url: formLogoUrl || null, subscription_start_date: formSubscriptionStartDate, subscription_end_date: formSubscriptionEndDate,
             region_ids: formRegionIds, default_region_id: formDefaultRegionId, is_active: formIsActive, url_businesspartner: formUrlBusinessPartner || null,
             level_1_name: formLevel1Name || null, level_2_name: formLevel2Name || null, level_3_name: formLevel3Name || null,
-            storage_tier: formStorageTier, allow_automated_newsletter: formAllowNewsletter, category_ids: formIndustryIds,
+            storage_tier: formStorageTier, allow_automated_newsletter: formAllowNewsletter, monthly_report_enabled: formMonthlyReportEnabled, category_ids: formIndustryIds,
             dashboard_focus: formDefaultWorkspace === 'sales' ? 'sales' : 'information',
             enabled_modules: formEnabledModules,
             default_workspace: formDefaultWorkspace,
@@ -699,6 +703,10 @@ const AdminBusinessPartnersPage: React.FC = () => {
                             <Grid item xs={12} sm={6}><TextField label="Abo Enddatum" type="date" fullWidth InputLabelProps={{ shrink: true }} value={formSubscriptionEndDate} onChange={(e) => setFormSubscriptionEndDate(e.target.value)} /></Grid>
                             <Grid item xs={12} sm={6}><FormControlLabel control={<Switch checked={formIsActive} onChange={(e) => setFormIsActive(e.target.checked)} color="primary" />} label="Partner-Account aktiv" /></Grid>
                             <Grid item xs={12} sm={6}><FormControlLabel control={<Switch checked={formAllowNewsletter} onChange={(e) => setFormAllowNewsletter(e.target.checked)} color="primary" />} label="Automatisierte Newsletter erlaubt" /></Grid>
+                            <Grid item xs={12}>
+                                <FormControlLabel control={<Switch checked={formMonthlyReportEnabled} onChange={(e) => setFormMonthlyReportEnabled(e.target.checked)} color="primary" />} label="Monatliche Mandantenstatistik versenden" />
+                                <Typography variant="caption" display="block" color="text.secondary">Separater Verwaltungsreport, unabhängig von Newslettern. Empfänger unter Benutzerverwaltung → Nutzer bearbeiten → E-Mail-Empfang auswählen.</Typography>
+                            </Grid>
 
                             <Grid item xs={12}>
                                 <Divider sx={{ my: 2 }} />

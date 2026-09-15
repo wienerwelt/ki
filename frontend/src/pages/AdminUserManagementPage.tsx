@@ -34,6 +34,9 @@ interface User {
   organization_name: string | null;
   email: string;
   newsletter_opt_in: boolean;
+  newsletter_opt_in_confirmed_at: string | null;
+  newsletter_email_enabled: boolean;
+  monthly_report_email_enabled: boolean;
   linkedin_url: string | null;
   login_count: number;
   membership_level: string | null;
@@ -126,6 +129,8 @@ const AdminUserManagementPage: React.FC = () => {
   const [formRole, setFormRole] = useState('user');
   const [formBusinessPartnerId, setFormBusinessPartnerId] = useState('');
   const [formIsActive, setFormIsActive] = useState(true);
+  const [formNewsletterEmailEnabled, setFormNewsletterEmailEnabled] = useState(true);
+  const [formMonthlyReportEmailEnabled, setFormMonthlyReportEmailEnabled] = useState(false);
   const [formActiveUntil, setFormActiveUntil] = useState('');
   const [formProfileImageUrl, setFormProfileImageUrl] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -295,10 +300,13 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
   }, [roleOptions, isAssistant]);
 
   const handleOpenAddDialog = () => {
+    setFormNewsletterEmailEnabled(true); setFormMonthlyReportEmailEnabled(false);
     setEditingUser(null); setFormUsername(''); setFormEmail(''); setFormPassword(''); setFormFirstName(''); setFormLastName(''); setFormOrganizationName(''); setFormLinkedinUrl(''); setFormProfileImageUrl(''); setFormMembershipLevel(''); setFormRole('user'); setFormBusinessPartnerId(isAssistant ? (loggedInUser?.business_partner_id || '') : (adminFilterBpId || '')); setFormIsActive(true); setFormActiveUntil(''); setDialogError(null); setOpenDialog(true);
   };
 
   const handleOpenEditDialog = (user: User) => {
+    setFormNewsletterEmailEnabled(user.newsletter_email_enabled !== false);
+    setFormMonthlyReportEmailEnabled(user.monthly_report_email_enabled === true);
     setEditingUser(user); setFormUsername(user.username); setFormEmail(user.email); setFormPassword(''); setFormFirstName(user.first_name || ''); setFormLastName(user.last_name || ''); setFormOrganizationName(user.organization_name || ''); setFormLinkedinUrl(user.linkedin_url || ''); setFormMembershipLevel(user.membership_level || ''); setFormRole(user.role); setFormBusinessPartnerId(user.business_partner_id || ''); setFormIsActive(user.is_active); setFormActiveUntil(user.active_until ? user.active_until.split('T')[0] : ''); setFormProfileImageUrl(user.profile_image_url || ''); setDialogError(null); setOpenDialog(true);
   };
 
@@ -321,7 +329,11 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       role: formRole, 
       business_partner_id: formBusinessPartnerId || null, 
       is_active: formIsActive,
-      active_until: formActiveUntil || null
+      active_until: formActiveUntil || null,
+      ...(isAdmin ? {
+        newsletter_email_enabled: formNewsletterEmailEnabled,
+        monthly_report_email_enabled: ['admin', 'assistenz'].includes(formRole) && formMonthlyReportEmailEnabled,
+      } : {}),
     };
     try {
       if (editingUser) {
@@ -621,11 +633,11 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                         
                         <TableCell>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                                <Tooltip title={u.newsletter_opt_in ? 'Newsletter abonniert' : 'Kein Newsletter'}>
+                                <Tooltip title={u.newsletter_email_enabled === false ? 'Newsletter-Empfang durch Admin deaktiviert' : u.newsletter_opt_in ? 'Newsletter-Empfang aktiv · Einwilligung vorhanden' : 'Newsletter-Empfang wartet auf Einwilligung'}>
                                     <Box 
                                         sx={{ 
                                             width: 10, height: 10, borderRadius: '50%', 
-                                            bgcolor: u.newsletter_opt_in ? 'success.main' : 'error.main', flexShrink: 0 
+                                            bgcolor: u.newsletter_email_enabled === false ? 'error.main' : u.newsletter_opt_in ? 'success.main' : 'warning.main', flexShrink: 0
                                         }} 
                                     />
                                 </Tooltip>
@@ -781,6 +793,25 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
             </TextField>
 
             <FormControlLabel control={<Switch checked={formIsActive} onChange={(e) => setFormIsActive(e.target.checked)} color="primary" />} label="Nutzerkonto Aktiv" sx={{ mt: 2 }} />
+            {isAdmin && (
+              <Box sx={{ mt: 2, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+                <Typography variant="subtitle1" fontWeight={700}>E-Mail-Empfang</Typography>
+                <FormControlLabel control={<Switch checked={formNewsletterEmailEnabled} onChange={(e) => setFormNewsletterEmailEnabled(e.target.checked)} />}
+                  label={`Newsletter-Empfang ${formNewsletterEmailEnabled ? 'aktiv' : 'inaktiv'}`} />
+                <Typography variant="caption" display="block" color="text.secondary">
+                  Gilt für Branchenbriefings und Mitglieder-Newsletter. Die Einwilligung und individuellen Abonnements bleiben unverändert.
+                </Typography>
+                <Chip size="small" sx={{ mt: 1 }} color={editingUser?.newsletter_opt_in ? 'success' : 'default'}
+                  label={editingUser?.newsletter_opt_in ? 'Newsletter-Einwilligung vorhanden' : 'Keine Newsletter-Einwilligung · kein Versand'} />
+                {['admin', 'assistenz'].includes(formRole) && (
+                  <Box sx={{ mt: 2 }}>
+                    <FormControlLabel control={<Switch checked={formMonthlyReportEmailEnabled} onChange={(e) => setFormMonthlyReportEmailEnabled(e.target.checked)} />}
+                      label={`Monatliche Mandantenstatistik ${formMonthlyReportEmailEnabled ? 'aktiv' : 'inaktiv'}`} />
+                    <Typography variant="caption" display="block" color="text.secondary">Unabhängig vom Newsletter. Versand nur, wenn der Monatsreport beim Mandanten freigegeben ist.</Typography>
+                  </Box>
+                )}
+              </Box>
+            )}
           </DialogContent>
           <DialogActions>
             <Button onClick={handleCloseDialog}>Abbrechen</Button>

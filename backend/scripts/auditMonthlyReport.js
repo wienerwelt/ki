@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { ACTIVE_MEMBERSHIP_SQL } = require('../utils/membershipExpiry');
 
 async function run() {
     const [jobs, recipients, rules, readColumns, eventCategories] = await Promise.all([
@@ -15,19 +16,21 @@ async function run() {
                 COUNT(u.id) FILTER (
                     WHERE u.role IN ('assistenz', 'admin')
                       AND u.is_active = TRUE
+                      AND ${ACTIVE_MEMBERSHIP_SQL}
                       AND NULLIF(BTRIM(u.email), '') IS NOT NULL
                 )::integer AS active_admin_assistants,
                 COUNT(u.id) FILTER (
                     WHERE u.role IN ('assistenz', 'admin')
-                      AND u.newsletter_opt_in = TRUE
+                      AND u.monthly_report_email_enabled = TRUE
                       AND u.is_active = TRUE
+                      AND ${ACTIVE_MEMBERSHIP_SQL}
                       AND NULLIF(BTRIM(u.email), '') IS NOT NULL
                 )::integer AS eligible_recipients
             FROM business_partners bp
             LEFT JOIN users u
               ON u.business_partner_id = bp.id
             WHERE bp.is_active = TRUE
-              AND COALESCE(bp.allow_automated_newsletter, FALSE) = TRUE
+              AND bp.monthly_report_enabled = TRUE
             GROUP BY bp.id, bp.name
             ORDER BY bp.name
         `),

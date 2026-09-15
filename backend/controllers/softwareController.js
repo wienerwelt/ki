@@ -1,5 +1,5 @@
 const db = require('../config/db');
-const { ListObjectsV2Command, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { DeleteObjectCommand, ListObjectsV2Command, PutObjectCommand } = require('@aws-sdk/client-s3');
 const s3Client = require('../config/s3Client.js');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
@@ -263,6 +263,64 @@ const replaceCategories = async (client, softwareToolId, categoryIds) => {
     `, [softwareToolId, categoryIds]);
 };
 
+const getLogoUsage = async (urls) => {
+    const candidates = Array.from(new Set((Array.isArray(urls) ? urls : [urls]).filter(Boolean)));
+    if (candidates.length === 0) return new Map();
+
+    const result = await db.query(`
+        SELECT logo_url AS url,
+               usage_type,
+               COUNT(*)::int AS usage_count
+        FROM (
+            SELECT logo_url, 'Software'::text AS usage_type
+            FROM software_tools
+            WHERE logo_url = ANY($1::text[])
+
+            UNION ALL
+
+            SELECT logo_url, 'Branchenverzeichnis'::text AS usage_type
+            FROM directory_providers
+            WHERE logo_url = ANY($1::text[])
+
+            UNION ALL
+
+            SELECT logo_url, 'Mandant'::text AS usage_type
+            FROM business_partners
+            WHERE logo_url = ANY($1::text[])
+
+            UNION ALL
+
+            SELECT logo_url, 'Quelle'::text AS usage_type
+            FROM sources
+            WHERE logo_url = ANY($1::text[])
+
+            UNION ALL
+
+            SELECT logo_url, 'Logo-Bibliothek'::text AS usage_type
+            FROM tags
+            WHERE logo_url = ANY($1::text[])
+
+            UNION ALL
+
+            SELECT logo_url, 'Account-Radar'::text AS usage_type
+            FROM business_partner_accounts
+            WHERE logo_url = ANY($1::text[])
+        ) logo_usage
+        WHERE NULLIF(BTRIM(logo_url), '') IS NOT NULL
+        GROUP BY logo_url, usage_type
+        ORDER BY logo_url, usage_type
+    `, [candidates]);
+
+    const usageByUrl = new Map();
+    result.rows.forEach((row) => {
+        const current = usageByUrl.get(row.url) || { count: 0, types: [] };
+        current.count += Number(row.usage_count || 0);
+        current.types.push(row.usage_type);
+        usageByUrl.set(row.url, current);
+    });
+    return usageByUrl;
+};
+
 const toCatalogEntry = (row) => {
     const { created_by_user_id, updated_by_user_id, ...safeRow } = row;
     return safeRow;
@@ -334,6 +392,7 @@ exports.getManagedSoftware = async (req, res) => {
 exports.getManagedLogoLibrary = async (req, res) => {
     try {
         const businessPartnerId = resolveManagedBusinessPartnerId(req, req.query.businessPartnerId);
+        const includeAllTenants = req.user.role === 'admin';
         const search = cleanSearchText(req.query.search, 120)?.toLowerCase() || '';
 
         const knownLogos = await db.query(`
@@ -344,7 +403,8 @@ exports.getManagedLogoLibrary = async (req, res) => {
             FROM (
                 SELECT st.logo_url, st.name AS label, 'Software'::text AS source_type
                 FROM software_tools st
-                WHERE st.business_partner_id = $1 AND st.logo_url IS NOT NULL
+                WHERE ($2::boolean OR st.business_partner_id = $1)
+                  AND st.logo_url IS NOT NULL
 
                 UNION ALL
 
@@ -352,14 +412,16 @@ exports.getManagedLogoLibrary = async (req, res) => {
                 FROM directory_providers p
                 JOIN directory_provider_mandant_settings ms
                   ON ms.provider_id = p.id
-                 AND ms.business_partner_id = $1
-                WHERE ms.status = 'active' AND p.logo_url IS NOT NULL
+                WHERE ($2::boolean OR ms.business_partner_id = $1)
+                  AND ms.status = 'active'
+                  AND p.logo_url IS NOT NULL
 
                 UNION ALL
 
                 SELECT bp.logo_url, bp.name AS label, 'Mandantenlogo'::text AS source_type
                 FROM business_partners bp
-                WHERE bp.id = $1 AND bp.logo_url IS NOT NULL
+                WHERE ($2::boolean OR bp.id = $1)
+                  AND bp.logo_url IS NOT NULL
 
                 UNION ALL
 
@@ -375,12 +437,13 @@ exports.getManagedLogoLibrary = async (req, res) => {
             ) logo_candidates
             WHERE NULLIF(TRIM(logo_url), '') IS NOT NULL
             ORDER BY logo_url, source_type, label
-        `, [businessPartnerId]);
+        `, [businessPartnerId, includeAllTenants]);
 
         const library = knownLogos.rows.map((item) => ({
             url: item.url,
             label: item.label || 'Bestehendes Logo',
             source: item.source_type,
+            deletable: false,
         }));
 
         // Frühere Branchenverzeichnis-Uploads liegen im persistenten Volume,
@@ -388,25 +451,29 @@ exports.getManagedLogoLibrary = async (req, res) => {
         // wurde. Sie bleiben bewusst nur auswählbar und werden keinem Anbieter
         // automatisch zugeordnet.
         const directoryLogoPath = path.join(__dirname, '..', 'public', 'directory_logos');
-        try {
-            const files = await fs.promises.readdir(directoryLogoPath, { withFileTypes: true });
-            files
-                .filter((entry) => entry.isFile() && /^[a-zA-Z0-9._-]+\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(entry.name))
-                .slice(0, 600)
-                .forEach((entry) => {
-                    const label = entry.name
-                        .replace(/\.[^.]+$/, '')
-                        .replace(/-\d{4}$/, '')
-                        .replace(/[-_]+/g, ' ')
-                        .replace(/\b\w/g, (letter) => letter.toUpperCase());
-                    library.push({
-                        url: `/directory_logos/${encodeURIComponent(entry.name)}`,
-                        label: label || 'Branchenverzeichnis-Logo',
-                        source: 'Branchenverzeichnis-Logoarchiv',
+        if (includeAllTenants) {
+            try {
+                const files = await fs.promises.readdir(directoryLogoPath, { withFileTypes: true });
+                files
+                    .filter((entry) => entry.isFile() && /^[a-zA-Z0-9._-]+\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(entry.name))
+                    .forEach((entry) => {
+                        const label = entry.name
+                            .replace(/\.[^.]+$/, '')
+                            .replace(/-\d{4}$/, '')
+                            .replace(/[-_]+/g, ' ')
+                            .replace(/\b\w/g, (letter) => letter.toUpperCase());
+                        library.push({
+                            url: `/directory_logos/${encodeURIComponent(entry.name)}`,
+                            label: label || 'Branchenverzeichnis-Logo',
+                            source: 'Branchenverzeichnis-Logoarchiv',
+                            deletable: true,
+                            storageKind: 'directory',
+                            storageKey: entry.name,
+                        });
                     });
-                });
-        } catch (fileError) {
-            if (fileError.code !== 'ENOENT') console.warn('[Software] directory logo archive unavailable:', fileError.message);
+            } catch (fileError) {
+                if (fileError.code !== 'ENOENT') console.warn('[Software] directory logo archive unavailable:', fileError.message);
+            }
         }
 
         const bucket = String(process.env.AWS_S3_BUCKET_NAME || '').trim();
@@ -414,12 +481,11 @@ exports.getManagedLogoLibrary = async (req, res) => {
         if (bucket && region) {
             try {
                 let continuationToken;
-                let pageCount = 0;
                 do {
                     const page = await s3Client.send(new ListObjectsV2Command({
                         Bucket: bucket,
-                        Prefix: `software-logos/${businessPartnerId}/`,
-                        MaxKeys: 200,
+                        Prefix: includeAllTenants ? 'software-logos/' : `software-logos/${businessPartnerId}/`,
+                        MaxKeys: 1000,
                         ContinuationToken: continuationToken,
                     }));
 
@@ -428,18 +494,21 @@ exports.getManagedLogoLibrary = async (req, res) => {
                         .forEach((object) => {
                             const key = String(object.Key);
                             const encodedKey = key.split('/').map(encodeURIComponent).join('/');
+                            const uploadId = path.basename(key, path.extname(key)).slice(0, 8);
                             library.push({
                                 url: `https://${bucket}.s3.${region}.amazonaws.com/${encodedKey}`,
                                 label: object.LastModified
-                                    ? `Software-Upload vom ${new Date(object.LastModified).toLocaleDateString('de-DE')}`
-                                    : 'Software-Upload',
+                                    ? `Software-Upload vom ${new Date(object.LastModified).toLocaleDateString('de-DE')} · ${uploadId}`
+                                    : `Software-Upload · ${uploadId}`,
                                 source: 'Eigenes AWS-Upload-Archiv',
+                                deletable: true,
+                                storageKind: 's3',
+                                storageKey: key,
                             });
                         });
 
                     continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
-                    pageCount += 1;
-                } while (continuationToken && pageCount < 3);
+                } while (continuationToken);
             } catch (s3Error) {
                 console.warn('[Software] AWS logo archive unavailable:', s3Error.message);
             }
@@ -447,18 +516,151 @@ exports.getManagedLogoLibrary = async (req, res) => {
 
         const uniqueByUrl = new Map();
         library.forEach((item) => {
-            if (!uniqueByUrl.has(item.url)) uniqueByUrl.set(item.url, item);
+            const existing = uniqueByUrl.get(item.url);
+            if (!existing) {
+                uniqueByUrl.set(item.url, item);
+            } else if (item.deletable) {
+                uniqueByUrl.set(item.url, {
+                    ...existing,
+                    deletable: true,
+                    storageKind: item.storageKind,
+                    storageKey: item.storageKey,
+                });
+            }
         });
+        const usageByUrl = await getLogoUsage(Array.from(uniqueByUrl.keys()));
         const unique = Array.from(uniqueByUrl.values())
+            .map((item) => {
+                const usage = usageByUrl.get(item.url) || { count: 0, types: [] };
+                return {
+                    ...item,
+                    usageCount: usage.count,
+                    usedBy: usage.types,
+                    deletable: item.deletable && usage.count === 0,
+                };
+            })
             .filter((item) => !search || `${item.label} ${item.source} ${item.url}`.toLowerCase().includes(search))
-            .sort((a, b) => a.source.localeCompare(b.source, 'de') || a.label.localeCompare(b.label, 'de'))
-            .slice(0, 600);
+            .sort((a, b) => a.source.localeCompare(b.source, 'de') || a.label.localeCompare(b.label, 'de'));
 
-        return res.json({ items: unique });
+        return res.json({
+            items: unique,
+            total: unique.length,
+            scope: includeAllTenants ? 'all-tenants' : 'own-tenant',
+        });
     } catch (error) {
         console.error('[Software] logo library:', error.message);
         return res.status(error.statusCode || 500).json({
             message: error.statusCode ? error.message : 'Bestehende Logos konnten nicht geladen werden.',
+        });
+    }
+};
+
+exports.deleteManagedLogo = async (req, res) => {
+    try {
+        const requestBody = req.body || {};
+        const businessPartnerId = resolveManagedBusinessPartnerId(req, requestBody.businessPartnerId);
+        const storageKind = cleanText(requestBody.storageKind, 20);
+        const storageKey = cleanText(requestBody.storageKey, 2048);
+        const url = cleanText(requestBody.url, 2048);
+        if (!storageKind || !storageKey || !url) {
+            return res.status(400).json({ message: 'Logo-Referenz ist unvollständig.' });
+        }
+
+        const usage = (await getLogoUsage(url)).get(url) || { count: 0, types: [] };
+        if (usage.count > 0) {
+            return res.status(409).json({
+                message: `Logo wird noch ${usage.count}-mal verwendet und kann nicht gelöscht werden.`,
+                usageCount: usage.count,
+                usedBy: usage.types,
+            });
+        }
+
+        if (storageKind === 's3') {
+            const bucket = String(process.env.AWS_S3_BUCKET_NAME || '').trim();
+            const region = String(process.env.AWS_S3_REGION || '').trim();
+            if (!bucket || !region) {
+                return res.status(503).json({ message: 'Der AWS-Logo-Speicher ist nicht konfiguriert.' });
+            }
+            const allowedPrefix = req.user.role === 'admin'
+                ? 'software-logos/'
+                : `software-logos/${businessPartnerId}/`;
+            const expectedUrl = `https://${bucket}.s3.${region}.amazonaws.com/${storageKey.split('/').map(encodeURIComponent).join('/')}`;
+            if (!storageKey.startsWith(allowedPrefix)
+                || !/^software-logos\/[0-9a-f-]{36}\/[a-zA-Z0-9._-]+$/i.test(storageKey)
+                || url !== expectedUrl) {
+                return res.status(403).json({ message: 'Dieses AWS-Logo darf nicht gelöscht werden.' });
+            }
+            await s3Client.send(new DeleteObjectCommand({
+                Bucket: bucket,
+                Key: storageKey,
+            }));
+        } else if (storageKind === 'directory') {
+            if (req.user.role !== 'admin' || !/^[a-zA-Z0-9._-]+\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(storageKey)) {
+                return res.status(403).json({ message: 'Dieses Branchenlogo darf nicht gelöscht werden.' });
+            }
+            if (url !== `/directory_logos/${encodeURIComponent(storageKey)}`) {
+                return res.status(403).json({ message: 'Die Logo-Referenz passt nicht zur Archivdatei.' });
+            }
+            const directoryLogoPath = path.join(__dirname, '..', 'public', 'directory_logos');
+            const targetPath = path.join(directoryLogoPath, storageKey);
+            if (path.dirname(targetPath) !== directoryLogoPath) {
+                return res.status(400).json({ message: 'Ungültiger Logo-Pfad.' });
+            }
+            await fs.promises.unlink(targetPath).catch((error) => {
+                if (error.code !== 'ENOENT') throw error;
+            });
+        } else {
+            return res.status(400).json({ message: 'Dieses Logo ist kein löschbarer Upload.' });
+        }
+
+        logActivity({
+            userId: req.user.id,
+            username: req.user.username,
+            actionType: 'SOFTWARE_LOGO_DELETE',
+            status: 'success',
+            targetType: 'software_logo',
+            details: { businessPartnerId, storageKind, storageKey, url },
+            ipAddress: req.ip,
+        }).catch((auditError) => console.error('[Software] logo delete audit:', auditError.message));
+
+        return res.json({ message: 'Unbenutztes Logo wurde gelöscht.' });
+    } catch (error) {
+        console.error('[Software] logo delete:', error.message);
+        return res.status(error.statusCode || 500).json({
+            message: error.statusCode ? error.message : 'Logo konnte nicht gelöscht werden.',
+        });
+    }
+};
+
+exports.getManagedCatalogStats = async (req, res) => {
+    try {
+        const businessPartnerId = resolveManagedBusinessPartnerId(req, req.query.businessPartnerId, false);
+        const result = await db.query(`
+            SELECT bp.id AS business_partner_id,
+                   (SELECT COUNT(*)::int
+                    FROM business_partner_actions action
+                    WHERE action.business_partner_id = bp.id) AS action_count,
+                   (SELECT COUNT(*)::int
+                    FROM software_tools software
+                    WHERE software.business_partner_id = bp.id) AS software_count
+            FROM business_partners bp
+            WHERE ($1::uuid IS NULL OR bp.id = $1)
+            ORDER BY bp.id
+        `, [businessPartnerId]);
+
+        const partners = Object.fromEntries(result.rows.map((row) => [row.business_partner_id, {
+            actions: Number(row.action_count || 0),
+            software: Number(row.software_count || 0),
+        }]));
+        return res.json({
+            partners,
+            totalActions: result.rows.reduce((sum, row) => sum + Number(row.action_count || 0), 0),
+            totalSoftware: result.rows.reduce((sum, row) => sum + Number(row.software_count || 0), 0),
+        });
+    } catch (error) {
+        console.error('[Software] catalog stats:', error.message);
+        return res.status(error.statusCode || 500).json({
+            message: error.statusCode ? error.message : 'Katalog-Zähler konnten nicht geladen werden.',
         });
     }
 };

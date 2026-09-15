@@ -14,6 +14,23 @@ const { callOpenAI } = require('./aiService');
 const { scrapeQueue, fundingQueue } = require('./queueService');
 const { searchGoogle } = require('./googleSearchService');
 const { parseDateString: parseDateValue } = require('../utils/dateParser');
+const { isXmlFeedContent, scrapingFetchError, feedText, feedLink, previewSkipReason, webUrl } = require('../utils/scrapingContent');
+
+async function _fetchRuleContent(rule, jobId = null) {
+    if (rule.use_headless_browser) {
+        return {
+            rawContent: await _fetchContentWithPuppeteer(rule.url_pattern, rule.content_container_selector, jobId),
+            contentType: 'text/html',
+        };
+    }
+    try {
+        // Preview and worker must use exactly the same request, without browser impersonation.
+        const response = await axios.get(rule.url_pattern, {
+            timeout: 15000, responseType: 'text', maxContentLength: 5 * 1024 * 1024,
+        });
+        return { rawContent: response.data, contentType: response.headers['content-type'] || '' };
+    } catch (error) { throw scrapingFetchError(error); }
+}
 
 const logToDb = async (jobId, level, message) => {
     if (!jobId) return;
@@ -320,7 +337,7 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags, all
     const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
     const result = await parser.parseStringPromise(xmlContent);
 
-    const feedTitle = result.rss?.channel?.title || null;
+    const feedTitle = feedText(result.rss?.channel?.title || result.feed?.title);
 
     const items = result.rss?.channel?.item || result.feed?.entry || [];
     const feedItems = Array.isArray(items) ? items : [items];
@@ -329,8 +346,8 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags, all
     await logToDb(jobId, 'INFO', `Verarbeite ${feedItems.length} Einträge für Regel '${sourceIdentifier}'. Feed-Titel: ${feedTitle}`);
 
     for (const item of feedItems) {
-        const title = item.title?._ || item.title || 'Kein Titel';
-        const parsedDate = parseDateString(item.pubDate || item.updated, dateFormat, jobId);
+        const title = feedText(item.title) || 'Kein Titel';
+        const parsedDate = parseDateString(feedText(item.pubDate || item.published || item.updated), dateFormat, jobId);
 
         if (rule.scrape_after_date && parsedDate) {
             const cutoffDate = new Date(rule.scrape_after_date);
@@ -341,7 +358,7 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags, all
             }
         }
         if (sourceIdentifier.includes('traffic')) {
-            const link = item.link?.href || item.link || null;
+            const link = feedLink(item);
             const guid = item.guid?._ || item.guid || link;
             if (!guid) continue;
             const result = await db.query(
@@ -352,14 +369,14 @@ async function _processXmlFeedByRule(xmlContent, rule, jobId, availableTags, all
             if (result.rowCount > 0) itemsInserted++;
         } else {
             let originalUrl, summary, fullText;
-            const audioUrl = (item.enclosure?.$?.url && item.enclosure.$.type?.startsWith('audio')) ? item.enclosure.$.url : null;
+            const audioUrl = item.enclosure?.$?.type?.startsWith('audio') ? webUrl(item.enclosure.$.url) : null;
 
             if (audioUrl) {
                 originalUrl = audioUrl;
                 summary = sanitizeHtml(item.description?._ || item.description || null);
                 fullText = feedTitle;
             } else {
-                originalUrl = item.link?.href || item.link || null;
+                originalUrl = feedLink(item);
                 const descriptionHtml = item['content:encoded'] || item.description?._ || item.summary?._ || item.description || item.summary || null;
                 summary = sanitizeFeedDescription(descriptionHtml);
                 fullText = null;
@@ -523,7 +540,7 @@ async function _processFundingXmlFeed(xmlContent, rule, jobId) {
     let itemsEnqueued = 0;
     await logToDb(jobId, 'INFO', `Funding-Feed erkannt. Verarbeite ${feedItems.length} Einträge.`);
     for (const item of feedItems) {
-        const articleUrl = item.link?.href || item.link || null;
+        const articleUrl = feedLink(item);
         if (!articleUrl) continue;
         try {
             await fundingQueue.add('extract-funding-details', {
@@ -770,19 +787,12 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
                 break;
             case 'standard':
             default:
-                let rawContent;
-                let contentType;
-                if (rule.use_headless_browser) {
-                    rawContent = await _fetchContentWithPuppeteer(rule.url_pattern, rule.content_container_selector, jobId);
-                    contentType = 'text/html';
-                } else {
-                    const response = await axios.get(rule.url_pattern, { timeout: 15000 });
-                    rawContent = response.data;
-                    contentType = response.headers['content-type'] || '';
-                }
+                const { rawContent, contentType } = await _fetchRuleContent(rule, jobId);
+                const xmlFeed = isXmlFeedContent(rawContent, contentType);
+                await logToDb(jobId, 'INFO', `Quelle erkannt: ${xmlFeed ? 'RSS/Atom/XML-Feed' : 'HTML'} (HTTP-Inhaltstyp: ${contentType || 'nicht angegeben'}).`);
 
                 if (rule.rule_type === 'funding') {
-                    if (contentType.includes('html')) {
+                    if (!xmlFeed && contentType.toLowerCase().includes('html')) {
                         const $ = cheerio.load(rawContent);
                         const articleContainers = $(rule.content_container_selector);
                         await logToDb(jobId, 'INFO', `${articleContainers.length} potenzielle Förderungs-Einträge gefunden.`);
@@ -798,7 +808,10 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
                          itemsProcessed = await _processFundingXmlFeed(rawContent, rule, jobId);
                     }
                 } else { // rule_type 'content'
-                    if (contentType.includes('html')) {
+                    if (!xmlFeed && contentType.toLowerCase().includes('html')) {
+                        if (!rule.content_container_selector || !rule.title_selector || !rule.link_selector) {
+                            throw new Error('Die Quelle liefert HTML statt eines RSS/Atom-Feeds. Für HTML sind Container-, Titel- und Link-Selektor erforderlich. Bitte die Feed-URL prüfen oder Selektoren ergänzen.');
+                        }
                         const $ = cheerio.load(rawContent);
                         const articleContainers = $(rule.content_container_selector);
                         await logToDb(jobId, 'INFO', `${articleContainers.length} potenzielle Content-Einträge gefunden.`);
@@ -842,7 +855,7 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
                                 }
                             }
                         }
-                    } else if (contentType.includes('xml') || contentType.includes('rss')) {
+                    } else if (xmlFeed) {
                         itemsProcessed = await _processXmlFeedByRule(rawContent, rule, jobId, availableTags, allCategories);
                     } else {
                         throw new Error(`Nicht unterstützter Inhaltstyp für Regel-Typ 'content': ${contentType}.`);
@@ -903,15 +916,10 @@ async function getScrapingRuleSuggestion(url, userId) {
 
     // 1. Daten abrufen (Fehlerhaftes try-catch repariert)
     try {
-        const response = await axios.get(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' },
-            timeout: 15000,
-            responseType: 'text'
-        });
-        rawContent = response.data;
+        const fetched = await _fetchRuleContent({ url_pattern: url });
+        rawContent = fetched.rawContent;
         
-        const contentType = response.headers['content-type'] || '';
-        if (contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom') || rawContent.trim().startsWith('<?xml')) {
+        if (isXmlFeedContent(rawContent, fetched.contentType)) {
             console.log(`[Intelligent-Selector-AI] URL ${url} als Feed (XML/RSS) erkannt. KI-Analyse wird übersprungen.`);
             return {
                 format: 'rss',
@@ -928,7 +936,7 @@ async function getScrapingRuleSuggestion(url, userId) {
             details: { url, error: error.message }
         });
         console.error(`[Intelligent-Selector-AI] Fehler beim Abrufen der URL ${url}:`, error.message);
-        throw new Error(`Konnte die URL nicht abrufen. Status: ${error.response?.status || 'Netzwerkfehler'}`);
+        throw error;
     }
 
     // OPTIMIERT: System-Prompt klarer für JSON formuliert und XML-Tags für den Content genutzt
@@ -972,7 +980,7 @@ async function getScrapingRuleSuggestion(url, userId) {
     // 2. KI-Aufruf mit nativem JSON-Mode
     try {
         // OPTIMIERT: Wir übergeben { responseFormat: { type: "json_object" } } an unseren aiService
-        const { content, usage } = await callOpenAI(prompt, model, { responseFormat: { type: "json_object" } });
+        const { content, usage } = await callOpenAI(prompt, model, { responseFormat: { type: "json_object" }, usageContext:{feature:'scraping_selector',scope:'system'} });
         aiResponseContent = content;
         
         if (!aiResponseContent || aiResponseContent.trim() === '') {
@@ -1334,17 +1342,18 @@ async function _getExistingOriginalUrls(urls) {
     return new Set(rows.map(r => r.original_url));
 }
 
-function _summarizePreviewItems(items, existingUrls) {
+function _summarizePreviewItems(items, existingUrls, rule = {}) {
     const previewItems = (items || []).map(item => ({
         ...item,
         exists: item.original_url ? existingUrls.has(item.original_url) : false,
+        skip_reason: item.skip_reason || previewSkipReason(item, rule),
     }));
 
     return {
         found: previewItems.length,
-        already_existing: previewItems.filter(i => i.exists).length,
-        would_insert: previewItems.filter(i => !i.exists && i.original_url).length,
-        skipped: previewItems.filter(i => !i.original_url).length,
+        already_existing: previewItems.filter(i => i.exists && !i.skip_reason).length,
+        would_insert: previewItems.filter(i => !i.exists && !i.skip_reason).length,
+        skipped: previewItems.filter(i => i.skip_reason).length,
         items: previewItems,
     };
 }
@@ -1463,15 +1472,17 @@ async function _previewYoutubePodcast(rule, limit) {
 async function _previewXmlFeed(rawContent, rule, limit) {
     const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
     const result = await parser.parseStringPromise(rawContent);
-    const feedTitle = result.rss?.channel?.title || result.feed?.title || null;
+    const feedTitle = feedText(result.rss?.channel?.title || result.feed?.title);
     const rawItems = result.rss?.channel?.item || result.feed?.entry || [];
-    const feedItems = (Array.isArray(rawItems) ? rawItems : [rawItems]).filter(Boolean).slice(0, limit);
+    const allFeedItems = (Array.isArray(rawItems) ? rawItems : [rawItems]).filter(Boolean);
+    const feedItems = allFeedItems.slice(0, limit);
 
     const items = feedItems.map(item => {
-        const title = sanitizeHtml(item.title?._ || item.title || 'Kein Titel');
-        const originalUrl = item.link?.href || item.link || item.guid?._ || item.guid || null;
+        const title = sanitizeHtml(feedText(item.title) || 'Kein Titel');
+        const audioUrl = item.enclosure?.$?.type?.startsWith('audio') ? webUrl(item.enclosure.$.url) : null;
+        const originalUrl = audioUrl || feedLink(item);
         const descriptionHtml = item['content:encoded'] || item.description?._ || item.summary?._ || item.description || item.summary || null;
-        const date = parseDateString(item.pubDate || item.updated, rule.date_format, null);
+        const date = parseDateString(feedText(item.pubDate || item.published || item.updated), rule.date_format, null);
         return {
             title,
             original_url: originalUrl,
@@ -1485,23 +1496,26 @@ async function _previewXmlFeed(rawContent, rule, limit) {
     return {
         kind: 'xml_feed',
         feed_title: feedTitle,
-        ..._summarizePreviewItems(items, existing),
+        total_found: allFeedItems.length,
+        ..._summarizePreviewItems(items, existing, rule),
     };
 }
 
 async function _previewHtml(rule, rawContent, limit) {
+    if (!rule.content_container_selector || (rule.rule_type !== 'funding' && !rule.title_selector) || !rule.link_selector) {
+        throw new Error('Die Quelle liefert HTML statt eines RSS/Atom-Feeds. Für HTML sind Container-, Titel- und Link-Selektor erforderlich. Bitte die Feed-URL prüfen oder Selektoren ergänzen.');
+    }
     const $ = cheerio.load(rawContent);
     const containers = $(rule.content_container_selector || '');
     const items = [];
 
     containers.slice(0, limit).each((_, container) => {
         const element = $(container);
-        const title = sanitizeHtml(element.find(rule.title_selector || '').text()) || sanitizeHtml(element.text()).slice(0, 180) || 'Ohne Titel';
+        const title = rule.rule_type === 'funding'
+            ? sanitizeHtml(element.find(rule.title_selector || rule.link_selector).text()) || 'Förderung'
+            : sanitizeHtml(element.find(rule.title_selector || '').text());
         const linkHref = rule.link_selector ? element.find(rule.link_selector).attr('href') : null;
-        let originalUrl = null;
-        if (linkHref) {
-            try { originalUrl = new URL(linkHref, rule.url_pattern).href; } catch (_) { originalUrl = linkHref; }
-        }
+        const originalUrl = webUrl(linkHref, rule.url_pattern);
         const summary = rule.description_selector ? sanitizeHtml(element.find(rule.description_selector).text()) : null;
         const dateString = rule.date_selector ? element.find(rule.date_selector).text() : null;
         const parsedDate = parseDateString(dateString, rule.date_format, null);
@@ -1512,6 +1526,7 @@ async function _previewHtml(rule, rawContent, limit) {
         }
         items.push({
             title,
+            skip_reason: !title ? 'Kein Titel gefunden' : null,
             original_url: originalUrl,
             published_date: parsedDate ? parsedDate.toISOString() : null,
             summary,
@@ -1524,7 +1539,9 @@ async function _previewHtml(rule, rawContent, limit) {
         kind: 'html',
         container_selector: rule.content_container_selector || null,
         containers_found: containers.length,
-        ..._summarizePreviewItems(items, existing),
+        total_found: containers.length,
+        warnings: containers.length === 0 ? ['Der Container-Selektor findet keine Einträge. Bitte Selektor und gegebenenfalls JavaScript-Nachladen prüfen.'] : [],
+        ..._summarizePreviewItems(items, existing, rule),
     };
 }
 
@@ -1551,35 +1568,17 @@ async function _previewHtmlEmbeddedJson(rule, rawContent, limit) {
 }
 
 async function _previewStandard(rule, limit) {
-    let rawContent;
-    let contentType = '';
+    const { rawContent, contentType } = await _fetchRuleContent(rule);
 
-    if (rule.use_headless_browser) {
-        rawContent = await _fetchContentWithPuppeteer(rule.url_pattern, null, null);
-        contentType = 'text/html';
+    let preview;
+    if (isXmlFeedContent(rawContent, contentType)) {
+        preview = await _previewXmlFeed(rawContent, rule, limit);
+    } else if (rule.scraping_strategy === 'html_embedded_json') {
+        preview = await _previewHtmlEmbeddedJson(rule, rawContent, limit);
     } else {
-        const response = await axios.get(rule.url_pattern, {
-            timeout: 15000,
-            responseType: 'text',
-            maxContentLength: 5 * 1024 * 1024,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36'
-            }
-        });
-        rawContent = response.data;
-        contentType = response.headers['content-type'] || '';
+        preview = await _previewHtml(rule, rawContent, limit);
     }
-
-    const head = typeof rawContent === 'string' ? rawContent.trim().slice(0, 200) : '';
-    if (contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom') || head.startsWith('<?xml') || head.startsWith('<rss') || head.startsWith('<feed')) {
-        return _previewXmlFeed(rawContent, rule, limit);
-    }
-
-    if (rule.scraping_strategy === 'html_embedded_json') {
-        return _previewHtmlEmbeddedJson(rule, rawContent, limit);
-    }
-
-    return _previewHtml(rule, rawContent, limit);
+    return { ...preview, content_type: contentType, sample_limit: limit };
 }
 
 async function previewScrapingRule(rule, options = {}) {
@@ -1697,7 +1696,7 @@ async function getSummaryForArticle(articleText, articleUrl) {
     await logActivity({ actionType: 'AI_SUMMARIZATION_START', status: 'info', details: { url: articleUrl, model: 'gpt-4o-mini' }, username: 'System' });
 
     try {
-        const { content: summary, usage, model } = await callOpenAI(prompt, 'gpt-4o-mini');
+        const { content: summary, usage, model } = await callOpenAI(prompt, 'gpt-4o-mini', {usageContext:{feature:'article_summary',sourceId:articleUrl,scope:'shared'}});
         await logActivity({
             actionType: 'AI_SUMMARIZATION_SUCCESS', status: 'success',
             details: { url: articleUrl, model, tokenUsage: usage, summaryLength: summary.length },

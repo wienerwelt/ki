@@ -121,16 +121,20 @@ export const VoteSourcesList: React.FC<VoteSourcesListProps> = ({ onScoreChange,
                     Community-Trust bewerten
                 </Typography>
                 <Typography variant="body1" color="text.secondary">
-                    Die redaktionelle Freigabe entscheidet über die Veröffentlichung. Deine Vertrauensbewertung
-                    bleibt auch danach sichtbar und kann jederzeit angepasst werden.
+                    Bewerte, wie vertrauenswürdig diese Quellen für deine tägliche Arbeit sind.
+                    Deine Bewertung kann jederzeit angepasst werden.
                 </Typography>
                 <Box sx={{ mt: 2, display: 'flex', gap: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
-                    <Chip label={`${openCount} noch nicht bewertet`} color={openCount ? 'primary' : 'default'} />
+                    <Chip
+                        label={openCount === 0
+                            ? 'Alle verfügbaren Quellen bewertet'
+                            : openCount === 1
+                                ? '1 Quelle wartet auf deine Bewertung'
+                                : `${openCount} Quellen warten auf deine Bewertung`}
+                        color={openCount ? 'primary' : 'success'}
+                    />
                     <Chip label="+1 Punkt bei der ersten Bewertung" variant="outlined" />
                 </Box>
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                    „Noch nicht bewertet“ entspricht der roten Badge-Zahl bei „Vertrauensw. Quellen“ in der Navigation.
-                </Typography>
             </Box>
 
             {sources.length > 0 ? (
@@ -176,14 +180,20 @@ export const VoteSourcesList: React.FC<VoteSourcesListProps> = ({ onScoreChange,
 
                                             <Box sx={{ mt: 0.75, mb: 1.25, display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
                                                 {!ownRating && (
-                                                    <Chip label="Offen · zählt zum Navigations-Badge" size="small" color="error" />
+                                                    <Chip label="Von dir noch nicht bewertet" size="small" color="primary" variant="outlined" />
                                                 )}
                                                 <Chip
                                                     icon={source.status === 'approved' ? <VerifiedIcon /> : <HourglassTopIcon />}
-                                                    label={source.status === 'approved' ? 'Redaktionell freigegeben' : 'Freigabe wird geprüft'}
+                                                    label={source.status === 'approved' ? 'Quelle geprüft' : 'Prüfung läuft'}
                                                     size="small"
-                                                    color={source.status === 'approved' ? 'success' : 'warning'}
+                                                    color="default"
                                                     variant="outlined"
+                                                    sx={{
+                                                        color: 'text.secondary',
+                                                        '& .MuiChip-icon': {
+                                                            color: source.status === 'approved' ? 'success.main' : 'text.secondary',
+                                                        },
+                                                    }}
                                                 />
                                                 {(source.category_name_lang || source.category_name) && (
                                                     <Chip label={source.category_name_lang || source.category_name} size="small" />

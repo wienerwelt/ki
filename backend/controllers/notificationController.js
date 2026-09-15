@@ -49,6 +49,16 @@ exports.getNotifications = async (req, res) => {
                 message,
                 is_read,
                 created_at,
+                CASE WHEN type = 'career_review' AND $4::text IN ('admin', 'assistenz') THEN (
+                    SELECT '/career?partnerId=' || e.business_partner_id::text
+                           || '&entry=' || e.id::text || '&mode=pending'
+                    FROM career_entries e
+                    JOIN business_partners bp ON bp.id = e.business_partner_id
+                    WHERE e.id::text = user_notifications.reference_id::text
+                      AND e.status <> 'withdrawn'
+                      AND bp.is_active AND 'content' = ANY(bp.enabled_modules)
+                      AND ($4::text = 'admin' OR e.business_partner_id = $5::uuid)
+                ) END AS target_url,
                 CASE
                     WHEN type = ANY($3::text[]) THEN TRUE
                     ELSE FALSE
@@ -58,7 +68,10 @@ exports.getNotifications = async (req, res) => {
             ORDER BY created_at DESC
             LIMIT $2
         `;
-        const { rows } = await db.query(query, [userId, safeLimit, SYSTEM_NOTIFICATION_TYPES]);
+        const { rows } = await db.query(query, [
+            userId, safeLimit, SYSTEM_NOTIFICATION_TYPES,
+            req.user.role, req.user.business_partner_id || null
+        ]);
         
         // Anzahl der ungelesenen Nachrichten zählen (für den roten Badge)
         const countQuery = `SELECT COUNT(*) FROM user_notifications WHERE user_id = $1 AND is_read = FALSE`;

@@ -10,6 +10,7 @@ const { retrieveTenantInternalDocuments } = require('../services/internalAiRetri
 const { findReusableAccountLogo, getDomainFromUrl, loadLogoCandidates } = require('../services/accountLogoService');
 const { hasTenantModule } = require('../services/tenantModuleService');
 const { hasSalesFeature } = require('../services/salesPlanService');
+const { enrichArticleTags } = require('../utils/articleOemLogos');
 const TANKERKOENIG_API_KEY = process.env.TANKERKOENIG_API_KEY;
 const ECONTROL_API_KEY     = process.env.ECONTROL_API_KEY;
 const ECONTROL_BASE_URL    = process.env.ECONTROL_BASE_URL;
@@ -3244,9 +3245,10 @@ const dataQuery = `
                     WHERE sct.scraped_content_id = sc.id
                 ) as tags,
                 (
-                    SELECT COALESCE(json_agg(json_build_object('name', t.name, 'logo_url', t.logo_url)), '[]'::json)
+                    SELECT COALESCE(json_agg(json_build_object('name', t.name, 'logo_url', t.logo_url, 'category_name', c.name)), '[]'::json)
                     FROM scraped_content_tags sct
                     JOIN tags t ON sct.tag_id = t.id
+                    LEFT JOIN categories c ON c.id = t.category_id
                     WHERE sct.scraped_content_id = sc.id
                 ) as tag_details
             FROM scraped_content sc
@@ -3260,7 +3262,7 @@ const dataQuery = `
         const result = await db.query(dataQuery, [...dataParams, userId, limitNum, offset]);
 
         res.json({
-            data: result.rows,
+            data: result.rows.map((item) => ({ ...item, tag_details: enrichArticleTags(item.tag_details) })),
             totalPages,
             counts: { unread: parseInt(unreadRes.rows[0]?.cnt || '0', 10), new: parseInt(newRes.rows[0]?.cnt || '0', 10) }
         });
@@ -4695,7 +4697,7 @@ exports.handleAiQuestion = async (req, res) => {
     const internalDailyLimit = Math.max(1, Math.min(Number(process.env.AI_INTERNAL_DAILY_LIMIT || 50), 1000));
     const dailyUsage = await db.query(`
         SELECT COUNT(*)::int AS count
-        FROM ai_usage_logs
+        FROM ai_usage_events
         WHERE user_id = $1 AND created_at >= CURRENT_DATE
     `, [userId]);
     if (Number(dailyUsage.rows[0]?.count || 0) >= internalDailyLimit) {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Link as RouterLink, useLocation } from 'react-router-dom';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
@@ -15,6 +15,8 @@ import InfoIcon from '@mui/icons-material/Info';
 import TipsAndUpdatesIcon from '@mui/icons-material/TipsAndUpdates';
 import ScienceIcon from '@mui/icons-material/Science';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import CloseIcon from '@mui/icons-material/Close';
 import DashboardLayout from '../components/DashboardLayout';
 import AdminScheduleSelector from '../components/AdminScheduleSelector';
 import apiClient from '../apiClient';
@@ -75,9 +77,15 @@ interface QueueStatus {
 
 interface TestResult {
     ok: boolean;
+    message?: string;
     validation?: { warnings?: string[] };
     preview?: {
         kind: string;
+        feed_title?: string;
+        content_type?: string;
+        total_found?: number;
+        sample_limit?: number;
+        warnings?: string[];
         found: number;
         would_insert: number;
         already_existing: number;
@@ -91,6 +99,7 @@ interface TestResult {
             original_url: string | null;
             published_date?: string | null;
             exists?: boolean;
+            skip_reason?: string | null;
         }>;
     };
 }
@@ -189,6 +198,10 @@ const AdminScrapingRulesPage: React.FC = () => {
     const [suggesting, setSuggesting] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<TestResult | null>(null);
+    const [testError, setTestError] = useState<string | null>(null);
+    const [manualCopyText, setManualCopyText] = useState<string | null>(null);
+    const testSectionRef = useRef<HTMLDivElement>(null);
+    const testRequestRef = useRef(0);
     const [suggestionAlert, setSuggestionAlert] = useState<string | null>(null);
     const [snackbar, setSnackbar] = useState<{ open: boolean, message: string }>({ open: false, message: '' });
 
@@ -204,20 +217,29 @@ const AdminScrapingRulesPage: React.FC = () => {
                 apiClient.get('/api/admin/scraping-rules/queue-status', { headers: { 'x-auth-token': token } }),
             ]);
 
-            if (rulesRes.status === 'fulfilled') setRules(rulesRes.value.data || []);
-            else throw rulesRes.reason;
+            if (rulesRes.status === 'rejected') throw rulesRes.reason;
+            if (!rulesRes.value.res.ok || !Array.isArray(rulesRes.value.data)) {
+                throw new Error(rulesRes.value.data?.message || 'Fehler beim Laden der Scraping-Regeln.');
+            }
+            setRules(rulesRes.value.data);
 
-            if (categoriesRes.status === 'fulfilled') setCategories(categoriesRes.value.data || []);
-            if (bpRes.status === 'fulfilled') setBusinessPartners(bpRes.value.data || []);
-            if (queueRes.status === 'fulfilled') setQueueStatus(queueRes.value.data || null);
+            if (categoriesRes.status === 'fulfilled' && categoriesRes.value.res.ok && Array.isArray(categoriesRes.value.data)) setCategories(categoriesRes.value.data);
+            if (bpRes.status === 'fulfilled' && bpRes.value.res.ok && Array.isArray(bpRes.value.data)) setBusinessPartners(bpRes.value.data);
+            if (queueRes.status === 'fulfilled' && queueRes.value.res.ok) setQueueStatus(queueRes.value.data || null);
         } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Laden der Daten.');
+            setError(err.response?.data?.message || err.message || 'Fehler beim Laden der Daten.');
         } finally {
             setLoading(false);
         }
     }, []);
 
     useEffect(() => { fetchInitialData(); }, [fetchInitialData]);
+
+    useEffect(() => {
+        testRequestRef.current += 1;
+        setTestResult(null);
+        setTestError(null);
+    }, [formState]);
 
     useEffect(() => {
         if (!currentJobId || !logModalOpen || (jobStatus !== 'running' && jobStatus !== 'pending')) return;
@@ -265,6 +287,8 @@ const AdminScrapingRulesPage: React.FC = () => {
             return next;
         });
         setTestResult(null);
+        setTestError(null);
+        testRequestRef.current += 1;
     };
 
     const handleOpenAddDialog = () => {
@@ -273,6 +297,7 @@ const AdminScrapingRulesPage: React.FC = () => {
         setOpenDialog(true);
         setSuggestionAlert(null);
         setTestResult(null);
+        setTestError(null);
     };
 
     const handleOpenEditDialog = (rule: ScrapingRule) => {
@@ -301,6 +326,36 @@ const AdminScrapingRulesPage: React.FC = () => {
         setOpenDialog(true);
         setSuggestionAlert(null);
         setTestResult(null);
+        setTestError(null);
+        testRequestRef.current += 1;
+    };
+
+    const handleDuplicateRule = (rule: ScrapingRule) => {
+        handleOpenEditDialog(rule);
+        setEditingRule(null);
+        const managed = isBusinessPartnerCategory(rule.category_default);
+        const base = `${rule.source_identifier.slice(0, 85)}_kopie`;
+        let source = base;
+        let suffix = 2;
+        while (rules.some(existing => existing.source_identifier === source)) source = `${base}_${suffix++}`;
+        setFormState(prev => ({
+            ...prev, name: `${rule.name || rule.source_identifier} (Kopie)`,
+            source_identifier: managed ? '' : source,
+            business_partner_id: managed ? null : prev.business_partner_id,
+            is_active: false, schedule: null,
+        }));
+        setSuggestionAlert(managed
+            ? 'Kopie vorbereitet. Bitte einen anderen Mandanten oder eine andere Kategorie wählen: Pro Mandant und News-/Events-Kategorie ist nur eine Quellenkennung vorgesehen. Die Kopie startet deaktiviert und ohne Zeitplan.'
+            : 'Kopie vorbereitet: neue Quellenkennung, zunächst deaktiviert und ohne Zeitplan. Bitte prüfen und mit „Hinzufügen“ speichern.');
+    };
+
+    const handleCopyConfiguration = async (rule: Partial<ScrapingRule> = buildRuleData()) => {
+        const data = Object.fromEntries(Object.keys(initialFormState).map(key => [key, rule[key as keyof ScrapingRule] ?? null]));
+        const text = JSON.stringify(data, null, 2);
+        try {
+            await navigator.clipboard.writeText(text);
+            setSnackbar({ open: true, message: 'Regelkonfiguration als JSON kopiert.' });
+        } catch (_) { setManualCopyText(text); }
     };
 
     const handleCloseDialog = () => {
@@ -309,6 +364,8 @@ const AdminScrapingRulesPage: React.FC = () => {
         setError(null);
         setSuggestionAlert(null);
         setTestResult(null);
+        setTestError(null);
+        testRequestRef.current += 1;
     };
 
     const buildRuleData = () => ({
@@ -326,13 +383,14 @@ const AdminScrapingRulesPage: React.FC = () => {
             const method = editingRule?.id ? 'put' : 'post';
             const url = editingRule?.id ? `/api/admin/scraping-rules/${editingRule.id}` : '/api/admin/scraping-rules';
             const res = await apiClient[method](url, ruleData, { headers: { 'x-auth-token': token } });
+            if (!res.res.ok) throw new Error(res.data?.message || 'Fehler beim Speichern.');
 
             const warnings = res.data?.warnings || [];
             setSnackbar({ open: true, message: warnings.length ? `Regel gespeichert. Warnungen: ${warnings.length}` : 'Regel erfolgreich gespeichert.' });
             handleCloseDialog();
             fetchInitialData();
         } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Speichern.');
+            setError(err.response?.data?.message || err.message || 'Fehler beim Speichern.');
         }
     };
 
@@ -340,11 +398,12 @@ const AdminScrapingRulesPage: React.FC = () => {
         if (!window.confirm('Diese Regel wird deaktiviert/archiviert. Fortfahren?')) return;
         try {
             const token = 'cookie-session';
-            await apiClient.delete(`/api/admin/scraping-rules/${id}`, { headers: { 'x-auth-token': token } });
+            const res = await apiClient.delete(`/api/admin/scraping-rules/${id}`, { headers: { 'x-auth-token': token } });
+            if (!res.res.ok) throw new Error(res.data?.message || 'Fehler beim Archivieren.');
             setSnackbar({ open: true, message: 'Regel wurde deaktiviert/archiviert.' });
             fetchInitialData();
         } catch (err: any) {
-            alert(err.response?.data?.message || 'Fehler beim Archivieren.');
+            alert(err.response?.data?.message || err.message || 'Fehler beim Archivieren.');
         }
     };
 
@@ -356,27 +415,34 @@ const AdminScrapingRulesPage: React.FC = () => {
         try {
             const token = 'cookie-session';
             const res = await apiClient.post(`/api/admin/scraping-rules/${rule.id}/trigger-scrape`, {}, { headers: { 'x-auth-token': token } });
+            if (!res.res.ok) throw new Error(res.data?.message || 'Fehler beim Auslösen des Jobs.');
             setCurrentJobId(res.data.jobId);
             setJobStatus('running');
         } catch (err: any) {
-            const errorMessage = err.response?.data?.message || 'Fehler beim Auslösen des Jobs.';
+            const errorMessage = err.response?.data?.message || err.message || 'Fehler beim Auslösen des Jobs.';
             setJobLogs(prev => [...prev, { log_level: 'ERROR', message: errorMessage, created_at: new Date().toISOString() }]);
             setJobStatus('failed');
         }
     };
 
     const handleTestRule = async () => {
+        const requestId = ++testRequestRef.current;
         setTesting(true);
-        setError(null);
+        setTestError(null);
         setTestResult(null);
+        testSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         try {
             const token = 'cookie-session';
             const res = await apiClient.post('/api/admin/scraping-rules/test-rule', buildRuleData(), { headers: { 'x-auth-token': token } });
-            setTestResult(res.data);
+            if (requestId !== testRequestRef.current) return;
+            if (!res.res.ok || !res.data?.ok || !res.data?.preview) {
+                setTestError(res.data?.message || 'Der Test liefert kein Ergebnis. Bitte URL, Pflichtfelder und API prüfen.');
+            } else { setTestResult(res.data); }
         } catch (err: any) {
-            setError(err.response?.data?.message || 'Regel-Test fehlgeschlagen.');
+            if (requestId === testRequestRef.current) setTestError(err.response?.data?.message || err.message || 'Regel-Test fehlgeschlagen.');
         } finally {
             setTesting(false);
+            if (requestId === testRequestRef.current) testSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     };
 
@@ -405,6 +471,7 @@ const AdminScrapingRulesPage: React.FC = () => {
         try {
             const token = 'cookie-session';
             const response = await apiClient.post('/api/admin/scraping-rules/suggest', { url: formState.url_pattern }, { headers: { 'x-auth-token': token } });
+            if (!response.res.ok) throw new Error(response.data?.message || 'Fehler beim Abrufen der Vorschläge.');
             const data = response.data;
             if (data?.format === 'html') {
                 setFormState(prevState => ({
@@ -424,7 +491,7 @@ const AdminScrapingRulesPage: React.FC = () => {
                 setError('Die KI hat keine brauchbare Antwortstruktur zurückgegeben.');
             }
         } catch (err: any) {
-            setError(err.response?.data?.message || 'Fehler beim Abrufen der Vorschläge.');
+            setError(err.response?.data?.message || err.message || 'Fehler beim Abrufen der Vorschläge.');
         } finally {
             setSuggesting(false);
         }
@@ -482,7 +549,7 @@ const AdminScrapingRulesPage: React.FC = () => {
                     </Box>
                 </Box>
 
-                {loading && rules.length === 0 ? <CircularProgress /> : error ? <Alert severity="error">{error}</Alert> : (
+                {loading && rules.length === 0 ? <CircularProgress /> : error && !openDialog ? <Alert severity="error">{error}</Alert> : (
                     <Paper>
                         <TableContainer sx={{ maxHeight: '70vh' }}>
                             <Table stickyHeader>
@@ -546,6 +613,7 @@ const AdminScrapingRulesPage: React.FC = () => {
                                                 <TableCell>{rule.last_scraped_at ? new Date(rule.last_scraped_at).toLocaleString('de-AT') : '-'}</TableCell>
                                                 <TableCell>
                                                     <IconButton size="small" color="primary" onClick={() => handleOpenEditDialog(rule)}><EditIcon /></IconButton>
+                                                    <MuiTooltip title="Regel duplizieren"><IconButton size="small" color="primary" onClick={() => handleDuplicateRule(rule)} aria-label="Regel duplizieren"><ContentCopyIcon /></IconButton></MuiTooltip>
                                                     <MuiTooltip title="Regel deaktivieren/archivieren"><IconButton size="small" color="error" onClick={() => handleDelete(rule.id)}><DeleteIcon /></IconButton></MuiTooltip>
                                                     <MuiTooltip title={hasActiveJob ? 'Für diese Regel läuft bereits ein Job' : 'Scraping jetzt starten'}>
                                                         <span><IconButton size="small" color="secondary" disabled={hasActiveJob || !queueStatus?.worker?.online} onClick={() => handleTriggerScrape(rule)}><PlayArrowIcon /></IconButton></span>
@@ -560,8 +628,10 @@ const AdminScrapingRulesPage: React.FC = () => {
                     </Paper>
                 )}
 
-                <Dialog open={openDialog} onClose={handleCloseDialog} fullWidth maxWidth="md">
-                    <DialogTitle>{editingRule?.id ? 'Scraping-Regel bearbeiten' : 'Neue Scraping-Regel hinzufügen'}</DialogTitle>
+                <Dialog open={openDialog} onClose={testing ? undefined : handleCloseDialog} fullWidth maxWidth="md">
+                    <DialogTitle sx={{ pr: 7 }}>{editingRule?.id ? 'Scraping-Regel bearbeiten' : 'Neue Scraping-Regel hinzufügen'}
+                        <IconButton onClick={handleCloseDialog} disabled={testing} aria-label="Schließen" sx={{ position: 'absolute', right: 12, top: 12 }}><CloseIcon /></IconButton>
+                    </DialogTitle>
                     <DialogContent>
                         <Grid container spacing={2} sx={{ mt: 1 }}>
                             <Grid item xs={12}>
@@ -599,6 +669,7 @@ const AdminScrapingRulesPage: React.FC = () => {
                             {showHtmlSelectors && (
                                 <>
                                     <Grid item xs={12}><Typography variant="subtitle2" sx={{ mt: 1 }}>HTML-Selektoren / RSS</Typography></Grid>
+                                    <Grid item xs={12}><Alert severity="info">RSS/Atom: Alle Selektoren und Datumformat dürfen leer bleiben; Headless-Browser ausschalten. Kategorie und Quellenkennung sind erforderlich. Ohne Zeitplan läuft die Regel nur bei „Scraping jetzt starten“.</Alert></Grid>
                                     <Grid item xs={12}><TextField name="content_container_selector" label="Container Selektor" fullWidth value={formState.content_container_selector} onChange={handleFormChange} margin="dense" helperText="Bei RSS/XML leer lassen. Bei HTML: Selektor für jeden einzelnen Eintrag." /></Grid>
                                     <Grid item xs={12}><TextField name="link_selector" label="Link Selektor" fullWidth value={formState.link_selector} onChange={handleFormChange} margin="dense" /></Grid>
                                     {formState.rule_type === 'content' && (
@@ -665,29 +736,35 @@ const AdminScrapingRulesPage: React.FC = () => {
                             </Grid>
 
                             <Grid item xs={12}>
+                                <Box ref={testSectionRef} sx={{ scrollMarginTop: 16 }}>
                                 <Divider sx={{ my: 1 }} />
-                                <Button variant="outlined" startIcon={testing ? <CircularProgress size={18} /> : <ScienceIcon />} onClick={handleTestRule} disabled={testing || !formState.url_pattern || !formState.category_default}>
+                                <Button variant="outlined" startIcon={testing ? <CircularProgress size={18} /> : <ScienceIcon />} onClick={handleTestRule} disabled={testing || !formState.url_pattern || !formState.category_default || !formState.source_identifier}>
                                     {testing ? 'Teste Regel...' : 'Regel testen ohne Speichern'}
                                 </Button>
+                                <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 1 }}>Vorschau ohne neue Inhalte oder Jobs zu speichern. Pflichtfelder: URL, Quellenkennung und Kategorie.</Typography>
+                                {testing && <LinearProgress sx={{ mt: 2 }} />}
+                                {testError && <Alert severity="error" role="alert" sx={{ mt: 2 }}>{testError}</Alert>}
+                                </Box>
                             </Grid>
 
                             {testResult?.preview && (
                                 <Grid item xs={12}>
-                                    <Alert severity="success" sx={{ mb: 2 }}>
-                                        Test erfolgreich: {testResult.preview.found} gefunden, {testResult.preview.would_insert} neu, {testResult.preview.already_existing} bereits vorhanden, {testResult.preview.skipped} übersprungen.
+                                    <Alert severity={testResult.preview.found === 0 || testResult.preview.skipped === testResult.preview.found ? 'warning' : 'success'} sx={{ mb: 2 }}>
+                                        {testResult.preview.kind === 'xml_feed' ? `RSS/Atom erkannt${testResult.preview.feed_title ? `: ${testResult.preview.feed_title}` : ''}.` : 'Test abgeschlossen.'} {testResult.preview.total_found !== undefined && `${testResult.preview.total_found} Einträge insgesamt.`} Vorschau: {testResult.preview.found} geprüft, {testResult.preview.would_insert} neu, {testResult.preview.already_existing} bereits vorhanden, {testResult.preview.skipped} übersprungen. Es wurde nichts importiert.
                                         {testResult.preview.containers_found !== undefined && ` Container gefunden: ${testResult.preview.containers_found}.`}
                                         {testResult.preview.channel_title && ` Kanal: ${testResult.preview.channel_title}.`}
+                                        {testResult.preview.content_type && ` Inhaltstyp: ${testResult.preview.content_type}.`}
                                     </Alert>
-                                    {(testResult.validation?.warnings || []).map((warning, idx) => <Alert key={idx} severity="warning" sx={{ mb: 1 }}>{warning}</Alert>)}
+                                    {[...(testResult.validation?.warnings || []), ...(testResult.preview.warnings || [])].map((warning, idx) => <Alert key={idx} severity="warning" sx={{ mb: 1 }}>{warning}</Alert>)}
                                     <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 240 }}>
                                         <Table size="small" stickyHeader>
                                             <TableHead><TableRow><TableCell>Titel</TableCell><TableCell>Datum</TableCell><TableCell>Status</TableCell></TableRow></TableHead>
                                             <TableBody>
                                                 {(testResult.preview.items || []).map((item, idx) => (
                                                     <TableRow key={idx}>
-                                                        <TableCell>{item.title}</TableCell>
+                                                        <TableCell>{item.original_url ? <MuiLink href={item.original_url} target="_blank" rel="noopener noreferrer">{item.title || 'Ohne Titel'}</MuiLink> : item.title || 'Ohne Titel'}</TableCell>
                                                         <TableCell>{item.published_date ? new Date(item.published_date).toLocaleDateString('de-AT') : '-'}</TableCell>
-                                                        <TableCell><Chip size="small" label={item.exists ? 'bereits vorhanden' : 'neu'} color={item.exists ? 'default' : 'success'} /></TableCell>
+                                                        <TableCell><Chip size="small" label={item.skip_reason || (item.exists ? 'bereits vorhanden' : 'neu')} color={item.skip_reason ? 'warning' : item.exists ? 'default' : 'success'} sx={{ maxWidth: '100%', height: 'auto', '& .MuiChip-label': { whiteSpace: 'normal', py: 0.5 } }} /></TableCell>
                                                     </TableRow>
                                                 ))}
                                             </TableBody>
@@ -697,10 +774,20 @@ const AdminScrapingRulesPage: React.FC = () => {
                             )}
                         </Grid>
                     </DialogContent>
-                    <DialogActions>
-                        <Button onClick={handleCloseDialog}>Abbrechen</Button>
-                        <Button onClick={handleSubmit} disabled={loading}>{editingRule ? 'Speichern' : 'Hinzufügen'}</Button>
+                    <DialogActions sx={{ flexWrap: 'wrap', gap: 1 }}>
+                        <Button startIcon={<ContentCopyIcon />} onClick={() => void handleCopyConfiguration()} sx={{ mr: 'auto' }}>Konfiguration kopieren</Button>
+                        <Button onClick={handleCloseDialog} disabled={testing}>Abbrechen</Button>
+                        <Button onClick={handleSubmit} disabled={loading || testing}>{editingRule ? 'Speichern' : 'Hinzufügen'}</Button>
                     </DialogActions>
+                </Dialog>
+
+                <Dialog open={manualCopyText !== null} onClose={() => setManualCopyText(null)} fullWidth maxWidth="sm">
+                    <DialogTitle>Regelkonfiguration kopieren</DialogTitle>
+                    <DialogContent>
+                        <Alert severity="info" sx={{ mb: 2 }}>Die Zwischenablage ist hier nicht verfügbar. Text markieren und mit Strg+C kopieren.</Alert>
+                        <TextField multiline fullWidth minRows={10} value={manualCopyText || ''} InputProps={{ readOnly: true }} onFocus={event => event.target.select()} />
+                    </DialogContent>
+                    <DialogActions><Button onClick={() => setManualCopyText(null)}>Schließen</Button></DialogActions>
                 </Dialog>
 
                 <Dialog open={logModalOpen} onClose={handleCloseLogModal} fullWidth maxWidth="md">

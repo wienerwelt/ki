@@ -1,5 +1,5 @@
 # Wir nutzen ein schlankes Debian-basiertes Node-Image
-FROM node:20-slim
+FROM node:24-bookworm-slim
 
 # Installieren der System-Abhängigkeiten für Puppeteer / Chromium
 RUN apt-get update && apt-get install -y \

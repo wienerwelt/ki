@@ -229,7 +229,10 @@ const LoginForm: React.FC<LoginFormProps> = ({ isRegister = false, prefilledUser
         login(authenticatedUser, data.session_expires_at || null);
         showSnackbar('Erfolgreich angemeldet.', 'success');
         navigate(
-          getDefaultWorkspacePath(authenticatedUser, null),
+          /^\/career(?:\?entry=[0-9a-f-]{36})?$/.test(searchParams.get('next') || '')
+            && (authenticatedUser.role === 'admin' || (authenticatedUser.tenant_modules || []).includes('content'))
+            ? searchParams.get('next')!
+            : getDefaultWorkspacePath(authenticatedUser, null),
           { replace: true }
         );
       }
