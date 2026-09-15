@@ -6,9 +6,8 @@ const db = require('../config/db');
  * - "Login" = activity_log.action_type IN ('LOGIN_SUCCESS', 'USER_LOGIN', 'LOGIN') AND status='success'
  * - "Scraped Inhalte" = COUNT(scraped_content) im Zeitraum (scraped_at)
  * - "Scraping Jobs" = COUNT(scraping_jobs) im Zeitraum (completed_at) mit status='completed'
- * - "AI Tokens (Redactional)" = SUM(activity_log.details.tokenUsage.totalTokens) für action_type LIKE 'AI_%_SUCCESS'
- * - "AI Tokens (Jobs/Usage Logs)" = SUM(ai_usage_logs.total_tokens)
- * - "Total Tokens" = Redactional + UsageLogs (nicht doppelt gezählt – setzt voraus, dass ihr beides getrennt loggt)
+ * - AI usage comes exclusively from ai_usage_events (canonical calls + deduplicated legacy logs).
+ * - The two legacy KPI fields are disjoint subsets; background calls have shared/system scope.
  */
 
 const LOGIN_ACTION_TYPES = ['LOGIN_SUCCESS', 'USER_LOGIN', 'LOGIN'];
@@ -107,23 +106,21 @@ exports.getUsageStats = async (req, res) => {
             ) AS logins ON ts.period = logins.period
             -- Tokens (Redactional)
             LEFT JOIN (
-                SELECT date_trunc('${dateTrunc}', al.timestamp) as period,
-                       SUM((al.details->'tokenUsage'->>'promptTokens')::int)::bigint as prompt,
-                       SUM((al.details->'tokenUsage'->>'completionTokens')::int)::bigint as completion
-                FROM activity_log al
-                JOIN users u ON al.user_id = u.id
-                WHERE al.timestamp >= $1 AND al.timestamp < $2
-                  AND al.action_type LIKE 'AI_%_SUCCESS'
-                  AND ($3::uuid IS NULL OR u.business_partner_id = $3::uuid)
+                SELECT date_trunc('${dateTrunc}', al.created_at) as period,
+                       SUM(al.prompt_tokens)::bigint as prompt,
+                       SUM(al.completion_tokens)::bigint as completion
+                FROM ai_usage_events al
+                WHERE al.created_at >= $1 AND al.created_at < $2
+                  AND ($3::uuid IS NULL OR al.business_partner_id = $3::uuid)
                 GROUP BY period
             ) AS tokens ON ts.period = tokens.period
             -- Funding Tokens (aus Jobs)
             LEFT JOIN (
                 SELECT date_trunc('${dateTrunc}', aul.created_at) as period,
                        SUM(aul.total_tokens)::bigint as total
-                FROM ai_usage_logs aul
-                JOIN ai_jobs aj ON aul.job_id = aj.id
-                JOIN scraping_rules sr ON aj.scraping_rule_id = sr.id
+                FROM ai_usage_events aul
+                JOIN ai_jobs aj ON aul.job_id = aj.id::text
+                JOIN scraping_rules sr ON COALESCE(aj.scraping_rule_id,aj.ai_prompt_rule_id) = sr.id
                 WHERE sr.rule_type = 'funding'
                   AND aul.created_at >= $1 AND aul.created_at < $2
                   AND ($3::uuid IS NULL OR aul.business_partner_id = $3::uuid)
@@ -193,25 +190,26 @@ exports.getUsageStats = async (req, res) => {
                 ) AS total_scraping_jobs_completed,
 
                 -- Tokens: Redactional (Activity Log)
-                (SELECT COALESCE(SUM((al.details->'tokenUsage'->>'totalTokens')::int), 0)::bigint
-                 FROM activity_log al JOIN users u ON al.user_id = u.id
-                 WHERE al.timestamp >= $1 AND al.timestamp < $2
-                   AND al.action_type LIKE 'AI_%_SUCCESS'
-                   AND ($3::uuid IS NULL OR u.business_partner_id = $3::uuid)
+                (SELECT COALESCE(SUM(al.total_tokens), 0)::bigint
+                 FROM ai_usage_events al
+                 WHERE al.created_at >= $1 AND al.created_at < $2
+                   AND al.origin = 'legacy_activity'
+                   AND ($3::uuid IS NULL OR al.business_partner_id = $3::uuid)
                 ) AS total_redactional_tokens,
 
                 -- Tokens: Usage Logs (alle Jobs)
                 (SELECT COALESCE(SUM(aul.total_tokens), 0)::bigint
-                 FROM ai_usage_logs aul
+                 FROM ai_usage_events aul
                  WHERE aul.created_at >= $1 AND aul.created_at < $2
+                   AND aul.origin <> 'legacy_activity'
                    AND ($3::uuid IS NULL OR aul.business_partner_id = $3::uuid)
                 ) AS total_usage_log_tokens,
 
                 -- Tokens: Funding (subset)
                 (SELECT COALESCE(SUM(aul.total_tokens), 0)::bigint
-                 FROM ai_usage_logs aul
-                 JOIN ai_jobs aj ON aul.job_id = aj.id
-                 JOIN scraping_rules sr ON aj.scraping_rule_id = sr.id
+                 FROM ai_usage_events aul
+                 JOIN ai_jobs aj ON aul.job_id = aj.id::text
+                 JOIN scraping_rules sr ON COALESCE(aj.scraping_rule_id,aj.ai_prompt_rule_id) = sr.id
                  WHERE sr.rule_type = 'funding'
                    AND aul.created_at >= $1 AND aul.created_at < $2
                    AND ($3::uuid IS NULL OR aul.business_partner_id = $3::uuid)
@@ -219,9 +217,9 @@ exports.getUsageStats = async (req, res) => {
 
                 -- Funding processed opportunities (count)
                 (SELECT COUNT(aul.id)::int
-                 FROM ai_usage_logs aul
-                 JOIN ai_jobs aj ON aul.job_id = aj.id
-                 JOIN scraping_rules sr ON aj.scraping_rule_id = sr.id
+                 FROM ai_usage_events aul
+                 JOIN ai_jobs aj ON aul.job_id = aj.id::text
+                 JOIN scraping_rules sr ON COALESCE(aj.scraping_rule_id,aj.ai_prompt_rule_id) = sr.id
                  WHERE sr.rule_type = 'funding'
                    AND aul.created_at >= $1 AND aul.created_at < $2
                    AND ($3::uuid IS NULL OR aul.business_partner_id = $3::uuid)
@@ -230,14 +228,7 @@ exports.getUsageStats = async (req, res) => {
                 -- AI Requests (count)
                 (
                     (SELECT COUNT(*)::int
-                     FROM activity_log al JOIN users u ON al.user_id = u.id
-                     WHERE al.timestamp >= $1 AND al.timestamp < $2
-                       AND al.action_type LIKE 'AI_%_SUCCESS'
-                       AND ($3::uuid IS NULL OR u.business_partner_id = $3::uuid)
-                    )
-                    +
-                    (SELECT COUNT(*)::int
-                     FROM ai_usage_logs aul
+                     FROM ai_usage_events aul
                      WHERE aul.created_at >= $1 AND aul.created_at < $2
                        AND ($3::uuid IS NULL OR aul.business_partner_id = $3::uuid)
                     )
@@ -276,24 +267,11 @@ exports.getUsageStats = async (req, res) => {
         const providerUsageQuery = `
             WITH all_usage AS (
                 SELECT
-                    u.business_partner_id,
-                    al.details->>'model' as model,
-                    (al.details->'tokenUsage'->>'promptTokens')::int as prompt_tokens,
-                    (al.details->'tokenUsage'->>'completionTokens')::int as completion_tokens
-                FROM activity_log al
-                JOIN users u ON al.user_id = u.id
-                WHERE al.timestamp >= $1 AND al.timestamp < $2
-                  AND al.action_type LIKE 'AI_%_SUCCESS'
-                  AND al.details->>'model' IS NOT NULL
-
-                UNION ALL
-
-                SELECT
                     aul.business_partner_id,
                     aul.model,
                     aul.prompt_tokens,
                     aul.completion_tokens
-                FROM ai_usage_logs aul
+                FROM ai_usage_events aul
                 WHERE aul.created_at >= $1 AND aul.created_at < $2
                   AND aul.model IS NOT NULL
             )
@@ -316,26 +294,15 @@ exports.getUsageStats = async (req, res) => {
         // -------------------------
         const costPerBpQuery = `
             WITH all_usage AS (
-                SELECT u.business_partner_id,
-                       (al.details->'tokenUsage'->>'totalTokens')::int as total_tokens
-                FROM activity_log al
-                JOIN users u ON al.user_id = u.id
-                WHERE al.timestamp >= $1 AND al.timestamp < $2
-                  AND al.action_type LIKE 'AI_%_SUCCESS'
-                  AND u.business_partner_id IS NOT NULL
-
-                UNION ALL
-
                 SELECT aul.business_partner_id,
                        aul.total_tokens::int as total_tokens
-                FROM ai_usage_logs aul
+                FROM ai_usage_events aul
                 WHERE aul.created_at >= $1 AND aul.created_at < $2
-                  AND aul.business_partner_id IS NOT NULL
             )
-            SELECT bp.name,
+            SELECT COALESCE(bp.name, 'Gemeinsame / System-KI') AS name,
                    COALESCE(SUM(au.total_tokens), 0)::bigint as total_tokens
             FROM all_usage au
-            JOIN business_partners bp ON au.business_partner_id = bp.id
+            LEFT JOIN business_partners bp ON au.business_partner_id = bp.id
             WHERE ($3::uuid IS NULL OR au.business_partner_id = $3::uuid)
             GROUP BY bp.name
             HAVING COALESCE(SUM(au.total_tokens), 0) > 0
@@ -402,9 +369,7 @@ exports.getUsageStats = async (req, res) => {
         // 7) Dropdowns
         // -------------------------
         const availableModelsPromise = db.query(`
-            SELECT DISTINCT model FROM ai_usage_logs WHERE model IS NOT NULL
-            UNION
-            SELECT DISTINCT details->>'model' as model FROM activity_log WHERE details->>'model' IS NOT NULL;
+            SELECT DISTINCT model FROM ai_usage_events WHERE model IS NOT NULL;
         `);
         const businessPartnersPromise = db.query(`SELECT id, name FROM business_partners ORDER BY name ASC;`);
 

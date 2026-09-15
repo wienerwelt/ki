@@ -1,6 +1,7 @@
 // backend/services/reportingService.js
 const db = require('../config/db');
 const { ACTIVE_MEMBERSHIP_SQL } = require('../utils/membershipExpiry');
+const { getMonthlyReportPeriod } = require('../utils/monthlyReportPeriod');
 const { sendEmail } = require('./emailService');
 const { renderMonthlyPartnerReportEmail } = require('./emailTemplates');
 const { connection: redisClient, heartbeatRedisClient } = require('./queueService');
@@ -115,23 +116,23 @@ async function getDailyStats() {
             [since, vortagStart]
         ),
 
-        // 4) Tokens aus activity_log (UI / Analysis)
+        // 4) Deduplicated legacy activity tokens; disjoint from canonical usage.
         db.query(
             `SELECT 
-                COALESCE(SUM(CASE WHEN timestamp >= $1 THEN (details->'tokenUsage'->>'totalTokens')::int ELSE 0 END), 0)::int AS current,
-                COALESCE(SUM(CASE WHEN timestamp >= $2 AND timestamp < $1 THEN (details->'tokenUsage'->>'totalTokens')::int ELSE 0 END), 0)::int AS previous
-             FROM activity_log
-             WHERE action_type LIKE 'AI_%_SUCCESS' AND timestamp >= $2`,
+                COALESCE(SUM(CASE WHEN created_at >= $1 THEN total_tokens ELSE 0 END), 0)::bigint AS current,
+                COALESCE(SUM(CASE WHEN created_at >= $2 AND created_at < $1 THEN total_tokens ELSE 0 END), 0)::bigint AS previous
+             FROM ai_usage_events
+             WHERE origin='legacy_activity' AND created_at >= $2`,
             [since, vortagStart]
         ),
 
-        // 5) Tokens aus ai_usage_logs (Jobs / Background)
+        // 5) Canonical calls and retained legacy usage, including null-user jobs.
         db.query(
             `SELECT 
                 COALESCE(SUM(CASE WHEN created_at >= $1 THEN total_tokens ELSE 0 END), 0)::int AS current,
                 COALESCE(SUM(CASE WHEN created_at >= $2 AND created_at < $1 THEN total_tokens ELSE 0 END), 0)::int AS previous
-             FROM ai_usage_logs
-             WHERE created_at >= $2`,
+             FROM ai_usage_events
+             WHERE origin<>'legacy_activity' AND created_at >= $2`,
             [since, vortagStart]
         ),
 
@@ -182,8 +183,8 @@ async function getDailyStats() {
         newUsers: results[0].rows[0],
         successfulLogins: results[1].rows[0],
         fileUploads: results[2].rows[0],
-        tokensActivityLog: results[3].rows[0],
-        tokensUsageLogs: results[4].rows[0],
+        tokensActivityLog: {current:Number(results[3].rows[0].current),previous:Number(results[3].rows[0].previous)},
+        tokensUsageLogs: {current:Number(results[4].rows[0].current),previous:Number(results[4].rows[0].previous)},
         scrapedContents: results[5].rows[0],
         scrapingJobsCompleted: results[6].rows[0],
         newIdeas: results[7].rows[0],
@@ -272,13 +273,13 @@ function formatReportAsHtml(stats, environmentInfo, dashboardUrl) {
                         <td style="padding:10px; border:1px solid #e2e8f0; text-align: center;">${getTrendIndicator(stats.scrapingJobsCompleted.current, stats.scrapingJobsCompleted.previous)}</td>
                     </tr>
                     <tr style="background:#f8fafc;">
-                        <td style="padding:10px; border:1px solid #e2e8f0;">AI Tokens (UI/User requests)</td>
+                        <td style="padding:10px; border:1px solid #e2e8f0;">KI-Tokens (ältere Aktivitäten)</td>
                         <td style="padding:10px; border:1px solid #e2e8f0; text-align: right;"><strong>${stats.tokensActivityLog.current}</strong></td>
                         <td style="padding:10px; border:1px solid #e2e8f0; text-align: right; color: #64748b;">${stats.tokensActivityLog.previous}</td>
                         <td style="padding:10px; border:1px solid #e2e8f0; text-align: center;">${getTrendIndicator(stats.tokensActivityLog.current, stats.tokensActivityLog.previous)}</td>
                     </tr>
                     <tr>
-                        <td style="padding:10px; border:1px solid #e2e8f0;">AI Tokens (Background-Jobs)</td>
+                        <td style="padding:10px; border:1px solid #e2e8f0;">KI-Tokens (erfasste Aufrufe)</td>
                         <td style="padding:10px; border:1px solid #e2e8f0; text-align: right;"><strong>${stats.tokensUsageLogs.current}</strong></td>
                         <td style="padding:10px; border:1px solid #e2e8f0; text-align: right; color: #64748b;">${stats.tokensUsageLogs.previous}</td>
                         <td style="padding:10px; border:1px solid #e2e8f0; text-align: center;">${getTrendIndicator(stats.tokensUsageLogs.current, stats.tokensUsageLogs.previous)}</td>
@@ -501,7 +502,6 @@ exports.generateAndSendBriefingNewsletters = async () => {
 exports.generateAndSendMonthlyReport = async (options = {}) => {
     const dryRun = Boolean(options.dryRun);
     const targetBusinessPartnerId = options.targetBusinessPartnerId || null;
-    const includeUnsubscribedRecipients = dryRun && Boolean(options.includeUnsubscribedRecipients);
     const collectPreviewDetails = dryRun && Boolean(options.collectPreviewDetails);
     console.log(
         '[Reporting] Starte Generierung der monatlichen Mandanten-Reports...'
@@ -518,25 +518,7 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
      * >= prevMonthStart
      * <  lastMonthStart
      */
-    const now = new Date();
-
-    const currentMonthStart = new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        1
-    ));
-
-    const lastMonthStart = new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth() - 1,
-        1
-    ));
-
-    const prevMonthStart = new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth() - 2,
-        1
-    ));
+    const { currentMonthStart, lastMonthStart, prevMonthStart, reportMonth } = getMonthlyReportPeriod();
 
     console.log('[Reporting] Berichtszeitraum:', {
         previousMonth: {
@@ -592,7 +574,7 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
         const partnerParams = [];
         let partnerWhere = 'bp.is_active = TRUE';
         if (!(collectPreviewDetails && targetBusinessPartnerId)) {
-            partnerWhere += ' AND COALESCE(bp.allow_automated_newsletter, FALSE) = TRUE';
+            partnerWhere += ' AND bp.monthly_report_enabled = TRUE';
         }
         if (targetBusinessPartnerId) {
             partnerParams.push(targetBusinessPartnerId);
@@ -620,10 +602,8 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
         let skippedAlreadySentCount = 0;
         let failedCount = 0;
         const previews = [];
-        const reportMonth = lastMonthStart.toISOString().slice(0, 10);
 
         for (const partner of partners) {
-            const optInCondition = includeUnsubscribedRecipients ? '' : 'AND newsletter_opt_in = TRUE';
             const { rows: recipients } = await client.query(`
                 SELECT
                     id,
@@ -634,7 +614,7 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                 FROM users u
                 WHERE business_partner_id = $1
                   AND role IN ('assistenz', 'admin')
-                  ${optInCondition}
+                  AND monthly_report_email_enabled = TRUE
                   AND is_active = TRUE
                   AND ${ACTIVE_MEMBERSHIP_SQL}
                   AND email IS NOT NULL
@@ -646,7 +626,7 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                 skippedPartnerCount++;
 
                 console.log(
-                    `[Reporting] Keine aktiven Empfänger mit Opt-in für Partner "${partner.name}".`
+                    `[Reporting] Keine aktiven Monatsreport-Empfänger für Partner "${partner.name}".`
                 );
 
                 if (!collectPreviewDetails) continue;
@@ -668,7 +648,8 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                 loginsRes,
                 readsRes,
                 communityRes,
-                downloadsRes
+                downloadsRes,
+                activeAccountsRes
             ] = await Promise.all([
                 client.query(`
                     SELECT
@@ -680,7 +661,9 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                         COUNT(*) FILTER (
                             WHERE timestamp >= $3
                               AND timestamp < $1
-                        )::int AS prev_logins
+                        )::int AS prev_logins,
+                        COUNT(DISTINCT user_id) FILTER (WHERE timestamp >= $1 AND timestamp < $2)::int AS current_active_users,
+                        COUNT(DISTINCT user_id) FILTER (WHERE timestamp >= $3 AND timestamp < $1)::int AS prev_active_users
                     FROM activity_log
                     WHERE action_type = 'LOGIN_SUCCESS'
                       AND status = 'success'
@@ -751,7 +734,18 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                           FROM users
                           WHERE business_partner_id = $4
                       )
-                `, queryParams)
+                `, queryParams),
+                client.query(`
+                    SELECT COUNT(*)::int AS active_accounts,
+                        COUNT(*) FILTER (WHERE EXISTS (
+                            SELECT 1 FROM activity_log al
+                            WHERE al.user_id = u.id AND al.action_type = 'LOGIN_SUCCESS'
+                              AND al.status = 'success' AND al.timestamp >= $1 AND al.timestamp < $2
+                        ))::int AS participating_accounts
+                    FROM users u
+                    WHERE u.business_partner_id = $3 AND u.is_active = TRUE
+                      AND ${ACTIVE_MEMBERSHIP_SQL}
+                `, [lastMonthStart, currentMonthStart, partner.id])
             ]);
 
             const storageLimit = Math.max(0, Number(
@@ -780,6 +774,17 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                     prev: Number(
                         loginsRes.rows[0]?.prev_logins || 0
                     )
+                },
+                activeUsers: {
+                    current: Number(loginsRes.rows[0]?.current_active_users || 0),
+                    prev: Number(loginsRes.rows[0]?.prev_active_users || 0),
+                },
+                participation: {
+                    activeAccounts: Number(activeAccountsRes.rows[0]?.active_accounts || 0),
+                    participatingAccounts: Number(activeAccountsRes.rows[0]?.participating_accounts || 0),
+                    percent: Number(activeAccountsRes.rows[0]?.active_accounts || 0) > 0
+                        ? Math.round(Number(activeAccountsRes.rows[0]?.participating_accounts || 0) / Number(activeAccountsRes.rows[0].active_accounts) * 100)
+                        : null,
                 },
 
                 reads: {
@@ -835,6 +840,7 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                         id: partner.id,
                         name: partner.name,
                         allowAutomatedNewsletter: Boolean(partner.allow_automated_newsletter),
+                        monthlyReportEnabled: Boolean(partner.monthly_report_enabled),
                     },
                     subject: `Ihre monatliche Plattform-Auswertung: ${stats.monthName}`,
                     reportMonth,
@@ -920,7 +926,8 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                         subject:
                             `Ihre monatliche Plattform-Auswertung: ${stats.monthName}`,
                         html: htmlContent,
-                        fromName: 'Dashboard Insights'
+                        fromName: 'Dashboard Insights',
+                        partner,
                     });
 
                     await client.query(`
@@ -958,7 +965,6 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
                 skippedAlreadySentCount,
                 failedCount,
                 dryRun,
-                includeUnsubscribedRecipients
             }
         );
 
@@ -974,7 +980,6 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
             skippedAlreadySentCount,
             failedCount,
             dryRun,
-            includeUnsubscribedRecipients,
             previews
         };
 

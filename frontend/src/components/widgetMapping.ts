@@ -4,6 +4,7 @@ import React from 'react';
 // This object maps the 'component_key' or 'type_key' from your database 
 // to the actual React component file.
 export const WIDGET_COMPONENTS: { [key: string]: React.LazyExoticComponent<React.ComponentType<any>> } = {
+    PeopleCareer: React.lazy(() => import('./widgets/PeopleCareerWidget')),
     GenericAI: React.lazy(() => import('./widgets/GenericAIWidget')),
     GenericScrape: React.lazy(() => import('./widgets/GenericScrapeWidget')),
     BusinessPartnerInfo: React.lazy(() => import('./widgets/BusinessPartnerInfoWidget')),

@@ -7,6 +7,26 @@ const { logActivity } = require('../services/auditLogService');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 const ASSISTANT_ALLOWED_TARGET_ROLES = new Set(['user', 'demo', 'sales_user']);
+const MAIL_PREFERENCE_FIELDS = ['newsletter_email_enabled', 'monthly_report_email_enabled'];
+
+function validateMailPreferences(req, res) {
+    for (const field of MAIL_PREFERENCE_FIELDS) {
+        if (req.body[field] === undefined) continue;
+        if (req.user.role !== 'admin') {
+            res.status(403).json({ message: 'Nur Admin darf die E-Mail-Empfangseinstellungen verwalten.' });
+            return false;
+        }
+        if (typeof req.body[field] !== 'boolean') {
+            res.status(400).json({ message: 'E-Mail-Empfangseinstellungen müssen aktiv oder inaktiv sein.' });
+            return false;
+        }
+    }
+    if (req.body.monthly_report_email_enabled === true && !['admin', 'assistenz'].includes(req.body.role)) {
+        res.status(400).json({ message: 'Monatsreports sind nur für Admin und Assistenz vorgesehen.' });
+        return false;
+    }
+    return true;
+}
 
 const normalizeUserEmail = (value) => String(value || '').trim().toLowerCase();
 const normalizeUsername = (value) => String(value || '').trim();
@@ -210,7 +230,8 @@ exports.getAllUsers = async (req, res) => {
                 u.id, u.username, u.first_name, u.last_name, u.organization_name, u.email, 
                 u.linkedin_url, u.login_count, u.membership_level,
                 u.role, u.is_active, u.active_until, u.created_at, u.updated_at, u.last_login_at,
-                u.profile_image_url, u.newsletter_opt_in,
+                u.profile_image_url, u.newsletter_opt_in, u.newsletter_opt_in_confirmed_at,
+                u.newsletter_email_enabled, u.monthly_report_email_enabled,
                 bp.name AS business_partner_name, bp.id AS business_partner_id
             ${baseQuery}
             ORDER BY u.last_name ASC, u.first_name ASC
@@ -247,7 +268,8 @@ exports.getUserById = async (req, res) => {
                 u.id, u.username, u.first_name, u.last_name, u.organization_name, u.email, 
                 u.phone, u.linkedin_url, u.login_count, u.contribution_score, u.membership_level,
                 u.role, u.is_active, u.active_until, u.created_at, u.updated_at, u.last_login_at,
-                u.profile_image_url, u.newsletter_opt_in,
+                u.profile_image_url, u.newsletter_opt_in, u.newsletter_opt_in_confirmed_at,
+                u.newsletter_email_enabled, u.monthly_report_email_enabled,
                 ARRAY(
                     SELECT ust.tag_name
                     FROM user_saved_tags ust
@@ -282,6 +304,7 @@ exports.createUser = async (req, res) => {
     const normalizedUsername = normalizeUsername(username);
 
     try {
+        if (!validateMailPreferences(req, res)) return;
         if (requester.role === 'assistenz' && !ASSISTANT_ALLOWED_TARGET_ROLES.has(String(role).toLowerCase())) {
             await logActivity({ userId: requester.id, username: requester.username, actionType: 'USER_CREATE_DENIED', status: 'failure', details: { reason: 'Assistant tried to create admin', attemptedRole: role }, ipAddress: req.ip });
             return res.status(403).json({ message: 'Mandantenassistenzen dürfen keine privilegierten Benutzerrollen vergeben.' });
@@ -313,9 +336,10 @@ exports.createUser = async (req, res) => {
         const password_hash = await bcrypt.hash(password, salt);
 
         const newUserResult = await db.query(
-            `INSERT INTO users (username, email, password_hash, first_name, last_name, organization_name, linkedin_url, profile_image_url, membership_level, role, business_partner_id, is_active, active_until)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
-            [normalizedUsername, normalizedEmail, password_hash, first_name, last_name, organization_name, linkedin_url, profile_image_url || null, validatedMembershipLevel, role, finalBpId || null, is_active, active_until || null]
+            `INSERT INTO users (username, email, password_hash, first_name, last_name, organization_name, linkedin_url, profile_image_url, membership_level, role, business_partner_id, is_active, active_until, newsletter_email_enabled, monthly_report_email_enabled)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
+            [normalizedUsername, normalizedEmail, password_hash, first_name, last_name, organization_name, linkedin_url, profile_image_url || null, validatedMembershipLevel, role, finalBpId || null, is_active, active_until || null,
+                req.body.newsletter_email_enabled ?? true, req.body.monthly_report_email_enabled ?? false]
         );
         const newUserId = newUserResult.rows[0].id;
 
@@ -346,7 +370,9 @@ exports.createUser = async (req, res) => {
         await logActivity({
             userId: requester.id, username: requester.username, actionType: 'USER_CREATE', status: 'success',
             targetId: newUserId, targetType: 'user',
-            details: { createdUsername: normalizedUsername, role: role, businessPartnerName: businessPartnerName },
+            details: { createdUsername: normalizedUsername, role: role, businessPartnerName: businessPartnerName,
+                newsletter_email_enabled: req.body.newsletter_email_enabled ?? true,
+                monthly_report_email_enabled: req.body.monthly_report_email_enabled ?? false },
             ipAddress: req.ip
         });
 
@@ -369,6 +395,7 @@ exports.updateUser = async (req, res) => {
     const updateData = req.body;
 
     try {
+        if (!validateMailPreferences(req, res)) return;
         const targetUserResult = await db.query('SELECT * FROM users WHERE id = $1', [targetUserId]);
         if (targetUserResult.rows.length === 0) {
             return res.status(404).json({ message: 'User not found.' });
@@ -408,6 +435,10 @@ exports.updateUser = async (req, res) => {
 
         const finalBpId = requester.role === 'assistenz' ? requester.business_partner_id : updateData.business_partner_id;
         const validatedMembershipLevel = await validateMembershipLevel(finalBpId, updateData.membership_level);
+        const newsletterEmailEnabled = updateData.newsletter_email_enabled ?? beforeUpdate.newsletter_email_enabled;
+        const monthlyReportEmailEnabled = ['admin', 'assistenz'].includes(updateData.role)
+            ? (updateData.monthly_report_email_enabled ?? beforeUpdate.monthly_report_email_enabled)
+            : false;
 
         await db.query(
             `UPDATE users SET
@@ -415,6 +446,7 @@ exports.updateUser = async (req, res) => {
                 organization_name = $6, linkedin_url = $7, membership_level = $8, role = $9, 
                 business_partner_id = $10, is_active = $11, active_until = $12, profile_image_url = $13,
                 auth_version = auth_version + CASE WHEN $15::boolean THEN 1 ELSE 0 END,
+                newsletter_email_enabled = $16, monthly_report_email_enabled = $17,
                 updated_at = CURRENT_TIMESTAMP
              WHERE id = $14`,
             [
@@ -423,11 +455,15 @@ exports.updateUser = async (req, res) => {
                 validatedMembershipLevel, updateData.role, finalBpId || null,
                 updateData.is_active, updateData.active_until || null, updateData.profile_image_url || null,
                 targetUserId,
-                Boolean(updateData.password && updateData.password.trim() !== '')
+                Boolean(updateData.password && updateData.password.trim() !== ''),
+                newsletterEmailEnabled, monthlyReportEmailEnabled
             ]
         );
 
         const changes = {};
+        for (const [key, value] of Object.entries({ newsletter_email_enabled: newsletterEmailEnabled, monthly_report_email_enabled: monthlyReportEmailEnabled })) {
+            if (beforeUpdate[key] !== value) changes[key] = { from: beforeUpdate[key], to: value };
+        }
         const fieldsToCheck = ['username', 'email', 'first_name', 'last_name', 'organization_name', 'linkedin_url', 'membership_level', 'role', 'business_partner_id', 'is_active', 'active_until', 'profile_image_url'];
         
         for (const key of fieldsToCheck) {

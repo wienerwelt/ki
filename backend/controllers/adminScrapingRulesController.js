@@ -698,7 +698,7 @@ exports.testScrapingRule = async (req, res) => {
         });
     } catch (err) {
         console.error('Error testing scraping rule:', err.message);
-        res.status(500).json({ ok: false, message: err.message });
+        res.status(err.statusCode || 500).json({ ok: false, message: err.message });
     }
 };
 

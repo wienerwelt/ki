@@ -13,6 +13,13 @@ const runScheduledJobs = async () => {
 
     const client = await db.connect();
     try {
+        if (now.getMinutes() % 15 === 0) {
+            const career = await client.query('SELECT enabled FROM career_ai_settings');
+            if (career.rows[0]?.enabled) await aiContentQueue.add('career-scan', {}, {
+                jobId: `career-scan-${Math.floor(now.getTime() / 900000)}`, attempts: 1,
+                removeOnComplete: 20, removeOnFail: 20,
+            });
+        }
         // 1. Enqueue scheduled AI Subscriptions for the aiWorker
         const aiSubs = await client.query("SELECT * FROM user_ai_content_subscriptions WHERE is_active = TRUE AND schedule IS NOT NULL AND schedule <> ''");
         for (const sub of aiSubs.rows) {

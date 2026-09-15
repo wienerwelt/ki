@@ -25,7 +25,7 @@ async function isContentRelevant(articleText, keywords, articleUrl) {
     if (!articleText) return false;
     const prompt = `Antworte nur mit "JA" oder "NEIN". Bezieht sich der folgende TEXT hauptsächlich auf eines dieser Themen: "${keywords.join(', ')}"? TEXT: """${articleText.substring(0, 1500)}"""`;
     try {
-        const { content } = await callOpenAI(prompt, 'gpt-3.5-turbo');
+        const { content } = await callOpenAI(prompt, 'gpt-3.5-turbo', {usageContext:{feature:'article_relevance',sourceId:articleUrl,scope:'shared'}});
         const answer = content.trim().toUpperCase();
         const decision = answer.includes('JA');
 
@@ -65,7 +65,7 @@ async function getSummaryForArticle(articleText, articleUrl) {
     await logActivity({ actionType: 'AI_SUMMARIZATION_START', status: 'info', details: { url: articleUrl, model: 'gpt-3.5-turbo' }, username: 'System' });
 
     try {
-        const { content: summary, usage, model } = await callOpenAI(prompt, 'gpt-3.5-turbo');
+        const { content: summary, usage, model } = await callOpenAI(prompt, 'gpt-3.5-turbo', {usageContext:{feature:'article_summary',sourceId:articleUrl,scope:'shared'}});
         await logActivity({
             actionType: 'AI_SUMMARIZATION_SUCCESS', status: 'success',
             details: { url: articleUrl, model, tokenUsage: usage, summaryLength: summary.length },

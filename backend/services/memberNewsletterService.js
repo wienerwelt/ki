@@ -60,6 +60,7 @@ async function loadEligibleRecipients(partnerId, filter = {}) {
        AND u.role = 'user'
        AND u.is_active = TRUE
        AND u.newsletter_opt_in = TRUE
+       AND u.newsletter_email_enabled = TRUE
        AND u.member_newsletter_enabled = TRUE
        AND u.newsletter_opt_in_confirmed_at IS NOT NULL
        AND NULLIF(BTRIM(u.email), '') IS NOT NULL
@@ -98,7 +99,8 @@ async function getRecipientPreview(partnerId, filter = {}) {
              AND (u.newsletter_opt_in IS DISTINCT FROM TRUE
                OR u.member_newsletter_enabled IS DISTINCT FROM TRUE
                OR u.newsletter_opt_in_confirmed_at IS NULL)
-         )::int AS without_consent
+         )::int AS without_consent,
+         COUNT(*) FILTER (WHERE u.role = 'user' AND u.newsletter_email_enabled = FALSE)::int AS disabled_by_admin
        FROM users u WHERE u.business_partner_id = $1`,
       [partnerId]
     ),
@@ -109,6 +111,7 @@ async function getRecipientPreview(partnerId, filter = {}) {
          AND u.role = 'user'
          AND u.is_active = TRUE
          AND u.newsletter_opt_in = TRUE
+         AND u.newsletter_email_enabled = TRUE
          AND u.member_newsletter_enabled = TRUE
          AND u.newsletter_opt_in_confirmed_at IS NOT NULL
          AND NULLIF(BTRIM(u.membership_level), '') IS NOT NULL
@@ -125,6 +128,7 @@ async function getRecipientPreview(partnerId, filter = {}) {
       inactive: totals.rows[0]?.inactive || 0,
       expired: totals.rows[0]?.expired || 0,
       without_consent: totals.rows[0]?.without_consent || 0,
+      disabled_by_admin: totals.rows[0]?.disabled_by_admin || 0,
     },
     membership_levels: levels.rows.map((row) => row.membership_level),
     recipients: recipients.map((recipient) => ({

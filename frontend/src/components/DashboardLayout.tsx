@@ -5,7 +5,7 @@ import {
     AppBar, Toolbar, Typography, Box, Drawer, List, ListItem, ListItemText,
     ListItemIcon, IconButton, Divider, Menu, MenuItem, Tooltip, Chip, Switch,
     useTheme, useMediaQuery, Dialog, DialogContent, DialogTitle,
-    Avatar, Badge, Collapse, Button, ListSubheader, Alert, ToggleButtonGroup, ToggleButton
+    Avatar, Badge, Collapse, Button, ListSubheader, Alert
 } from '@mui/material';
 
 import { alpha, keyframes } from '@mui/material/styles';
@@ -73,6 +73,7 @@ import {
     WorkspaceModule,
 } from '../utils/workspaceAccess';
 import { isExternalLogoutTarget } from '../utils/partnerNavigation';
+import { getNotificationTarget } from '../utils/notificationNavigation';
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -128,7 +129,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         || location.pathname.startsWith('/admin/business-partners/') && location.pathname.endsWith('/accounts')
         || location.pathname.startsWith('/admin/accounts/');
     const contentRoutePrefixes = [
-        '/dashboard', '/community', '/directory', '/files', '/trusted-sources', '/surveys', '/funding',
+        '/dashboard', '/community', '/career', '/directory', '/files', '/trusted-sources', '/surveys', '/funding',
         '/admin/actions', '/admin/briefing-editorial', '/admin/public-assistant', '/admin/legal-monitor',
         '/admin/scraped-content', '/admin/social-media', '/admin/newsletter', '/admin/statistics',
     ];
@@ -313,10 +314,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         if (isSystemNotification(notif)) return;
 
         handleClose();
-        if (['community_comment', 'community_like', 'community_mention'].includes(notif.type)) {
-            navigate('/community'); 
-        } else if (notif.type === 'file_upload') {
-            navigate('/files');
+        const target = getNotificationTarget(notif, user?.role);
+        if (target) {
+            navigate(target);
+            if (notif.type === 'career_review') {
+                if (!notif.target_url) showSnackbar('Die ursprüngliche Personalie ist nicht mehr verfügbar. Hier finden Sie die offenen Freigaben.', 'info');
+                if (!notif.is_read) void markSingleNotificationRead(notif.id);
+            }
         }
     };
 
@@ -381,22 +385,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             {adBannerHeight > 0 && <Box sx={{ height: adBannerHeight }} />}
             <Divider />
             <List>
-                {canUseContent && canUseSales && (
-                    <Box sx={{ px: 1.5, pb: 1 }} onClick={(event) => event.stopPropagation()}>
-                        <ToggleButtonGroup
-                            exclusive
-                            fullWidth
-                            size="small"
-                            value={activeWorkspace}
-                            onChange={(_, workspace: WorkspaceModule | null) => workspace && handleWorkspaceChange(workspace)}
-                            aria-label="Arbeitsbereich auswählen"
-                        >
-                            <ToggleButton value="content"><DashboardIcon sx={{ mr: 0.7, fontSize: 18 }} />Content</ToggleButton>
-                            <ToggleButton value="sales"><RadarIcon sx={{ mr: 0.7, fontSize: 18 }} />Sales</ToggleButton>
-                        </ToggleButtonGroup>
-                    </Box>
-                )}
-
                 {isSalesWorkspace && (
                     <>
                         <ListSubheader
@@ -489,9 +477,16 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
                 <ListItem button component={RouterLink} to="/trusted-sources">
                     <ListItemIcon>
-                        <Badge badgeContent={menuBadges.sources} color="error" max={99}>
-                            <FactCheckIcon />
-                        </Badge>
+                        <Tooltip
+                            title={menuBadges.sources > 0
+                                ? `${menuBadges.sources} ${menuBadges.sources === 1 ? 'Quelle' : 'Quellen'} noch bewerten`
+                                : 'Keine Quellen mehr zu bewerten'}
+                            placement="right"
+                        >
+                            <Badge badgeContent={menuBadges.sources} color="error" max={99}>
+                                <FactCheckIcon />
+                            </Badge>
+                        </Tooltip>
                     </ListItemIcon>
                     <ListItemText primary={t('layout.trustedSources')} />
                 </ListItem>
@@ -554,6 +549,10 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItem button component={RouterLink} to="/admin/advertisements"><ListItemIcon><CampaignIcon /></ListItemIcon><ListItemText primary={t('layout.advertising')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/surveys"><ListItemIcon><PollIcon /></ListItemIcon><ListItemText primary={t('layout.surveys')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/community"><ListItemIcon><ForumIcon /></ListItemIcon><ListItemText primary="Community Moderation" /></ListItem>
+                            <ListItem button component={RouterLink} to="/career" selected={location.pathname === '/career'}>
+                                <ListItemIcon><GroupIcon /></ListItemIcon>
+                                <ListItemText primary="Menschen & Karriere" secondary="Personalien & Freigaben" sx={{ '& .MuiListItemText-primary': { whiteSpace: 'nowrap' } }} />
+                            </ListItem>
                             <ListItem button component={RouterLink} to="/admin/events"><ListItemIcon><CalendarMonthIcon /></ListItemIcon><ListItemText primary={t('layout.events')} /></ListItem>
 
                             <ListSubheader
@@ -700,26 +699,57 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                       )}
                     </RouterLink>
 
-                    {!isMobile && canUseContent && canUseSales && (
+                    {canUseContent && canUseSales && (
                         <Box sx={{ display: 'flex', ml: 2, p: 0.35, borderRadius: 2, bgcolor: alpha(theme.palette.common.white, 0.16), gap: 0.35 }}>
-                            <Button
-                                size="small"
-                                color="inherit"
-                                variant={activeWorkspace === 'content' ? 'contained' : 'text'}
-                                onClick={() => handleWorkspaceChange('content')}
-                                sx={{ minWidth: 78, color: 'inherit', fontWeight: 850, bgcolor: activeWorkspace === 'content' ? alpha(theme.palette.common.white, 0.22) : 'transparent' }}
-                            >
-                                Content
-                            </Button>
-                            <Button
-                                size="small"
-                                color="inherit"
-                                variant={activeWorkspace === 'sales' ? 'contained' : 'text'}
-                                onClick={() => handleWorkspaceChange('sales')}
-                                sx={{ minWidth: 70, color: 'inherit', fontWeight: 850, bgcolor: activeWorkspace === 'sales' ? alpha(theme.palette.common.white, 0.22) : 'transparent' }}
-                            >
-                                Sales
-                            </Button>
+                            {isMobile ? (
+                                <>
+                                    <Tooltip title="Content öffnen">
+                                        <IconButton
+                                            size="small"
+                                            color="inherit"
+                                            onClick={() => handleWorkspaceChange('content')}
+                                            aria-label="Content öffnen"
+                                            sx={{ bgcolor: activeWorkspace === 'content' ? alpha(theme.palette.common.white, 0.24) : 'transparent' }}
+                                        >
+                                            <DashboardIcon fontSize="small" />
+                                        </IconButton>
+                                    </Tooltip>
+                                    <Tooltip title="Sales öffnen">
+                                        <IconButton
+                                            size="small"
+                                            color="inherit"
+                                            onClick={() => handleWorkspaceChange('sales')}
+                                            aria-label="Sales öffnen"
+                                            sx={{ bgcolor: activeWorkspace === 'sales' ? alpha(theme.palette.common.white, 0.24) : 'transparent' }}
+                                        >
+                                            <RadarIcon fontSize="small" />
+                                        </IconButton>
+                                    </Tooltip>
+                                </>
+                            ) : (
+                                <>
+                                    <Button
+                                        size="small"
+                                        color="inherit"
+                                        variant={activeWorkspace === 'content' ? 'contained' : 'text'}
+                                        startIcon={<DashboardIcon fontSize="small" />}
+                                        onClick={() => handleWorkspaceChange('content')}
+                                        sx={{ minWidth: 102, color: 'inherit', fontWeight: 850, bgcolor: activeWorkspace === 'content' ? alpha(theme.palette.common.white, 0.22) : 'transparent' }}
+                                    >
+                                        Content
+                                    </Button>
+                                    <Button
+                                        size="small"
+                                        color="inherit"
+                                        variant={activeWorkspace === 'sales' ? 'contained' : 'text'}
+                                        startIcon={<RadarIcon fontSize="small" />}
+                                        onClick={() => handleWorkspaceChange('sales')}
+                                        sx={{ minWidth: 92, color: 'inherit', fontWeight: 850, bgcolor: activeWorkspace === 'sales' ? alpha(theme.palette.common.white, 0.22) : 'transparent' }}
+                                    >
+                                        Sales
+                                    </Button>
+                                </>
+                            )}
                         </Box>
                     )}
 

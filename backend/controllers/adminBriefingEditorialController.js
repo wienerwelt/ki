@@ -81,7 +81,7 @@ exports.getDebugStatus = async (req, res) => {
         );
 
         const historyRes = await db.query(`SELECT created_at, headline, briefing_type FROM business_partner_intelligence_briefings WHERE business_partner_id = $1::uuid ORDER BY created_at DESC LIMIT 10`, [bpId]);
-        const recRes = await db.query(`SELECT COUNT(*) as count FROM users u WHERE business_partner_id = $1::uuid AND newsletter_opt_in = TRUE AND briefing_email_enabled = TRUE AND is_active = TRUE AND ${ACTIVE_MEMBERSHIP_SQL}`, [bpId]);
+        const recRes = await db.query(`SELECT COUNT(*) as count FROM users u WHERE business_partner_id = $1::uuid AND newsletter_opt_in = TRUE AND newsletter_email_enabled = TRUE AND briefing_email_enabled = TRUE AND is_active = TRUE AND ${ACTIVE_MEMBERSHIP_SQL}`, [bpId]);
         const jobRes = await db.query(`SELECT COUNT(*) as count FROM ai_jobs WHERE status = 'running' AND updated_at >= NOW() - INTERVAL '15 minutes'`);
 
         res.json({
@@ -390,7 +390,8 @@ exports.getRecipients = async (req, res) => {
             `SELECT first_name, last_name, email 
              FROM users u
              WHERE business_partner_id = $1::uuid 
-               AND newsletter_opt_in = TRUE 
+               AND newsletter_opt_in = TRUE
+               AND newsletter_email_enabled = TRUE
                AND briefing_email_enabled = TRUE
                AND is_active = TRUE
                AND ${ACTIVE_MEMBERSHIP_SQL}

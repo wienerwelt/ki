@@ -10,6 +10,7 @@ const {
     updateSource, 
     deleteSource,
     getSourceReports,
+    getSourceLogoSuggestions,
     adminCreateSource // NEU: Importiert!
 } = require('../controllers/adminSourcesController');
 
@@ -24,6 +25,7 @@ router.get('/', getAllSourcesAdmin);
 router.post('/', upload.single('logo'), adminCreateSource);
 
 router.get('/reports', getSourceReports);
+router.get('/logo-suggestions', getSourceLogoSuggestions);
 router.get('/:id', getSourceDetailsAdmin);
 router.put('/:id/status', updateSourceStatus);
 

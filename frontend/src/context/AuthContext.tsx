@@ -59,6 +59,7 @@ export interface UserPayload {
   preferred_theme?: 'light' | 'dark';
   preferred_language?: 'de' | 'en';
   newsletter_opt_in?: boolean;
+  newsletter_email_enabled?: boolean;
   briefing_email_enabled?: boolean;
   member_newsletter_enabled?: boolean;
   active_until?: string | null;

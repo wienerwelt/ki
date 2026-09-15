@@ -1,0 +1,22 @@
+const router=require('express').Router();
+const multer=require('multer');
+const {rateLimit}=require('express-rate-limit');
+const controller=require('../controllers/careerController');
+router.use(require('../middleware/authMiddleware'));
+router.use(require('../services/tenantModuleService').requireTenantModule('content'));
+const upload=multer({storage:multer.memoryStorage(),limits:{files:1,fileSize:5*1024*1024,fields:15,fieldSize:8000},
+ fileFilter:(_req,file,cb)=>['image/jpeg','image/png','image/webp','image/avif'].includes(file.mimetype)?cb(null,true):cb(new Error('Ungültiges Fotoformat.'))});
+const writes=rateLimit({windowMs:3600000,limit:30,standardHeaders:'draft-7',legacyHeaders:false,message:{message:'Zu viele Einreichungen. Bitte später erneut versuchen.'}});
+router.get('/',controller.list);
+router.get('/tenants',controller.tenants);
+router.get('/settings',controller.settings);
+router.put('/settings',controller.saveSettings);
+router.post('/archive',controller.archive);
+router.post('/',writes,(req,res,next)=>upload.single('photo')(req,res,error=>error?res.status(400).json({message:'Foto: maximal 5 MB, ein JPG/PNG/WebP.'}):next()),controller.create);
+router.put('/:id/review',controller.review);
+router.get('/:id',controller.detail);
+router.delete('/:id',controller.withdraw);
+router.get('/:id/photo',controller.photo);
+router.get('/:id/comments',controller.comments);
+router.post('/:id/comments',writes,controller.comments);
+module.exports=router;

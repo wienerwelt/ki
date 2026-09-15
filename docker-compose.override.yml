@@ -8,7 +8,9 @@ services:
       - "127.0.0.1:6381:6379"
 
   api:
-    command: npm run dev:api
+    # Ohne Dateiwächter: sechs parallele nodemon-Instanzen auf Windows-/WSL-
+    # Bind-Mounts können mit ENOMEM ausfallen. Frontend-HMR bleibt unberührt.
+    command: npm start
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -19,7 +21,7 @@ services:
       - .env
 
   worker-ai:
-    command: npm run dev:ai
+    command: npm run start:ai
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -27,7 +29,7 @@ services:
       - .env
 
   worker-scrape:
-    command: npm run dev:scrape
+    command: npm run start:scrape
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -35,7 +37,7 @@ services:
       - .env
 
   worker-mail:
-    command: npm run dev:mail
+    command: npm run start:mail
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -43,7 +45,7 @@ services:
       - .env
 
   worker-data:
-    command: npm run dev:data
+    command: npm run start:data
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -51,7 +53,7 @@ services:
       - .env
 
   worker-funding:
-    command: npm run dev:funding
+    command: npm run start:funding
     volumes:
       - ./backend:/app
       - /app/node_modules

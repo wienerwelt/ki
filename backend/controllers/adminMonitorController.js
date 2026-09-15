@@ -21,7 +21,6 @@ exports.previewMonthlyReport = async (req, res) => {
         const result = await generateAndSendMonthlyReport({
             dryRun: true,
             targetBusinessPartnerId: businessPartnerId,
-            includeUnsubscribedRecipients: false,
             collectPreviewDetails: true,
         });
         const preview = result.previews?.[0];
@@ -80,6 +79,7 @@ exports.getMonthlyReportDeliveries = async (req, res) => {
                     bp.id,
                     bp.name,
                     COALESCE(bp.allow_automated_newsletter, FALSE) AS allow_automated_newsletter,
+                    bp.monthly_report_enabled,
                     bp.newsletter_frequency,
                     bp.newsletter_delivery_mode,
                     bp.newsletter_recipient_limit,
@@ -94,7 +94,7 @@ exports.getMonthlyReportDeliveries = async (req, res) => {
                         WHERE u.is_active = TRUE
                           AND (u.active_until IS NULL OR (u.active_until AT TIME ZONE 'Europe/Vienna')::date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Vienna')::date)
                           AND u.role IN ('assistenz', 'admin')
-                          AND u.newsletter_opt_in = TRUE
+                          AND u.monthly_report_email_enabled = TRUE
                           AND u.email IS NOT NULL
                           AND TRIM(u.email) <> ''
                     )::int AS eligible_recipients
@@ -102,6 +102,7 @@ exports.getMonthlyReportDeliveries = async (req, res) => {
                         WHERE u.is_active = TRUE
                           AND (u.active_until IS NULL OR (u.active_until AT TIME ZONE 'Europe/Vienna')::date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Vienna')::date)
                           AND u.newsletter_opt_in = TRUE
+                          AND u.newsletter_email_enabled = TRUE
                           AND u.briefing_email_enabled = TRUE
                           AND u.email IS NOT NULL
                           AND TRIM(u.email) <> ''
@@ -109,7 +110,7 @@ exports.getMonthlyReportDeliveries = async (req, res) => {
                 FROM business_partners bp
                 LEFT JOIN users u ON u.business_partner_id = bp.id
                 WHERE bp.id = $1
-                GROUP BY bp.id, bp.name, bp.allow_automated_newsletter,
+                GROUP BY bp.id, bp.name, bp.allow_automated_newsletter, bp.monthly_report_enabled,
                          bp.newsletter_frequency, bp.newsletter_delivery_mode, bp.newsletter_recipient_limit
             `, [businessPartnerId]),
             db.query(`

@@ -13,6 +13,24 @@ function Assert-LastExitCode([string]$Message) {
     }
 }
 
+function Assert-LocalReleaseDiskSpace {
+    # Docker Desktop speichert seine Linux-Disk üblicherweise auf dem Systemlaufwerk.
+    # Auch bei ausgelagerter Docker-Disk muss Windows ausreichend Platz behalten.
+    $releaseDriveRoots = @(
+        [System.IO.Path]::GetPathRoot($repoRoot),
+        [System.IO.Path]::GetPathRoot([Environment]::GetFolderPath('System'))
+    ) | Select-Object -Unique
+    foreach ($releaseDriveRoot in $releaseDriveRoots) {
+        $releaseDrive = [System.IO.DriveInfo]::new($releaseDriveRoot)
+        if (-not $releaseDrive.IsReady) { throw "Release-Laufwerk nicht verfügbar: $releaseDriveRoot" }
+        $releaseFreeGiB = [math]::Round($releaseDrive.AvailableFreeSpace / 1GB, 2)
+        if ($releaseDrive.AvailableFreeSpace -lt 5GB) {
+            throw "STOPP: $releaseDriveRoot hat nur $releaseFreeGiB GiB frei. Mindestens 5 GiB, für den ersten Docker-Build möglichst 10 GiB freigeben. Keine Docker-Volumes oder fremden Projekte löschen."
+        }
+        Write-Host "  Freier lokaler Speicher ${releaseDriveRoot}: $releaseFreeGiB GiB"
+    }
+}
+
 function Assert-NoCriticalVulnerabilities([string]$PackageDirectory, [string]$Label) {
     Push-Location $PackageDirectory
     try {
@@ -99,6 +117,7 @@ Push-Location $repoRoot
 
 try {
     Write-Host '[1/9] Release-Secrets sowie Dev- und Prod-Docker-Konfiguration prüfen'
+    Assert-LocalReleaseDiskSpace
     Assert-SeparateReleaseSecrets (Join-Path $repoRoot '.env')
     & docker compose -f docker-compose.yml -f docker-compose.override.yml config --quiet
     Assert-LastExitCode 'Die lokale Docker-Compose-Konfiguration ist ungültig.'
@@ -132,6 +151,10 @@ try {
     Assert-LastExitCode 'Die lokalen Datenbankmigrationen sind fehlgeschlagen.'
 
     Write-Host '[6/9] Dashboard-Frontend bauen'
+    & npm.cmd --prefix frontend run test:article-presentation
+    Assert-LastExitCode 'Die Artikel-Anzeige-Tests sind fehlgeschlagen.'
+    & npm.cmd --prefix frontend run test:notification-navigation
+    Assert-LastExitCode 'Die Benachrichtigungs-Navigation ist fehlgeschlagen.'
     & npm.cmd --prefix frontend run build:dashboard
     Assert-LastExitCode 'Der Frontend-Build ist fehlgeschlagen.'
 
@@ -146,6 +169,12 @@ try {
         Write-Host '[8/9] Lokalen Healthcheck ausdrücklich übersprungen'
     } else {
         Write-Host '[8/9] Laufende lokale API prüfen'
+        foreach ($runtimeService in @('api','worker-ai','worker-scrape','worker-mail','worker-data','worker-funding')) {
+            & docker compose exec -T $runtimeService node -e "if (Number(process.versions.node.split('.')[0]) !== 24) process.exit(1); if (process.env.NODE_OPTIONS !== '--max-old-space-size=512') process.exit(2); console.log('${runtimeService}: ' + process.version + ', Heap 512 MiB');"
+            Assert-LastExitCode "Node 24 LTS oder die 512-MiB-Heap-Grenze ist in $runtimeService nicht aktiv."
+        }
+        & docker compose exec -T worker-scrape npm run smoke:container-runtime
+        Assert-LastExitCode 'Init-/Chromium-Test im lokalen Scraping-Container fehlgeschlagen.'
         $health = $null
         for ($attempt = 1; $attempt -le 18; $attempt++) {
             try {
@@ -174,19 +203,25 @@ try {
             'smoke:software-rating',
             'smoke:software-delete',
             'smoke:monthly-report',
+            'smoke:monthly-report-preview',
             'smoke:monthly-report-monitor',
             'smoke:community-profile',
             'smoke:admin-user-search',
             'smoke:event-feed-dedup',
             'smoke:scraper-date',
+            'smoke:scraping-rules',
+            'smoke:article-oem-logos',
+            'smoke:career',
             'smoke:public-file-links',
             'smoke:public-profile-privacy',
             'smoke:newsletter-delivery',
             'smoke:member-newsletter',
+            'smoke:monthly-report-preferences',
             'smoke:security-boundaries',
             'smoke:public-ai-assistant',
             'smoke:account-radar-trust',
             'smoke:account-radar-campaigns',
+            'smoke:account-radar-integrations',
             'smoke:tenant-modules',
             'smoke:sales-plans',
             'smoke:sales-lifecycle',

@@ -621,6 +621,7 @@ Antworte ohne Einleitung in höchstens 90 Wörtern und mit maximal fünf kurzen 
       systemPrompt,
       maxOutputTokens: 220,
       temperature: 0.2,
+      usageContext: { businessPartnerId: settings.business_partner_id, feature: 'public_assistant', sourceId: reservation.usageId },
     });
     const finalAnswer = appendContactLinkForInsufficientAnswer(aiResult.content, contactUrl);
 

@@ -50,6 +50,8 @@ const publicAssistantConfigLimiter = rateLimit({
 
 // --- 1. BRANDING & KONTEXT ---
 router.get('/context', publicController.getPublicContext);
+router.get('/career', publicSearchLimiter, require('../controllers/careerController').publicList);
+router.get('/career/:partnerId/:id/photo', publicSearchLimiter, require('../controllers/careerController').photo);
 
 // Homepagebasierter, strikt mandantenspezifischer Public-Assistent.
 // Das eigentliche Fragen-/Tokenbudget wird transaktionssicher je Mandant,

@@ -6,6 +6,220 @@ const fs = require('fs');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 
+const normalizeSourceUrl = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+
+    try {
+        const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+        const parsed = new URL(candidate);
+        if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) return null;
+        return candidate;
+    } catch {
+        return null;
+    }
+};
+
+const normalizeHostname = (value) => {
+    const normalizedUrl = normalizeSourceUrl(value);
+    if (!normalizedUrl) return '';
+
+    return new URL(normalizedUrl).hostname
+        .toLowerCase()
+        .replace(/^www\d*\./, '')
+        .replace(/\.$/, '');
+};
+
+const domainsMatch = (left, right) => {
+    if (!left || !right) return false;
+    return left === right || left.endsWith(`.${right}`) || right.endsWith(`.${left}`);
+};
+
+const SHARED_PLATFORM_DOMAINS = new Set([
+    'facebook.com',
+    'instagram.com',
+    'linkedin.com',
+    'tiktok.com',
+    'twitter.com',
+    'x.com',
+    'youtube.com',
+]);
+
+const getSharedPlatformDomain = (hostname) => Array.from(SHARED_PLATFORM_DOMAINS)
+    .find((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+
+const domainCandidateMatches = (sourceUrl, candidateUrl) => {
+    const sourceHostname = normalizeHostname(sourceUrl);
+    const candidateHostname = normalizeHostname(candidateUrl);
+    if (!domainsMatch(sourceHostname, candidateHostname)) return false;
+
+    const sharedDomain = getSharedPlatformDomain(sourceHostname);
+    if (!sharedDomain || sharedDomain !== getSharedPlatformDomain(candidateHostname)) return true;
+
+    try {
+        const sourcePath = new URL(normalizeSourceUrl(sourceUrl)).pathname.replace(/\/+$/, '').toLowerCase();
+        const candidatePath = new URL(normalizeSourceUrl(candidateUrl)).pathname.replace(/\/+$/, '').toLowerCase();
+        return sourcePath.length > 1 && sourcePath === candidatePath;
+    } catch {
+        return false;
+    }
+};
+
+const domainSearchTokens = (hostname) => hostname
+    .split('.')
+    .slice(0, -1)
+    .flatMap((part) => part.split(/[-_]+/))
+    .map((part) => part.toLowerCase().replace(/[^a-z0-9]/g, ''))
+    .filter((part) => part.length >= 3 && !['www', 'group', 'gmbh', 'austria', 'deutschland'].includes(part));
+
+const labelMatchesDomain = (label, hostname) => {
+    if (getSharedPlatformDomain(hostname)) return false;
+    const comparableLabel = String(label || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return domainSearchTokens(hostname).some((token) => comparableLabel.includes(token));
+};
+
+const getSourceLogoSuggestionsInternal = async (sourceUrl, sourceId = null) => {
+    const sourceHostname = normalizeHostname(sourceUrl);
+    if (!sourceHostname) return [];
+
+    const result = await db.query(`
+        SELECT logo_url AS url, label, source_type, candidate_url
+        FROM (
+            SELECT s.logo_url,
+                   COALESCE(NULLIF(s.description, ''), s.url) AS label,
+                   'Andere Quelle'::text AS source_type,
+                   s.url AS candidate_url
+            FROM sources s
+            WHERE s.logo_url IS NOT NULL
+              AND ($1::uuid IS NULL OR s.id <> $1)
+
+            UNION ALL
+
+            SELECT provider.logo_url,
+                   provider.name AS label,
+                   'Branchenverzeichnis'::text AS source_type,
+                   provider.website_url AS candidate_url
+            FROM directory_providers provider
+            WHERE provider.logo_url IS NOT NULL
+
+            UNION ALL
+
+            SELECT software.logo_url,
+                   software.name AS label,
+                   'Software-Katalog'::text AS source_type,
+                   software.product_url AS candidate_url
+            FROM software_tools software
+            WHERE software.logo_url IS NOT NULL
+
+            UNION ALL
+
+            SELECT partner.logo_url,
+                   partner.name AS label,
+                   'Mandantenlogo'::text AS source_type,
+                   partner.url_businesspartner AS candidate_url
+            FROM business_partners partner
+            WHERE partner.logo_url IS NOT NULL
+
+            UNION ALL
+
+            SELECT account.logo_url,
+                   account.name AS label,
+                   'Account-Radar'::text AS source_type,
+                   account.website_url AS candidate_url
+            FROM business_partner_accounts account
+            WHERE account.logo_url IS NOT NULL
+
+            UNION ALL
+
+            SELECT tag.logo_url,
+                   tag.name AS label,
+                   'Logo-Bibliothek'::text AS source_type,
+                   NULL::text AS candidate_url
+            FROM tags tag
+            WHERE tag.logo_url IS NOT NULL
+        ) candidates
+        WHERE NULLIF(TRIM(logo_url), '') IS NOT NULL
+    `, [isValidUUID(sourceId) ? sourceId : null]);
+
+    const priorities = {
+        'Andere Quelle': 10,
+        'Branchenverzeichnis': 20,
+        'Software-Katalog': 30,
+        'Mandantenlogo': 40,
+        'Account-Radar': 50,
+        'Logo-Bibliothek': 60,
+        'Branchenverzeichnis-Logoarchiv': 70,
+    };
+    const candidates = result.rows.flatMap((row) => {
+        const domainMatch = domainCandidateMatches(sourceUrl, row.candidate_url);
+        const nameMatch = !domainMatch
+            && !getSharedPlatformDomain(sourceHostname)
+            && labelMatchesDomain(row.label, sourceHostname);
+        if (!domainMatch && !nameMatch) return [];
+
+        return [{
+            url: row.url,
+            label: row.label || 'Bestehendes Logo',
+            source: row.source_type,
+            match: domainMatch ? 'domain' : 'name',
+            matchLabel: domainMatch ? 'Domain stimmt überein' : 'Name passt zur Domain',
+            priority: (domainMatch ? 0 : 100) + (priorities[row.source_type] || 90),
+        }];
+    });
+
+    const directoryLogoPath = path.join(__dirname, '..', 'public', 'directory_logos');
+    try {
+        const files = await fs.promises.readdir(directoryLogoPath, { withFileTypes: true });
+        files
+            .filter((entry) => entry.isFile() && /^[a-zA-Z0-9._-]+\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(entry.name))
+            .forEach((entry) => {
+                const label = entry.name
+                    .replace(/\.[^.]+$/, '')
+                    .replace(/-\d{4}$/, '')
+                    .replace(/[-_]+/g, ' ')
+                    .trim();
+                if (!labelMatchesDomain(label, sourceHostname)) return;
+                candidates.push({
+                    url: `/directory_logos/${encodeURIComponent(entry.name)}`,
+                    label: label || 'Branchenverzeichnis-Logo',
+                    source: 'Branchenverzeichnis-Logoarchiv',
+                    match: 'name',
+                    matchLabel: 'Dateiname passt zur Domain',
+                    priority: priorities['Branchenverzeichnis-Logoarchiv'],
+                });
+            });
+    } catch (error) {
+        if (error.code !== 'ENOENT') {
+            console.warn('[Sources] Logoarchiv konnte nicht durchsucht werden:', error.message);
+        }
+    }
+
+    const uniqueByUrl = new Map();
+    candidates
+        .sort((left, right) => left.priority - right.priority || left.label.localeCompare(right.label, 'de'))
+        .forEach((candidate) => {
+            if (!uniqueByUrl.has(candidate.url)) uniqueByUrl.set(candidate.url, candidate);
+        });
+
+    return Array.from(uniqueByUrl.values())
+        .slice(0, 12)
+        .map(({ priority, ...candidate }) => candidate);
+};
+
+const validateSuggestedLogo = async (sourceUrl, sourceId, logoUrl) => {
+    const requestedLogoUrl = String(logoUrl || '').trim();
+    if (!requestedLogoUrl) return null;
+
+    const suggestions = await getSourceLogoSuggestionsInternal(sourceUrl, sourceId);
+    const match = suggestions.find((candidate) => candidate.url === requestedLogoUrl);
+    if (!match) {
+        const error = new Error('Das ausgewählte Logo passt nicht zur Domain oder ist nicht mehr verfügbar.');
+        error.statusCode = 400;
+        throw error;
+    }
+    return match.url;
+};
+
 // Hilfsfunktion: Domain aus URL extrahieren für den Dateinamen
 const extractDomain = (urlStr) => {
     try {
@@ -55,6 +269,24 @@ exports.getAllSourcesAdmin = async (req, res) => {
     } catch (err) {
         console.error('Error fetching all sources for admin:', err.message);
         res.status(500).send('Server error');
+    }
+};
+
+// @desc    Bestehende Logos passend zur Domain einer Quelle vorschlagen
+// @route   GET /api/admin/sources/logo-suggestions?url=...
+// @access  Admin
+exports.getSourceLogoSuggestions = async (req, res) => {
+    const sourceUrl = normalizeSourceUrl(req.query.url);
+    if (!sourceUrl) {
+        return res.status(400).json({ message: 'Bitte eine gültige HTTP- oder HTTPS-URL eingeben.' });
+    }
+
+    try {
+        const suggestions = await getSourceLogoSuggestionsInternal(sourceUrl, req.query.sourceId);
+        return res.json({ domain: normalizeHostname(sourceUrl), suggestions });
+    } catch (err) {
+        console.error('Error fetching source logo suggestions:', err.message);
+        return res.status(500).json({ message: 'Logo-Vorschläge konnten nicht geladen werden.' });
     }
 };
 
@@ -182,10 +414,11 @@ exports.updateSource = async (req, res) => {
     const { id } = req.params;
     if (!isValidUUID(id)) return res.status(400).json({ message: 'Invalid ID format.' });
 
-    const { url, description, category_id } = req.body; 
+    const { description, category_id } = req.body;
+    const url = normalizeSourceUrl(req.body.url);
 
     if (!url) {
-        return res.status(400).json({ message: 'Die URL ist ein Pflichtfeld.' });
+        return res.status(400).json({ message: 'Bitte eine gültige HTTP- oder HTTPS-URL eingeben.' });
     }
 
     try {
@@ -200,8 +433,15 @@ exports.updateSource = async (req, res) => {
             updateQuery += `, logo_url = $${paramIndex}`;
             values.push(logoUrl);
             paramIndex++;
-        } 
-        // 2. Logo soll gelöscht werden
+        }
+        // 2. Bereits bekanntes, zur Domain passendes Logo bewusst übernehmen
+        else if (req.body.logo_reference_url) {
+            const logoUrl = await validateSuggestedLogo(url, id, req.body.logo_reference_url);
+            updateQuery += `, logo_url = $${paramIndex}`;
+            values.push(logoUrl);
+            paramIndex++;
+        }
+        // 3. Logo soll gelöscht werden
         else if (req.body.delete_logo === 'true') {
             updateQuery += `, logo_url = NULL`;
         }
@@ -215,6 +455,9 @@ exports.updateSource = async (req, res) => {
         res.json(updatedSource.rows[0]);
     } catch (err) {
         console.error('Error updating source:', err.message);
+        if (err.statusCode) {
+            return res.status(err.statusCode).json({ message: err.message });
+        }
         if (err.code === '23505') {
             return res.status(409).json({ message: 'Diese URL existiert bereits in der Datenbank.' });
         }
@@ -226,15 +469,18 @@ exports.updateSource = async (req, res) => {
 // @route   POST /api/admin/sources
 // @access  Admin
 exports.adminCreateSource = async (req, res) => {
-    const { url, description, category_id, status } = req.body;
+    const { description, category_id, status } = req.body;
+    const url = normalizeSourceUrl(req.body.url);
     let logoUrl = null;
 
-    if (!url) return res.status(400).json({ message: 'Die URL ist ein Pflichtfeld.' });
+    if (!url) return res.status(400).json({ message: 'Bitte eine gültige HTTP- oder HTTPS-URL eingeben.' });
 
     try {
         // HIER GEFIXT: Nutzt jetzt auch die WebP-Komprimierung aus dem Hilfs-Skript
         if (req.file) {
             logoUrl = await processAndSaveSourceLogo(req.file.buffer, url);
+        } else if (req.body.logo_reference_url) {
+            logoUrl = await validateSuggestedLogo(url, null, req.body.logo_reference_url);
         }
 
         const result = await db.query(
@@ -245,6 +491,9 @@ exports.adminCreateSource = async (req, res) => {
         res.status(201).json(result.rows[0]);
     } catch (err) {
         console.error('Error creating source:', err.message);
+        if (err.statusCode) {
+            return res.status(err.statusCode).json({ message: err.message });
+        }
         if (err.code === '23505') {
             return res.status(409).json({ message: 'Diese URL existiert bereits in der Datenbank.' });
         }

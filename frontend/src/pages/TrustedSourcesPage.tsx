@@ -1,7 +1,7 @@
 // frontend/src/pages/TrustedSourcesPage.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Container, Typography, Box, Paper, Tabs, Tab, Alert, Tooltip, Button, Badge } from '@mui/material';
+import { Container, Typography, Box, Paper, Tabs, Tab, Alert, Tooltip, Badge } from '@mui/material';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
@@ -92,17 +92,6 @@ const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
 
             {/* Demo Alert */}
             {isDemo && <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>Einige Funktionen sind im Demo-Modus deaktiviert.</Alert>}
-
-            {!isDemo && (
-                <Alert
-                    severity="info"
-                    sx={{ mb: 3, borderRadius: 2 }}
-                    action={<Button color="inherit" size="small" onClick={() => setTabIndex(1)}>Offene Bewertungen zeigen</Button>}
-                >
-                    Die rote Badge-Zahl in der Navigation zeigt Quellen, die du persönlich noch nicht bewertet hast.
-                    Betroffene Quellen sind im Tab „Community-Trust bewerten“ rot als offen markiert.
-                </Alert>
-            )}
 
             {/* Hauptinhalt */}
             <Paper sx={{ borderRadius: 2, overflow: 'hidden' }}>

@@ -1,5 +1,6 @@
 
 // frontend/src/pages/PublicPortalPage.tsx
+import PublicCareerTeaser from '../components/PublicCareerTeaser';
 import React, { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useSearchParams, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -1609,6 +1610,7 @@ const renderProviderPreviewCard = (provider: any) => {
                 </Paper>
 
                 {/* --- NETZWERK-TICKER: vollständig und unabhängig von Verzeichnisfiltern --- */}
+                <PublicCareerTeaser partnerId={partner?.id || ''} partnerPath={canonicalPartnerPath} primaryColor={primaryColor} />
                 <Box sx={{ mt: 4.5, display: 'flex', alignItems: 'center', gap: 4, color: alpha(darkBlue, 0.62), whiteSpace: 'nowrap' }}>
                     <Typography variant="body2" fontWeight={800} whiteSpace="nowrap" sx={{ flexShrink: 0 }}>
                         Über {tenantStats.member_companies ? formatNumber(Number(tenantStats.member_companies)) : 'zahlreiche'} Unternehmen im Netzwerk von {partnerName}

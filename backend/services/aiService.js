@@ -1,6 +1,7 @@
 // backend/services/aiService.js
 const OpenAI = require('openai');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { startUsage, finishUsage, unknownUsage } = require('./aiUsageService');
 
 // Initialisierung der Clients mit den Schlüsseln aus der .env-Datei.
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -37,6 +38,7 @@ const normalizeUsage = (provider, usage) => {
  * @returns {Promise<object>} Ein Objekt mit Inhalt, Token-Nutzung und Modell.
  */
 async function callOpenAI(prompt, model = 'gpt-4', options = {}) {
+    let usageEventId;
     if (!process.env.OPENAI_API_KEY) {
         console.warn('OPENAI_API_KEY nicht gesetzt. Simuliere KI-Antwort.');
         return {
@@ -48,6 +50,7 @@ async function callOpenAI(prompt, model = 'gpt-4', options = {}) {
         };
     }
     try {
+        usageEventId = await startUsage('OpenAI', model, options.usageContext);
         // Basis-Konfiguration für den API-Aufruf
         const messages = [];
         if (options.systemPrompt) {
@@ -74,15 +77,18 @@ async function callOpenAI(prompt, model = 'gpt-4', options = {}) {
 
         const completion = await openai.chat.completions.create(apiConfig, {
             timeout: 60000, // Timeout nach 60 Sekunden
-            maxRetries: 1,
+            maxRetries: options.noRetries ? 0 : 1,
         });
-
+        const usage = { ...normalizeUsage('openai', completion.usage), usageEventId };
+        if (completion.usage) await finishUsage(usageEventId, usage, completion.id);
+        else await unknownUsage(usageEventId);
         return {
             content: completion.choices[0].message.content,
-            usage: normalizeUsage('openai', completion.usage),
+            usage,
             model: model
         };
     } catch (error) {
+        await unknownUsage(usageEventId).catch(() => {});
         console.error("OpenAI API Error:", error);
         if (error instanceof OpenAI.APIError) {
             throw new Error(`Fehler von OpenAI API: ${error.status} ${error.name} - ${error.message}`);
@@ -99,6 +105,7 @@ async function callOpenAI(prompt, model = 'gpt-4', options = {}) {
  * @returns {Promise<object>} Ein Objekt mit Inhalt, Token-Nutzung und Modell.
  */
 async function callGoogleGemini(prompt, model = 'gemini-1.5-flash', options = {}) {
+    let usageEventId;
     if (!process.env.GOOGLE_GEMINI_API_KEY) {
         console.warn('GOOGLE_GEMINI_API_KEY nicht gesetzt. Simuliere KI-Antwort.');
          return {
@@ -110,6 +117,7 @@ async function callGoogleGemini(prompt, model = 'gemini-1.5-flash', options = {}
         };
     }
     try {
+        usageEventId = await startUsage('Gemini', model, options.usageContext);
         const modelConfig = { model: model };
         
         // NEU: Gemini JSON-Mode Unterstützung
@@ -125,13 +133,16 @@ async function callGoogleGemini(prompt, model = 'gemini-1.5-flash', options = {}
             : String(prompt || '');
         const result = await geminiModel.generateContent(finalPrompt);
         const response = await result.response;
-        
+        const usage = { ...normalizeUsage('gemini', result.response.usageMetadata), usageEventId };
+        if (response.usageMetadata) await finishUsage(usageEventId, usage);
+        else await unknownUsage(usageEventId);
         return {
             content: response.text(),
-            usage: normalizeUsage('gemini', result.response.usageMetadata),
+            usage,
             model: model
         };
     } catch (error) {
+        await unknownUsage(usageEventId).catch(() => {});
         console.error("Google Gemini API Error:", error);
         throw new Error("Fehler bei der Anfrage an die Google Gemini API.");
     }

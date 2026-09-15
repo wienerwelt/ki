@@ -25,7 +25,7 @@ interface Preview {
   configured_mode: 'mobiliti' | 'export' | 'external';
   effective_mode: 'mobiliti' | 'export' | 'external';
   direct_limit: number;
-  excluded: { inactive: number; expired: number; without_consent: number };
+  excluded: { inactive: number; expired: number; without_consent: number; disabled_by_admin?: number };
   membership_levels: string[];
   recipients: Array<{ id: string; name: string; email: string; membership_level?: string; active_until?: string }>;
   signature: { name: string; organization?: string; address?: string; email?: string; url?: string };
@@ -181,6 +181,7 @@ const MemberNewsletterPanel: React.FC<Props> = ({ businessPartnerId, partnerName
               <Chip label={`${preview.members_total} Mitglieder gesamt`} />
               <Chip variant="outlined" label={`${preview.excluded.expired} abgelaufen`} />
               <Chip variant="outlined" label={`${preview.excluded.without_consent} ohne Einwilligung`} />
+              {!!preview.excluded.disabled_by_admin && <Chip variant="outlined" label={`${preview.excluded.disabled_by_admin} Newsletter-Empfang pausiert`} />}
               <Chip color={effectiveMode === 'mobiliti' ? 'primary' : 'warning'} label={`Versand: ${effectiveMode === 'mobiliti' ? 'Mobiliti direkt' : effectiveMode === 'export' ? 'zentraler Export' : 'extern'}`} />
             </Stack>
             {preview.configured_mode === 'mobiliti' && effectiveMode === 'export' && (

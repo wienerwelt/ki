@@ -281,6 +281,7 @@ app.use('/api/surveys', surveyRoutes);
 app.use('/api/funding', fundingRoutes);
 app.use('/api/admin-legal-monitor', adminLegalMonitorRoutes);
 app.use('/api/community', communityRoutes);
+app.use('/api/career', require('./routes/careerRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/admin/briefing', adminBriefingRoutes);
 app.use('/api/onboarding', require('./routes/onboardingRoutes'));

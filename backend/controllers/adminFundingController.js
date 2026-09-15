@@ -173,9 +173,9 @@ exports.getFundingUsageStats = async (req, res) => {
             SELECT
                 COUNT(aul.id)::INT AS total_processed_opportunities,
                 SUM(aul.total_tokens)::BIGINT AS total_tokens
-            FROM ai_usage_logs aul
-            JOIN ai_jobs aj ON aul.job_id = aj.id
-            JOIN scraping_rules sr ON aj.ai_prompt_rule_id = sr.id
+            FROM ai_usage_events aul
+            JOIN ai_jobs aj ON aul.job_id = aj.id::text
+            JOIN scraping_rules sr ON COALESCE(aj.scraping_rule_id, aj.ai_prompt_rule_id) = sr.id
             WHERE sr.rule_type = 'funding' AND aul.created_at >= (NOW() - $1::interval);
         `;
         const kpiPromise = db.query(kpiQuery, queryParams);
