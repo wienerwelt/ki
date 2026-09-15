@@ -124,6 +124,25 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const salesStatusLabel = salesSubscriptionStatus === 'trial'
         ? (salesAccessActive ? `Test · ${salesTrialDaysRemaining ?? 0} Tage` : 'Test beendet')
         : salesSubscriptionStatus === 'paused' ? 'Pausiert' : (salesPlan === 'premium' ? 'Premium' : 'Basic');
+    const contentStatusLabel = businessPartner?.storage_tier === 'premium'
+        ? 'Premium'
+        : businessPartner?.storage_tier === 'standard' ? 'Standard' : 'Basis';
+    const workspaceBadgeSx = {
+        '& .MuiBadge-badge': {
+            top: -5,
+            right: 8,
+            height: 17,
+            minWidth: 17,
+            px: 0.65,
+            borderRadius: 8,
+            fontSize: '0.58rem',
+            fontWeight: 900,
+            bgcolor: alpha(theme.palette.background.paper, 0.94),
+            color: theme.palette.text.primary,
+            border: `1px solid ${alpha(theme.palette.text.primary, 0.18)}`,
+            boxShadow: `0 1px 3px ${alpha(theme.palette.common.black, 0.2)}`,
+        },
+    };
     const isSalesRoute = location.pathname.startsWith('/radar')
         || location.pathname === '/admin/sales-leads'
         || location.pathname.startsWith('/admin/business-partners/') && location.pathname.endsWith('/accounts')
@@ -689,7 +708,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                       <Typography variant="h6" noWrap component="div" sx={{ display: { xs: 'none', sm: 'block' } }}>
                         {dashboardTitle}
                       </Typography>
-                      {isSalesWorkspace && (
+                      {isSalesWorkspace && !(canUseContent && canUseSales) && (
                         <Chip
                           size="small"
                           label={salesStatusLabel}
@@ -703,51 +722,59 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         <Box sx={{ display: 'flex', ml: 2, p: 0.35, borderRadius: 2, bgcolor: alpha(theme.palette.common.white, 0.16), gap: 0.35 }}>
                             {isMobile ? (
                                 <>
-                                    <Tooltip title="Content öffnen">
-                                        <IconButton
-                                            size="small"
-                                            color="inherit"
-                                            onClick={() => handleWorkspaceChange('content')}
-                                            aria-label="Content öffnen"
-                                            sx={{ bgcolor: activeWorkspace === 'content' ? alpha(theme.palette.common.white, 0.24) : 'transparent' }}
-                                        >
-                                            <DashboardIcon fontSize="small" />
-                                        </IconButton>
+                                    <Tooltip title={`Content ${contentStatusLabel} öffnen`}>
+                                        <Badge badgeContent={contentStatusLabel} sx={workspaceBadgeSx}>
+                                            <IconButton
+                                                size="small"
+                                                color="inherit"
+                                                onClick={() => handleWorkspaceChange('content')}
+                                                aria-label={`Content ${contentStatusLabel} öffnen`}
+                                                sx={{ bgcolor: activeWorkspace === 'content' ? alpha(theme.palette.common.white, 0.24) : 'transparent' }}
+                                            >
+                                                <DashboardIcon fontSize="small" />
+                                            </IconButton>
+                                        </Badge>
                                     </Tooltip>
-                                    <Tooltip title="Sales öffnen">
-                                        <IconButton
-                                            size="small"
-                                            color="inherit"
-                                            onClick={() => handleWorkspaceChange('sales')}
-                                            aria-label="Sales öffnen"
-                                            sx={{ bgcolor: activeWorkspace === 'sales' ? alpha(theme.palette.common.white, 0.24) : 'transparent' }}
-                                        >
-                                            <RadarIcon fontSize="small" />
-                                        </IconButton>
+                                    <Tooltip title={`Sales ${salesStatusLabel} öffnen`}>
+                                        <Badge badgeContent={salesStatusLabel} sx={workspaceBadgeSx}>
+                                            <IconButton
+                                                size="small"
+                                                color="inherit"
+                                                onClick={() => handleWorkspaceChange('sales')}
+                                                aria-label={`Sales ${salesStatusLabel} öffnen`}
+                                                sx={{ bgcolor: activeWorkspace === 'sales' ? alpha(theme.palette.common.white, 0.24) : 'transparent' }}
+                                            >
+                                                <RadarIcon fontSize="small" />
+                                            </IconButton>
+                                        </Badge>
                                     </Tooltip>
                                 </>
                             ) : (
                                 <>
-                                    <Button
-                                        size="small"
-                                        color="inherit"
-                                        variant={activeWorkspace === 'content' ? 'contained' : 'text'}
-                                        startIcon={<DashboardIcon fontSize="small" />}
-                                        onClick={() => handleWorkspaceChange('content')}
-                                        sx={{ minWidth: 102, color: 'inherit', fontWeight: 850, bgcolor: activeWorkspace === 'content' ? alpha(theme.palette.common.white, 0.22) : 'transparent' }}
-                                    >
-                                        Content
-                                    </Button>
-                                    <Button
-                                        size="small"
-                                        color="inherit"
-                                        variant={activeWorkspace === 'sales' ? 'contained' : 'text'}
-                                        startIcon={<RadarIcon fontSize="small" />}
-                                        onClick={() => handleWorkspaceChange('sales')}
-                                        sx={{ minWidth: 92, color: 'inherit', fontWeight: 850, bgcolor: activeWorkspace === 'sales' ? alpha(theme.palette.common.white, 0.22) : 'transparent' }}
-                                    >
-                                        Sales
-                                    </Button>
+                                    <Badge badgeContent={contentStatusLabel} sx={workspaceBadgeSx}>
+                                        <Button
+                                            size="small"
+                                            color="inherit"
+                                            variant={activeWorkspace === 'content' ? 'contained' : 'text'}
+                                            startIcon={<DashboardIcon fontSize="small" />}
+                                            onClick={() => handleWorkspaceChange('content')}
+                                            sx={{ minWidth: 102, color: 'inherit', fontWeight: 850, bgcolor: activeWorkspace === 'content' ? alpha(theme.palette.common.white, 0.22) : 'transparent' }}
+                                        >
+                                            Content
+                                        </Button>
+                                    </Badge>
+                                    <Badge badgeContent={salesStatusLabel} sx={workspaceBadgeSx}>
+                                        <Button
+                                            size="small"
+                                            color="inherit"
+                                            variant={activeWorkspace === 'sales' ? 'contained' : 'text'}
+                                            startIcon={<RadarIcon fontSize="small" />}
+                                            onClick={() => handleWorkspaceChange('sales')}
+                                            sx={{ minWidth: 92, color: 'inherit', fontWeight: 850, bgcolor: activeWorkspace === 'sales' ? alpha(theme.palette.common.white, 0.22) : 'transparent' }}
+                                        >
+                                            Sales
+                                        </Button>
+                                    </Badge>
                                 </>
                             )}
                         </Box>
@@ -808,7 +835,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <Chip
                                 icon={<AccessTimeIcon />}
                                 label={isMobile ? (membershipDaysRemaining === 0 ? 'Heute' : `${membershipDaysRemaining} T.`) : membershipNotice}
-                                color={membershipDaysRemaining <= 7 ? 'error' : 'warning'}
+                                color={(membershipDaysRemaining ?? Number.POSITIVE_INFINITY) <= 7 ? 'error' : 'warning'}
                                 size="small"
                                 sx={{ mr: 1, fontWeight: 700, maxWidth: { xs: 88, md: 280 } }}
                             />

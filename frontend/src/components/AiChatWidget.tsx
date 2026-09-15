@@ -19,7 +19,6 @@ import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import SendIcon from '@mui/icons-material/Send';
 import ReactMarkdown from 'react-markdown';
 import { useAiChat } from './useAiChat';
-import { AI_CONFIG } from './aiConfig';
 import { useAuth } from '../context/AuthContext';
 import AiContentLabel from './AiContentLabel';
 
@@ -30,13 +29,33 @@ export const AiChatWidget: React.FC = () => {
   const [input, setInput] = useState('');
   const [clearing, setClearing] = useState(false);
   const { messages, sendMessage, clearConversation, loading } = useAiChat();
-  const { user } = useAuth();
+  const { user, businessPartner } = useAuth();
+  const [avatarKey, setAvatarKey] = useState<'female' | 'male'>(
+    businessPartner?.assistant_avatar_key === 'male' ? 'male' : 'female'
+  );
   const bottomRef = useRef<HTMLDivElement>(null);
   const [isDashboardWidgetMenuOpen, setIsDashboardWidgetMenuOpen] = useState(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
+
+  useEffect(() => {
+    setAvatarKey(businessPartner?.assistant_avatar_key === 'male' ? 'male' : 'female');
+  }, [businessPartner?.assistant_avatar_key]);
+
+  useEffect(() => {
+    const handleAvatarPreview = (event: Event) => {
+      const detail = (event as CustomEvent<{ avatarKey?: string; businessPartnerId?: string }>).detail;
+      if (detail?.businessPartnerId && detail.businessPartnerId !== businessPartner?.id) return;
+      if (detail?.avatarKey === 'female' || detail?.avatarKey === 'male') setAvatarKey(detail.avatarKey);
+    };
+    window.addEventListener('assistant-avatar-preview-change', handleAvatarPreview);
+    return () => window.removeEventListener('assistant-avatar-preview-change', handleAvatarPreview);
+  }, [businessPartner?.id]);
+
+  const assistantAvatarUrl = avatarKey === 'male' ? '/ki-avatar-m.png' : '/ki-avatar-w.png';
+  const assistantFirstName = avatarKey === 'male' ? 'Max' : 'Anna';
 
   useEffect(() => {
     const handleWidgetMenuState = (event: Event) => {
@@ -113,7 +132,7 @@ export const AiChatWidget: React.FC = () => {
           boxShadow: 8,
         }}
       >
-        {isOpen ? <CloseIcon /> : <Avatar src={AI_CONFIG.avatarUrl} sx={{ width: 46, height: 46 }} />}
+        {isOpen ? <CloseIcon /> : <Avatar src={assistantAvatarUrl} sx={{ width: 46, height: 46 }} />}
       </Fab>
 
       {isOpen && (
@@ -154,12 +173,12 @@ export const AiChatWidget: React.FC = () => {
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
               <Avatar
-                src={AI_CONFIG.avatarUrl}
+                src={assistantAvatarUrl}
                 sx={{ width: { xs: 38, sm: 40 }, height: { xs: 38, sm: 40 }, flexShrink: 0 }}
               />
               <Box sx={{ minWidth: 0 }}>
                 <Typography variant="subtitle1" fontWeight="bold" noWrap>
-                  Hallo, ich bin {AI_CONFIG.name}
+                  Hallo, ich bin {assistantFirstName}
                 </Typography>
                 <AiContentLabel kind="ai" size={14} />
               </Box>
@@ -234,11 +253,11 @@ export const AiChatWidget: React.FC = () => {
               >
                 <Box sx={{ textAlign: 'center', flexShrink: 0 }}>
                   <Avatar
-                    src={m.role === 'user' ? user?.profile_image_url || '' : AI_CONFIG.avatarUrl}
+                    src={m.role === 'user' ? user?.profile_image_url || '' : assistantAvatarUrl}
                     sx={{ width: { xs: 32, sm: 40 }, height: { xs: 32, sm: 40 } }}
                   />
                   <Typography variant="caption" display="block">
-                    {m.role === 'user' ? 'Ich' : AI_CONFIG.name}
+                    {m.role === 'user' ? 'Ich' : assistantFirstName}
                   </Typography>
                   {m.role === 'assistant' && <AiContentLabel kind="ai" size={12} />}
                 </Box>

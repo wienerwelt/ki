@@ -3977,6 +3977,7 @@ exports.getDashboardConfig = async (req, res) => {
         bp.enabled_modules,
         bp.default_workspace,
         bp.sales_plan,
+        COALESCE(paas.avatar_key, 'female') AS assistant_avatar_key,
         
         cs.id as cs_id, cs.name as cs_name,
         cs.primary_color, cs.primary_text_color,
@@ -3986,6 +3987,7 @@ exports.getDashboardConfig = async (req, res) => {
       FROM users u
       LEFT JOIN business_partners bp ON bp.id = u.business_partner_id
       LEFT JOIN color_schemes cs ON cs.id = bp.color_scheme_id
+      LEFT JOIN public_ai_assistant_settings paas ON paas.business_partner_id = bp.id
       WHERE u.id = $1
       LIMIT 1;
     `;
@@ -4054,6 +4056,7 @@ exports.getDashboardConfig = async (req, res) => {
         enabled_modules: r.enabled_modules || ['content'],
         default_workspace: r.default_workspace || 'content',
         sales_plan: r.sales_plan || 'basic',
+        assistant_avatar_key: r.assistant_avatar_key === 'male' ? 'male' : 'female',
         
         color_scheme,
       },

@@ -7,6 +7,7 @@ exports.getPublicAssistantConfig = async (req, res) => {
   try {
     const settings = await resolvePublicAssistant(req.params.siteKey);
     if (!settings) return res.status(404).json({ message: 'Öffentlicher Assistent nicht gefunden.' });
+    res.set('Cache-Control', 'no-store');
     return res.json({
       siteKey: settings.site_key,
       partnerName: settings.business_partner_name,

@@ -49,7 +49,7 @@ const PRICING_MODEL_OPTIONS = [
 ] as const;
 
 interface BusinessPartner { id: string; name: string; }
-interface ProviderOption { id: string; name: string; logo_url?: string; }
+interface ProviderOption { id: string; name: string; logo_url?: string; is_public?: boolean; }
 interface CategoryOption { id: string; slug: string; name: string; }
 interface RegionOption { id: string; name: string; code: string; }
 interface LogoLibraryItem {
@@ -89,6 +89,9 @@ interface SoftwareEntry {
     is_active: boolean;
     is_public: boolean;
     is_featured: boolean;
+    provider_is_public?: boolean;
+    provider_mandant_status?: string;
+    is_publicly_visible?: boolean;
     categories: CategoryOption[];
     experience_count: number;
     average_rating: number;
@@ -151,13 +154,13 @@ const SoftwareCatalogAdminPanel: React.FC<SoftwareCatalogAdminPanelProps> = ({
     const [error, setError] = useState<string | null>(null);
 
     const replaceLogoPreview = useCallback((nextUrl = '') => {
-        if (logoPreviewUrlRef.current) URL.revokeObjectURL(logoPreviewUrlRef.current);
+        if (logoPreviewUrlRef.current.startsWith('blob:')) URL.revokeObjectURL(logoPreviewUrlRef.current);
         logoPreviewUrlRef.current = nextUrl;
         setLogoPreviewUrl(nextUrl);
     }, []);
 
     useEffect(() => () => {
-        if (logoPreviewUrlRef.current) URL.revokeObjectURL(logoPreviewUrlRef.current);
+        if (logoPreviewUrlRef.current.startsWith('blob:')) URL.revokeObjectURL(logoPreviewUrlRef.current);
     }, []);
 
     useEffect(() => {
@@ -265,6 +268,17 @@ const SoftwareCatalogAdminPanel: React.FC<SoftwareCatalogAdminPanelProps> = ({
         () => filteredLogoLibrary.slice(0, visibleLogoCount),
         [filteredLogoLibrary, visibleLogoCount]
     );
+    const publicVisibilityIssues = (entry: SoftwareEntry) => {
+        const issues: string[] = [];
+        if (entry.status !== 'published') issues.push('Status ist nicht „Veröffentlicht“');
+        if (!entry.is_active) issues.push('Software ist inaktiv');
+        if (!entry.is_public) issues.push('Freigabe „Auf Public Page“ fehlt');
+        if (entry.provider_mandant_status !== 'active') issues.push('Anbieter ist dem Mandanten nicht aktiv zugeordnet');
+        if (entry.provider_is_public === false) issues.push('Anbieter ist im Branchenverzeichnis nicht öffentlich');
+        return issues;
+    };
+    const publiclyVisibleCount = entries.filter((entry) => entry.is_publicly_visible).length;
+    const incompletePublicCount = entries.filter((entry) => entry.is_public && !entry.is_publicly_visible).length;
 
     useEffect(() => {
         setVisibleLogoCount(80);
@@ -309,7 +323,10 @@ const SoftwareCatalogAdminPanel: React.FC<SoftwareCatalogAdminPanelProps> = ({
             payload.append('businessPartnerId', form.business_partner_id);
             const response = await apiClient.post('/api/admin/actions/software-logo/upload', payload);
             if (!response.res.ok) throw new Error(response.data?.message || 'Logo konnte nicht hochgeladen werden.');
-            setForm((current) => ({ ...current, logo_url: response.data.filePath }));
+            const storedLogoUrl = String(response.data?.filePath || '').trim();
+            if (!storedLogoUrl) throw new Error('Der Logo-Speicher hat keine verwendbare URL zurückgegeben.');
+            setForm((current) => ({ ...current, logo_url: storedLogoUrl }));
+            replaceLogoPreview(storedLogoUrl);
         } catch (err: any) {
             replaceLogoPreview('');
             setError(err?.message || err.response?.data?.message || 'Logo konnte nicht hochgeladen werden.');
@@ -443,9 +460,17 @@ const SoftwareCatalogAdminPanel: React.FC<SoftwareCatalogAdminPanelProps> = ({
             </Stack>
 
             {error && !open && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+            {!loading && entries.length > 0 && (
+                <Alert severity={incompletePublicCount > 0 ? 'warning' : 'info'} sx={{ mb: 2 }}>
+                    {publiclyVisibleCount} Einträge sind tatsächlich auf der Public Page sichtbar.
+                    {incompletePublicCount > 0 && ` Bei ${incompletePublicCount} als „Public“ markierten Einträgen fehlt noch eine Freigabe; der Grund steht direkt am Eintrag.`}
+                </Alert>
+            )}
             {loading ? <Typography color="text.secondary">Lädt …</Typography> : (
                 <Grid container spacing={2}>
-                    {entries.map((entry) => (
+                    {entries.map((entry) => {
+                        const visibilityIssues = publicVisibilityIssues(entry);
+                        return (
                         <Grid item xs={12} md={6} lg={4} key={entry.id}>
                             <Paper variant="outlined" sx={{ p: 2.2, borderRadius: 3, height: '100%' }}>
                                 <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
@@ -474,7 +499,16 @@ const SoftwareCatalogAdminPanel: React.FC<SoftwareCatalogAdminPanelProps> = ({
                                 </Stack>
                                 <Stack direction="row" spacing={0.7} useFlexGap flexWrap="wrap" sx={{ my: 1.3 }}>
                                     <Chip size="small" label={entry.status === 'published' ? 'Veröffentlicht' : entry.status === 'archived' ? 'Archiviert' : 'Entwurf'} color={entry.status === 'published' ? 'success' : 'default'} />
-                                    {entry.is_public && <Chip size="small" label="Public" variant="outlined" />}
+                                    {entry.is_publicly_visible ? (
+                                        <Chip size="small" label="Public sichtbar" color="success" variant="outlined" />
+                                    ) : entry.is_public ? (
+                                        <Tooltip title={visibilityIssues.join(' · ')}>
+                                            <Chip size="small" label="Public noch nicht sichtbar" color="warning" variant="outlined" />
+                                        </Tooltip>
+                                    ) : (
+                                        <Chip size="small" label="Nur intern" variant="outlined" />
+                                    )}
+                                    {!entry.is_active && <Chip size="small" label="Inaktiv" color="warning" />}
                                     {entry.is_featured && <Chip size="small" label="Empfohlen" color="primary" variant="outlined" />}
                                     {(entry.categories || []).slice(0, 2).map((category) => <Chip size="small" key={category.id} label={category.name} />)}
                                 </Stack>
@@ -484,7 +518,8 @@ const SoftwareCatalogAdminPanel: React.FC<SoftwareCatalogAdminPanelProps> = ({
                                 </Typography>
                             </Paper>
                         </Grid>
-                    ))}
+                        );
+                    })}
                     {entries.length === 0 && <Grid item xs={12}><Alert severity="info">Noch keine Software-Einträge vorhanden.</Alert></Grid>}
                 </Grid>
             )}
@@ -668,10 +703,13 @@ const SoftwareCatalogAdminPanel: React.FC<SoftwareCatalogAdminPanelProps> = ({
                             </FormControl>
                         </Grid>
                         <Grid item xs={12} md={8}>
-                            <FormControlLabel control={<Switch checked={form.is_active} onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.checked }))} />} label="Aktiv" />
-                            <FormControlLabel control={<Switch checked={form.is_public} disabled={form.status !== 'published'} onChange={(event) => setForm((current) => ({ ...current, is_public: event.target.checked }))} />} label="Auf Public Page" />
+                            <FormControlLabel control={<Switch checked={form.is_active} onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.checked, ...(!event.target.checked ? { is_public: false } : {}) }))} />} label="Aktiv" />
+                            <FormControlLabel control={<Switch checked={form.is_public} disabled={form.status !== 'published' || !form.is_active || selectedProvider?.is_public === false} onChange={(event) => setForm((current) => ({ ...current, is_public: event.target.checked }))} />} label="Auf Public Page" />
                             <FormControlLabel control={<Switch checked={form.is_featured} onChange={(event) => setForm((current) => ({ ...current, is_featured: event.target.checked }))} />} label="Empfohlen" />
                         </Grid>
+                        {selectedProvider?.is_public === false && (
+                            <Grid item xs={12}><Alert severity="warning">Dieser Anbieter ist im Branchenverzeichnis nicht öffentlich. Bitte dort zuerst die öffentliche Freigabe aktivieren; erst danach kann die Software auf der Public Page erscheinen.</Alert></Grid>
+                        )}
                         <Grid item xs={12}><Alert severity="info">Bewertungen und Hinweise entstehen als Beiträge in „Software & Tools“ in der internen Mandanten-Community. Öffentlich werden nur Durchschnitt und Anzahl gezeigt.</Alert></Grid>
                         {error && <Grid item xs={12}><Alert severity="error">{error}</Alert></Grid>}
                     </Grid>

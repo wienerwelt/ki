@@ -488,10 +488,12 @@ const AdminBpActionsPage: React.FC = () => {
 
         try {
             const response = await apiClient.post('/api/admin/actions/upload', formData);
-            const { filePath } = response.data;
+            if (!response.res.ok) throw new Error(response.data?.message || 'Upload fehlgeschlagen.');
+            const filePath = String(response.data?.filePath || '').trim();
+            if (!filePath) throw new Error('Der Bildspeicher hat keine verwendbare URL zurückgegeben.');
             setFormState(prev => ({ ...prev, [targetField]: filePath }));
         } catch (err: any) {
-            setUploadError(err.response?.data?.message || 'Upload fehlgeschlagen.');
+            setUploadError(err?.message || err.response?.data?.message || 'Upload fehlgeschlagen.');
         } finally {
             event.target.value = '';
         }

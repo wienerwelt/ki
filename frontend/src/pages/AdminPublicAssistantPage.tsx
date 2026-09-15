@@ -71,7 +71,7 @@ const statusLabel: Record<Settings['last_crawl_status'], string> = {
 };
 
 const AdminPublicAssistantPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, fetchBusinessPartnerData } = useAuth();
   const { showSnackbar } = useSnackbar();
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerId, setPartnerId] = useState('');
@@ -132,6 +132,13 @@ const AdminPublicAssistantPage: React.FC = () => {
     setSettings((current) => current ? { ...current, [key]: value } : current);
   };
 
+  const changeAvatar = (avatarKey: Settings['avatar_key']) => {
+    change('avatar_key', avatarKey);
+    window.dispatchEvent(new CustomEvent('assistant-avatar-preview-change', {
+      detail: { avatarKey, businessPartnerId: settings?.business_partner_id || partnerId },
+    }));
+  };
+
   const save = async () => {
     if (!settings) return;
     setSaving(true);
@@ -157,6 +164,10 @@ const AdminPublicAssistantPage: React.FC = () => {
         avatar_key: response.data.avatar_key === 'male' ? 'male' : 'female',
       });
       setOriginsText((response.data.allowed_origins || []).join('\n'));
+      window.dispatchEvent(new CustomEvent('assistant-avatar-preview-change', {
+        detail: { avatarKey: response.data.avatar_key, businessPartnerId: response.data.business_partner_id },
+      }));
+      await fetchBusinessPartnerData();
       showSnackbar('Assistent-Einstellungen gespeichert.', 'success');
     } catch (requestError: any) {
       setError(requestError?.response?.data?.message || 'Einstellungen konnten nicht gespeichert werden.');
@@ -249,7 +260,7 @@ const AdminPublicAssistantPage: React.FC = () => {
                     return (
                       <ButtonBase
                         key={avatar.key}
-                        onClick={() => change('avatar_key', avatar.key)}
+                        onClick={() => changeAvatar(avatar.key)}
                         aria-pressed={selected}
                         aria-label={`${avatar.label}${selected ? ', ausgewählt' : ''}`}
                         sx={{
@@ -272,7 +283,7 @@ const AdminPublicAssistantPage: React.FC = () => {
                     );
                   })}
                 </Stack>
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>Wird auf der Public Page und bei externer Einbettung angezeigt.</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>Die Auswahl ist sofort im Chat als Vorschau sichtbar und wird nach „Speichern“ dauerhaft für internen Chat, Public Page und externe Einbettung übernommen.</Typography>
               </Grid>
               <Grid item xs={12}><TextField fullWidth label="Homepage-Quelle" value={settings.source_url || ''} onChange={(event) => change('source_url', event.target.value)} helperText={`Muss zur hinterlegten Mandanten-Homepage gehören: ${settings.url_businesspartner || 'noch nicht definiert'}`} /></Grid>
               {isAdmin && <Grid item xs={12}><TextField fullWidth multiline minRows={2} label="Erlaubte Einbettungs-Domains" value={originsText} onChange={(event) => setOriginsText(event.target.value)} placeholder="https://beispiel.at" helperText="Eine HTTPS-Origin pro Zeile, ohne Pfad. Bei der hinterlegten Mandanten-Homepage werden www und die Variante ohne www automatisch gemeinsam freigegeben." /></Grid>}

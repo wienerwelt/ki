@@ -47,4 +47,4 @@ function promptFor(text) {
  Keine Karrieretipps, Stellenanzeigen oder Spekulationen. Fehlende Namen/Organisation: Eintrag weglassen. Fehlendes Startdatum: null; nie das Veröffentlichungsdatum als Startdatum verwenden. Keine erfundenen Angaben.
  ARTIKELDATEN: ${JSON.stringify(snippet)}`;
 }
-module.exports = {VERSION,KINDS,SIGNAL,plain,articleText,hash,fingerprint,validateEntry,parseExtraction,promptFor,safeUrl};
+module.exports = {VERSION,KINDS,SIGNAL,plain,articleText,hash,fingerprint,date,validateEntry,parseExtraction,promptFor,safeUrl};

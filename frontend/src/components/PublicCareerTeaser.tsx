@@ -1,14 +1,254 @@
-import React,{useEffect,useState} from 'react';
-import {Alert,Box,Button,Dialog,DialogActions,DialogContent,DialogTitle,Grid,IconButton,Stack,TextField,Typography} from '@mui/material';
+import { useEffect, useState } from 'react';
+import {
+    Alert,
+    Avatar,
+    Box,
+    Button,
+    CardActionArea,
+    Chip,
+    Dialog,
+    DialogActions,
+    DialogContent,
+    DialogTitle,
+    Grid,
+    IconButton,
+    Paper,
+    Stack,
+    TextField,
+    Typography,
+} from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
 import CloseIcon from '@mui/icons-material/Close';
-import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
+import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
 import ShareIcon from '@mui/icons-material/Share';
-import {CareerCard,CareerEntry,careerRequest} from './CareerPanel';
-export default function PublicCareerTeaser({partnerId,partnerPath,primaryColor}:{partnerId:string;partnerPath:string;primaryColor:string}){
- const[entries,setEntries]=useState<CareerEntry[]>([]);const[enabled,setEnabled]=useState(false);const[selected,setSelected]=useState<CareerEntry|null>(null);const[notice,setNotice]=useState('');const[shareFallback,setShareFallback]=useState('');
- useEffect(()=>{let live=true;setEnabled(false);setEntries([]);setSelected(null);if(!partnerId)return;careerRequest(`/api/public/career?partnerId=${encodeURIComponent(partnerId)}`).then(async data=>{if(!live)return;setEnabled(true);setEntries(data.entries);const id=new URLSearchParams(window.location.search).get('career');if(id){const detail=await careerRequest(`/api/public/career?partnerId=${encodeURIComponent(partnerId)}&id=${encodeURIComponent(id)}`);if(live)setSelected(detail.entries[0]||null);}}).catch(()=>{});return()=>{live=false;};},[partnerId]);
- if(!enabled)return null;const login=`/login?partner=${encodeURIComponent(partnerPath.replace(/^\//,''))}&next=${encodeURIComponent(selected?`/career?entry=${selected.id}`:'/career')}`;
- return <Box id="menschen-karriere" sx={{mt:4,scrollMarginTop:100}}><Typography variant="h4" fontWeight={900}>Menschen & Karriere</Typography><Typography color="text.secondary" sx={{mb:2}}>Wer bewegt die Branche?</Typography><Grid container spacing={2}>{entries.map(e=><Grid item xs={12} md={4} key={e.id}><CareerCard entry={e} onOpen={()=>setSelected(e)}/></Grid>)}</Grid>
- <Stack direction={{xs:'column',sm:'row'}} spacing={2} justifyContent="space-between" alignItems={{xs:'stretch',sm:'center'}} sx={{p:2,mt:2,borderRadius:3,bgcolor:`${primaryColor}10`}}><Typography>Weitere Personalien entdecken und eigenes Karriere-Update teilen.</Typography><Button component="a" href={login} variant="contained" startIcon={<LockOutlinedIcon/>} sx={{bgcolor:primaryColor,color:'#fff',textTransform:'none'}}>Als Mitglied entdecken</Button></Stack>
- <Dialog open={Boolean(selected)} onClose={()=>setSelected(null)} maxWidth="sm" fullWidth><DialogTitle sx={{pr:7}}>{selected?.person_name}<IconButton aria-label="Schließen" onClick={()=>setSelected(null)} sx={{position:'absolute',right:12,top:12}}><CloseIcon/></IconButton></DialogTitle><DialogContent>{selected&&<><CareerCard entry={selected} onOpen={()=>{}} detail/>{selected.source_url&&<Button component="a" href={selected.source_url} target="_blank" rel="noopener noreferrer" sx={{color:primaryColor}}>Originalmeldung öffnen</Button>}<Typography variant="body2" sx={{mt:2}}>Austausch und Kommentare bleiben der Community vorbehalten.</Typography></>}{notice&&<Alert severity="info" sx={{mt:1}}>{notice}</Alert>}{shareFallback&&<TextField label="Link zum Kopieren" value={shareFallback} fullWidth InputProps={{readOnly:true}} onFocus={e=>e.target.select()} sx={{mt:2}}/>}</DialogContent><DialogActions><Button startIcon={<ShareIcon/>} onClick={async()=>{const url=`${window.location.origin}${partnerPath}?career=${selected!.id}#menschen-karriere`;setShareFallback('');try{if(navigator.share)await navigator.share({title:`${selected!.person_name} · Menschen & Karriere`,url});else{await navigator.clipboard.writeText(url);setNotice('Link kopiert.');}}catch(e:any){if(e?.name!=='AbortError'){setShareFallback(url);setNotice('Bitte diesen Link kopieren.');}}}}>Teilen</Button><Button component="a" href={login}>Zur Community</Button></DialogActions></Dialog></Box>;
+import AiContentLabel from './AiContentLabel';
+import { CareerCard, CareerEntry, careerKinds, careerRequest } from './CareerPanel';
+import { resolveAssetUrl } from '../utils/assetUrl';
+
+const formatDate = (value?: string) => value
+    ? new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString('de-AT')
+    : '';
+
+export default function PublicCareerTeaser({
+    partnerId,
+    partnerPath,
+    primaryColor,
+}: {
+    partnerId: string;
+    partnerPath: string;
+    primaryColor: string;
+}) {
+    const [entries, setEntries] = useState<CareerEntry[]>([]);
+    const [enabled, setEnabled] = useState(false);
+    const [selected, setSelected] = useState<CareerEntry | null>(null);
+    const [notice, setNotice] = useState('');
+    const [shareFallback, setShareFallback] = useState('');
+
+    useEffect(() => {
+        let live = true;
+        setEnabled(false);
+        setEntries([]);
+        setSelected(null);
+        if (!partnerId) return undefined;
+
+        careerRequest(`/api/public/career?partnerId=${encodeURIComponent(partnerId)}`)
+            .then(async (data) => {
+                if (!live) return;
+                setEnabled(true);
+                setEntries(data.entries);
+                const id = new URLSearchParams(window.location.search).get('career');
+                if (id) {
+                    const detail = await careerRequest(`/api/public/career?partnerId=${encodeURIComponent(partnerId)}&id=${encodeURIComponent(id)}`);
+                    if (live) setSelected(detail.entries[0] || null);
+                }
+            })
+            .catch(() => {});
+
+        return () => { live = false; };
+    }, [partnerId]);
+
+    if (!enabled || entries.length === 0) return null;
+
+    const login = `/login?partner=${encodeURIComponent(partnerPath.replace(/^\//, ''))}&next=${encodeURIComponent(selected ? `/career?entry=${selected.id}` : '/career')}`;
+    const columnWidth = entries.length === 1 ? 12 : entries.length === 2 ? 6 : 4;
+
+    return (
+        <Box
+            id="menschen-karriere"
+            sx={{
+                mt: 4,
+                p: { xs: 2.25, sm: 3, md: 3.5 },
+                position: 'relative',
+                overflow: 'hidden',
+                scrollMarginTop: 100,
+                borderRadius: 5,
+                border: `1px solid ${alpha(primaryColor, 0.2)}`,
+                background: `linear-gradient(135deg, ${alpha(primaryColor, 0.11)} 0%, #fff 45%, ${alpha(primaryColor, 0.045)} 100%)`,
+                boxShadow: `0 20px 50px ${alpha(primaryColor, 0.1)}`,
+                '&::after': {
+                    content: '""',
+                    position: 'absolute',
+                    width: 260,
+                    height: 260,
+                    right: -120,
+                    top: -150,
+                    borderRadius: '50%',
+                    bgcolor: alpha(primaryColor, 0.08),
+                    pointerEvents: 'none',
+                },
+            }}
+        >
+            <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                alignItems={{ xs: 'flex-start', sm: 'center' }}
+                justifyContent="space-between"
+                spacing={2}
+                sx={{ position: 'relative', zIndex: 1, mb: 2.5 }}
+            >
+                <Box>
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.75 }}>
+                        <Box sx={{ width: 36, height: 36, borderRadius: 2, display: 'grid', placeItems: 'center', bgcolor: primaryColor, color: '#fff' }}>
+                            <GroupsOutlinedIcon fontSize="small" />
+                        </Box>
+                        <Typography variant="overline" sx={{ color: primaryColor, fontWeight: 950, letterSpacing: '0.12em', lineHeight: 1.2 }}>
+                            Branchen-Personalien
+                        </Typography>
+                    </Stack>
+                    <Typography variant="h4" fontWeight={950} sx={{ letterSpacing: '-0.025em' }}>
+                        Menschen &amp; Karriere
+                    </Typography>
+                    <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                        Neue Rollen, neue Impulse – Menschen, die die Branche bewegen.
+                    </Typography>
+                </Box>
+                <Chip
+                    label={`${entries.length} ${entries.length === 1 ? 'aktuelle Personalie' : 'aktuelle Personalien'}`}
+                    sx={{ bgcolor: primaryColor, color: '#fff', fontWeight: 900, flexShrink: 0 }}
+                />
+            </Stack>
+
+            <Grid container spacing={2} sx={{ position: 'relative', zIndex: 1 }}>
+                {entries.map((entry) => {
+                    const imageUrl = entry.photo_url || (entry.organization_logo ? resolveAssetUrl(entry.organization_logo) : undefined);
+                    return (
+                        <Grid item xs={12} md={columnWidth} key={entry.id}>
+                            <Paper
+                                elevation={0}
+                                sx={{
+                                    height: '100%',
+                                    overflow: 'hidden',
+                                    borderRadius: 3.5,
+                                    border: `1px solid ${alpha(primaryColor, 0.18)}`,
+                                    bgcolor: alpha('#fff', 0.94),
+                                    transition: 'transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease',
+                                    '&:hover': {
+                                        transform: 'translateY(-3px)',
+                                        borderColor: alpha(primaryColor, 0.42),
+                                        boxShadow: `0 16px 34px ${alpha(primaryColor, 0.13)}`,
+                                    },
+                                }}
+                            >
+                                <CardActionArea onClick={() => setSelected(entry)} sx={{ height: '100%', p: { xs: 2, sm: entries.length === 1 ? 2.5 : 2 } }}>
+                                    <Stack
+                                        direction={{ xs: 'column', sm: entries.length === 1 ? 'row' : 'column' }}
+                                        spacing={2}
+                                        alignItems={{ xs: 'stretch', sm: entries.length === 1 ? 'center' : 'stretch' }}
+                                        sx={{ height: '100%' }}
+                                    >
+                                        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ flexShrink: 0 }}>
+                                            <Avatar src={imageUrl} sx={{ width: 64, height: 64, bgcolor: alpha(primaryColor, 0.09), color: primaryColor, border: `3px solid ${alpha(primaryColor, 0.13)}` }}>
+                                                <PeopleOutlineIcon />
+                                            </Avatar>
+                                            <Box sx={{ minWidth: 0 }}>
+                                                <Chip size="small" label={careerKinds[entry.kind] || 'Personalie'} sx={{ mb: 0.7, color: primaryColor, bgcolor: alpha(primaryColor, 0.09), fontWeight: 800 }} />
+                                                <Typography variant="h6" fontWeight={950} sx={{ lineHeight: 1.15, overflowWrap: 'anywhere' }}>
+                                                    {entry.person_name}
+                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary" fontWeight={700} sx={{ mt: 0.3 }}>
+                                                    {entry.organization}
+                                                </Typography>
+                                            </Box>
+                                        </Stack>
+
+                                        <Box sx={{ minWidth: 0, flex: 1 }}>
+                                            {entry.role_title && <Typography fontWeight={850}>{entry.role_title}</Typography>}
+                                            <Typography
+                                                variant="body2"
+                                                color="text.secondary"
+                                                sx={{ mt: 0.8, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere' }}
+                                            >
+                                                {entry.summary}
+                                            </Typography>
+                                            {(entry.extraction_id || entry.ai_assisted) && (
+                                                <Stack direction="row" alignItems="center" spacing={0.7} sx={{ mt: 1 }}>
+                                                    <AiContentLabel kind="ai" size={14} />
+                                                    <Typography variant="caption" color="text.secondary">KI-unterstützt · redaktionell geprüft</Typography>
+                                                </Stack>
+                                            )}
+                                        </Box>
+
+                                        <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} sx={{ minWidth: { sm: entries.length === 1 ? 190 : 0 }, flexShrink: 0 }}>
+                                            <Typography variant="caption" color="text.secondary">
+                                                {entry.effective_date ? `Start: ${formatDate(entry.effective_date)}` : `Meldung: ${formatDate(entry.published_date)}`}
+                                            </Typography>
+                                            <Stack direction="row" spacing={0.5} alignItems="center" sx={{ color: primaryColor }}>
+                                                <Typography variant="body2" fontWeight={900} whiteSpace="nowrap">Details</Typography>
+                                                <ArrowForwardRoundedIcon fontSize="small" />
+                                            </Stack>
+                                        </Stack>
+                                    </Stack>
+                                </CardActionArea>
+                            </Paper>
+                        </Grid>
+                    );
+                })}
+            </Grid>
+
+            <Dialog open={Boolean(selected)} onClose={() => setSelected(null)} maxWidth="sm" fullWidth>
+                <DialogTitle sx={{ pr: 7 }}>
+                    {selected?.person_name}
+                    <IconButton aria-label="Schließen" onClick={() => setSelected(null)} sx={{ position: 'absolute', right: 12, top: 12 }}>
+                        <CloseIcon />
+                    </IconButton>
+                </DialogTitle>
+                <DialogContent>
+                    {selected && (
+                        <>
+                            <CareerCard entry={selected} onOpen={() => {}} detail />
+                            {selected.source_url && <Button component="a" href={selected.source_url} target="_blank" rel="noopener noreferrer" sx={{ color: primaryColor }}>Originalmeldung öffnen</Button>}
+                            <Typography variant="body2" sx={{ mt: 2 }}>Austausch und Kommentare bleiben der Community vorbehalten.</Typography>
+                        </>
+                    )}
+                    {notice && <Alert severity="info" sx={{ mt: 1 }}>{notice}</Alert>}
+                    {shareFallback && <TextField label="Link zum Kopieren" value={shareFallback} fullWidth InputProps={{ readOnly: true }} onFocus={(event) => event.target.select()} sx={{ mt: 2 }} />}
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        startIcon={<ShareIcon />}
+                        onClick={async () => {
+                            const url = `${window.location.origin}${partnerPath}?career=${selected!.id}#menschen-karriere`;
+                            setShareFallback('');
+                            try {
+                                if (navigator.share) await navigator.share({ title: `${selected!.person_name} · Menschen & Karriere`, url });
+                                else {
+                                    await navigator.clipboard.writeText(url);
+                                    setNotice('Link kopiert.');
+                                }
+                            } catch (error: any) {
+                                if (error?.name !== 'AbortError') {
+                                    setShareFallback(url);
+                                    setNotice('Bitte diesen Link kopieren.');
+                                }
+                            }
+                        }}
+                    >
+                        Teilen
+                    </Button>
+                    <Button component="a" href={login}>Zur Community</Button>
+                </DialogActions>
+            </Dialog>
+        </Box>
+    );
 }

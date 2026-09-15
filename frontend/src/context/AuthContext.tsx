@@ -104,6 +104,7 @@ export interface BusinessPartnerData {
   sales_trial_ends_on?: string | null;
   sales_trial_days_remaining?: number | null;
   sales_access_active?: boolean;
+  assistant_avatar_key?: 'female' | 'male';
   favicon_url?: string;
 }
 

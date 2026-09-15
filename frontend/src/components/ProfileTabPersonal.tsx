@@ -193,7 +193,7 @@ const ProfileTabPersonal: React.FC<{ user: any; isDemoUser: boolean }> = ({ user
       </Grid>
       </Paper>
 
-      <Paper variant="outlined" sx={{ mt: 4, p: { xs: 2, sm: 3 }, borderRadius: 2 }}>
+      <Paper id="public-business-card-settings" variant="outlined" sx={{ mt: 4, p: { xs: 2, sm: 3 }, borderRadius: 2, scrollMarginTop: 96 }}>
         <Typography variant="h6" gutterBottom>Öffentliche Visitenkarte</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Sie bestimmen selbst, ob Ihre Visitenkarte erreichbar ist und welche Kontaktdaten öffentlich ausgeliefert werden.
@@ -262,14 +262,14 @@ const ProfileTabPersonal: React.FC<{ user: any; isDemoUser: boolean }> = ({ user
       <Dialog open={qrDialogOpen} onClose={() => setQrDialogOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ textAlign: 'center' }}>Digitale Visitenkarte</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 3 }}>
-            {!publicProfileEnabled && <Alert severity="info" sx={{ mb: 2, width: '100%' }}>Diese Visitenkarte ist momentan nicht öffentlich erreichbar.</Alert>}
+            {!publicProfileEnabled && <Alert severity="info" sx={{ mb: 2, width: '100%' }} action={<Button color="inherit" size="small" sx={{ whiteSpace: 'nowrap' }} onClick={() => { setQrDialogOpen(false); window.setTimeout(() => document.getElementById('public-business-card-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100); }}>Öffentlich sichtbar machen</Button>}>Diese Visitenkarte ist momentan nicht öffentlich erreichbar.</Alert>}
             <Box sx={{ p: 2, bgcolor: 'white', borderRadius: 2, border: '1px solid #eee', mb: 2 }}>
                 <QRCodeCanvas value={`${window.location.origin}/p/${user.id}`} size={200} level="M" />
             </Box>
             <Typography variant="body2" align="center" color="text.secondary">Scannen Sie diesen Code, um Ihre Kontaktdaten zu teilen.</Typography>
             <Button startIcon={<ShareIcon />} sx={{ mt: 2 }} onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/p/${user.id}`); setSnackbar({ open: true, message: 'Link kopiert!' }); }}>Link kopieren</Button>
         </DialogContent>
-        <DialogActions><Button onClick={() => setQrDialogOpen(false)}>Schließen</Button><Button component="a" href={`/p/${user.id}`} target="_blank" disabled={!user.public_profile_enabled}>Öffentlichen Link öffnen</Button></DialogActions>
+        <DialogActions><Button onClick={() => setQrDialogOpen(false)}>Schließen</Button><Button component="a" href={`/p/${user.id}`} target="_blank" disabled={!publicProfileEnabled}>Öffentlichen Link öffnen</Button></DialogActions>
       </Dialog>
 
       <Snackbar open={snackbar.open} autoHideDuration={3000} onClose={() => setSnackbar({ ...snackbar, open: false })} message={snackbar.message} />

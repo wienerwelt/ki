@@ -429,11 +429,19 @@ exports.uploadActionImage = async (req, res) => {
     const file = req.file;
 
     try {
+        const requestedPartnerId = req.body.businessPartnerId;
+        const managedPartnerId = req.user.role === 'assistenz'
+            ? req.user.business_partner_id
+            : requestedPartnerId;
+        if (!isValidUUID(managedPartnerId)) {
+            return res.status(400).json({ message: 'Bitte zuerst einen gültigen Mandanten auswählen.' });
+        }
+        if (!process.env.AWS_S3_BUCKET_NAME || !process.env.AWS_S3_REGION) {
+            return res.status(503).json({ message: 'Der Bildspeicher ist nicht vollständig konfiguriert.' });
+        }
         const fileExtension = file.originalname.split('.').pop() || '';
         const uniqueFileName = `${uuidv4()}${fileExtension ? '.' + fileExtension : ''}`;
-        const rawPartnerId = req.body.businessPartnerId;
-        const safePartnerSegment = isValidUUID(rawPartnerId) ? rawPartnerId : 'global';
-        const storagePath = `actions/${safePartnerSegment}/${uniqueFileName}`;
+        const storagePath = `actions/${managedPartnerId}/${uniqueFileName}`;
 
         const params = {
             Bucket: process.env.AWS_S3_BUCKET_NAME,

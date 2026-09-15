@@ -4,7 +4,7 @@ const sharp = require('sharp');
 const { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const s3 = require('../config/s3Client');
 const c = require('../utils/careerContent');
-const { notifyReview } = require('../services/careerService');
+const { notifyReview, getArchiveCandidateCount } = require('../services/careerService');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const fail = (message,status=400)=>Object.assign(new Error(message),{status});
 const manager = user => ['admin','assistenz'].includes(user?.role);
@@ -181,9 +181,9 @@ exports.archive=wrap(async(req,res)=>{
  if(req.user.role!=='admin')throw fail('Archiv-Analyse nur für Admin.',403);
  const id=tenant(req);const since=c.date(req.body.since);const limit=Number(req.body.limit);
  if(!since||!Number.isInteger(limit)||limit<1||limit>100)throw fail('Bitte Startdatum und 1–100 Artikel angeben.');
- const count=(await db.query(`SELECT COUNT(*)::int FROM scraped_content sc JOIN career_tenant_settings cs ON cs.business_partner_id=$1
- WHERE cs.enabled AND sc.category_id=ANY(cs.category_ids) AND sc.event_date IS NULL AND sc.published_date >= $2`,[id,since])).rows[0].count;
+ const count=await getArchiveCandidateCount(id,since);
  if(req.body.confirm!==true)return res.json({available:count,max_articles:limit,max_calls:limit,max_reserved_tokens:limit*6000,message:'Keyword-Filter und globale Tages-/Monatslimits gelten auch im Archiv. Geprüfte Artikel werden nicht erneut analysiert.'});
+ if(count<1)throw fail('Keine noch ungeprüften passenden Artikel im gewählten Zeitraum gefunden.',409);
  const {aiContentQueue}=require('../services/queueService');
  await aiContentQueue.add('career-scan',{archive:true,tenantId:id,since,limit},{jobId:`career-archive-${id}-${Date.now()}`,attempts:1,removeOnComplete:20,removeOnFail:20});res.status(202).json({message:'Begrenzte Archiv-Prüfung gestartet. Treffer erscheinen nach der Analyse unter Freigaben.'});
 });

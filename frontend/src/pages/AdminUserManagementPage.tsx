@@ -4,7 +4,7 @@ import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, 
     TextField, MenuItem, Switch, FormControlLabel, Chip, Tabs, Tab, TableSortLabel, InputAdornment, Tooltip, Snackbar, Grid,
-    Avatar, List, ListItem, ListItemText, Divider, Collapse
+    Avatar, List, ListItem, ListItemText, Divider, Collapse, Stack
 } from '@mui/material';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
@@ -105,6 +105,7 @@ const AdminUserManagementPage: React.FC = () => {
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
   const [membershipLevels, setMembershipLevels] = useState<MembershipLevels | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingAll, setLoadingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openDialog, setOpenDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -175,16 +176,10 @@ const AdminUserManagementPage: React.FC = () => {
     }
   };
 
-const fetchUsers = useCallback(async (currentPage = 1, bpFilterOverride?: string) => {
-  if (isAssistant && !loggedInUser?.business_partner_id) {
-      setUsers([]); setLoading(false); return;
-  }
-  if (currentPage === 1) setLoading(true);
-  try {
+const buildUsersUrl = useCallback((currentPage: number, limit: number, bpFilterOverride?: string) => {
     const filterToUse = bpFilterOverride !== undefined ? bpFilterOverride : selectedBpFilter;
-    
-    let userUrl = `/api/admin/users?page=${currentPage}&limit=50`;
-    
+    let userUrl = `/api/admin/users?page=${currentPage}&limit=${limit}`;
+
     if (isAdmin && filterToUse !== 'all') {
       userUrl += `&business_partner_id=${filterToUse}`;
     } else if (isAdmin && adminFilterBpId) {
@@ -192,15 +187,22 @@ const fetchUsers = useCallback(async (currentPage = 1, bpFilterOverride?: string
     } else if (isAssistant && loggedInUser?.business_partner_id) {
       userUrl += `&business_partner_id=${loggedInUser.business_partner_id}`;
     }
-
-    // Die feingranularen Suchparameter an die URL anhängen
     if (searchFirstName) userUrl += `&first_name=${encodeURIComponent(searchFirstName)}`;
     if (searchLastName) userUrl += `&last_name=${encodeURIComponent(searchLastName)}`;
     if (searchEmail) userUrl += `&email=${encodeURIComponent(searchEmail)}`;
     if (searchOrgName) userUrl += `&organization_name=${encodeURIComponent(searchOrgName)}`;
     if (debouncedSearch.trim()) userUrl += `&search=${encodeURIComponent(debouncedSearch.trim())}`;
-    
-    const userRes = await apiClient.get(userUrl);
+    return userUrl;
+}, [isAdmin, isAssistant, adminFilterBpId, loggedInUser?.business_partner_id, selectedBpFilter, searchFirstName, searchLastName, searchEmail, searchOrgName, debouncedSearch]);
+
+const fetchUsers = useCallback(async (currentPage = 1, bpFilterOverride?: string) => {
+  if (isAssistant && !loggedInUser?.business_partner_id) {
+      setUsers([]); setLoading(false); return;
+  }
+  if (currentPage === 1) setLoading(true);
+  try {
+    const userRes = await apiClient.get(buildUsersUrl(currentPage, 50, bpFilterOverride));
+    if (!userRes.res.ok) throw new Error(userRes.data?.message || 'Fehler beim Laden.');
     const responseData = userRes.data;
     const newUsers = asArray<User>(responseData.users || responseData);
     
@@ -218,7 +220,35 @@ const fetchUsers = useCallback(async (currentPage = 1, bpFilterOverride?: string
   } finally {
       setLoading(false);
   }
-}, [isAdmin, isAssistant, adminFilterBpId, loggedInUser?.business_partner_id, selectedBpFilter, searchFirstName, searchLastName, searchEmail, searchOrgName, debouncedSearch]);
+}, [isAssistant, loggedInUser?.business_partner_id, buildUsersUrl]);
+
+const loadAllUsers = useCallback(async () => {
+  if (loadingAll || (isAssistant && !loggedInUser?.business_partner_id)) return;
+  setLoadingAll(true);
+  setError(null);
+  try {
+    const collected: User[] = [];
+    let currentPage = 1;
+    let totalCount = 0;
+    do {
+      const response = await apiClient.get(buildUsersUrl(currentPage, 100));
+      if (!response.res.ok) throw new Error(response.data?.message || 'Alle Benutzer konnten nicht geladen werden.');
+      const pageUsers = asArray<User>(response.data?.users || response.data);
+      totalCount = Number(response.data?.total_count ?? pageUsers.length);
+      collected.push(...pageUsers);
+      currentPage += 1;
+      if (pageUsers.length === 0) break;
+    } while (collected.length < totalCount);
+    setUsers(Array.from(new Map(collected.map((entry) => [entry.id, entry])).values()));
+    setTotalUsersCount(totalCount);
+    setPage(Math.max(1, Math.ceil(totalCount / 50)));
+    setHasMore(false);
+  } catch (loadError: any) {
+    setError(loadError?.message || 'Alle Benutzer konnten nicht geladen werden.');
+  } finally {
+    setLoadingAll(false);
+  }
+}, [buildUsersUrl, isAssistant, loadingAll, loggedInUser?.business_partner_id]);
 
   useEffect(() => {
     const fetchDropdownData = async () => {
@@ -690,7 +720,7 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 
         {/* Schwebender (Floating) Button "Weitere 50 Benutzer laden" */}
         {!loading && users.length > 0 && (
-            <Box sx={{ position: 'fixed', bottom: 32, left: '50%', transform: 'translateX(-50%)', zIndex: 1000, display: 'flex', gap: 2, alignItems: 'center' }}>
+            <Box sx={{ position: 'fixed', bottom: { xs: 12, sm: 32 }, left: '50%', transform: 'translateX(-50%)', zIndex: 1000, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1, alignItems: 'center', maxWidth: 'calc(100vw - 24px)' }}>
                 
                 <Tooltip title="Zum Seitenanfang">
                     <IconButton 
@@ -702,19 +732,31 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                 </Tooltip>
 
                 {hasMore && (
-                    <Button 
-                        variant="contained" 
-                        color="secondary"
-                        size="large"
-                        sx={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.25)', fontWeight: 'bold', px: 4, py: 1.5 }}
-                        onClick={() => {
-                            const nextPage = page + 1;
-                            setPage(nextPage);
-                            fetchUsers(nextPage);
-                        }}
-                    >
-                        Weitere 50 Benutzer laden
-                    </Button>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ width: { xs: '100%', sm: 'auto' } }}>
+                        <Button
+                            variant="contained"
+                            color="secondary"
+                            size="large"
+                            disabled={loadingAll}
+                            sx={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.25)', fontWeight: 'bold', px: 3, py: 1.25, whiteSpace: 'nowrap' }}
+                            onClick={() => {
+                                const nextPage = page + 1;
+                                setPage(nextPage);
+                                fetchUsers(nextPage);
+                            }}
+                        >
+                            Weitere 50 Benutzer laden
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            size="large"
+                            disabled={loadingAll}
+                            onClick={loadAllUsers}
+                            sx={{ borderRadius: 8, bgcolor: 'background.paper', boxShadow: '0 8px 24px rgba(0,0,0,0.16)', fontWeight: 'bold', px: 3, py: 1.25, whiteSpace: 'nowrap' }}
+                        >
+                            {loadingAll ? 'Alle werden geladen …' : `Alle Benutzer laden (${totalUsersCount})`}
+                        </Button>
+                    </Stack>
                 )}
 
                 <Tooltip title="Zum Seitenende">

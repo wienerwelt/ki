@@ -119,7 +119,7 @@ const normalizeSoftwarePayload = (body, businessPartnerId) => {
         target_group: cleanText(body.target_group, 255),
         status,
         is_active: body.is_active === undefined ? true : !!body.is_active,
-        is_public: status === 'published' && !!body.is_public,
+        is_public: status === 'published' && (body.is_active === undefined || !!body.is_active) && !!body.is_public,
         is_featured: !!body.is_featured,
         category_ids: normalizeCategoryIds(body.category_ids),
     };
@@ -158,7 +158,7 @@ const assertProviderForTenant = async (client, providerId, businessPartnerId) =>
     }
 
     const result = await client.query(`
-        SELECT p.id, p.name
+        SELECT p.id, p.name, p.is_public
         FROM directory_providers p
         JOIN directory_provider_mandant_settings ms
           ON ms.provider_id = p.id
@@ -214,6 +214,27 @@ const softwareSelect = `
         st.*,
         p.name AS provider_name,
         p.logo_url AS provider_logo_url,
+        p.is_public AS provider_is_public,
+        COALESCE((
+            SELECT visibility_ms.status
+            FROM directory_provider_mandant_settings visibility_ms
+            WHERE visibility_ms.provider_id = st.provider_id
+              AND visibility_ms.business_partner_id = st.business_partner_id
+            LIMIT 1
+        ), 'missing') AS provider_mandant_status,
+        (
+            st.status = 'published'
+            AND st.is_active = true
+            AND st.is_public = true
+            AND p.is_public = true
+            AND EXISTS (
+                SELECT 1
+                FROM directory_provider_mandant_settings visibility_ms
+                WHERE visibility_ms.provider_id = st.provider_id
+                  AND visibility_ms.business_partner_id = st.business_partner_id
+                  AND visibility_ms.status = 'active'
+            )
+        ) AS is_publicly_visible,
         COALESCE(categories.items, '[]'::json) AS categories,
         COALESCE(experiences.experience_count, 0)::int AS experience_count,
         COALESCE(experiences.rating_count, 0)::int AS rating_count,
@@ -331,7 +352,7 @@ exports.getManagedOptions = async (req, res) => {
         const businessPartnerId = resolveManagedBusinessPartnerId(req, req.query.businessPartnerId);
         const [providers, tools, categories, regions] = await Promise.all([
             db.query(`
-                SELECT p.id, p.name, p.logo_url
+                SELECT p.id, p.name, p.logo_url, p.is_public
                 FROM directory_providers p
                 JOIN directory_provider_mandant_settings ms ON ms.provider_id = p.id
                 WHERE ms.business_partner_id = $1 AND ms.status = 'active'
@@ -675,7 +696,12 @@ exports.createSoftware = async (req, res) => {
 
         client = await db.connect();
         await client.query('BEGIN');
-        await assertProviderForTenant(client, payload.provider_id, businessPartnerId);
+        const provider = await assertProviderForTenant(client, payload.provider_id, businessPartnerId);
+        if (payload.is_public && !provider.is_public) {
+            const error = new Error('Der Anbieter ist im Branchenverzeichnis nicht öffentlich. Bitte den Anbieter zuerst öffentlich freigeben.');
+            error.statusCode = 400;
+            throw error;
+        }
         await assertCategoriesExist(client, payload.category_ids);
         await assertCountriesExist(client, payload.country_codes);
 
@@ -749,7 +775,12 @@ exports.updateSoftware = async (req, res) => {
             error.statusCode = 400;
             throw error;
         }
-        await assertProviderForTenant(client, payload.provider_id, businessPartnerId);
+        const provider = await assertProviderForTenant(client, payload.provider_id, businessPartnerId);
+        if (payload.is_public && !provider.is_public) {
+            const error = new Error('Der Anbieter ist im Branchenverzeichnis nicht öffentlich. Bitte den Anbieter zuerst öffentlich freigeben.');
+            error.statusCode = 400;
+            throw error;
+        }
         await assertCategoriesExist(client, payload.category_ids);
         await assertCountriesExist(client, payload.country_codes);
 
@@ -1004,6 +1035,13 @@ exports.uploadSoftwareLogo = async (req, res) => {
 
     try {
         const businessPartnerId = resolveManagedBusinessPartnerId(req, req.body.businessPartnerId);
+        const bucket = String(process.env.AWS_S3_BUCKET_NAME || '').trim();
+        const region = String(process.env.AWS_S3_REGION || '').trim();
+        if (!bucket || !region) {
+            const error = new Error('Der AWS-Logo-Speicher ist nicht vollständig konfiguriert.');
+            error.statusCode = 503;
+            throw error;
+        }
         const { data, info } = await sharp(req.file.buffer, { limitInputPixels: 20_000_000 })
             .rotate()
             .resize(320, 320, { fit: 'inside', withoutEnlargement: true })
@@ -1012,14 +1050,15 @@ exports.uploadSoftwareLogo = async (req, res) => {
 
         const storagePath = `software-logos/${businessPartnerId}/${uuidv4()}.webp`;
         await s3Client.send(new PutObjectCommand({
-            Bucket: process.env.AWS_S3_BUCKET_NAME,
+            Bucket: bucket,
             Key: storagePath,
             Body: data,
             ContentType: 'image/webp',
             CacheControl: 'public, max-age=31536000, immutable',
         }));
 
-        const filePath = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_S3_REGION}.amazonaws.com/${storagePath}`;
+        const encodedStoragePath = storagePath.split('/').map(encodeURIComponent).join('/');
+        const filePath = `https://${bucket}.s3.${region}.amazonaws.com/${encodedStoragePath}`;
         return res.json({
             message: 'Logo wurde optimiert und hochgeladen.',
             filePath,

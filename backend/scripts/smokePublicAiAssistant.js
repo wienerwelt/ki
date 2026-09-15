@@ -88,6 +88,13 @@ async function run() {
   assert(!('allowed_origins' in own.body), 'Assistenz erhält die externe Domain-Allowlist.');
   assert(['female', 'male'].includes(own.body.avatar_key), 'Assistenz erhält keine gültige Avatar-Auswahl.');
 
+  const dashboardConfig = await request('/api/data/dashboard/config', token);
+  assert(dashboardConfig.response.status === 200, `Dashboard-Konfiguration nicht erreichbar: HTTP ${dashboardConfig.response.status}`);
+  assert(
+    dashboardConfig.body?.businessPartner?.assistant_avatar_key === own.body.avatar_key,
+    'Interner Dashboard-Chat verwendet nicht den mandantenspezifischen Avatar.'
+  );
+
   const rotate = await request('/api/admin/public-assistant/rotate-site-key', token, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

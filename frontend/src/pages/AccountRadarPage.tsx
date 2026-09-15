@@ -62,7 +62,9 @@ import SearchIcon from '@mui/icons-material/Search';
 import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 import VideocamOutlinedIcon from '@mui/icons-material/VideocamOutlined';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import posthog from 'posthog-js';
+import { QRCodeSVG } from 'qrcode.react';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 import AccountRadarTools, { SalesEntitlements } from '../components/AccountRadarTools';
@@ -628,6 +630,7 @@ const AccountRadarPage: React.FC = () => {
   const canConfigureRadar = canManageAccounts;
   const isDemoMode = user?.role === 'demo';
   const primary = theme.palette.primary.main;
+  const calendarDeviceUrl = calendarFeed?.url?.replace(/^https?:/i, 'webcal:') || '';
 
   useEffect(() => {
     const timer = window.setInterval(() => setClockNow(Date.now()), 60_000);
@@ -678,6 +681,17 @@ const AccountRadarPage: React.FC = () => {
   useEffect(() => {
     fetchRadar(false);
   }, [fetchRadar]);
+
+  useEffect(() => {
+    if (!canConfigureRadar) return undefined;
+    let active = true;
+    apiClient.get<{ enabled: boolean; url: string | null; updated_at?: string | null }>('/api/account-radar/calendar-feed')
+      .then((response) => {
+        if (active && response.res.ok) setCalendarFeed(response.data);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [canConfigureRadar]);
 
   useEffect(() => {
     if (!campaignDetailId) return undefined;
@@ -1325,9 +1339,14 @@ const AccountRadarPage: React.FC = () => {
         }}
       >
         <Stack direction="row" spacing={1.5} alignItems="flex-start">
-          <Box sx={{ width: 42, height: 42, flexShrink: 0, borderRadius: 2.5, display: 'grid', placeItems: 'center', color: competitorSignal ? 'secondary.main' : 'primary.main', bgcolor: competitorSignal ? alpha(theme.palette.secondary.main, 0.12) : alpha(primary, 0.11) }}>
+          <Avatar
+            variant="rounded"
+            src={resolveAssetUrl(signal.account_logo_url || '') || undefined}
+            alt={signal.account_name || 'Account'}
+            sx={{ width: 42, height: 42, flexShrink: 0, borderRadius: 2.5, color: competitorSignal ? 'secondary.main' : 'primary.main', bgcolor: competitorSignal ? alpha(theme.palette.secondary.main, 0.12) : alpha(primary, 0.11), '& img': { objectFit: 'contain', p: 0.35 } }}
+          >
             {competitorSignal ? <TrackChangesIcon /> : <BusinessCenterIcon />}
-          </Box>
+          </Avatar>
           <Box sx={{ minWidth: 0, flexGrow: 1 }}>
             <Stack direction="row" alignItems="center" spacing={0.8} flexWrap="wrap" useFlexGap>
               <Button
@@ -1343,6 +1362,19 @@ const AccountRadarPage: React.FC = () => {
               {campaigns.filter((campaign) => campaign.signal_ids.includes(signal.id) || campaign.account_ids.includes(signal.account_id || '')).map((campaign) => (
                 <Chip key={campaign.id} size="small" icon={<CampaignOutlinedIcon />} label={campaign.name} variant="outlined" color="info" sx={{ height: 24, fontWeight: 800 }} />
               ))}
+              {!isDemoMode && (
+                <Stack direction="row" spacing={0.35} sx={{ ml: 'auto' }}>
+                  <Tooltip title="Kontakt planen">
+                    <IconButton size="small" onClick={() => openWorkflow(signal, 'contact_planned')} disabled={saving} aria-label="Kontakt planen" sx={{ color: 'warning.dark', bgcolor: alpha(theme.palette.warning.main, status === 'read' && signal.action_type ? 0.22 : 0.1), '&:hover': { bgcolor: alpha(theme.palette.warning.main, 0.2) } }}><ScheduleIcon fontSize="small" /></IconButton>
+                  </Tooltip>
+                  <Tooltip title="Als erledigt markieren">
+                    <IconButton size="small" onClick={() => updateStatus(signal, 'done')} disabled={saving || status === 'done'} aria-label="Als erledigt markieren" sx={{ color: 'success.main', bgcolor: alpha(theme.palette.success.main, status === 'done' ? 0.22 : 0.1), '&:hover': { bgcolor: alpha(theme.palette.success.main, 0.2) } }}><DoneAllIcon fontSize="small" /></IconButton>
+                  </Tooltip>
+                  <Tooltip title="Als nicht relevant ausblenden">
+                    <IconButton size="small" onClick={() => openRelevanceDialog(signal)} disabled={saving || status === 'ignored'} aria-label="Als nicht relevant ausblenden" sx={{ color: 'text.secondary', bgcolor: alpha(theme.palette.text.primary, status === 'ignored' ? 0.16 : 0.06), '&:hover': { bgcolor: alpha(theme.palette.text.primary, 0.12) } }}><DeleteOutlineIcon fontSize="small" /></IconButton>
+                  </Tooltip>
+                </Stack>
+              )}
             </Stack>
 
             <Typography variant="h6" sx={{ mt: 1, fontWeight: 900, lineHeight: 1.25, fontSize: { xs: '1.05rem', md: '1.15rem' } }}>
@@ -2416,6 +2448,11 @@ const AccountRadarPage: React.FC = () => {
             <Stack direction="row" spacing={1} alignItems="center">
               <CalendarMonthOutlinedIcon color="primary" />
               <Typography variant="h6" sx={{ fontWeight: 950 }}>Kontaktkalender</Typography>
+              {calendarFeed?.enabled && calendarFeed.url && (
+                <Tooltip title="Kalenderfeed ist aktiv – Einstellungen öffnen">
+                  <IconButton size="small" color="success" onClick={openCalendarFeed} aria-label="Aktiven Kalenderfeed anzeigen"><InfoOutlinedIcon fontSize="small" /></IconButton>
+                </Tooltip>
+              )}
             </Stack>
             <Stack direction="row" spacing={1.2} useFlexGap flexWrap="wrap" alignItems="center" sx={{ mt: 0.7 }}>
               {[
@@ -2556,9 +2593,11 @@ const AccountRadarPage: React.FC = () => {
               ['planned', `Geplant ${tabCounts.planned}`],
               ['done', `Erledigt ${tabCounts.done}`],
               ['ignored', `Ausgeblendet ${tabCounts.ignored}`],
-            ] as Array<[RadarView, string]>).map(([value, label]) => (
-              <Button key={value} size="small" variant={view === value ? 'contained' : 'text'} onClick={() => setView(value)} sx={{ flexShrink: 0, minWidth: 0, whiteSpace: 'normal', lineHeight: 1.15, minHeight: 38, px: { xs: 1.25, sm: 1.8 }, fontWeight: 900 }}>{label}</Button>
-            ))}
+            ] as Array<[RadarView, string]>).map(([value, label]) => {
+              const tone = value === 'planned' ? theme.palette.warning.main : value === 'done' ? theme.palette.success.main : value === 'ignored' ? theme.palette.grey[600] : primary;
+              const emphasized = ['planned', 'done', 'ignored'].includes(value);
+              return <Button key={value} size="small" variant={view === value ? 'contained' : 'text'} onClick={() => setView(value)} sx={{ flexShrink: 0, minWidth: 0, whiteSpace: 'nowrap', lineHeight: 1.15, minHeight: 38, px: { xs: 1.25, sm: 1.8 }, fontWeight: 900, color: view === value ? theme.palette.getContrastText(tone) : emphasized ? tone : undefined, bgcolor: view === value ? tone : emphasized ? alpha(tone, 0.1) : undefined, '&:hover': { bgcolor: view === value ? tone : alpha(tone, 0.17) } }}>{label}</Button>;
+            })}
           </Stack>
           <Box sx={{ flexGrow: 1 }} />
           <TextField
@@ -2912,6 +2951,11 @@ const AccountRadarPage: React.FC = () => {
                   </MenuItem>
                 ))}
               </TextField>
+              {campaigns.length === 0 && canConfigureRadar && (
+                <Button variant="text" startIcon={<CampaignOutlinedIcon />} onClick={() => { setWorkflowSignal(null); openCampaignDialog(); }} sx={{ alignSelf: 'flex-start', mt: -1, whiteSpace: 'nowrap' }}>
+                  Erste Kampagne anlegen
+                </Button>
+              )}
 
               <TextField
                 select
@@ -3294,6 +3338,18 @@ const AccountRadarPage: React.FC = () => {
                     InputProps={{ readOnly: true, endAdornment: <InputAdornment position="end"><Tooltip title="Link kopieren"><IconButton onClick={copyCalendarFeed}><ContentCopyOutlinedIcon /></IconButton></Tooltip></InputAdornment> }}
                     helperText="In Outlook, Apple Kalender oder Google Kalender als Kalender per URL abonnieren."
                   />
+                  <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
+                      <Box sx={{ p: 1, bgcolor: '#fff', borderRadius: 2, lineHeight: 0 }}>
+                        <QRCodeSVG value={calendarFeed.url} size={148} level="M" />
+                      </Box>
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography sx={{ fontWeight: 900 }}>Auf dem Handy einrichten</Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>QR-Code mit der Kamera scannen oder den Feed direkt auf diesem Gerät öffnen. Danach im Kalender als Abo bestätigen.</Typography>
+                        <Button component="a" href={calendarDeviceUrl} variant="contained" size="small" sx={{ mt: 1.2, whiteSpace: 'nowrap' }}>Auf diesem Gerät abonnieren</Button>
+                      </Box>
+                    </Stack>
+                  </Paper>
                   <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                     <Button variant="outlined" startIcon={<RestartAltIcon />} onClick={rotateCalendarFeed} disabled={calendarFeedLoading}>Link erneuern</Button>
                     <Button color="error" onClick={disableCalendarFeed} disabled={calendarFeedLoading}>Feed deaktivieren</Button>
@@ -3375,13 +3431,13 @@ const AccountRadarPage: React.FC = () => {
                   cancelled: 'Planung entfernt',
                 };
                 return (
-                  <Stack key={item.id} direction="row" spacing={1.4} sx={{ py: 1.5 }}>
-                    <Avatar src={item.actor_profile_image_url || undefined} sx={{ width: 36, height: 36, fontSize: '0.82rem', bgcolor: 'primary.main' }}>
+                  <Stack key={item.id} direction="row" spacing={1.4} sx={{ py: 1.5, px: item.event_type === 'cancelled' ? 1 : 0, opacity: item.event_type === 'cancelled' ? 0.58 : 1, bgcolor: item.event_type === 'cancelled' ? 'action.hover' : 'transparent', borderRadius: 2 }}>
+                    <Avatar src={item.actor_profile_image_url || undefined} sx={{ width: 36, height: 36, fontSize: '0.82rem', bgcolor: item.event_type === 'cancelled' ? 'text.disabled' : 'primary.main' }}>
                       {(item.actor_name || '?').slice(0, 1)}
                     </Avatar>
                     <Box sx={{ minWidth: 0, flexGrow: 1 }}>
                       <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="baseline">
-                        <Typography variant="body2" sx={{ fontWeight: 900 }}>{activityLabel[item.event_type] || item.event_type}</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 900, textDecoration: item.event_type === 'cancelled' ? 'line-through' : 'none' }}>{activityLabel[item.event_type] || item.event_type}</Typography>
                         <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>{formatActionDate(item.created_at)}</Typography>
                       </Stack>
                       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.2 }}>{item.actor_name}</Typography>

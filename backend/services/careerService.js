@@ -67,6 +67,45 @@ async function processArticle(article, onlyTenant = null) {
   console.warn('[Career] Analyse/Verteilung fehlgeschlagen:',extraction.id,e.message);return 'failed';
  }
 }
+
+async function getArchiveCandidateCount(tenantId, since) {
+ const configuration = (await db.query(`SELECT
+  COALESCE((SELECT enabled FROM career_ai_settings WHERE singleton=true),false) AS global_enabled,
+  COALESCE(cs.enabled,false) AS tenant_enabled,
+  COALESCE(cardinality(cs.category_ids),0)::int AS category_count,
+  COALESCE(bp.is_active,false) AS partner_active,
+  COALESCE('content'=ANY(bp.enabled_modules),false) AS content_enabled
+  FROM (SELECT $1::uuid AS id) selected
+  LEFT JOIN business_partners bp ON bp.id=selected.id
+  LEFT JOIN career_tenant_settings cs ON cs.business_partner_id=selected.id`,[tenantId])).rows[0];
+ const configurationError = !configuration?.global_enabled
+  ? 'Die zentrale KI-Verarbeitung ist noch deaktiviert.'
+  : !configuration.partner_active || !configuration.content_enabled
+   ? 'Das Content-Modul dieses Mandanten ist nicht aktiv.'
+   : !configuration.tenant_enabled
+    ? 'Die Menschen-&-Karriere-Automatik dieses Mandanten ist noch deaktiviert.'
+    : Number(configuration.category_count) < 1
+     ? 'Bitte zuerst mindestens eine Artikelkategorie für diesen Mandanten auswählen.'
+     : null;
+ if (configurationError) {
+  const error = new Error(configurationError);
+  error.status = 409;
+  throw error;
+ }
+
+ const result = await db.query(`SELECT COUNT(*)::int AS count FROM scraped_content sc
+  WHERE sc.event_date IS NULL
+  AND COALESCE(sc.published_date::date,sc.scraped_at::date,sc.created_at::date) >= $2::date
+  AND EXISTS(SELECT 1 FROM career_tenant_settings cs JOIN business_partners bp ON bp.id=cs.business_partner_id
+   WHERE cs.business_partner_id=$1 AND cs.enabled AND bp.is_active AND 'content'=ANY(bp.enabled_modules)
+   AND sc.category_id=ANY(cs.category_ids)
+   AND (NOT EXISTS(SELECT 1 FROM business_partner_regions WHERE business_partner_id=bp.id)
+    OR EXISTS(SELECT 1 FROM business_partner_regions br JOIN regions r ON r.id=br.region_id
+     WHERE br.business_partner_id=bp.id AND (r.code=sc.region OR sc.region IN ('EU','GLOBAL','WORLD')))))
+  AND NOT EXISTS(SELECT 1 FROM career_article_checks cc
+   WHERE cc.article_id=sc.id AND cc.checked_at>=COALESCE(sc.updated_at,sc.scraped_at,sc.created_at))`,[tenantId,since]);
+ return Number(result.rows[0]?.count || 0);
+}
 async function scan(options = {}) {
  const settings = (await db.query('SELECT * FROM career_ai_settings')).rows[0];
  if (!settings?.enabled) return {disabled:true};
@@ -90,8 +129,8 @@ async function scan(options = {}) {
  OR EXISTS(SELECT 1 FROM business_partner_regions br JOIN regions r ON r.id=br.region_id
  WHERE br.business_partner_id=bp.id AND (r.code=sc.region OR sc.region IN ('EU','GLOBAL','WORLD')))))
  AND ($1::boolean OR sc.scraped_at >= $2)
- AND ($4::date IS NULL OR sc.published_date >= $4)
- AND NOT EXISTS(SELECT 1 FROM career_article_checks cc WHERE cc.article_id=sc.id AND cc.checked_at>=COALESCE(sc.updated_at,sc.scraped_at))
+ AND ($4::date IS NULL OR COALESCE(sc.published_date::date,sc.scraped_at::date,sc.created_at::date) >= $4)
+ AND NOT EXISTS(SELECT 1 FROM career_article_checks cc WHERE cc.article_id=sc.id AND cc.checked_at>=COALESCE(sc.updated_at,sc.scraped_at,sc.created_at))
  ORDER BY sc.scraped_at DESC LIMIT $5`,[Boolean(options.archive),settings.auto_since,options.tenantId||null,options.since||null,limit]);
  const counts={checked:articles.rowCount,completed:0,cached:0,excluded:0,waiting:0,failed:0};
  for (const article of articles.rows) {const status=await processArticle(article,options.tenantId);counts[status]=(counts[status]||0)+1;}
@@ -109,4 +148,4 @@ async function scan(options = {}) {
  }
  return counts;
 }
-module.exports={scan,processArticle,reserve,distribute,notifyReview,RESERVE};
+module.exports={scan,processArticle,reserve,distribute,notifyReview,getArchiveCandidateCount,RESERVE};

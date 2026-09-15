@@ -37,6 +37,16 @@ const getViennaClock = (date = new Date()) => {
   };
 };
 
+const formatDigestDate = (isoDate) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ''));
+  return match ? `${match[3]}.${match[2]}.${match[1]}` : new Intl.DateTimeFormat('de-AT', {
+    timeZone: 'Europe/Vienna',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(new Date());
+};
+
 const getWeekStart = (localDate, weekday) => {
   const date = new Date(`${localDate}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() - (weekday - 1));
@@ -392,7 +402,7 @@ async function getRadarSignals({ businessPartnerId, userId, minRelevance = 70, l
     .slice(0, Math.min(Math.max(Number(limit) || 10, 1), 20));
 }
 
-const renderRadarDigest = ({ partner, recipient, signals, campaigns = [] }) => {
+const renderRadarDigest = ({ partner, recipient, signals, campaigns = [], reportDate }) => {
   const primaryColor = getPrimaryColor(partner);
   const primaryTextColor = getPrimaryTextColor(partner);
   const euro = new Intl.NumberFormat('de-AT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
@@ -433,7 +443,7 @@ const renderRadarDigest = ({ partner, recipient, signals, campaigns = [] }) => {
   const includesManagementPdf = getSalesPlanDefinition(partner.sales_plan).features.managementPdf;
   return renderLayout({
     preheader: `${signals.length} relevante Account-Signale · ${campaigns.length} Kampagnen`,
-    title: 'Ihr Account-Radar',
+    title: `Ihr Account-Radar am ${formatDigestDate(reportDate)}`,
     partner,
     contentHtml: `
       <p>Guten Morgen ${escapeHtml(recipientName)},</p>
@@ -492,11 +502,12 @@ async function sendAccountRadarTestEmail({ businessPartnerId, userId, minRelevan
   }
 
   const entitlements = getSalesPlanDefinition(partner.sales_plan);
+  const clock = getViennaClock();
   const attachments = [];
   if (entitlements.features.managementPdf) {
     const managementPdf = await createRadarManagementPdf({ partner, signals, campaigns });
     attachments.push({
-      filename: `account-radar-management-${getViennaClock().date}.pdf`,
+      filename: `account-radar-management-${clock.date}.pdf`,
       content: managementPdf,
       contentType: 'application/pdf',
     });
@@ -504,8 +515,8 @@ async function sendAccountRadarTestEmail({ businessPartnerId, userId, minRelevan
 
   const info = await sendEmail({
     to: recipient.email,
-    subject: `[TEST] ${partner.name || 'Account-Radar'}: ${signals.length} Signale · ${campaigns.length} Kampagnen`,
-    html: renderRadarDigest({ partner, recipient, signals, campaigns }),
+    subject: `[TEST] Ihr Account-Radar am ${formatDigestDate(clock.date)} · ${partner.name || 'Account-Radar'}`,
+    html: renderRadarDigest({ partner, recipient, signals, campaigns, reportDate: clock.date }),
     partner,
     attachments,
   });
@@ -591,8 +602,8 @@ async function dispatchForSettings(settings, clock) {
 
       const info = await sendEmail({
         to: recipient.email,
-        subject: `${settings.partner_name || 'Account-Radar'}: ${signals.length} Signale · ${campaigns.length} Kampagnen`,
-        html: renderRadarDigest({ partner, recipient, signals, campaigns }),
+        subject: `Ihr Account-Radar am ${formatDigestDate(clock.date)} · ${settings.partner_name || 'Account-Radar'}`,
+        html: renderRadarDigest({ partner, recipient, signals, campaigns, reportDate: clock.date }),
         partner,
         attachments,
       });

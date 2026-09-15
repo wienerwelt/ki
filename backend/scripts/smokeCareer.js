@@ -37,6 +37,9 @@ async function run(){
   for(const id of partners)await db.query('INSERT INTO career_tenant_settings(business_partner_id,enabled,public_enabled,category_ids) VALUES($1,true,true,ARRAY[$2::uuid])',[id,category]);
   await db.query("UPDATE career_ai_settings SET enabled=true,auto_since=now()+interval '2 days',daily_calls=100,monthly_tokens=1000000");
   const a=(await db.query('SELECT * FROM scraped_content WHERE id=$1',[article])).rows[0];
+  const archivePreview=await invoke(controller.archive,{id:users[2],role:'admin',business_partner_id:partners[0]},{since:'2026-09-01',limit:20},{partnerId:partners[0]});
+  assert.equal(archivePreview.status,200,'Archive preview is available for a configured tenant');
+  assert.equal(archivePreview.data.available,1,'Archive preview follows the same tenant/category/region rules as the scanner');
   await Promise.all([service.processArticle(a),service.processArticle(a)]);assert.equal(aiCalls,1,'One analysis even with concurrent claims');
   await service.processArticle(a);assert.equal(aiCalls,1,'Cache must not pay again');
   const scanned=await service.scan({limit:1,tenantId:partners[0]});assert.equal(scanned.checked,0);assert.equal(aiCalls,1,'Scheduled queries do not re-analyse checked/cached articles');
@@ -71,6 +74,10 @@ async function run(){
   assert.equal((await invoke(controller.tenants,assistant,{}, {partnerId:partners[1]})).status,403);
   assert.equal((await invoke(controller.tenants,normal)).status,403);
   const assistantSettings=await invoke(controller.settings,assistant);assert.deepEqual(assistantSettings.data.global,{enabled:true},'Assistants cannot read platform-wide budgets');
+  assert.equal((await invoke(controller.archive,admin,{since:'2026-09-01',limit:20,confirm:true},{partnerId:partners[0]})).status,409,'An empty archive run must not enqueue a useless AI job');
+  await db.query('UPDATE career_ai_settings SET enabled=false');
+  assert.equal((await invoke(controller.archive,admin,{since:'2026-09-01',limit:20},{partnerId:partners[0]})).status,409,'Disabled automation returns an actionable conflict instead of a server error');
+  await db.query('UPDATE career_ai_settings SET enabled=true');
   assert.equal((await invoke(controller.saveSettings,assistant,{enabled:true,category_ids:[category],global:{enabled:false,daily_calls:20,monthly_tokens:120000}})).status,403,'Assistants cannot change global settings');
   const form={...item,is_self:'true',confirm_rights:'true',requested_public:'true'};
   const created=await invoke(controller.create,normal,form);assert.equal(created.status,201);createdEntry=created.data.id;

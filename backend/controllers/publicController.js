@@ -254,6 +254,10 @@ const loadPublicBusinessPartnerActions = async ({ partnerId, page = 1, limit = 1
 exports.getPublicContext = async (req, res) => {
     const { partnerCode } = req.query;
 
+    // Badge-Zahlen und Freigaben sind dynamisch und dürfen nicht aus einem
+    // älteren Browser-/Proxy-Cache stammen.
+    res.set('Cache-Control', 'no-store');
+
     try {
         let partnerData = null;
         let colorScheme = null;
@@ -298,7 +302,14 @@ exports.getPublicContext = async (req, res) => {
 
                 // 1. Verzeichnis-Einträge zählen               
                 try {
-                    const dirCount = await db.query(`SELECT COUNT(*) as count FROM directory_provider_mandant_settings WHERE business_partner_id = $1 AND status = 'active'`, [partnerData.id]);
+                    const dirCount = await db.query(`
+                        SELECT COUNT(*)::int AS count
+                        FROM directory_provider_mandant_settings ms
+                        JOIN directory_providers provider ON provider.id = ms.provider_id
+                        WHERE ms.business_partner_id = $1
+                          AND ms.status = 'active'
+                          AND provider.is_public = true
+                    `, [partnerData.id]);
                     stats.total_directory_entries = parseInt(dirCount.rows[0].count, 10);
                 } catch(e) { 
                     console.error('Fehler beim Zählen der Verzeichnis-Einträge:', e.message); 
