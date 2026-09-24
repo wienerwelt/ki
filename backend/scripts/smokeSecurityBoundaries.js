@@ -282,6 +282,20 @@ function checkDemoReadOnlyBoundary() {
   }, response);
   assert(getAllowed === false, 'Demo-Benutzer kann Inhalte nicht schreibgeschützt lesen.');
 
+  const exportBlocked = authMiddleware.__test.rejectDemoMutation({
+    user: { role: 'demo' },
+    method: 'GET',
+    originalUrl: '/api/account-radar/exports/accounts.csv',
+  }, response);
+  assert(exportBlocked === true && response.statusCode === 403, 'Demo-Benutzer kann Account-Daten exportieren.');
+
+  const downloadBlocked = authMiddleware.__test.rejectDemoMutation({
+    user: { role: 'demo' },
+    method: 'GET',
+    originalUrl: '/api/files/example/download',
+  }, response);
+  assert(downloadBlocked === true && response.statusCode === 403, 'Demo-Benutzer kann Dateien herunterladen.');
+
   const renewalAllowed = authMiddleware.__test.rejectDemoMutation({
     user: { role: 'demo' },
     method: 'POST',

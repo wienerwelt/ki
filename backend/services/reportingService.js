@@ -572,7 +572,7 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
         );
 
         const partnerParams = [];
-        let partnerWhere = 'bp.is_active = TRUE';
+        let partnerWhere = 'bp.is_active = TRUE AND COALESCE(bp.is_demo_tenant, FALSE) = FALSE';
         if (!(collectPreviewDetails && targetBusinessPartnerId)) {
             partnerWhere += ' AND bp.monthly_report_enabled = TRUE';
         }

@@ -1,9 +1,9 @@
 const { createHash } = require('crypto');
-const VERSION = 'career-v1';
+const VERSION = 'career-v3';
 const KINDS = ['appointment','change','promotion','departure'];
-const SIGNAL = /(?<!\p{L})(ernennt|ernannt|bestellt|berufen|übernimmt|wechselt|befördert|verlässt|nachfolger|nachfolgerin|personalwechsel|personalie|neuer\s+(?:chef|leiter|geschäftsführer)|neue\s+(?:chefin|leiterin|geschäftsführerin)|appointed|joins|promoted|steps down)(?!\p{L})/iu;
+const SIGNAL = /(?<!\p{L})(ernennt|ernannt|bestellt|berufen|übernimmt|wechselt|befördert|verlässt|verstärkt|verstärkung|folgt\s+auf|rückt\s+(?:in|zum|zur|an)|kommt\s+zu|startet\s+bei|holt\s+.{0,80}(?:ins\s+team|an\s+bord)|verantwortet\s+(?:künftig|neu)|nachfolger|nachfolgerin|personalwechsel|personalie|neu\s+im\s+(?:team|management|vorstand|vertrieb)|neuer\s+(?:chef|leiter|geschäftsführer)|neue\s+(?:chefin|leiterin|geschäftsführerin)|appointed|joins|promoted|steps down)(?!\p{L})/iu;
 const plain = value => String(value || '').replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/g,' ').replace(/\s+/g,' ').trim();
-function articleText(article) { return plain(`${article.title || ''}\n${article.full_text || article.summary || ''}`); }
+function articleText(article) { return plain(`${article.title || ''}\n${article.summary || ''}\n${article.full_text || ''}`); }
 const hash = text => createHash('sha256').update(text).digest('hex');
 function fingerprint(entry) { return hash([entry.person_name,entry.organization,entry.role_title,entry.kind,entry.effective_date || ''].map(v=>plain(v).toLowerCase()).join('|')); }
 function short(value, limit, required = false) {

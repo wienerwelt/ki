@@ -4,7 +4,12 @@ param(
     [ValidatePattern('^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$')]
     [string]$Version,
 
-    [string]$OutputDirectory = 'releases'
+    [string]$OutputDirectory = 'releases',
+
+    [ValidateRange(1, 100)]
+    [double]$MinimumFreeGiB = 5,
+
+    [switch]$PreserveDependencyVolumes
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,10 +64,16 @@ try {
         }
     }
 
-    & powershell.exe `
-        -NoProfile `
-        -ExecutionPolicy Bypass `
-        -File (Join-Path $repoRoot 'scripts\preflight.ps1')
+    $preflightArguments = @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', (Join-Path $repoRoot 'scripts\preflight.ps1'),
+        '-MinimumFreeGiB', ([string]$MinimumFreeGiB)
+    )
+    if ($PreserveDependencyVolumes) {
+        $preflightArguments += '-PreserveDependencyVolumes'
+    }
+    & powershell.exe @preflightArguments
     if ($LASTEXITCODE -ne 0) {
         throw 'Preflight fehlgeschlagen; es wurde kein Release erstellt.'
     }

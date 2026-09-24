@@ -23,6 +23,8 @@ import ScheduleIcon from '@mui/icons-material/Schedule';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import CalendarMonthOutlinedIcon from '@mui/icons-material/CalendarMonthOutlined';
+import ManageSearchOutlinedIcon from '@mui/icons-material/ManageSearchOutlined';
+import RssFeedOutlinedIcon from '@mui/icons-material/RssFeedOutlined';
 
 const quickSteps = [
   ['1', 'Accounts anlegen', 'Kunden, Interessenten und - in Premium - Wettbewerber strukturiert erfassen.'],
@@ -39,6 +41,9 @@ const views = [
   { icon: <ScheduleIcon />, title: 'Geplant', text: 'Alle Kontakte und Wiedervorlagen mit Termin, Zuständigkeit und Kalenderexport.' },
   { icon: <CalendarMonthOutlinedIcon />, title: 'Kontaktkalender', text: 'Geplante, überfällige und erledigte Kontakte als Monatsübersicht prüfen. Manager können einen geschützten Kalenderfeed erzeugen.' },
   { icon: <FactCheckOutlinedIcon />, title: 'Daten & API', text: 'Mandantenweite Qualitätsprüfung, CSV-Export und - in Premium - sichere API-Anbindung.' },
+  { icon: <ManageSearchOutlinedIcon />, title: 'Sales-Trigger', text: 'Premium erkennt Branchenereignisse im Plattform-Datenbestand und in beobachteten Quellen. Dafür ist kein separates CONTENT-Abo erforderlich.' },
+  { icon: <RadarIcon />, title: 'Trigger-Treffer', text: 'Accountlose Markt- und Ereignistreffer sichtbar prüfen, ausblenden oder einem bestehenden beziehungsweise neuen Account zuordnen.' },
+  { icon: <RssFeedOutlinedIcon />, title: 'Beobachtete Quellen', text: 'Accounts sind Vertriebsziele; Quellen sind Informationslieferanten. Premium überwacht bis zu 25 mandanteneigene RSS-, Atom- oder Website-Quellen. Inhalte laufen durch dieselbe Deduplizierung und Trigger-Pipeline wie CONTENT.' },
 ];
 
 const faqs = [
@@ -51,7 +56,10 @@ const faqs = [
   ['Was muss ich beim Kalenderlink beachten?', 'Wer den Link kennt, kann die freigegebenen Termindaten lesen. Deshalb nicht öffentlich teilen; bei Verdacht den Link sofort erneuern oder den Feed deaktivieren.'],
   ['Wer darf Accounts bearbeiten?', 'Admin, Assistenz und Sales-Manager können Accounts und Kontakte verwalten. Sales-Nutzer erhalten eine lesende Detailansicht. Alle Zugriffe bleiben mandantengebunden.'],
   ['Was ist in Sales Basic enthalten?', 'Bis zu 250 Accounts, Team-Zuweisung, Workflows, wöchentlicher Radar, bis zu drei Empfänger, CSV-Export und Datenqualitätsprüfung.'],
-  ['Was ergänzt Sales Premium?', 'Import, bis zu 5.000 Accounts, Wettbewerber-Monitoring, häufigere Radar-Mails, Analytics, KI-Sales-Kontext, Management-PDF und eine mandantengebundene API.'],
+  ['Wie funktionieren Sales-Trigger?', 'Feste Kategorien wie Personalwechsel, Investition oder Ladeinfrastruktur werden mit frei ergänzbaren Trigger- und Ausschlussbegriffen kombiniert. „Ohne Account“ zeigt allgemeine Trigger-Treffer. „Alle Accounts“ ordnet passende Inhalte dem gesamten aktiven Bestand zu. „Ausgewählte Accounts“ begrenzt die Prüfung auf eine definierte Auswahl. Die regelbasierte Prüfung benötigt keine zusätzlichen KI-Tokens und funktioniert auch ohne gebuchtes CONTENT-Modul.'],
+  ['Was mache ich mit Treffern ohne Account?', 'Diese Trigger-Treffer erscheinen im eigenen Bereich. Sales-Manager können sie einem bestehenden Account zuordnen, direkt einen neuen Prospect anlegen oder vorerst ausblenden. Nach der Zuordnung steht das Signal im normalen Workflow für Planung, Kampagnen und Team-Bearbeitung bereit.'],
+  ['Wie funktionieren beobachtete Quellen?', 'RSS- und Atom-Feeds werden automatisch erkannt und täglich geprüft. Bei einer normalen Website erstellt das System einen Konfigurationsauftrag; der Admin hinterlegt einmalig die HTML-Selektoren. Ein Inhalt kann Signale zu mehreren Accounts oder einen allgemeinen Markttreffer liefern. Die regelbasierte Erkennung benötigt keine KI-Tokens. Automatisiertes LinkedIn-Scraping ist bewusst nicht enthalten.'],
+  ['Was ergänzt Sales Premium?', 'Sales-Trigger aus dem Plattform-Datenbestand, bis zu 25 mandanteneigene beobachtete Quellen, Import, bis zu 5.000 Accounts, Wettbewerber-Monitoring, häufigere Radar-Mails, Analytics, KI-Sales-Kontext, Management-PDF und eine mandantengebundene API. CONTENT und SALES können unabhängig voneinander gebucht werden.'],
   ['Wie werden API-Tokens sicher verwendet?', 'Nur notwendige Berechtigungen vergeben, Token unmittelbar sicher speichern, nicht per unverschlüsselter E-Mail teilen und nicht mehr benötigte Tokens widerrufen.'],
 ];
 

@@ -64,6 +64,7 @@ const adminBpWidgetAccessRoutes = require('./routes/adminBpWidgetAccessRoutes.js
 const adminBpAccountsRoutes = require('./routes/adminBpAccountsRoutes.js');
 const adminBpCompetitorsRoutes = require('./routes/adminBpCompetitorsRoutes.js');
 const adminUserRoutes = require('./routes/adminUserRoutes.js');
+const adminDemoInvitationRoutes = require('./routes/adminDemoInvitationRoutes.js');
 const adminScrapingRulesRoutes = require('./routes/adminScrapingRulesRoutes.js');
 const adminScrapedContentRoutes = require('./routes/adminScrapedContentRoutes.js');
 const adminAIPromptRulesRoutes = require('./routes/adminAIPromptRulesRoutes.js');
@@ -259,6 +260,7 @@ app.use('/api/admin/bp-widget-access', adminBpWidgetAccessRoutes);
 app.use('/api/admin/accounts', adminBpAccountsRoutes);
 app.use('/api/admin/competitors', adminBpCompetitorsRoutes);
 app.use('/api/admin/users', adminUserRoutes);
+app.use('/api/admin/demo-invitations', adminDemoInvitationRoutes);
 app.use('/api/admin/scraped-content', adminScrapedContentRoutes);
 app.use('/api/admin/scraping-rules', adminScrapingRulesRoutes);
 app.use('/api/admin/ai-prompt-rules', adminAIPromptRulesRoutes);

@@ -163,10 +163,10 @@ function canonicalizeCrawlUrl(value, sourceUrl) {
   return url;
 }
 
-async function fetchPublicHtml(targetUrl, sourceUrl, redirectsRemaining = 3) {
+async function fetchPublicHtml(targetUrl, sourceUrl, redirectsRemaining = 3, timeoutMs = 15000, options = {}) {
   await assertPublicHostname(targetUrl.hostname);
   const response = await axios.get(targetUrl.toString(), {
-    timeout: 15000,
+    timeout: timeoutMs,
     maxRedirects: 0,
     responseType: 'text',
     maxContentLength: MAX_PAGE_BYTES,
@@ -180,13 +180,18 @@ async function fetchPublicHtml(targetUrl, sourceUrl, redirectsRemaining = 3) {
 
   if (response.status >= 300) {
     if (!redirectsRemaining || !response.headers.location) throw new Error('Zu viele oder ungültige Homepage-Weiterleitungen.');
-    const redirected = canonicalizeCrawlUrl(response.headers.location, sourceUrl);
+    const redirected = options.allowFeedPaths
+      ? normalizeHttpUrl(new URL(response.headers.location, targetUrl).toString())
+      : canonicalizeCrawlUrl(response.headers.location, sourceUrl);
     if (!redirected) throw new Error('Die Homepage leitet auf eine nicht freigegebene Domain um.');
-    return fetchPublicHtml(redirected, sourceUrl, redirectsRemaining - 1);
+    if (stripWww(redirected.hostname) !== stripWww(sourceUrl.hostname)) {
+      throw new Error('Die Homepage leitet auf eine nicht freigegebene Domain um.');
+    }
+    return fetchPublicHtml(redirected, sourceUrl, redirectsRemaining - 1, timeoutMs, options);
   }
 
   const contentType = String(response.headers['content-type'] || '').toLowerCase();
-  if (!contentType.includes('text/html') && !contentType.includes('xml')) {
+  if (!contentType.includes('text/html') && !contentType.includes('xml') && !contentType.includes('text/plain')) {
     throw new Error(`Nicht unterstützter Inhaltstyp: ${contentType || 'unbekannt'}`);
   }
   return { body: String(response.data || ''), contentType, finalUrl: targetUrl };
@@ -679,8 +684,11 @@ async function syncDuePublicAssistants() {
 
 module.exports = {
   MAX_QUESTION_LENGTH,
+  normalizeHttpUrl,
   normalizeOrigin,
   expandOriginVariants,
+  assertPublicHostname,
+  fetchPublicHtml,
   validateSourceUrl,
   getManagedSettings,
   ensureSettings,

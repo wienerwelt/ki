@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
+  Autocomplete,
   Avatar,
   Box,
   Button,
@@ -63,6 +64,8 @@ import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 import VideocamOutlinedIcon from '@mui/icons-material/VideocamOutlined';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
+import RssFeedOutlinedIcon from '@mui/icons-material/RssFeedOutlined';
 import posthog from 'posthog-js';
 import { QRCodeSVG } from 'qrcode.react';
 import apiClient from '../apiClient';
@@ -80,6 +83,7 @@ type RadarPriority = 'low' | 'normal' | 'high' | 'urgent';
 type RelevanceReason = 'false_positive' | 'outdated' | 'duplicate' | 'wrong_account' | 'no_sales_relevance' | 'other';
 type WorkflowMode = SignalActionType | 'note';
 type RadarView = 'today' | 'accounts' | 'planned' | 'done' | 'ignored';
+type RadarPrimarySection = 'today' | 'triggers' | 'accounts' | 'pipeline' | 'calendar';
 
 interface RadarSignal {
   id: string;
@@ -92,6 +96,10 @@ interface RadarSignal {
   competitor_name?: string | null;
   summary?: string | null;
   signal_type?: string;
+  trigger_profile_names?: string[];
+  trigger_template_keys?: string[];
+  matched_trigger_keywords?: string[];
+  trigger_match_score?: number | null;
   recommended_action?: string;
   relevance_score?: number;
   status?: SignalStatus;
@@ -133,6 +141,25 @@ interface RadarSignal {
   account_website_url?: string | null;
   account_contact_email?: string | null;
   account_contact_phone?: string | null;
+}
+
+interface MarketTriggerSignal {
+  id: string;
+  trigger_profile_id: string;
+  trigger_profile_name: string;
+  trigger_template_key?: string | null;
+  trigger_profile_active: boolean;
+  title: string;
+  summary?: string | null;
+  original_url: string;
+  source_identifier?: string | null;
+  published_at: string;
+  category?: string | null;
+  region?: string | null;
+  matched_keywords: string[];
+  match_score: number;
+  review_status: 'new' | 'ignored';
+  discovered_at: string;
 }
 
 interface RadarTeamMember {
@@ -568,6 +595,7 @@ const AccountRadarPage: React.FC = () => {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<RadarView>('today');
+  const [primarySection, setPrimarySection] = useState<RadarPrimarySection>('today');
   const [search, setSearch] = useState('');
   const [days, setDays] = useState(30);
   const [assigneeFilter, setAssigneeFilter] = useState('all');
@@ -622,7 +650,20 @@ const AccountRadarPage: React.FC = () => {
   const [calendarFeedLoading, setCalendarFeedLoading] = useState(false);
   const [cockpitOpen, setCockpitOpen] = useState(true);
   const [calendarOpen, setCalendarOpen] = useState(true);
+  const [marketSignalsOpen, setMarketSignalsOpen] = useState(true);
+  const [marketSignals, setMarketSignals] = useState<MarketTriggerSignal[]>([]);
+  const [marketSignalTotal, setMarketSignalTotal] = useState(0);
+  const [marketSignalCounts, setMarketSignalCounts] = useState({ active: 0, ignored: 0 });
+  const [marketSignalFilter, setMarketSignalFilter] = useState<'active' | 'ignored'>('active');
+  const [marketSignalDialog, setMarketSignalDialog] = useState<MarketTriggerSignal | null>(null);
+  const [marketSignalAccountId, setMarketSignalAccountId] = useState('');
+  const [marketSignalAccountMode, setMarketSignalAccountMode] = useState<'existing' | 'new'>('existing');
+  const [marketSignalNewAccountName, setMarketSignalNewAccountName] = useState('');
+  const [marketSignalNewAccountWebsite, setMarketSignalNewAccountWebsite] = useState('');
+  const [marketSignalBusy, setMarketSignalBusy] = useState(false);
   const resultsSectionRef = useRef<HTMLDivElement | null>(null);
+  const marketSignalsSectionRef = useRef<HTMLDivElement | null>(null);
+  const pipelineSectionRef = useRef<HTMLDivElement | null>(null);
   const workflowNoteRef = useRef<HTMLDivElement | null>(null);
   const calendarSectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -641,17 +682,127 @@ const AccountRadarPage: React.FC = () => {
     const requestedView = searchParams.get('view');
     if (requestedView && ['today', 'accounts', 'planned', 'done', 'ignored'].includes(requestedView)) {
       setView(requestedView as RadarView);
+      setPrimarySection(requestedView === 'accounts' ? 'accounts' : 'today');
+      window.setTimeout(() => resultsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+      return;
+    }
+    if (requestedView && ['triggers', 'pipeline', 'calendar'].includes(requestedView)) {
+      const requestedSection = requestedView as RadarPrimarySection;
+      setPrimarySection(requestedSection);
+      if (requestedSection === 'triggers') setMarketSignalsOpen(true);
+      if (requestedSection === 'pipeline') setCockpitOpen(true);
+      if (requestedSection === 'calendar') setCalendarOpen(true);
+      window.setTimeout(() => {
+        if (requestedSection === 'triggers') marketSignalsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (requestedSection === 'pipeline') pipelineSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (requestedSection === 'calendar') calendarSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 0);
     }
   }, [searchParams]);
 
-  const requestedToolsPanel = canConfigureRadar && ['import', 'settings'].includes(searchParams.get('panel') || '')
-    ? searchParams.get('panel') as 'import' | 'settings'
+  const selectPrimarySection = useCallback((section: RadarPrimarySection) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('view', section);
+    setSearchParams(next);
+  }, [searchParams, setSearchParams]);
+
+  const selectRadarView = useCallback((nextView: RadarView) => {
+    setPrimarySection(nextView === 'accounts' ? 'accounts' : 'today');
+    setView(nextView);
+    const next = new URLSearchParams(searchParams);
+    next.set('view', nextView);
+    setSearchParams(next, { replace: true });
+    window.setTimeout(() => resultsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  }, [searchParams, setSearchParams]);
+
+  const requestedToolsPanel = canConfigureRadar && ['import', 'settings', 'triggers', 'sources'].includes(searchParams.get('panel') || '')
+    ? searchParams.get('panel') as 'import' | 'settings' | 'triggers' | 'sources'
     : null;
+  const requestedTriggerProfileId = requestedToolsPanel === 'triggers' ? searchParams.get('triggerProfileId') : null;
+  const requestedTriggerKeyword = requestedToolsPanel === 'triggers' ? searchParams.get('triggerKeyword') : null;
   const clearRequestedToolsPanel = useCallback(() => {
     const next = new URLSearchParams(searchParams);
     next.delete('panel');
+    next.delete('triggerProfileId');
+    next.delete('triggerKeyword');
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  const openTriggerManagement = (signal?: MarketTriggerSignal) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('panel', 'triggers');
+    if (signal?.trigger_profile_id) next.set('triggerProfileId', signal.trigger_profile_id);
+    else next.delete('triggerProfileId');
+    if (signal?.matched_keywords?.length) next.set('triggerKeyword', signal.matched_keywords.join(', '));
+    else next.delete('triggerKeyword');
+    setSearchParams(next);
+  };
+
+  const openExternalSources = () => {
+    const next = new URLSearchParams(searchParams);
+    next.set('panel', 'sources');
+    setSearchParams(next);
+  };
+
+  const openMarketSignalAssignment = (signal: MarketTriggerSignal) => {
+    setMarketSignalDialog(signal);
+    setMarketSignalAccountId('');
+    setMarketSignalAccountMode(accounts.length ? 'existing' : 'new');
+    setMarketSignalNewAccountName('');
+    setMarketSignalNewAccountWebsite('');
+  };
+
+  const updateMarketSignalReviewStatus = async (signal: MarketTriggerSignal, status: 'new' | 'ignored') => {
+    setMarketSignalBusy(true);
+    try {
+      const { res, data } = await apiClient.request<any>(`/api/account-radar/market-signals/${signal.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) throw new Error(data?.message || 'Trefferstatus konnte nicht geändert werden.');
+      setNotice(data?.message || (status === 'ignored' ? 'Treffer wurde ausgeblendet.' : 'Treffer wurde wiederhergestellt.'));
+      await fetchRadar(true);
+    } catch (statusError: any) {
+      setError(statusError?.message || 'Trefferstatus konnte nicht geändert werden.');
+    } finally {
+      setMarketSignalBusy(false);
+    }
+  };
+
+  const submitMarketSignalAccount = async () => {
+    if (!marketSignalDialog) return;
+    if (marketSignalAccountMode === 'existing' && !marketSignalAccountId) {
+      setError('Bitte einen bestehenden Account auswählen.');
+      return;
+    }
+    if (marketSignalAccountMode === 'new' && marketSignalNewAccountName.trim().length < 2) {
+      setError('Bitte einen Namen für den neuen Account eingeben.');
+      return;
+    }
+    setMarketSignalBusy(true);
+    setError(null);
+    try {
+      const endpoint = marketSignalAccountMode === 'existing'
+        ? `/api/account-radar/market-signals/${marketSignalDialog.id}/assign`
+        : `/api/account-radar/market-signals/${marketSignalDialog.id}/create-account`;
+      const payload = marketSignalAccountMode === 'existing'
+        ? { account_id: marketSignalAccountId }
+        : { name: marketSignalNewAccountName.trim(), website_url: marketSignalNewAccountWebsite.trim() || null };
+      const { res, data } = await apiClient.post<any>(endpoint, payload);
+      if (!res.ok) throw new Error(data?.message || 'Treffer konnte nicht in den Account-Radar übernommen werden.');
+      setNotice(data?.message || 'Treffer wurde in den Account-Radar übernommen.');
+      setMarketSignalDialog(null);
+      if (data?.accountId) {
+        setSelectedAccountId(data.accountId);
+        selectRadarView('today');
+      }
+      await fetchRadar(true);
+    } catch (assignmentError: any) {
+      setError(assignmentError?.message || 'Treffer konnte nicht in den Account-Radar übernommen werden.');
+    } finally {
+      setMarketSignalBusy(false);
+    }
+  };
 
   const fetchRadar = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -670,13 +821,28 @@ const AccountRadarPage: React.FC = () => {
       setAccounts(Array.isArray(radarResponse.data) ? radarResponse.data : []);
       if (teamResponse.res.ok) setTeamMembers(Array.isArray(teamResponse.data) ? teamResponse.data : []);
       if (campaignResponse.res.ok) setCampaigns(Array.isArray(campaignResponse.data) ? campaignResponse.data : []);
+      if (entitlementResponse.res.ok && entitlementResponse.data?.features?.contentTriggers) {
+        const marketResponse = await apiClient.get<{ items: MarketTriggerSignal[]; total: number; counts: { active: number; ignored: number } }>('/api/account-radar/market-signals', { params: { limit: 24, status: marketSignalFilter } });
+        if (marketResponse.res.ok) {
+          setMarketSignals(Array.isArray(marketResponse.data?.items) ? marketResponse.data.items : []);
+          setMarketSignalTotal(Number(marketResponse.data?.total || 0));
+          setMarketSignalCounts({
+            active: Number(marketResponse.data?.counts?.active || 0),
+            ignored: Number(marketResponse.data?.counts?.ignored || 0),
+          });
+        }
+      } else {
+        setMarketSignals([]);
+        setMarketSignalTotal(0);
+        setMarketSignalCounts({ active: 0, ignored: 0 });
+      }
     } catch (err: any) {
       setError(err?.message || 'Account-Radar konnte nicht geladen werden.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [days]);
+  }, [days, marketSignalFilter]);
 
   useEffect(() => {
     fetchRadar(false);
@@ -1267,6 +1433,7 @@ const AccountRadarPage: React.FC = () => {
     setCalendarMonth(new Date(eventDate.getFullYear(), eventDate.getMonth(), 1));
     setCalendarSelectedDate(toLocalDateKey(eventDate));
     setCalendarOpen(true);
+    setPrimarySection('calendar');
     window.setTimeout(() => calendarSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
   };
 
@@ -1275,6 +1442,7 @@ const AccountRadarPage: React.FC = () => {
     setSearch(account.name);
     setAssigneeFilter('all');
     setSalesStageFilter('all');
+    setPrimarySection('accounts');
     setView('accounts');
     window.setTimeout(() => {
       resultsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1362,19 +1530,6 @@ const AccountRadarPage: React.FC = () => {
               {campaigns.filter((campaign) => campaign.signal_ids.includes(signal.id) || campaign.account_ids.includes(signal.account_id || '')).map((campaign) => (
                 <Chip key={campaign.id} size="small" icon={<CampaignOutlinedIcon />} label={campaign.name} variant="outlined" color="info" sx={{ height: 24, fontWeight: 800 }} />
               ))}
-              {!isDemoMode && (
-                <Stack direction="row" spacing={0.35} sx={{ ml: 'auto' }}>
-                  <Tooltip title="Kontakt planen">
-                    <IconButton size="small" onClick={() => openWorkflow(signal, 'contact_planned')} disabled={saving} aria-label="Kontakt planen" sx={{ color: 'warning.dark', bgcolor: alpha(theme.palette.warning.main, status === 'read' && signal.action_type ? 0.22 : 0.1), '&:hover': { bgcolor: alpha(theme.palette.warning.main, 0.2) } }}><ScheduleIcon fontSize="small" /></IconButton>
-                  </Tooltip>
-                  <Tooltip title="Als erledigt markieren">
-                    <IconButton size="small" onClick={() => updateStatus(signal, 'done')} disabled={saving || status === 'done'} aria-label="Als erledigt markieren" sx={{ color: 'success.main', bgcolor: alpha(theme.palette.success.main, status === 'done' ? 0.22 : 0.1), '&:hover': { bgcolor: alpha(theme.palette.success.main, 0.2) } }}><DoneAllIcon fontSize="small" /></IconButton>
-                  </Tooltip>
-                  <Tooltip title="Als nicht relevant ausblenden">
-                    <IconButton size="small" onClick={() => openRelevanceDialog(signal)} disabled={saving || status === 'ignored'} aria-label="Als nicht relevant ausblenden" sx={{ color: 'text.secondary', bgcolor: alpha(theme.palette.text.primary, status === 'ignored' ? 0.16 : 0.06), '&:hover': { bgcolor: alpha(theme.palette.text.primary, 0.12) } }}><DeleteOutlineIcon fontSize="small" /></IconButton>
-                  </Tooltip>
-                </Stack>
-              )}
             </Stack>
 
             <Typography variant="h6" sx={{ mt: 1, fontWeight: 900, lineHeight: 1.25, fontSize: { xs: '1.05rem', md: '1.15rem' } }}>
@@ -1384,6 +1539,11 @@ const AccountRadarPage: React.FC = () => {
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
               <Chip size="small" icon={<LocalFireDepartmentIcon />} label={`${score}% relevant`} color={score >= 80 ? 'error' : 'default'} variant={score >= 80 ? 'filled' : 'outlined'} sx={{ fontWeight: 900 }} />
               <Chip size="small" label={signal.signal_type || (competitorSignal ? 'Wettbewerbssignal' : 'Account-Signal')} variant="outlined" sx={{ fontWeight: 800 }} />
+              {!!signal.trigger_profile_names?.length && (
+                <Tooltip title={`Sales-Trigger: ${signal.trigger_profile_names.join(', ')}${signal.matched_trigger_keywords?.length ? ` · Trigger-Begriff gefunden: ${signal.matched_trigger_keywords.join(', ')}` : ''}`}>
+                  <Chip size="small" icon={<AutoAwesomeOutlinedIcon />} label="Sales-Trigger" color="info" variant="outlined" sx={{ fontWeight: 800 }} />
+                </Tooltip>
+              )}
               <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>{source} · {formatDate(signal.published_at)}</Typography>
             </Stack>
 
@@ -1566,14 +1726,17 @@ const AccountRadarPage: React.FC = () => {
             <Box sx={{
               mt: 1.8,
               display: 'grid',
-              gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))', lg: 'repeat(6, max-content)' },
+              gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(3, minmax(0, 1fr))', lg: 'repeat(6, max-content)' },
               gap: 1,
               '& .MuiButton-root': {
                 minWidth: 0,
                 minHeight: 42,
-                whiteSpace: 'normal',
-                lineHeight: 1.15,
-                overflowWrap: 'anywhere',
+                px: { xs: 0.8, sm: 1.2 },
+                whiteSpace: 'nowrap',
+                lineHeight: 1.1,
+                fontSize: { xs: '0.7rem', sm: '0.78rem' },
+                fontWeight: 850,
+                '& .MuiButton-startIcon': { mr: { xs: 0.45, sm: 0.7 } },
               },
               }}>
               <Button size={isMobile ? 'medium' : 'small'} variant="outlined" startIcon={<OpenInNewIcon />} onClick={() => openSignal(signal)} disabled={saving}>Quelle öffnen</Button>
@@ -1881,6 +2044,112 @@ const AccountRadarPage: React.FC = () => {
   const campaignDetailFunnelMax = Math.max(1, ...campaignDetailFunnel.map((entry) => entry.value));
   const campaignTimelineMax = Math.max(1, ...(campaignDetail?.timeline || []).map((entry) => entry.signals + entry.contacts + entry.meetings + entry.offers + entry.wins));
   const todayLabel = new Date().toLocaleDateString('de-AT', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+  const salesAccessActive = entitlements?.subscription?.accessActive !== false;
+  const triggerFeatureIncluded = Boolean(entitlements?.features.contentTriggers);
+  const triggerFeatureActive = Boolean(triggerFeatureIncluded && salesAccessActive);
+  const todayDateKey = toLocalDateKey(new Date(clockNow));
+  const contactsToday = calendarEntries.filter((entry) => entry.dateKey === todayDateKey && entry.calendarStatus !== 'done').length;
+  const overdueContacts = calendarEntries.filter((entry) => entry.calendarStatus === 'overdue').length;
+  const compactActionButtonSx = {
+    minHeight: 42,
+    minWidth: 0,
+    px: { xs: 1.15, sm: 1.5 },
+    whiteSpace: 'nowrap',
+    lineHeight: 1.1,
+    fontWeight: 850,
+    fontSize: { xs: '0.74rem', sm: '0.8rem' },
+  } as const;
+
+  const worklistSection = (
+    <Box ref={resultsSectionRef} sx={{ mt: 2.2, scrollMarginTop: { xs: 138, md: 92 } }}>
+      <Paper elevation={0} sx={{ p: { xs: 1, sm: 1.2 }, borderRadius: 3.5, border: '1px solid', borderColor: 'divider', bgcolor: alpha(theme.palette.background.paper, 0.97), backdropFilter: 'blur(12px)' }}>
+        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.1} alignItems={{ lg: 'center' }}>
+          <Box sx={{ minWidth: { lg: 165 } }}>
+            <Typography sx={{ fontWeight: 950, lineHeight: 1.2 }}>{view === 'accounts' ? 'Accounts' : 'Arbeitsliste'}</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {view === 'accounts' ? `${cockpitAccounts.length} im Bestand` : 'Priorisiert entscheiden'}
+            </Typography>
+          </Box>
+          {view !== 'accounts' && (
+            <Stack direction="row" spacing={0.6} sx={{ overflowX: 'auto', pb: { xs: 0.2, lg: 0 } }}>
+              {([
+                ['today', `Aktuell ${tabCounts.today}`, <RadarIcon fontSize="small" />],
+                ['planned', `Geplant ${tabCounts.planned}`, <ScheduleIcon fontSize="small" />],
+                ['done', `Erledigt ${tabCounts.done}`, <DoneAllIcon fontSize="small" />],
+                ['ignored', `Ausgeblendet ${tabCounts.ignored}`, <VisibilityIcon fontSize="small" />],
+              ] as Array<[RadarView, string, React.ReactNode]>).map(([value, label, icon]) => {
+                const tone = value === 'planned' ? theme.palette.warning.main : value === 'done' ? theme.palette.success.main : value === 'ignored' ? theme.palette.grey[600] : primary;
+                return (
+                  <Button
+                    key={value}
+                    size="small"
+                    variant={view === value ? 'contained' : 'outlined'}
+                    startIcon={icon}
+                    onClick={() => selectRadarView(value)}
+                    sx={{ ...compactActionButtonSx, flexShrink: 0, color: view === value ? theme.palette.getContrastText(tone) : tone, borderColor: alpha(tone, 0.42), bgcolor: view === value ? tone : alpha(tone, 0.055), '&:hover': { borderColor: tone, bgcolor: view === value ? tone : alpha(tone, 0.12) } }}
+                  >
+                    {label}
+                  </Button>
+                );
+              })}
+            </Stack>
+          )}
+          <Box sx={{ flexGrow: 1 }} />
+          <TextField
+            size="small"
+            value={search}
+            onChange={(event) => { setSearch(event.target.value); setSelectedAccountId(null); }}
+            placeholder={view === 'accounts' ? 'Account suchen …' : 'Signal oder Account suchen …'}
+            InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
+            sx={{ minWidth: { lg: 270 }, '& .MuiOutlinedInput-root': { minHeight: 42, bgcolor: 'background.paper' } }}
+          />
+          {view !== 'accounts' && (
+            <TextField
+              select
+              size="small"
+              label="Verantwortlich"
+              value={assigneeFilter}
+              onChange={(event) => setAssigneeFilter(event.target.value)}
+              sx={{ minWidth: { xs: '100%', sm: 190 }, '& .MuiOutlinedInput-root': { minHeight: 42, bgcolor: 'background.paper' } }}
+            >
+              <MenuItem value="all">Alle im Team</MenuItem>
+              {user?.id && <MenuItem value={user.id}>Meine Aufgaben</MenuItem>}
+              <MenuItem value="unassigned">Nicht zugewiesen</MenuItem>
+              {teamMembers.filter((member) => member.id !== user?.id).map((member) => (
+                <MenuItem key={member.id} value={member.id}>{member.name}</MenuItem>
+              ))}
+            </TextField>
+          )}
+        </Stack>
+      </Paper>
+
+      <Box sx={{ mt: 1.5 }}>
+        {loading ? (
+          <Box sx={{ minHeight: 280, display: 'grid', placeItems: 'center' }}><CircularProgress /></Box>
+        ) : view === 'accounts' ? (
+          renderAccounts()
+        ) : visibleSignals.length > 0 ? (
+          <Stack spacing={1.25}>{visibleSignals.map(renderSignal)}</Stack>
+        ) : (
+          <Paper elevation={0} sx={{ p: { xs: 4, md: 6 }, borderRadius: 4, border: '1px dashed', borderColor: 'divider', textAlign: 'center' }}>
+            <CheckCircleOutlineIcon sx={{ fontSize: 48, color: 'success.main' }} />
+            <Typography variant="h6" sx={{ mt: 1, fontWeight: 950 }}>
+              {view === 'done'
+                ? 'Noch keine erledigten Signale.'
+                : view === 'ignored' ? 'Keine ausgeblendeten Treffer.'
+                : view === 'planned' ? 'Noch keine Kontakte oder Wiedervorlagen geplant.' : 'Für diesen Filter ist alles erledigt.'}
+            </Typography>
+            <Typography color="text.secondary" sx={{ mt: 0.6 }}>
+              {accounts.length === 0
+                ? 'Legen Sie zunächst Accounts zur Beobachtung an.'
+                : view === 'planned' ? 'Planen Sie direkt an einem Signal den nächsten Kontakt.' : 'Ändern Sie Zeitraum oder Suche, um weitere Signale zu sehen.'}
+            </Typography>
+            {canManageAccounts && salesAccessActive && accounts.length === 0 && <Button sx={{ mt: 2, ...compactActionButtonSx }} variant="contained" startIcon={<BusinessCenterIcon />} onClick={goToAccountManagement}>Ersten Account anlegen</Button>}
+          </Paper>
+        )}
+      </Box>
+    </Box>
+  );
 
   return (
     <Container maxWidth="xl" sx={{ py: { xs: 2, md: 4 }, pb: { xs: 12, md: 5 } }}>
@@ -1893,7 +2162,11 @@ const AccountRadarPage: React.FC = () => {
           <Typography color="text.secondary" sx={{ mt: 0.6, textTransform: 'capitalize' }}>{todayLabel} · {businessPartner?.name || 'Ihr Unternehmen'}</Typography>
           {entitlements && (
             <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap" sx={{ mt: 1 }}>
-              <Chip size="small" color={entitlements.key === 'premium' ? 'success' : 'default'} label={entitlements.label} />
+              <Chip
+                size="small"
+                color={user?.role === 'demo' ? 'info' : entitlements.key === 'premium' ? 'success' : 'default'}
+                label={user?.role === 'demo' ? 'Demo' : entitlements.label}
+              />
               <Typography variant="caption" color="text.secondary">
                 {entitlements.usage?.accounts || 0} / {entitlements.limits.accounts.toLocaleString('de-DE')} Accounts
               </Typography>
@@ -1941,6 +2214,8 @@ const AccountRadarPage: React.FC = () => {
               onOpenCalendarFeed={openCalendarFeed}
               accountCount={loading ? undefined : accounts.length}
               openPanel={requestedToolsPanel}
+              openTriggerProfileId={requestedTriggerProfileId}
+              openTriggerKeyword={requestedTriggerKeyword}
               onPanelOpened={clearRequestedToolsPanel}
               entitlements={entitlements}
             />
@@ -1981,7 +2256,7 @@ const AccountRadarPage: React.FC = () => {
         >
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ xs: 'stretch', md: 'center' }} justifyContent="space-between">
             <Typography variant="body2" sx={{ lineHeight: 1.55 }}>
-              <strong>Sales Basic ist aktiv.</strong> Premium ergänzt Import, Wettbewerber-Monitoring, häufigere Radar-Mails, Sales-Erfolgsmessung, KI-Sales-Kontext, Management-PDF und die mandantengebundene API.
+              <strong>Sales Basic ist aktiv.</strong> Premium ergänzt Sales-Trigger aus dem Plattform-Datenbestand, bis zu 25 beobachtete Quellen, Import, Wettbewerber-Monitoring, häufigere Radar-Mails, Sales-Erfolgsmessung, KI-Sales-Kontext, Management-PDF und die mandantengebundene API. Ein CONTENT-Abo ist dafür nicht erforderlich.
             </Typography>
             <Button
               component="a"
@@ -1997,6 +2272,248 @@ const AccountRadarPage: React.FC = () => {
             </Button>
           </Stack>
         </Alert>
+      )}
+
+      <Paper
+        component="nav"
+        aria-label="Account-Radar Bereiche"
+        elevation={0}
+        sx={{
+          mt: 2.5,
+          p: 0.65,
+          borderRadius: 3.5,
+          border: '1px solid',
+          borderColor: 'divider',
+          bgcolor: alpha(theme.palette.background.paper, 0.97),
+          position: { xs: 'sticky', md: 'static' },
+          top: { xs: 64 },
+          zIndex: 7,
+          backdropFilter: 'blur(14px)',
+        }}
+      >
+        <Box sx={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: { xs: 'minmax(132px, 1fr)', md: 'minmax(0, 1fr)' }, gap: 0.55, overflowX: 'auto', scrollbarWidth: 'none' }}>
+          {([
+            { key: 'today', label: 'Heute', icon: <RadarIcon />, count: tabCounts.today },
+            { key: 'triggers', label: 'Trigger-Treffer', icon: triggerFeatureIncluded ? <AutoAwesomeOutlinedIcon /> : <LockOutlinedIcon />, count: triggerFeatureActive ? marketSignalCounts.active : null, premium: !triggerFeatureIncluded },
+            { key: 'accounts', label: 'Accounts', icon: <BusinessCenterIcon />, count: stats.accounts },
+            { key: 'pipeline', label: 'Pipeline', icon: <TrackChangesIcon />, count: salesOverview.due + salesOverview.waiting || null },
+            { key: 'calendar', label: 'Kalender', icon: <CalendarMonthOutlinedIcon />, count: stats.planned || null },
+          ] as Array<{ key: RadarPrimarySection; label: string; icon: React.ReactNode; count: number | null; premium?: boolean }>).map((item) => {
+            const selected = primarySection === item.key;
+            return (
+              <Tooltip key={item.key} title={item.premium ? 'Trigger-Treffer und beobachtete Quellen sind in Sales Premium enthalten.' : ''}>
+                <Button
+                  type="button"
+                  aria-current={selected ? 'page' : undefined}
+                  variant={selected ? 'contained' : 'text'}
+                  startIcon={item.icon}
+                  disabled={!salesAccessActive && !item.premium}
+                  onClick={() => item.premium
+                    ? window.open('/account-radar?request=upgrade#pakete', '_blank', 'noopener,noreferrer')
+                    : selectPrimarySection(item.key)}
+                  sx={{
+                    minHeight: 48,
+                    minWidth: 0,
+                    px: { xs: 1.2, sm: 1.5 },
+                    borderRadius: 2.6,
+                    whiteSpace: 'nowrap',
+                    fontWeight: 900,
+                    color: item.premium ? 'text.secondary' : selected ? 'primary.contrastText' : 'text.primary',
+                    bgcolor: selected ? 'primary.main' : item.premium ? alpha(theme.palette.text.primary, 0.035) : 'transparent',
+                    '&:hover': { bgcolor: selected ? 'primary.dark' : alpha(primary, 0.08) },
+                    '& .MuiButton-startIcon': { mr: 0.8 },
+                  }}
+                >
+                  {item.label}
+                  {item.count !== null && item.count !== undefined && (
+                    <Box component="span" sx={{ ml: 0.8, minWidth: 22, height: 22, px: 0.65, display: 'inline-grid', placeItems: 'center', borderRadius: 99, bgcolor: selected ? alpha(theme.palette.common.white, 0.22) : alpha(primary, 0.11), color: selected ? 'inherit' : 'primary.main', fontSize: '0.68rem', fontWeight: 950 }}>
+                      {item.count}
+                    </Box>
+                  )}
+                  {item.premium && <Box component="span" sx={{ ml: 0.7, fontSize: '0.62rem', fontWeight: 950 }}>PREMIUM</Box>}
+                </Button>
+              </Tooltip>
+            );
+          })}
+        </Box>
+      </Paper>
+
+      <Box sx={{ mt: 1.4, display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 1 }}>
+        {[
+          {
+            key: 'triggers' as const,
+            icon: triggerFeatureIncluded ? <AutoAwesomeOutlinedIcon /> : <LockOutlinedIcon />,
+            value: triggerFeatureActive ? marketSignalCounts.active : triggerFeatureIncluded ? 'Pausiert' : 'Premium',
+            label: triggerFeatureActive ? 'neue Trigger-Treffer' : triggerFeatureIncluded ? 'Sales-Zugriff reaktivieren' : 'Trigger-Treffer freischalten',
+            color: theme.palette.info.main,
+            action: () => triggerFeatureActive ? selectPrimarySection('triggers') : window.open('/account-radar?request=upgrade#pakete', '_blank', 'noopener,noreferrer'),
+          },
+          {
+            key: 'today' as const,
+            icon: <LocalFireDepartmentIcon />,
+            value: stats.open,
+            label: 'Signale mit Handlungsbedarf',
+            color: theme.palette.error.main,
+            action: () => selectRadarView('today'),
+          },
+          {
+            key: 'calendar' as const,
+            icon: <EventAvailableIcon />,
+            value: contactsToday,
+            label: overdueContacts > 0 ? `${overdueContacts} überfällig · heute geplant` : 'Kontakte heute geplant',
+            color: overdueContacts > 0 ? theme.palette.warning.main : theme.palette.success.main,
+            action: () => selectPrimarySection('calendar'),
+          },
+        ].map((item) => (
+          <Button
+            key={item.key}
+            onClick={item.action}
+            sx={{
+              minHeight: 76,
+              p: 1.4,
+              justifyContent: 'flex-start',
+              textAlign: 'left',
+              textTransform: 'none',
+              color: 'text.primary',
+              border: '1px solid',
+              borderColor: alpha(item.color, 0.24),
+              borderRadius: 3,
+              bgcolor: alpha(item.color, 0.055),
+              '&:hover': { bgcolor: alpha(item.color, 0.11), borderColor: alpha(item.color, 0.44) },
+            }}
+          >
+            <Box sx={{ width: 42, height: 42, flexShrink: 0, mr: 1.25, display: 'grid', placeItems: 'center', borderRadius: 2.5, color: item.color, bgcolor: alpha(item.color, 0.12) }}>{item.icon}</Box>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography sx={{ fontSize: { xs: '1.1rem', md: '1.3rem' }, fontWeight: 950, lineHeight: 1.1 }}>{item.value}</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.35, fontWeight: 750, lineHeight: 1.25 }}>{item.label}</Typography>
+            </Box>
+          </Button>
+        ))}
+      </Box>
+
+      {worklistSection}
+
+      {entitlements?.features.contentTriggers && entitlements.subscription?.accessActive !== false && (
+        <Paper
+          ref={marketSignalsSectionRef}
+          elevation={0}
+          sx={{
+            mt: 2.5,
+            scrollMarginTop: { xs: 132, md: 88 },
+            p: { xs: 1.5, md: 2.3 },
+            borderRadius: 4,
+            border: '1px solid',
+            borderColor: alpha(theme.palette.info.main, 0.3),
+            background: `linear-gradient(135deg, ${alpha(theme.palette.info.main, 0.11)}, ${theme.palette.background.paper} 46%)`,
+          }}
+        >
+          <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ xs: 'stretch', md: 'center' }} justifyContent="space-between" spacing={1.5}>
+            <Box sx={{ minWidth: 0 }}>
+              <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+                <AutoAwesomeOutlinedIcon color="info" />
+                <Typography variant="h6" sx={{ fontWeight: 950 }}>Trigger-Treffer</Typography>
+                <Chip size="small" color="info" variant="outlined" label={`${marketSignalCounts.active} aktuell`} />
+                {marketSignalCounts.ignored > 0 && <Chip size="small" variant="outlined" label={`${marketSignalCounts.ignored} ausgeblendet`} />}
+              </Stack>
+              <Typography variant="caption" color="text.secondary">
+                Markt- und Ereignistreffer aus dem Datenbestand und beobachteten Quellen – auch ohne eigenes CONTENT-Abo nutzbar.
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={0.8} alignItems="center" useFlexGap flexWrap="wrap">
+              {canConfigureRadar && (
+                <>
+                  <Button variant="contained" color="info" startIcon={<TrackChangesIcon />} onClick={() => openTriggerManagement()} sx={compactActionButtonSx}>
+                    Sales-Trigger verwalten
+                  </Button>
+                  <Button variant="outlined" color="info" startIcon={<RssFeedOutlinedIcon />} onClick={openExternalSources} sx={compactActionButtonSx}>
+                    Beobachtete Quellen
+                  </Button>
+                </>
+              )}
+              <Tooltip title={marketSignalsOpen ? 'Trigger-Treffer einklappen' : 'Trigger-Treffer öffnen'}>
+                <IconButton onClick={() => setMarketSignalsOpen((current) => !current)} aria-expanded={marketSignalsOpen} aria-label="Trigger-Treffer ein- oder ausklappen">
+                  {marketSignalsOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                </IconButton>
+              </Tooltip>
+            </Stack>
+          </Stack>
+          <Collapse in={marketSignalsOpen} timeout="auto">
+            <Stack direction="row" spacing={0.8} useFlexGap flexWrap="wrap" sx={{ mt: 1.7 }}>
+              <Button size="small" startIcon={<AutoAwesomeOutlinedIcon />} variant={marketSignalFilter === 'active' ? 'contained' : 'outlined'} color="info" onClick={() => setMarketSignalFilter('active')} sx={compactActionButtonSx}>
+                Aktuell · {marketSignalCounts.active}
+              </Button>
+              <Button size="small" startIcon={<VisibilityIcon />} variant={marketSignalFilter === 'ignored' ? 'contained' : 'outlined'} color="inherit" onClick={() => setMarketSignalFilter('ignored')} sx={compactActionButtonSx}>
+                Ausgeblendet · {marketSignalCounts.ignored}
+              </Button>
+            </Stack>
+            <Box sx={{ mt: 1.7, display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' }, gap: 1.2 }}>
+              {marketSignals.map((signal) => (
+                <Paper key={signal.id} variant="outlined" sx={{ p: 1.5, borderRadius: 3, minWidth: 0, bgcolor: 'background.paper' }}>
+                  <Stack direction="row" spacing={0.7} useFlexGap flexWrap="wrap" alignItems="center">
+                    <Chip size="small" color="info" clickable={canConfigureRadar} onClick={canConfigureRadar ? () => openTriggerManagement(signal) : undefined} label={`Sales-Trigger: ${signal.trigger_profile_name}`} />
+                    <Chip size="small" variant="outlined" label={`${signal.match_score}%`} />
+                    {!signal.trigger_profile_active && <Chip size="small" variant="outlined" label="Sales-Trigger inaktiv" />}
+                  </Stack>
+                  <Typography sx={{ mt: 1, fontWeight: 900, lineHeight: 1.35 }}>{signal.title}</Typography>
+                  {signal.summary && (
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ mt: 0.65, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden' }}
+                    >
+                      {signal.summary}
+                    </Typography>
+                  )}
+                  <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap" sx={{ mt: 0.8 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      {new Date(signal.published_at).toLocaleDateString('de-AT')}
+                    </Typography>
+                    <Typography variant="caption" color="text.disabled" aria-hidden="true">·</Typography>
+                    {canConfigureRadar ? (
+                      <Button size="small" variant="text" startIcon={<EditNoteIcon />} onClick={() => openTriggerManagement(signal)} sx={{ minHeight: 30, p: 0.25, textTransform: 'none', fontWeight: 850 }}>
+                        Trigger-Begriff: {signal.matched_keywords.join(', ')}
+                      </Button>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">Trigger-Begriff: {signal.matched_keywords.join(', ')}</Typography>
+                    )}
+                  </Stack>
+                  <Box sx={{ mt: 1.2, display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(3, max-content)' }, gap: 0.7, alignItems: 'center' }}>
+                    {canConfigureRadar && signal.review_status === 'new' && (
+                      <Button size="small" variant="contained" startIcon={<BusinessCenterIcon />} onClick={() => openMarketSignalAssignment(signal)} disabled={marketSignalBusy} sx={compactActionButtonSx}>
+                        Account zuordnen
+                      </Button>
+                    )}
+                    <Button component="a" href={signal.original_url} target="_blank" rel="noopener noreferrer" size="small" variant="outlined" startIcon={<OpenInNewIcon />} sx={compactActionButtonSx}>
+                      Quelle öffnen
+                    </Button>
+                    {canConfigureRadar && signal.review_status === 'new' && (
+                      <Button size="small" color="inherit" startIcon={<DeleteOutlineIcon />} onClick={() => updateMarketSignalReviewStatus(signal, 'ignored')} disabled={marketSignalBusy} sx={compactActionButtonSx}>
+                        Ausblenden
+                      </Button>
+                    )}
+                    {canConfigureRadar && signal.review_status === 'ignored' && (
+                      <Button size="small" color="info" startIcon={<VisibilityIcon />} onClick={() => updateMarketSignalReviewStatus(signal, 'new')} disabled={marketSignalBusy} sx={compactActionButtonSx}>
+                        Wiederherstellen
+                      </Button>
+                    )}
+                  </Box>
+                </Paper>
+              ))}
+            </Box>
+            {!marketSignals.length && (
+              <Alert severity="info" sx={{ mt: 1.5 }}>
+                {marketSignalFilter === 'active'
+                  ? 'Noch keine offenen Trigger-Treffer. Sales-Trigger anlegen oder bestehende Sales-Trigger jetzt prüfen.'
+                  : 'Keine ausgeblendeten Markt- oder Ereignistreffer vorhanden.'}
+              </Alert>
+            )}
+            {marketSignalTotal > marketSignals.length && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.2 }}>
+                Die neuesten {marketSignals.length} von {marketSignalTotal} Treffern werden angezeigt.
+              </Typography>
+            )}
+          </Collapse>
+        </Paper>
       )}
 
       {campaigns.some((campaign) => campaign.status !== 'archived') && entitlements?.subscription?.accessActive !== false && (
@@ -2161,9 +2678,11 @@ const AccountRadarPage: React.FC = () => {
       )}
 
       <Paper
+        ref={pipelineSectionRef}
         elevation={0}
         sx={{
           mt: 3,
+          scrollMarginTop: { xs: 132, md: 88 },
           p: { xs: 2, md: 2.5 },
           borderRadius: 4,
           border: '1px solid',
@@ -2243,7 +2762,7 @@ const AccountRadarPage: React.FC = () => {
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1.05fr 1.35fr' }, gap: { xs: 2, md: 3 }, mt: 2.3 }}>
           <Stack direction="row" spacing={1.8} justifyContent="center" alignItems="flex-start" sx={{ py: 0.5 }}>
             {[
-              { value: salesOverview.completion, label: 'Arbeitsstand', inside: 'erledigt', color: theme.palette.success.main, action: () => setView('done') },
+              { value: salesOverview.completion, label: 'Arbeitsstand', inside: 'erledigt', color: theme.palette.success.main, action: () => selectRadarView('done') },
               { value: cockpitDataQuality, label: 'Datenqualität', inside: 'vollständig', color: cockpitDataQuality >= 75 ? theme.palette.success.main : cockpitDataQuality >= 50 ? theme.palette.warning.main : theme.palette.error.main, action: () => selectedAccount && openAccountDetails(selectedAccount.id) },
             ].map((item) => (
               <Box key={item.label} sx={{ display: 'grid', placeItems: 'center', minWidth: 0 }}>
@@ -2283,7 +2802,7 @@ const AccountRadarPage: React.FC = () => {
                   <Button
                     key={item.label}
                     onClick={() => {
-                      setView(item.target);
+                      selectRadarView(item.target);
                       if (selectedAccount) setSearch(selectedAccount.name);
                     }}
                     sx={{ display: 'block', p: 0, textAlign: 'left', textTransform: 'none', color: 'text.primary', minWidth: 0 }}
@@ -2412,7 +2931,7 @@ const AccountRadarPage: React.FC = () => {
                 key={stage}
                 onClick={() => {
                   setSalesStageFilter(selected ? 'all' : stage);
-                  if (view === 'accounts') setView('today');
+                  if (view === 'accounts') selectRadarView('today');
                   if (selectedAccount) setSearch(selectedAccount.name);
                 }}
                 disabled={!selected && stageCount === 0}
@@ -2583,76 +3102,6 @@ const AccountRadarPage: React.FC = () => {
           </Box>
         </Collapse>
       </Paper>
-
-      <Paper ref={resultsSectionRef} elevation={0} sx={{ mt: 2.5, p: 1, borderRadius: 3.5, border: '1px solid', borderColor: 'divider', position: { xs: 'sticky', md: 'static' }, top: { xs: 64 }, zIndex: 5, bgcolor: alpha(theme.palette.background.paper, 0.96), backdropFilter: 'blur(10px)', scrollMarginTop: { xs: 76, md: 88 } }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ md: 'center' }}>
-          <Stack direction="row" spacing={0.6} sx={{ overflowX: 'auto' }}>
-            {([
-              ['today', isMobile ? `Aktuell (${tabCounts.today})` : `Aktuell · ${days} Tage (${tabCounts.today})`],
-              ['accounts', `Accounts ${selectedAccount || selectedCampaign ? cockpitAccounts.length : stats.accounts}`],
-              ['planned', `Geplant ${tabCounts.planned}`],
-              ['done', `Erledigt ${tabCounts.done}`],
-              ['ignored', `Ausgeblendet ${tabCounts.ignored}`],
-            ] as Array<[RadarView, string]>).map(([value, label]) => {
-              const tone = value === 'planned' ? theme.palette.warning.main : value === 'done' ? theme.palette.success.main : value === 'ignored' ? theme.palette.grey[600] : primary;
-              const emphasized = ['planned', 'done', 'ignored'].includes(value);
-              return <Button key={value} size="small" variant={view === value ? 'contained' : 'text'} onClick={() => setView(value)} sx={{ flexShrink: 0, minWidth: 0, whiteSpace: 'nowrap', lineHeight: 1.15, minHeight: 38, px: { xs: 1.25, sm: 1.8 }, fontWeight: 900, color: view === value ? theme.palette.getContrastText(tone) : emphasized ? tone : undefined, bgcolor: view === value ? tone : emphasized ? alpha(tone, 0.1) : undefined, '&:hover': { bgcolor: view === value ? tone : alpha(tone, 0.17) } }}>{label}</Button>;
-            })}
-          </Stack>
-          <Box sx={{ flexGrow: 1 }} />
-          <TextField
-            size="small"
-            value={search}
-            onChange={(event) => { setSearch(event.target.value); setSelectedAccountId(null); }}
-            placeholder={view === 'accounts' ? 'Account suchen …' : 'Signal oder Account suchen …'}
-            InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
-            sx={{ minWidth: { md: 280 }, '& .MuiOutlinedInput-root': { bgcolor: 'background.paper' } }}
-          />
-          {view !== 'accounts' && (
-            <TextField
-              select
-              size="small"
-              label="Verantwortlich"
-              value={assigneeFilter}
-              onChange={(event) => setAssigneeFilter(event.target.value)}
-              sx={{ minWidth: { xs: '100%', sm: 190 }, '& .MuiOutlinedInput-root': { bgcolor: 'background.paper' } }}
-            >
-              <MenuItem value="all">Alle im Team</MenuItem>
-              {user?.id && <MenuItem value={user.id}>Meine Aufgaben</MenuItem>}
-              <MenuItem value="unassigned">Nicht zugewiesen</MenuItem>
-              {teamMembers.filter((member) => member.id !== user?.id).map((member) => (
-                <MenuItem key={member.id} value={member.id}>{member.name}</MenuItem>
-              ))}
-            </TextField>
-          )}
-        </Stack>
-      </Paper>
-
-      <Box sx={{ mt: 2 }}>
-        {loading ? (
-          <Box sx={{ minHeight: 280, display: 'grid', placeItems: 'center' }}><CircularProgress /></Box>
-        ) : view === 'accounts' ? (
-          renderAccounts()
-        ) : visibleSignals.length > 0 ? (
-          <Stack spacing={1.5}>{visibleSignals.map(renderSignal)}</Stack>
-        ) : (
-          <Paper elevation={0} sx={{ p: { xs: 4, md: 7 }, borderRadius: 4, border: '1px dashed', borderColor: 'divider', textAlign: 'center' }}>
-            <CheckCircleOutlineIcon sx={{ fontSize: 52, color: 'success.main' }} />
-            <Typography variant="h6" sx={{ mt: 1, fontWeight: 950 }}>
-              {view === 'done'
-                ? 'Noch keine erledigten Signale.'
-                : view === 'ignored' ? 'Keine ausgeblendeten Treffer.'
-                : view === 'planned' ? 'Noch keine Kontakte oder Wiedervorlagen geplant.' : 'Für diesen Filter ist alles erledigt.'}
-            </Typography>
-            <Typography color="text.secondary" sx={{ mt: 0.6 }}>
-              {accounts.length === 0
-                ? 'Legen Sie zunächst Accounts zur Beobachtung an.'
-                : view === 'planned' ? 'Planen Sie direkt an einem Signal den nächsten Kontakt.' : 'Ändern Sie Zeitraum oder Suche, um weitere Signale zu sehen.'}
-            </Typography>
-            {canManageAccounts && entitlements?.subscription?.accessActive !== false && accounts.length === 0 && <Button sx={{ mt: 2 }} variant="contained" onClick={goToAccountManagement}>Ersten Account anlegen</Button>}
-          </Paper>
-        )}
-      </Box>
 
       <AccountDetailDialog
         open={Boolean(detailAccountId)}
@@ -3176,7 +3625,7 @@ const AccountRadarPage: React.FC = () => {
                   <Typography variant="subtitle1" sx={{ fontWeight: 950 }}>Accounts in dieser Kampagne</Typography>
                   <Box sx={{ mt: 1.2, display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(3, minmax(0, 1fr))' }, gap: 0.8 }}>
                     {campaignDetail.accounts.map((account) => (
-                      <Button key={account.id} onClick={() => { setCampaignDetailId(null); setSelectedAccountId(account.id); setCampaignFilter(campaignDetail.campaign.id); setView('accounts'); }} sx={{ p: 1, justifyContent: 'flex-start', textAlign: 'left', textTransform: 'none', color: 'text.primary', border: '1px solid', borderColor: 'divider', minWidth: 0 }}>
+                      <Button key={account.id} onClick={() => { setCampaignDetailId(null); setSelectedAccountId(account.id); setCampaignFilter(campaignDetail.campaign.id); selectRadarView('accounts'); }} sx={{ p: 1, justifyContent: 'flex-start', textAlign: 'left', textTransform: 'none', color: 'text.primary', border: '1px solid', borderColor: 'divider', minWidth: 0 }}>
                         <Avatar src={resolveAssetUrl(account.logo_url) || undefined} variant="rounded" sx={{ width: 36, height: 36, mr: 1, bgcolor: alpha(primary, 0.08) }}>{account.name.charAt(0).toUpperCase()}</Avatar>
                         <Box sx={{ minWidth: 0 }}>
                           <Typography variant="body2" noWrap sx={{ fontWeight: 900 }}>{account.name}</Typography>
@@ -3462,6 +3911,149 @@ const AccountRadarPage: React.FC = () => {
             </Box>
           )}
         </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(marketSignalDialog)}
+        onClose={() => { if (!marketSignalBusy) setMarketSignalDialog(null); }}
+        fullWidth
+        maxWidth="sm"
+        fullScreen={isMobile}
+      >
+        <DialogTitle sx={{ pr: 7 }}>
+          <Typography component="span" sx={{ display: 'block', fontWeight: 950 }}>
+            Treffer in den Account-Radar übernehmen
+          </Typography>
+          <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+            Bestehendem Account zuordnen oder direkt einen neuen Prospect anlegen.
+          </Typography>
+          <IconButton
+            onClick={() => setMarketSignalDialog(null)}
+            disabled={marketSignalBusy}
+            aria-label="Zuordnung schließen"
+            sx={{ position: 'absolute', right: 12, top: 12 }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            {marketSignalDialog && (
+              <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 3, bgcolor: alpha(theme.palette.info.main, 0.06) }}>
+                <Stack direction="row" spacing={0.7} useFlexGap flexWrap="wrap" alignItems="center">
+                  <Chip size="small" color="info" clickable={canConfigureRadar} onClick={canConfigureRadar ? () => openTriggerManagement(marketSignalDialog) : undefined} label={`Sales-Trigger: ${marketSignalDialog.trigger_profile_name}`} />
+                  <Chip size="small" variant="outlined" label={`${marketSignalDialog.match_score}% Trefferqualität`} />
+                </Stack>
+                <Typography sx={{ mt: 1, fontWeight: 900, lineHeight: 1.35 }}>{marketSignalDialog.title}</Typography>
+                <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap" sx={{ mt: 0.7 }}>
+                  <Typography variant="caption" color="text.secondary">{new Date(marketSignalDialog.published_at).toLocaleDateString('de-AT')}</Typography>
+                  <Typography variant="caption" color="text.disabled" aria-hidden="true">·</Typography>
+                  {canConfigureRadar ? (
+                    <Button size="small" variant="text" startIcon={<EditNoteIcon />} onClick={() => openTriggerManagement(marketSignalDialog)} sx={{ minHeight: 30, p: 0.25, textTransform: 'none', fontWeight: 850 }}>
+                      Trigger-Begriff: {marketSignalDialog.matched_keywords.join(', ')}
+                    </Button>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">Trigger-Begriff: {marketSignalDialog.matched_keywords.join(', ')}</Typography>
+                  )}
+                </Stack>
+              </Paper>
+            )}
+
+            <Alert severity="info">
+              Nach der Zuordnung wird der Treffer zum normalen Sales-Signal. Er kann anschließend geplant, einer Kampagne zugeordnet und im Team bearbeitet werden.
+            </Alert>
+
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+              <Button
+                fullWidth
+                variant={marketSignalAccountMode === 'existing' ? 'contained' : 'outlined'}
+                color="info"
+                onClick={() => setMarketSignalAccountMode('existing')}
+                disabled={marketSignalBusy || accounts.length === 0}
+                sx={{ whiteSpace: 'nowrap' }}
+              >
+                Bestehender Account
+              </Button>
+              <Button
+                fullWidth
+                variant={marketSignalAccountMode === 'new' ? 'contained' : 'outlined'}
+                color="info"
+                onClick={() => setMarketSignalAccountMode('new')}
+                disabled={marketSignalBusy}
+                sx={{ whiteSpace: 'nowrap' }}
+              >
+                Neuer Prospect
+              </Button>
+            </Stack>
+
+            {marketSignalAccountMode === 'existing' ? (
+              <>
+                {accounts.length > 0 ? (
+                  <Autocomplete
+                    options={accounts}
+                    value={accounts.find((account) => account.id === marketSignalAccountId) || null}
+                    onChange={(_event, account) => setMarketSignalAccountId(account?.id || '')}
+                    getOptionLabel={(account) => account.name}
+                    isOptionEqualToValue={(option, value) => option.id === value.id}
+                    disabled={marketSignalBusy}
+                    renderOption={(props, account) => (
+                      <Box component="li" {...props} key={account.id} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Avatar src={account.logo_url ? resolveAssetUrl(account.logo_url) : undefined} variant="rounded" sx={{ width: 30, height: 30, fontSize: 13 }}>
+                          {account.name.slice(0, 1).toUpperCase()}
+                        </Avatar>
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 800 }}>{account.name}</Typography>
+                          {account.website_url && <Typography variant="caption" color="text.secondary">{account.website_url}</Typography>}
+                        </Box>
+                      </Box>
+                    )}
+                    renderInput={(params) => (
+                      <TextField {...params} label="Account suchen und auswählen" placeholder="Name des Accounts" autoFocus />
+                    )}
+                  />
+                ) : (
+                  <Alert severity="warning">Es ist noch kein Account angelegt. Legen Sie für diesen Treffer direkt einen neuen Prospect an.</Alert>
+                )}
+              </>
+            ) : (
+              <Stack spacing={1.5}>
+                <TextField
+                  label="Account-Name"
+                  value={marketSignalNewAccountName}
+                  onChange={(event) => setMarketSignalNewAccountName(event.target.value.slice(0, 200))}
+                  required
+                  autoFocus
+                  disabled={marketSignalBusy}
+                  helperText="Der Account wird zunächst als Prospect angelegt."
+                />
+                <TextField
+                  label="Website (optional)"
+                  value={marketSignalNewAccountWebsite}
+                  onChange={(event) => setMarketSignalNewAccountWebsite(event.target.value.slice(0, 500))}
+                  placeholder="https://www.beispiel.at"
+                  disabled={marketSignalBusy}
+                />
+              </Stack>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: { xs: 2, sm: 3 }, py: 2, gap: 1, flexWrap: 'wrap' }}>
+          <Button onClick={() => setMarketSignalDialog(null)} disabled={marketSignalBusy} sx={{ whiteSpace: 'nowrap' }}>
+            Abbrechen
+          </Button>
+          <Button
+            variant="contained"
+            color="info"
+            onClick={submitMarketSignalAccount}
+            disabled={marketSignalBusy
+              || (marketSignalAccountMode === 'existing' && !marketSignalAccountId)
+              || (marketSignalAccountMode === 'new' && marketSignalNewAccountName.trim().length < 2)}
+            startIcon={marketSignalBusy ? <CircularProgress size={17} color="inherit" /> : <TrackChangesIcon />}
+            sx={{ whiteSpace: 'nowrap' }}
+          >
+            {marketSignalBusy ? 'Wird übernommen …' : 'In Account-Radar übernehmen'}
+          </Button>
+        </DialogActions>
       </Dialog>
 
       {notice && (

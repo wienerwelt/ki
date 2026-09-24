@@ -14,31 +14,23 @@ import EmailIcon from '@mui/icons-material/Email';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import SettingsIcon from '@mui/icons-material/Settings';
 import BusinessIcon from '@mui/icons-material/Business';
-import WidgetsIcon from '@mui/icons-material/Widgets';
-import SubscriptionsIcon from '@mui/icons-material/Subscriptions';
 import GroupIcon from '@mui/icons-material/Group';
 import DataObjectIcon from '@mui/icons-material/DataObject';
 import PolicyIcon from '@mui/icons-material/Policy';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
-import CategoryIcon from '@mui/icons-material/Category';
-import TagIcon from '@mui/icons-material/Tag';
 import MonitorIcon from '@mui/icons-material/Monitor';
 import QueryStatsIcon from '@mui/icons-material/QueryStats';
-import CampaignIcon from '@mui/icons-material/Campaign';
 import StarsIcon from '@mui/icons-material/Stars';
-import ScheduleIcon from '@mui/icons-material/Schedule';
 import FeedbackIcon from '@mui/icons-material/Feedback';
 import FolderIcon from '@mui/icons-material/Folder';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import LogoutIcon from '@mui/icons-material/Logout';
 import SearchIcon from '@mui/icons-material/Search';
-import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout';
 import PollIcon from '@mui/icons-material/Poll';
 import InsightsIcon from '@mui/icons-material/Insights';
 import CloseIcon from '@mui/icons-material/Close';
-import GavelIcon from '@mui/icons-material/Gavel';
 import ForumIcon from '@mui/icons-material/Forum';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
@@ -117,14 +109,19 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const token = 'cookie-session';
     const canUseContent = canUseContentWorkspace(user, businessPartner);
     const canUseSales = canUseSalesWorkspace(user, businessPartner);
+    const isDemoMode = String(user?.role || '').toLowerCase() === 'demo';
     const salesPlan = businessPartner?.sales_plan || user?.tenant_sales_plan || 'basic';
     const salesSubscriptionStatus = businessPartner?.sales_subscription_status || user?.tenant_sales_subscription_status || 'active';
     const salesTrialDaysRemaining = businessPartner?.sales_trial_days_remaining ?? user?.tenant_sales_trial_days_remaining;
     const salesAccessActive = businessPartner?.sales_access_active ?? user?.tenant_sales_access_active ?? true;
-    const salesStatusLabel = salesSubscriptionStatus === 'trial'
+    const salesStatusLabel = isDemoMode
+        ? 'Demo'
+        : salesSubscriptionStatus === 'trial'
         ? (salesAccessActive ? `Test · ${salesTrialDaysRemaining ?? 0} Tage` : 'Test beendet')
         : salesSubscriptionStatus === 'paused' ? 'Pausiert' : (salesPlan === 'premium' ? 'Premium' : 'Basic');
-    const contentStatusLabel = businessPartner?.storage_tier === 'premium'
+    const contentStatusLabel = isDemoMode
+        ? 'Demo'
+        : businessPartner?.storage_tier === 'premium'
         ? 'Premium'
         : businessPartner?.storage_tier === 'standard' ? 'Standard' : 'Basis';
     const workspaceBadgeSx = {
@@ -414,15 +411,25 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         </ListSubheader>
                         <ListItem button component={RouterLink} to="/radar?view=today">
                             <ListItemIcon><RadarIcon /></ListItemIcon>
-                            <ListItemText primary="Heute" secondary="Aktuelle Signale" />
+                            <ListItemText primary="Heute" secondary="Priorisierte Arbeitsliste" />
                         </ListItem>
+                        {salesPlan === 'premium' && (
+                            <ListItem button component={RouterLink} to="/radar?view=triggers">
+                                <ListItemIcon><AutoAwesomeIcon /></ListItemIcon>
+                                <ListItemText primary="Trigger-Treffer" secondary="Märkte & Ereignisse" />
+                            </ListItem>
+                        )}
                         <ListItem button component={RouterLink} to="/radar?view=accounts">
                             <ListItemIcon><BusinessIcon /></ListItemIcon>
                             <ListItemText primary="Accounts" secondary="Gesamter Bestand" />
                         </ListItem>
-                        <ListItem button component={RouterLink} to="/radar?view=planned">
-                            <ListItemIcon><ScheduleIcon /></ListItemIcon>
-                            <ListItemText primary="Aufgaben" secondary="Geplante Kontakte" />
+                        <ListItem button component={RouterLink} to="/radar?view=pipeline">
+                            <ListItemIcon><InsightsIcon /></ListItemIcon>
+                            <ListItemText primary="Pipeline" secondary="Cockpit & Sales-Erfolg" />
+                        </ListItem>
+                        <ListItem button component={RouterLink} to="/radar?view=calendar">
+                            <ListItemIcon><CalendarMonthIcon /></ListItemIcon>
+                            <ListItemText primary="Kalender" secondary="Kontakte & Wiedervorlagen" />
                         </ListItem>
                         <ListItem button component={RouterLink} to="/radar?panel=settings">
                             <ListItemIcon><QueryStatsIcon /></ListItemIcon>
@@ -453,7 +460,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         {user?.role === 'admin' && (
                             <ListItem button component={RouterLink} to="/admin">
                                 <ListItemIcon><SettingsIcon /></ListItemIcon>
-                                <ListItemText primary="System-Administration" />
+                                <ListItemText primary="Admin-Dashboard" secondary="Alle Verwaltungsbereiche" />
                             </ListItem>
                         )}
                         <Divider sx={{ my: 1 }} />
@@ -519,6 +526,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 
                 {user?.role === 'assistenz' && (
                    <>
+                        <ListSubheader
+                            disableSticky
+                            sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                        >
+                            Mandanten-Werkzeuge
+                        </ListSubheader>
                         <ListItem button component={RouterLink} to="/admin/briefing-editorial"><ListItemIcon><HistoryEduIcon /></ListItemIcon><ListItemText primary="Briefing Redaktion" /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/public-assistant"><ListItemIcon><SmartToyIcon /></ListItemIcon><ListItemText primary="Homepage-Assistent" /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/users"><ListItemIcon><GroupIcon /></ListItemIcon><ListItemText primary={t('layout.userManagement')} /></ListItem>
@@ -540,14 +553,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     <>
                         <ListItem button component={RouterLink} to="/admin">
                             <ListItemIcon><SettingsIcon /></ListItemIcon>
-                            <ListItemText primary={t('layout.adminArea')} />
+                            <ListItemText primary="Admin-Dashboard" secondary="Alle Verwaltungsbereiche" />
                         </ListItem>
-                        <List component="div" disablePadding sx={{ pl: 4 }}>
+                        <List component="div" disablePadding sx={{ pl: 1.5 }}>
                             <ListSubheader
                                 disableSticky
                                 sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
                             >
-                                Redaktion & Inhalte
+                                Redaktion
                             </ListSubheader>
                             <ListItem button component={RouterLink} to="/admin/briefing-editorial">
                                 <ListItemIcon><HistoryEduIcon /></ListItemIcon>
@@ -565,38 +578,25 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 </ListItemIcon>
                                 <ListItemText primary="Actions & Software" />
                             </ListItem>
-                            <ListItem button component={RouterLink} to="/admin/advertisements"><ListItemIcon><CampaignIcon /></ListItemIcon><ListItemText primary={t('layout.advertising')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/surveys"><ListItemIcon><PollIcon /></ListItemIcon><ListItemText primary={t('layout.surveys')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/community"><ListItemIcon><ForumIcon /></ListItemIcon><ListItemText primary="Community Moderation" /></ListItem>
                             <ListItem button component={RouterLink} to="/career" selected={location.pathname === '/career'}>
                                 <ListItemIcon><GroupIcon /></ListItemIcon>
                                 <ListItemText primary="Menschen & Karriere" secondary="Personalien & Freigaben" sx={{ '& .MuiListItemText-primary': { whiteSpace: 'nowrap' } }} />
                             </ListItem>
-                            <ListItem button component={RouterLink} to="/admin/events"><ListItemIcon><CalendarMonthIcon /></ListItemIcon><ListItemText primary={t('layout.events')} /></ListItem>
-
                             <ListSubheader
                                 disableSticky
                                 sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
                             >
-                                Produkte & Vertrieb
+                                Kunden & Vertrieb
                             </ListSubheader>
                             <ListItem button component={RouterLink} to="/admin/sales-leads">
                                 <ListItemIcon><Badge badgeContent={menuBadges.salesLeads} color="error" max={99}><ContactMailOutlinedIcon /></Badge></ListItemIcon>
                                 <ListItemText primary="Account-Radar Anfragen" />
                             </ListItem>
 
-                            <ListSubheader
-                                disableSticky
-                                sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
-                            >
-                                Mandanten & Netzwerk
-                            </ListSubheader>
                             <ListItem button component={RouterLink} to="/admin/business-partners"><ListItemIcon><BusinessIcon /></ListItemIcon><ListItemText primary={t('layout.businessPartners')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/demo-access"><ListItemIcon><VisibilityIcon /></ListItemIcon><ListItemText primary="Demo-Zugänge" /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/users"><ListItemIcon><GroupIcon /></ListItemIcon><ListItemText primary={t('layout.users')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/widget-types"><ListItemIcon><WidgetsIcon /></ListItemIcon><ListItemText primary={t('layout.widgetTypes')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/bp-widget-access"><ListItemIcon><SubscriptionsIcon /></ListItemIcon><ListItemText primary={t('layout.subscriptions')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/directory"><ListItemIcon><StorefrontIcon /></ListItemIcon><ListItemText primary={t('layout.directory')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/sources"><ListItemIcon><FactCheckIcon /></ListItemIcon><ListItemText primary={t('layout.sourceManagement')} /></ListItem>
 
                             <ListSubheader
                                 disableSticky
@@ -604,8 +604,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             >
                                 Daten & KI
                             </ListSubheader>
-                            <ListItem button component={RouterLink} to="/admin/funding"><ListItemIcon><ShoppingCartCheckoutIcon /></ListItemIcon><ListItemText primary={t('layout.funding')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/legal-monitor"><ListItemIcon><GavelIcon /></ListItemIcon><ListItemText primary="Monitor-Verwaltung" /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/scraped-content">
                                 <ListItemIcon>
                                     <Badge 
@@ -620,23 +618,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 <ListItemText primary={t('layout.scrapedContent')} />
                             </ListItem>
                             <ListItem button component={RouterLink} to="/admin/scraping-rules"><ListItemIcon><PolicyIcon /></ListItemIcon><ListItemText primary={t('layout.scrapingRules')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/ai-content">
-                                <ListItemIcon>
-                                    <Badge 
-                                        badgeContent={menuBadges.ai} 
-                                        color="error" 
-                                        max={999}
-                                        sx={{ '& .MuiBadge-badge': menuBadges.ai > 0 ? { animation: `${pulseAnimation} 2s infinite` } : {} }}
-                                    >
-                                        <SmartToyIcon />
-                                    </Badge>
-                                </ListItemIcon>
-                                <ListItemText primary={t('layout.aiContent')} />
-                            </ListItem>
-                            <ListItem button component={RouterLink} to="/admin/ai-prompt-rules"><ListItemIcon><AutoAwesomeIcon /></ListItemIcon><ListItemText primary={t('layout.aiPromptRules')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/public-assistant"><ListItemIcon><SmartToyIcon /></ListItemIcon><ListItemText primary="Homepage-Assistent" /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/categories"><ListItemIcon><CategoryIcon /></ListItemIcon><ListItemText primary={t('layout.categories')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/tags"><ListItemIcon><TagIcon /></ListItemIcon><ListItemText primary={t('layout.tags')} /></ListItem>
 
                             <ListSubheader
                                 disableSticky
@@ -644,7 +626,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             >
                                 Betrieb & Analyse
                             </ListSubheader>
-                            <ListItem button component={RouterLink} to="/admin/cronjobs"><ListItemIcon><ScheduleIcon /></ListItemIcon><ListItemText primary={t('layout.automatedTasks')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/statistics"><ListItemIcon><QueryStatsIcon /></ListItemIcon><ListItemText primary={t('layout.statistics')} /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/monitor"><ListItemIcon><MonitorIcon /></ListItemIcon><ListItemText primary={t('layout.activityMonitor')} /></ListItem>
                             <Divider sx={{ my: 1 }} />                                            
@@ -708,11 +689,11 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                       <Typography variant="h6" noWrap component="div" sx={{ display: { xs: 'none', sm: 'block' } }}>
                         {dashboardTitle}
                       </Typography>
-                      {isSalesWorkspace && !(canUseContent && canUseSales) && (
+                      {!(canUseContent && canUseSales) && (isSalesWorkspace || isDemoMode) && (
                         <Chip
                           size="small"
-                          label={salesStatusLabel}
-                          sx={{ display: { xs: 'none', md: 'inline-flex' }, ml: 1, color: 'inherit', borderColor: 'currentColor' }}
+                          label={isDemoMode ? 'Demo' : salesStatusLabel}
+                          sx={{ display: isDemoMode ? 'inline-flex' : { xs: 'none', md: 'inline-flex' }, ml: 1, color: 'inherit', borderColor: 'currentColor' }}
                           variant="outlined"
                         />
                       )}
@@ -1098,7 +1079,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         icon={<VisibilityIcon />}
                         sx={{ mb: 2, borderRadius: 2.5, fontWeight: 750 }}
                     >
-                        Demo-Modus · Alle Inhalte sind schreibgeschützt. Änderungen und Versandfunktionen sind deaktiviert.
+                        Demo-Modus · Fiktive Sales-Beispiele, öffentliche Content-Informationen. Änderungen, KI-Anfragen, Exporte und Versand sind deaktiviert.{' '}
+                        {canUseSalesWorkspace(user, businessPartner) ? (
+                            <Button component={RouterLink} to="/account-radar?request=pilot" size="small" sx={{ ml: 1, whiteSpace: 'nowrap' }}>14-Tage-Pilot anfragen</Button>
+                        ) : (
+                            <Button href="https://mobiliti.at/index.html#pilot" target="_blank" rel="noopener noreferrer" size="small" sx={{ ml: 1, whiteSpace: 'nowrap' }}>Pilot anfragen</Button>
+                        )}
                     </Alert>
                 )}
                 {children}

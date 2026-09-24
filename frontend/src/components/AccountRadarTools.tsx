@@ -35,8 +35,12 @@ import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import BusinessCenterOutlinedIcon from '@mui/icons-material/BusinessCenterOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import CalendarMonthOutlinedIcon from '@mui/icons-material/CalendarMonthOutlined';
+import ManageSearchOutlinedIcon from '@mui/icons-material/ManageSearchOutlined';
+import RssFeedOutlinedIcon from '@mui/icons-material/RssFeedOutlined';
 import apiClient from '../apiClient';
 import AccountRadarIntegrationDialog from './AccountRadarIntegrationDialog';
+import AccountRadarTriggerDialog from './AccountRadarTriggerDialog';
+import AccountRadarSourceDialog from './AccountRadarSourceDialog';
 
 interface StaffRecipient {
   id: string;
@@ -84,7 +88,9 @@ interface AccountRadarToolsProps {
   onOpenCampaigns?: () => void;
   onOpenCalendarFeed?: () => void;
   accountCount?: number;
-  openPanel?: 'import' | 'settings' | null;
+  openPanel?: 'import' | 'settings' | 'triggers' | 'sources' | null;
+  openTriggerProfileId?: string | null;
+  openTriggerKeyword?: string | null;
   onPanelOpened?: () => void;
   entitlements?: SalesEntitlements | null;
 }
@@ -97,6 +103,9 @@ export interface SalesEntitlements {
     digestRecipients: number;
     importRows: number;
     apiTokens: number;
+    triggerProfiles: number;
+    customKeywordsPerProfile: number;
+    externalSources: number;
   };
   features: {
     dataImport: boolean;
@@ -107,6 +116,8 @@ export interface SalesEntitlements {
     advancedAnalytics: boolean;
     dataQuality: boolean;
     apiIntegration: boolean;
+    contentTriggers: boolean;
+    externalSources: boolean;
   };
   usage?: { accounts: number };
   subscription?: {
@@ -158,6 +169,8 @@ const AccountRadarTools: React.FC<AccountRadarToolsProps> = ({
   onOpenCalendarFeed,
   accountCount,
   openPanel = null,
+  openTriggerProfileId = null,
+  openTriggerKeyword = null,
   onPanelOpened,
   entitlements: entitlementProp = null,
 }) => {
@@ -187,6 +200,9 @@ const AccountRadarTools: React.FC<AccountRadarToolsProps> = ({
   const [previewCampaignCount, setPreviewCampaignCount] = useState<number | null>(null);
   const [entitlements, setEntitlements] = useState<SalesEntitlements | null>(entitlementProp);
   const [integrationOpen, setIntegrationOpen] = useState(false);
+  const [triggerOpen, setTriggerOpen] = useState(false);
+  const [triggerTarget, setTriggerTarget] = useState<{ profileId: string; keyword?: string } | null>(null);
+  const [sourceOpen, setSourceOpen] = useState(false);
   const [toolsAnchor, setToolsAnchor] = useState<HTMLElement | null>(null);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -194,6 +210,7 @@ const AccountRadarTools: React.FC<AccountRadarToolsProps> = ({
   useEffect(() => {
     if (!openPanel) return;
     if (openPanel === 'import' && !entitlements) return;
+    if ((openPanel === 'triggers' || openPanel === 'sources') && !entitlements) return;
     if (openPanel === 'import' && entitlements?.features.dataImport) setImportOpen(true);
     if (openPanel === 'import' && entitlements && !entitlements.features.dataImport) {
       setSettingsNoticeSeverity('info');
@@ -201,8 +218,13 @@ const AccountRadarTools: React.FC<AccountRadarToolsProps> = ({
       setSettingsOpen(true);
     }
     if (openPanel === 'settings') setSettingsOpen(true);
+    if (openPanel === 'triggers' && entitlements?.features.contentTriggers) {
+      setTriggerTarget(openTriggerProfileId ? { profileId: openTriggerProfileId, keyword: openTriggerKeyword || undefined } : null);
+      setTriggerOpen(true);
+    }
+    if (openPanel === 'sources') setSourceOpen(true);
     onPanelOpened?.();
-  }, [entitlements, openPanel, onPanelOpened]);
+  }, [entitlements, openPanel, openTriggerKeyword, openTriggerProfileId, onPanelOpened]);
 
   useEffect(() => setEntitlements(entitlementProp), [entitlementProp]);
 
@@ -412,6 +434,20 @@ const AccountRadarTools: React.FC<AccountRadarToolsProps> = ({
           <ListItemIcon><NotificationsActiveIcon fontSize="small" /></ListItemIcon>
           <ListItemText primary="Daily-Radar" secondary="Versand und Empfänger" />
         </MenuItem>
+        <MenuItem onClick={() => { setToolsAnchor(null); setTriggerTarget(null); setTriggerOpen(true); }}>
+          <ListItemIcon><ManageSearchOutlinedIcon fontSize="small" /></ListItemIcon>
+          <ListItemText
+            primary="Sales-Trigger"
+            secondary={entitlements?.features.contentTriggers ? 'Themen, Ereignisse oder Accounts beobachten' : 'In Sales Premium enthalten'}
+          />
+        </MenuItem>
+        <MenuItem onClick={() => { setToolsAnchor(null); setSourceOpen(true); }}>
+          <ListItemIcon><RssFeedOutlinedIcon fontSize="small" /></ListItemIcon>
+          <ListItemText
+            primary="Beobachtete Quellen"
+            secondary={entitlements?.features.externalSources ? 'RSS, Atom und Websites überwachen' : 'In Sales Premium enthalten'}
+          />
+        </MenuItem>
         {entitlements?.features.dataQuality && (
           <MenuItem onClick={() => { setToolsAnchor(null); setIntegrationOpen(true); }}>
             <ListItemIcon><HubOutlinedIcon fontSize="small" /></ListItemIcon>
@@ -425,6 +461,24 @@ const AccountRadarTools: React.FC<AccountRadarToolsProps> = ({
           open={integrationOpen}
           onClose={() => setIntegrationOpen(false)}
           entitlements={entitlements}
+        />
+      )}
+      {entitlements && (
+        <AccountRadarTriggerDialog
+          open={triggerOpen}
+          onClose={() => setTriggerOpen(false)}
+          entitlements={entitlements}
+          onImported={onImported}
+          initialProfileId={triggerTarget?.profileId || null}
+          initialKeyword={triggerTarget?.keyword || null}
+        />
+      )}
+      {entitlements && (
+        <AccountRadarSourceDialog
+          open={sourceOpen}
+          onClose={() => setSourceOpen(false)}
+          entitlements={entitlements}
+          onChanged={onImported}
         />
       )}
 

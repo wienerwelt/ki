@@ -48,8 +48,8 @@ async function processArticle(article, onlyTenant = null) {
  let extraction = (await db.query(`INSERT INTO career_extractions(content_hash,prompt_version,article_id,status)
  VALUES($1,$2,$3,$4) ON CONFLICT(content_hash,prompt_version) DO UPDATE SET content_hash=EXCLUDED.content_hash RETURNING *`,
  [contentHash,c.VERSION,article.id,candidate ? 'waiting' : 'excluded'])).rows[0];
- await db.query(`INSERT INTO career_article_checks(article_id,content_hash) VALUES($1,$2)
- ON CONFLICT(article_id) DO UPDATE SET content_hash=EXCLUDED.content_hash,checked_at=now()`,[article.id,contentHash]);
+ await db.query(`INSERT INTO career_article_checks(article_id,content_hash,prompt_version) VALUES($1,$2,$3)
+ ON CONFLICT(article_id) DO UPDATE SET content_hash=EXCLUDED.content_hash,prompt_version=EXCLUDED.prompt_version,checked_at=now()`,[article.id,contentHash,c.VERSION]);
  if (extraction.status==='completed') {await distribute(extraction,article,onlyTenant);return 'cached';}
  if (!candidate || extraction.status!=='waiting' || !process.env.OPENAI_API_KEY || !(await reserve(extraction.id))) return extraction.status;
  try {
@@ -103,7 +103,8 @@ async function getArchiveCandidateCount(tenantId, since) {
     OR EXISTS(SELECT 1 FROM business_partner_regions br JOIN regions r ON r.id=br.region_id
      WHERE br.business_partner_id=bp.id AND (r.code=sc.region OR sc.region IN ('EU','GLOBAL','WORLD')))))
   AND NOT EXISTS(SELECT 1 FROM career_article_checks cc
-   WHERE cc.article_id=sc.id AND cc.checked_at>=COALESCE(sc.updated_at,sc.scraped_at,sc.created_at))`,[tenantId,since]);
+   WHERE cc.article_id=sc.id AND cc.prompt_version=$3
+   AND cc.checked_at>=COALESCE(sc.updated_at,sc.scraped_at,sc.created_at))`,[tenantId,since,c.VERSION]);
  return Number(result.rows[0]?.count || 0);
 }
 async function scan(options = {}) {
@@ -130,8 +131,9 @@ async function scan(options = {}) {
  WHERE br.business_partner_id=bp.id AND (r.code=sc.region OR sc.region IN ('EU','GLOBAL','WORLD')))))
  AND ($1::boolean OR sc.scraped_at >= $2)
  AND ($4::date IS NULL OR COALESCE(sc.published_date::date,sc.scraped_at::date,sc.created_at::date) >= $4)
- AND NOT EXISTS(SELECT 1 FROM career_article_checks cc WHERE cc.article_id=sc.id AND cc.checked_at>=COALESCE(sc.updated_at,sc.scraped_at,sc.created_at))
- ORDER BY sc.scraped_at DESC LIMIT $5`,[Boolean(options.archive),settings.auto_since,options.tenantId||null,options.since||null,limit]);
+ AND NOT EXISTS(SELECT 1 FROM career_article_checks cc WHERE cc.article_id=sc.id AND cc.prompt_version=$6
+ AND cc.checked_at>=COALESCE(sc.updated_at,sc.scraped_at,sc.created_at))
+ ORDER BY sc.scraped_at DESC LIMIT $5`,[Boolean(options.archive),settings.auto_since,options.tenantId||null,options.since||null,limit,c.VERSION]);
  const counts={checked:articles.rowCount,completed:0,cached:0,excluded:0,waiting:0,failed:0};
  for (const article of articles.rows) {const status=await processArticle(article,options.tenantId);counts[status]=(counts[status]||0)+1;}
  // Budget-deferred work remains queued in DB; never pay again for running/failed work.

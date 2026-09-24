@@ -18,7 +18,7 @@ const wrap = fn => async(req,res)=>{try{await fn(req,res);}catch(e){console.erro
 async function entry(req,client=db) {
  if (!UUID.test(req.params.id || '')) throw fail('Ungültiger Eintrag.');
  const row = (await client.query('SELECT * FROM career_entries WHERE id=$1 AND business_partner_id=$2',[req.params.id,tenant(req)])).rows[0];
- if (!row || (!manager(req.user) && row.status!=='approved' && row.author_id!==req.user.id)) throw fail('Eintrag nicht verfügbar.',404);return row;
+ if (!row || (!manager(req.user) && row.status!=='approved')) throw fail('Eintrag nicht verfügbar.',404);return row;
 }
 const fields = `e.id,e.person_name,e.organization,e.role_title,e.kind,e.effective_date,e.published_date,e.summary,e.source_url,
  e.status,e.author_id,e.extraction_id,e.requested_public,e.public_approved,e.photo_consent,e.version,e.created_at,
@@ -42,7 +42,7 @@ exports.tenants=wrap(async(req,res)=>{
 exports.list=wrap(async(req,res)=>{
  const partnerId=tenant(req); const isManager=manager(req.user);
  const mode=['approved','mine','pending','rejected'].includes(req.query.mode)?req.query.mode:'approved';
- if (['pending','rejected'].includes(mode) && !isManager) throw fail('Freigabe nur für Assistenz und Admin.',403);
+ if (mode!=='approved' && !isManager) throw fail('Nur freigegebene Personalien sind verfügbar.',403);
  const offset=Math.min(Math.max(Number(req.query.offset)||0,0),10000);const limit=Math.min(Math.max(Number(req.query.limit)||24,1),50);
  const params=[partnerId,req.user.id,mode,String(req.query.search || '').slice(0,120),req.query.kind||'',limit,offset];
  const where=`e.business_partner_id=$1 AND (CASE WHEN $3='mine' THEN e.author_id=$2 ELSE e.status=$3 END)
@@ -54,14 +54,14 @@ exports.list=wrap(async(req,res)=>{
  const counts=(await db.query(`SELECT COUNT(*) FILTER(WHERE status='approved')::int AS approved,
  COUNT(*) FILTER(WHERE author_id=$2)::int AS mine,COUNT(*) FILTER(WHERE status='pending')::int AS pending
  FROM career_entries WHERE business_partner_id=$1`,[partnerId,req.user.id])).rows[0];
- // Read-only status, scoped to the selected tenant; ordinary members do not see settings.
- const automation=isManager?(await db.query(`SELECT
+ // Automation state is administrative configuration and is only returned to admins.
+ const automation=req.user.role==='admin'?(await db.query(`SELECT
  COALESCE((SELECT enabled FROM career_ai_settings WHERE singleton=true),false) AS global_enabled,
  COALESCE(cs.enabled,false) AS tenant_enabled,
  COALESCE(cardinality(cs.category_ids),0) AS category_count,
  COALESCE(cs.public_enabled,false) AS public_enabled
  FROM (SELECT $1::uuid AS id) selected LEFT JOIN career_tenant_settings cs ON cs.business_partner_id=selected.id`,[partnerId])).rows[0]:undefined;
- res.json({entries:rows.rows,total:count,counts:{...counts,pending:isManager?counts.pending:0},...(automation?{automation}:{})});
+ res.json({entries:rows.rows,total:count,counts:{approved:counts.approved,mine:isManager?counts.mine:0,pending:isManager?counts.pending:0},...(automation?{automation}:{})});
 });
 exports.detail=wrap(async(req,res)=>{
  const row=await entry(req);
@@ -70,6 +70,7 @@ exports.detail=wrap(async(req,res)=>{
  result.review_note=manager(req.user)?row.review_note:'';res.json(result);
 });
 exports.create=wrap(async(req,res)=>{
+ if(!manager(req.user))throw fail('Karriere-Updates können nur von Assistenz und Admin angelegt werden.',403);
  const partnerId=tenant(req);const data=c.validateEntry(req.body);
  const consent=req.body.confirm_rights==='true';
  if (!consent) throw fail('Bitte Angaben, Einwilligung bzw. öffentliche Quelle und Bildrechte bestätigen.');
@@ -92,7 +93,7 @@ exports.create=wrap(async(req,res)=>{
   const result=await db.query(`INSERT INTO career_entries(business_partner_id,author_id,person_name,organization,role_title,kind,effective_date,summary,
   source_url,portrait_key,photo_consent,requested_public,fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
   [partnerId,req.user.id,data.person_name,data.organization,data.role_title,data.kind,data.effective_date,data.summary,data.source_url,key,Boolean(key&&consent),requestedPublic,c.fingerprint(data)]);
-  stored=false;await notifyReview(partnerId,result.rows[0].id);res.status(201).json({id:result.rows[0].id,message:'Eingereicht. Die Assistenz prüft das Update vor der Veröffentlichung.'});
+  stored=false;await notifyReview(partnerId,result.rows[0].id);res.status(201).json({id:result.rows[0].id,message:'Eingereicht. Der Eintrag wartet vor der Veröffentlichung auf redaktionelle Freigabe.'});
  }finally{if(stored&&key)await s3.send(new DeleteObjectCommand({Bucket:process.env.AWS_S3_BUCKET_NAME,Key:key})).catch(()=>{});}
 });
 exports.review=wrap(async(req,res)=>{
@@ -148,27 +149,25 @@ exports.photo=wrap(async(req,res)=>{
  res.set({'Content-Type':'image/webp','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});object.Body.on('error',()=>res.destroy());object.Body.pipe(res);
 });
 exports.settings=wrap(async(req,res)=>{
- if(!manager(req.user))throw fail('Einstellungen nur für Assistenz und Admin.',403);
+ if(req.user.role!=='admin')throw fail('Einstellungen nur für Admin.',403);
  const id=tenant(req);
  await db.query('INSERT INTO career_tenant_settings(business_partner_id) VALUES($1) ON CONFLICT DO NOTHING',[id]);
  const settings=(await db.query('SELECT * FROM career_tenant_settings WHERE business_partner_id=$1',[id])).rows[0];
  const categories=(await db.query("SELECT id,name FROM categories WHERE category_type IN ('content','scraped','news') OR id IN (SELECT DISTINCT category_id FROM scraped_content WHERE event_date IS NULL) ORDER BY name")).rows;
  const global=(await db.query('SELECT * FROM career_ai_settings')).rows[0];
- let usage=null;
- if(req.user.role==='admin')usage=(await db.query(`SELECT COUNT(*)::int AS calls,COALESCE(SUM(prompt_tokens),0)::bigint AS input_tokens,
+ const usage=(await db.query(`SELECT COUNT(*)::int AS calls,COALESCE(SUM(prompt_tokens),0)::bigint AS input_tokens,
  COALESCE(SUM(completion_tokens),0)::bigint AS output_tokens,COALESCE(SUM(total_tokens),0)::bigint AS total_tokens,
  COUNT(*) FILTER(WHERE status<>'completed')::int AS unknown_calls FROM ai_call_usage WHERE feature='people_career' AND created_at>=date_trunc('month',now())`)).rows[0];
- res.json({settings,categories,global:req.user.role==='admin'?global:{enabled:global.enabled},usage});
+ res.json({settings,categories,global,usage});
 });
 exports.saveSettings=wrap(async(req,res)=>{
- if(!manager(req.user))throw fail('Einstellungen nur für Assistenz und Admin.',403);
+ if(req.user.role!=='admin')throw fail('Einstellungen nur für Admin.',403);
  const id=tenant(req);const categories=req.body.category_ids;
  if(!(await db.query('SELECT id FROM business_partners WHERE id=$1',[id])).rowCount)throw fail('Mandant nicht verfügbar.',404);
  if(!Array.isArray(categories)||categories.length>30||categories.some(x=>!UUID.test(x)))throw fail('Bitte gültige Artikelkategorien auswählen.');
  if(req.body.enabled&&!categories.length)throw fail('Für KI-Treffer mindestens eine relevante Artikelkategorie wählen.');
  const count=(await db.query('SELECT COUNT(*)::int FROM categories WHERE id=ANY($1::uuid[])',[categories])).rows[0].count;
  if(count!==new Set(categories).size)throw fail('Kategorie nicht verfügbar.');
- if(req.body.global && req.user.role!=='admin')throw fail('Globale KI-Limits nur für Admin.',403);
  if(req.body.global) {
   const g=req.body.global;
   if(!Number.isInteger(g.daily_calls)||g.daily_calls<1||g.daily_calls>100||!Number.isInteger(g.monthly_tokens)||g.monthly_tokens<10000||g.monthly_tokens>1000000)throw fail('Globale Limits: 1–100 Analysen/Tag und 10.000–1.000.000 Tokens/Monat.');

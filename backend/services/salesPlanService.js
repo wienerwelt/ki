@@ -7,6 +7,9 @@ const SALES_PLAN_DEFINITIONS = Object.freeze({
       digestRecipients: 3,
       importRows: 0,
       apiTokens: 0,
+      triggerProfiles: 0,
+      customKeywordsPerProfile: 0,
+      externalSources: 0,
     }),
     features: Object.freeze({
       accountWorkflow: true,
@@ -20,6 +23,8 @@ const SALES_PLAN_DEFINITIONS = Object.freeze({
       advancedAnalytics: false,
       dataQuality: true,
       apiIntegration: false,
+      contentTriggers: false,
+      externalSources: false,
     }),
   }),
   premium: Object.freeze({
@@ -30,6 +35,9 @@ const SALES_PLAN_DEFINITIONS = Object.freeze({
       digestRecipients: 25,
       importRows: 1000,
       apiTokens: 5,
+      triggerProfiles: 25,
+      customKeywordsPerProfile: 25,
+      externalSources: 25,
     }),
     features: Object.freeze({
       accountWorkflow: true,
@@ -43,6 +51,8 @@ const SALES_PLAN_DEFINITIONS = Object.freeze({
       advancedAnalytics: true,
       dataQuality: true,
       apiIntegration: true,
+      contentTriggers: true,
+      externalSources: true,
     }),
   }),
 });

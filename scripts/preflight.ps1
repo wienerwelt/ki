@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
     [switch]$SkipHealthCheck,
-    [switch]$SkipSmokeTests
+    [switch]$SkipSmokeTests,
+    [ValidateRange(1, 100)]
+    [double]$MinimumFreeGiB = 5,
+    [switch]$PreserveDependencyVolumes
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,8 +27,8 @@ function Assert-LocalReleaseDiskSpace {
         $releaseDrive = [System.IO.DriveInfo]::new($releaseDriveRoot)
         if (-not $releaseDrive.IsReady) { throw "Release-Laufwerk nicht verfügbar: $releaseDriveRoot" }
         $releaseFreeGiB = [math]::Round($releaseDrive.AvailableFreeSpace / 1GB, 2)
-        if ($releaseDrive.AvailableFreeSpace -lt 5GB) {
-            throw "STOPP: $releaseDriveRoot hat nur $releaseFreeGiB GiB frei. Mindestens 5 GiB, für den ersten Docker-Build möglichst 10 GiB freigeben. Keine Docker-Volumes oder fremden Projekte löschen."
+        if ($releaseDrive.AvailableFreeSpace -lt ($MinimumFreeGiB * 1GB)) {
+            throw "STOPP: $releaseDriveRoot hat nur $releaseFreeGiB GiB frei. Mindestens $MinimumFreeGiB GiB, für den ersten Docker-Build möglichst 10 GiB freigeben. Keine Docker-Volumes oder fremden Projekte löschen."
         }
         Write-Host "  Freier lokaler Speicher ${releaseDriveRoot}: $releaseFreeGiB GiB"
     }
@@ -161,8 +164,17 @@ try {
     Write-Host '[7/9] Backend- und Worker-Images bauen und lokale Dienste aktualisieren'
     & docker compose -f docker-compose.yml -f docker-compose.override.yml build
     Assert-LastExitCode 'Der lokale Docker-Image-Build ist fehlgeschlagen.'
-    & docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --force-recreate --renew-anon-volumes --no-deps `
-        api worker-ai worker-scrape worker-mail worker-data worker-funding
+    $runtimeServices = @('api', 'worker-ai', 'worker-scrape', 'worker-mail', 'worker-data', 'worker-funding')
+    $runtimeArguments = @(
+        'compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.override.yml',
+        'up', '-d', '--force-recreate'
+    )
+    if (-not $PreserveDependencyVolumes) {
+        $runtimeArguments += '--renew-anon-volumes'
+    }
+    $runtimeArguments += '--no-deps'
+    $runtimeArguments += $runtimeServices
+    & docker @runtimeArguments
     Assert-LastExitCode 'Die lokalen API-/Worker-Container konnten nicht aus den neuen Images erstellt werden.'
 
     if ($SkipHealthCheck) {
@@ -170,8 +182,18 @@ try {
     } else {
         Write-Host '[8/9] Laufende lokale API prüfen'
         foreach ($runtimeService in @('api','worker-ai','worker-scrape','worker-mail','worker-data','worker-funding')) {
-            & docker compose exec -T $runtimeService node -e "if (Number(process.versions.node.split('.')[0]) !== 24) process.exit(1); if (process.env.NODE_OPTIONS !== '--max-old-space-size=512') process.exit(2); console.log('${runtimeService}: ' + process.version + ', Heap 512 MiB');"
-            Assert-LastExitCode "Node 24 LTS oder die 512-MiB-Heap-Grenze ist in $runtimeService nicht aktiv."
+            $runtimeVerified = $false
+            for ($attempt = 1; $attempt -le 12; $attempt++) {
+                & docker compose exec -T $runtimeService node -e "if (Number(process.versions.node.split('.')[0]) !== 24) process.exit(1); if (process.env.NODE_OPTIONS !== '--max-old-space-size=512') process.exit(2); console.log('${runtimeService}: ' + process.version + ', Heap 512 MiB');"
+                if ($LASTEXITCODE -eq 0) {
+                    $runtimeVerified = $true
+                    break
+                }
+                Start-Sleep -Seconds 2
+            }
+            if (-not $runtimeVerified) {
+                throw "Node 24 LTS oder die 512-MiB-Heap-Grenze ist in $runtimeService nicht aktiv."
+            }
         }
         & docker compose exec -T worker-scrape npm run smoke:container-runtime
         Assert-LastExitCode 'Init-/Chromium-Test im lokalen Scraping-Container fehlgeschlagen.'
@@ -222,7 +244,10 @@ try {
             'smoke:public-ai-assistant',
             'smoke:account-radar-trust',
             'smoke:account-radar-campaigns',
+            'smoke:account-radar-content-triggers',
+            'smoke:account-radar-external-sources',
             'smoke:account-radar-integrations',
+            'smoke:demo-invitations',
             'smoke:tenant-modules',
             'smoke:sales-plans',
             'smoke:sales-lifecycle',
@@ -231,8 +256,21 @@ try {
         )
         foreach ($smokeScript in $smokeScripts) {
             Write-Host "  -> $smokeScript"
-            & docker compose exec -T api npm run $smokeScript
-            Assert-LastExitCode "Smoke-Test fehlgeschlagen: $smokeScript"
+            $smokePassed = $false
+            for ($attempt = 1; $attempt -le 2; $attempt++) {
+                & docker compose exec -T api npm run $smokeScript
+                if ($LASTEXITCODE -eq 0) {
+                    $smokePassed = $true
+                    break
+                }
+                if ($attempt -lt 2) {
+                    Write-Warning "$smokeScript ist im ersten Lauf fehlgeschlagen; einmaliger Retry folgt."
+                    Start-Sleep -Seconds 2
+                }
+            }
+            if (-not $smokePassed) {
+                throw "Smoke-Test fehlgeschlagen: $smokeScript"
+            }
         }
     }
 

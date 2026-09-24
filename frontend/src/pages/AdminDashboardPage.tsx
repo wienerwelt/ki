@@ -2,7 +2,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Typography, Container, Button, Grid, Paper } from '@mui/material';
-import DashboardLayout from '../components/DashboardLayout';
 
 // Icons
 import BusinessIcon from '@mui/icons-material/Business';
@@ -29,10 +28,10 @@ import ForumIcon from '@mui/icons-material/Forum';
 import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
 import ShareIcon from '@mui/icons-material/Share';
 import StorefrontIcon from '@mui/icons-material/Storefront'; // ✅ NEU: Icon für Branchenverzeichnis
+import VisibilityIcon from '@mui/icons-material/Visibility';
 
 const AdminDashboardPage: React.FC = () => {
     return (
-        <DashboardLayout>
             <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
                 <Typography variant="h4" component="h1" gutterBottom>
                     Admin-Dashboard
@@ -96,6 +95,15 @@ const AdminDashboardPage: React.FC = () => {
                             <Typography variant="h6" component="h2" gutterBottom>Business Partner</Typography>
                             <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Alle registrierten Business Partner verwalten.</Typography>
                             <Button component={Link} to="/admin/business-partners" variant="contained" color="primary">Verwalten</Button>
+                        </Paper>
+                    </Grid>
+
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <VisibilityIcon sx={{ fontSize: 60, mb: 2 }} color="info" />
+                            <Typography variant="h6" component="h2" gutterBottom>Demo-Zugänge</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Befristete, schreibgeschützte Zugänge für ausgewählte Interessenten verwalten.</Typography>
+                            <Button component={Link} to="/admin/demo-access" variant="contained" color="info">Demo-Zugänge öffnen</Button>
                         </Paper>
                     </Grid>
 
@@ -263,7 +271,6 @@ const AdminDashboardPage: React.FC = () => {
                     </Grid>
                 </Grid>
             </Container>
-        </DashboardLayout>
     );
 };
 

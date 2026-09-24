@@ -171,6 +171,8 @@ def build_pdf():
         [p("Radar-Mail"), p("wöchentlich, bis 3 Empfänger"), p("täglich / werktäglich / wöchentlich, bis 25 Empfänger")],
         [p("Datenpflege"), p("CSV-Export, Qualitätsprüfung"), p("zusätzlich CSV-/Excel-Import")],
         [p("Wettbewerber"), p("-"), p("Monitoring enthalten")],
+        [p("CONTENT-Trigger"), p("-"), p("Themen-/Ereignistreffer sowie Zuordnung zu allen oder ausgewählten Accounts")],
+        [p("Beobachtete Quellen"), p("-"), p("bis 25 mandanteneigene RSS-, Atom- oder Website-Quellen")],
         [p("Auswertung"), p("Arbeitscockpit"), p("Analytics, Sales-Erfolg, Management-PDF")],
         [p("KI & API"), p("-"), p("KI-Sales-Kontext, API mit bis zu 5 Tokens")],
     ]
@@ -201,6 +203,8 @@ def build_pdf():
     faqs = [
         ("Warum unterscheiden sich Aktuell und gesamter offener Bestand?", "Aktuell berücksichtigt den gewählten Zeitraum und keine zukünftigen Planungen. Der gesamte offene Bestand zählt alle noch offenen Signale über sämtliche Zeiträume."),
         ("Was bedeutet der Relevanzwert?", "Er priorisiert die inhaltliche Nähe zum Account und zu den konfigurierten Themen. Er ersetzt nicht die fachliche Prüfung durch das Sales-Team."),
+        ("Wie funktionieren CONTENT-Trigger?", "Feste Kategorien werden mit eigenen Such- und Ausschlussbegriffen kombiniert. Ohne Account entstehen allgemeine Markt- und Ereignistreffer. Alternativ werden Inhalte allen passenden oder nur ausgewählten Accounts zugeordnet. Die regelbasierte Prüfung benötigt keine zusätzlichen KI-Tokens."),
+        ("Wie funktionieren beobachtete Quellen?", "Accounts sind Vertriebsziele; beobachtete Quellen sind Informationslieferanten. RSS- und Atom-Feeds werden automatisch erkannt und täglich geprüft. Bei einer normalen Website erstellt das System einen Konfigurationsauftrag; der Admin hinterlegt einmalig die HTML-Selektoren. Inhalte können Signale zu mehreren Accounts oder allgemeine Markttreffer liefern. Automatisiertes LinkedIn-Scraping ist bewusst nicht enthalten."),
         ("Wie erkenne ich den ausgewählten Account?", "Der Account erhält einen farbigen Rahmen und die Markierung Ausgewählt. Oberhalb der Liste kann die Auswahl aufgehoben werden."),
         ("Kann ein Wettbewerber direkt geöffnet werden?", "Ja. Der Klick auf den Wettbewerber zeigt dessen Stammdaten und das zugehörige Signal mit Quelle, Relevanz, Begründung und nächstem Schritt."),
         ("Wer darf Account-Daten ändern?", "Admin, Assistenz und Sales-Manager dürfen Accounts und Kontakte verwalten. Sales-Nutzer erhalten eine lesende Detailansicht."),
@@ -212,7 +216,7 @@ def build_pdf():
         story.append(KeepTogether([
             p(question, "GuideFaqQ"),
             p(answer),
-            Spacer(1, 3 * mm),
+            Spacer(1, 1 * mm),
         ]))
 
     story.extend([

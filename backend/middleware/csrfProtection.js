@@ -7,6 +7,8 @@ const EXEMPT_PATHS = new Set([
   '/api/auth/forgot-password',
   '/api/auth/resend-verification',
   '/api/auth/logout',
+  '/api/auth/demo-invitations/inspect',
+  '/api/auth/demo-invitations/accept',
 ]);
 
 const safeEqual = (left, right) => {

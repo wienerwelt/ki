@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
 const authMiddleware = require('../middleware/authMiddleware');
+const demoInvitationController = require('../controllers/demoInvitationController');
 
 const rateLimit = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
@@ -146,6 +147,8 @@ router.get('/verify-email/:token', authController.verifyEmail);
 router.post('/resend-verification', resendVerificationLimiter, authController.resendVerification);
 router.post('/forgot-password', forgotPasswordLimiter, authController.forgotPassword);
 router.post('/reset-password/:token', resetPasswordLimiter, authController.resetPassword);
+router.post('/demo-invitations/inspect', resetPasswordLimiter, demoInvitationController.inspect);
+router.post('/demo-invitations/accept', resetPasswordLimiter, demoInvitationController.accept);
 
 // ---- Newsletter Double-Opt-In ----
 router.post('/newsletter/opt-in', newsletterOptInLimiter, authMiddleware, authController.startNewsletterOptIn);

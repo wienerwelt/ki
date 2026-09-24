@@ -34,7 +34,7 @@ exports.getAllBusinessPartners = async (req, res) => {
             `SELECT
                 bp.id, bp.name, bp.slug, bp.dashboard_title, bp.address, bp.logo_url, bp.email,
                 bp.subscription_start_date, bp.subscription_end_date, bp.color_scheme_id,
-                bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
+                bp.is_active, bp.is_demo_tenant, bp.demo_scenario, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 bp.storage_tier, bp.storage_usage_bytes, bp.storage_limit_bytes,
                 bp.allow_automated_newsletter, bp.monthly_report_enabled, bp.dashboard_focus,
@@ -95,7 +95,7 @@ exports.getBusinessPartnerById = async (req, res) => {
             `SELECT
                 bp.id, bp.name, bp.slug, bp.dashboard_title, bp.address, bp.logo_url, bp.email,
                 bp.subscription_start_date, bp.subscription_end_date, bp.color_scheme_id,
-                bp.is_active, bp.created_at, bp.updated_at, bp.url_businesspartner,
+                bp.is_active, bp.is_demo_tenant, bp.demo_scenario, bp.created_at, bp.updated_at, bp.url_businesspartner,
                 bp.level_1_name, bp.level_2_name, bp.level_3_name,
                 bp.briefing_frequency,
                 bp.newsletter_frequency, bp.allow_automated_newsletter, bp.monthly_report_enabled, bp.dashboard_focus,

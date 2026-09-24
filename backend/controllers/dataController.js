@@ -10,6 +10,7 @@ const { retrieveTenantInternalDocuments } = require('../services/internalAiRetri
 const { findReusableAccountLogo, getDomainFromUrl, loadLogoCandidates } = require('../services/accountLogoService');
 const { hasTenantModule } = require('../services/tenantModuleService');
 const { hasSalesFeature } = require('../services/salesPlanService');
+const { classifyAccountRadarSignal } = require('../services/accountRadarSignalClassifier');
 const { enrichArticleTags } = require('../utils/articleOemLogos');
 const TANKERKOENIG_API_KEY = process.env.TANKERKOENIG_API_KEY;
 const ECONTROL_API_KEY     = process.env.ECONTROL_API_KEY;
@@ -1474,6 +1475,9 @@ const safeDateDiffDays = (dateValue) => {
 };
 
 const classifyAccountIntelligenceArticle = (article, type) => {
+    if (Array.isArray(article.trigger_profile_names) && article.trigger_profile_names.length > 0) {
+        return classifyAccountRadarSignal(article, type);
+    }
     const text = `${article.article_title || ''} ${article.summary || ''}`.toLowerCase();
     const isCompetitor = type === 'competitor';
     const ageDays = safeDateDiffDays(article.published_at);
@@ -1644,6 +1648,22 @@ exports.getAccountIntelligence = async (req, res) => {
                             radar_contact.email AS contact_email,
                             radar_contact.phone AS contact_phone,
                             radar_contact.linkedin_url AS contact_linkedin_url,
+                            (SELECT COALESCE(array_agg(DISTINCT profile.name), ARRAY[]::text[])
+                             FROM account_radar_content_trigger_matches trigger_match
+                             JOIN account_radar_trigger_profiles profile ON profile.id = trigger_match.trigger_profile_id
+                             WHERE trigger_match.tracked_article_id = bpta.id) AS trigger_profile_names,
+                            (SELECT COALESCE(array_agg(DISTINCT profile.template_key)
+                                      FILTER (WHERE profile.template_key IS NOT NULL), ARRAY[]::text[])
+                             FROM account_radar_content_trigger_matches trigger_match
+                             JOIN account_radar_trigger_profiles profile ON profile.id = trigger_match.trigger_profile_id
+                             WHERE trigger_match.tracked_article_id = bpta.id) AS trigger_template_keys,
+                            (SELECT COALESCE(array_agg(DISTINCT keyword), ARRAY[]::text[])
+                             FROM account_radar_content_trigger_matches trigger_match
+                             CROSS JOIN LATERAL unnest(trigger_match.matched_keywords) keyword
+                             WHERE trigger_match.tracked_article_id = bpta.id) AS matched_trigger_keywords,
+                            (SELECT MAX(trigger_match.match_score)
+                             FROM account_radar_content_trigger_matches trigger_match
+                             WHERE trigger_match.tracked_article_id = bpta.id) AS trigger_match_score,
                             (SELECT COALESCE(json_agg(link.campaign_id::text ORDER BY link.campaign_id::text), '[]'::json)
                              FROM account_radar_campaign_signals link
                              JOIN account_radar_campaigns campaign ON campaign.id = link.campaign_id
@@ -1719,6 +1739,22 @@ exports.getAccountIntelligence = async (req, res) => {
                             radar_contact.email AS contact_email,
                             radar_contact.phone AS contact_phone,
                             radar_contact.linkedin_url AS contact_linkedin_url,
+                            (SELECT COALESCE(array_agg(DISTINCT profile.name), ARRAY[]::text[])
+                             FROM account_radar_content_trigger_matches trigger_match
+                             JOIN account_radar_trigger_profiles profile ON profile.id = trigger_match.trigger_profile_id
+                             WHERE trigger_match.tracked_article_id = bpta.id) AS trigger_profile_names,
+                            (SELECT COALESCE(array_agg(DISTINCT profile.template_key)
+                                      FILTER (WHERE profile.template_key IS NOT NULL), ARRAY[]::text[])
+                             FROM account_radar_content_trigger_matches trigger_match
+                             JOIN account_radar_trigger_profiles profile ON profile.id = trigger_match.trigger_profile_id
+                             WHERE trigger_match.tracked_article_id = bpta.id) AS trigger_template_keys,
+                            (SELECT COALESCE(array_agg(DISTINCT keyword), ARRAY[]::text[])
+                             FROM account_radar_content_trigger_matches trigger_match
+                             CROSS JOIN LATERAL unnest(trigger_match.matched_keywords) keyword
+                             WHERE trigger_match.tracked_article_id = bpta.id) AS matched_trigger_keywords,
+                            (SELECT MAX(trigger_match.match_score)
+                             FROM account_radar_content_trigger_matches trigger_match
+                             WHERE trigger_match.tracked_article_id = bpta.id) AS trigger_match_score,
                             (SELECT COALESCE(json_agg(link.campaign_id::text ORDER BY link.campaign_id::text), '[]'::json)
                              FROM account_radar_campaign_signals link
                              JOIN account_radar_campaigns campaign ON campaign.id = link.campaign_id

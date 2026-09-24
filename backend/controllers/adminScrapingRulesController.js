@@ -284,6 +284,12 @@ async function validateAndPrepareRule(rawBody, options = {}) {
         }
     } else if (mode === 'update' && existingRule) {
         input.source_identifier = existingRule.source_identifier;
+        // Mandantengebundene Account-Radar-Quellen bleiben auch dann dem
+        // ursprünglichen Mandanten zugeordnet, wenn die allgemeine Admin-Maske
+        // für die Kategorie keinen Business-Partner-Selektor anzeigt.
+        if (existingRule.account_radar_source_type) {
+            input.business_partner_id = existingRule.business_partner_id;
+        }
     }
 
     validateSourceIdentifier(input.source_identifier, errors);

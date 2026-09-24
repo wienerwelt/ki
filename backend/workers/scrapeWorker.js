@@ -15,6 +15,7 @@ const {
 
 const db = require('../config/db');
 const { triggerSingleRuleScrape, processNewsKeywordSearch } = require('../services/scraperService');
+const { processActiveContentTriggerProfiles } = require('../services/accountRadarTriggerService');
 
 function logWorkerBoot() {
   console.log('==================================================');
@@ -67,7 +68,17 @@ async function startWorker() {
                 console.log(`[scrape] Neuer scraping_job angelegt: ${jobId} für ruleId=${ruleId}`);
               }
 
-              await triggerSingleRuleScrape(ruleId, jobId);
+              const scrapeResult = await triggerSingleRuleScrape(ruleId, jobId);
+              if (scrapeResult?.success && scrapeResult.rule?.account_radar_source_type && scrapeResult.rule?.business_partner_id) {
+                const triggerSummary = await processActiveContentTriggerProfiles({
+                  businessPartnerId: scrapeResult.rule.business_partner_id,
+                  limitPerProfile: 100,
+                });
+                console.log(
+                  `[scrape] Sales-Trigger nach externer Quelle: ${triggerSummary.profiles} Profile, `
+                  + `${triggerSummary.inserted} neue Signale, ${triggerSummary.failed} Fehler.`
+                );
+              }
               break;
             }
           }

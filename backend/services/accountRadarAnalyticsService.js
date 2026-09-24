@@ -49,7 +49,19 @@ async function getAccountRadarAnalytics(businessPartnerId, requestedPeriodDays =
              task.opportunity_probability,
              feedback.relevance_status,
              feedback.reason AS relevance_reason,
-             feedback.updated_at AS feedback_at
+             feedback.updated_at AS feedback_at,
+             (SELECT COALESCE(array_agg(DISTINCT profile.name), ARRAY[]::text[])
+              FROM account_radar_content_trigger_matches trigger_match
+              JOIN account_radar_trigger_profiles profile ON profile.id = trigger_match.trigger_profile_id
+              WHERE trigger_match.tracked_article_id = article.id) AS trigger_profile_names,
+             (SELECT COALESCE(array_agg(DISTINCT profile.template_key)
+                       FILTER (WHERE profile.template_key IS NOT NULL), ARRAY[]::text[])
+              FROM account_radar_content_trigger_matches trigger_match
+              JOIN account_radar_trigger_profiles profile ON profile.id = trigger_match.trigger_profile_id
+              WHERE trigger_match.tracked_article_id = article.id) AS trigger_template_keys,
+             (SELECT MAX(trigger_match.match_score)
+              FROM account_radar_content_trigger_matches trigger_match
+              WHERE trigger_match.tracked_article_id = article.id) AS trigger_match_score
       FROM business_partner_tracked_articles article
       JOIN business_partner_accounts account ON account.id = article.account_id
       LEFT JOIN account_radar_tasks task

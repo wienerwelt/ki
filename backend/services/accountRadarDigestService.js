@@ -361,7 +361,19 @@ async function getRadarSignals({ businessPartnerId, userId, minRelevance = 70, l
         radar_task.sales_stage,
         radar_task.contact_channel,
         radar_contact.name AS contact_name,
-        COALESCE(item_status.status, 'new') AS status
+        COALESCE(item_status.status, 'new') AS status,
+        (SELECT COALESCE(array_agg(DISTINCT profile.name), ARRAY[]::text[])
+         FROM account_radar_content_trigger_matches trigger_match
+         JOIN account_radar_trigger_profiles profile ON profile.id = trigger_match.trigger_profile_id
+         WHERE trigger_match.tracked_article_id = tracked.id) AS trigger_profile_names,
+        (SELECT COALESCE(array_agg(DISTINCT profile.template_key)
+                  FILTER (WHERE profile.template_key IS NOT NULL), ARRAY[]::text[])
+         FROM account_radar_content_trigger_matches trigger_match
+         JOIN account_radar_trigger_profiles profile ON profile.id = trigger_match.trigger_profile_id
+         WHERE trigger_match.tracked_article_id = tracked.id) AS trigger_template_keys,
+        (SELECT MAX(trigger_match.match_score)
+         FROM account_radar_content_trigger_matches trigger_match
+         WHERE trigger_match.tracked_article_id = tracked.id) AS trigger_match_score
      FROM business_partner_tracked_articles tracked
      JOIN business_partner_accounts account ON account.id = tracked.account_id
      JOIN business_partners partner ON partner.id = account.business_partner_id
@@ -644,6 +656,7 @@ async function dispatchAccountRadarDigests(now = new Date()) {
      JOIN business_partners partner ON partner.id = settings.business_partner_id
      LEFT JOIN color_schemes colors ON colors.id = partner.color_scheme_id
      WHERE settings.digest_frequency <> 'off'
+       AND COALESCE(partner.is_demo_tenant, FALSE) = FALSE
        AND COALESCE(partner.is_active, TRUE) = TRUE
        AND (
          partner.sales_subscription_status = 'active'

@@ -5,6 +5,8 @@ const { rateLimit } = require('express-rate-limit');
 const auth = require('../middleware/authMiddleware');
 const accountRadarController = require('../controllers/accountRadarController');
 const accountRadarIntegrationController = require('../controllers/accountRadarIntegrationController');
+const accountRadarTriggerController = require('../controllers/accountRadarTriggerController');
+const accountRadarSourceController = require('../controllers/accountRadarSourceController');
 const {
   ACCOUNT_RADAR_MANAGER_ROLES,
   ACCOUNT_RADAR_ROLES,
@@ -32,6 +34,14 @@ const testMailLimiter = rateLimit({
   keyGenerator: (req) => `user:${req.user.id}`,
   message: { message: 'Zu viele Testmails in kurzer Zeit. Bitte warten Sie einige Minuten.' },
 });
+const sourceActionLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req) => `user:${req.user.id}`,
+  message: { message: 'Zu viele Quellenprüfungen in kurzer Zeit. Bitte warten Sie einige Minuten.' },
+});
 const handleTableUpload = (controller) => (req, res, next) => {
   upload.single('file')(req, res, (error) => {
     if (error) {
@@ -55,6 +65,21 @@ const requireRadarManager = (req, res, next) => {
 router.get('/entitlements', accountRadarController.getEntitlements);
 router.use(requireActiveSalesSubscription);
 router.get('/settings', accountRadarController.getSettings);
+router.get('/market-signals', requireSalesFeature('contentTriggers'), accountRadarTriggerController.listMarketSignals);
+router.post('/market-signals/:matchId/assign', requireRadarManager, requireSalesFeature('contentTriggers'), accountRadarTriggerController.assignMarketSignal);
+router.post('/market-signals/:matchId/create-account', requireRadarManager, requireSalesFeature('contentTriggers'), accountRadarTriggerController.createAccountFromMarketSignal);
+router.patch('/market-signals/:matchId/status', requireRadarManager, requireSalesFeature('contentTriggers'), accountRadarTriggerController.updateMarketSignalStatus);
+router.get('/triggers', requireRadarManager, accountRadarTriggerController.list);
+router.post('/triggers', requireRadarManager, requireSalesFeature('contentTriggers'), accountRadarTriggerController.create);
+router.put('/triggers/:profileId', requireRadarManager, requireSalesFeature('contentTriggers'), accountRadarTriggerController.update);
+router.delete('/triggers/:profileId', requireRadarManager, requireSalesFeature('contentTriggers'), accountRadarTriggerController.remove);
+router.post('/triggers/preview', requireRadarManager, requireSalesFeature('contentTriggers'), accountRadarTriggerController.preview);
+router.post('/triggers/:profileId/run', requireRadarManager, requireSalesFeature('contentTriggers'), accountRadarTriggerController.run);
+router.get('/sources', requireRadarManager, requireSalesFeature('externalSources'), accountRadarSourceController.list);
+router.post('/sources', requireRadarManager, requireSalesFeature('externalSources'), sourceActionLimiter, accountRadarSourceController.create);
+router.post('/sources/:sourceId/run', requireRadarManager, requireSalesFeature('externalSources'), sourceActionLimiter, accountRadarSourceController.run);
+router.patch('/sources/:sourceId', requireRadarManager, requireSalesFeature('externalSources'), accountRadarSourceController.update);
+router.delete('/sources/:sourceId', requireRadarManager, requireSalesFeature('externalSources'), accountRadarSourceController.remove);
 router.get('/analytics', requireSalesFeature('advancedAnalytics'), accountRadarController.getAnalytics);
 router.get('/campaigns', accountRadarController.listCampaigns);
 router.get('/campaigns/:campaignId/detail', accountRadarController.getCampaignDetail);

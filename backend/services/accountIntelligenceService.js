@@ -1,6 +1,7 @@
 // backend/services/accountIntelligenceService.js
 const db = require('../config/db');
 const { scrapeQueue } = require('./queueService');
+const { processActiveContentTriggerProfiles } = require('./accountRadarTriggerService');
 
 async function triggerNewsSearchForAll() {
     console.log('[AccountIntelligence] Starte die Erstellung von News-Such-Jobs...');
@@ -31,11 +32,6 @@ async function triggerNewsSearchForAll() {
               );
         `);
 
-        if (accounts.length === 0) {
-            console.log('[AccountIntelligence] Keine aktiven Accounts gefunden. Beende Job-Erstellung.');
-            return;
-        }
-
         let jobCount = 0;
         // 2. Jobs für jeden Account und jeden Wettbewerber erstellen
         for (const account of accounts) {
@@ -60,6 +56,16 @@ async function triggerNewsSearchForAll() {
 
     } catch (error) {
         console.error('[AccountIntelligence] Kritischer Fehler bei der Erstellung der News-Such-Jobs:', error);
+    }
+
+    try {
+        const triggerSummary = await processActiveContentTriggerProfiles({ limitPerProfile: 100 });
+        console.log(
+            `[AccountIntelligence] CONTENT-Trigger: ${triggerSummary.profiles} Profile, `
+            + `${triggerSummary.inserted} neue Signale, ${triggerSummary.failed} Fehler.`
+        );
+    } catch (error) {
+        console.error('[AccountIntelligence] CONTENT-Trigger konnten nicht verarbeitet werden:', error);
     }
 }
 

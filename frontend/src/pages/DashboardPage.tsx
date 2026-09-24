@@ -59,9 +59,9 @@ function coerceConfig(raw: any): DashboardSavedConfig {
 }
 
 const MemoizedWidgetContent = memo(({ 
-    widget, availableWidgetTypes, businessPartner, onDelete 
+    widget, availableWidgetTypes, businessPartner, onDelete, readOnly
 }: { 
-    widget: WidgetConfig, availableWidgetTypes: WidgetTypeMeta[], businessPartner: any, onDelete: (id: string) => void 
+    widget: WidgetConfig, availableWidgetTypes: WidgetTypeMeta[], businessPartner: any, onDelete: (id: string) => void, readOnly: boolean
 }) => {
     const widgetTypeMeta = availableWidgetTypes.find((wt) => wt.type_key === widget.type);
     if (!widgetTypeMeta) return <Alert severity="warning">Widget-Typ "{widget.type}" nicht gefunden.</Alert>;
@@ -78,7 +78,7 @@ const MemoizedWidgetContent = memo(({
       ...config,
       onDelete,
       widgetId: widget.id,
-      isRemovable: widgetTypeMeta.is_removable ?? true,
+      isRemovable: !readOnly && (widgetTypeMeta.is_removable ?? true),
       icon: <IconComponent fontSize="small" />,
       title: config.title || widgetTypeMeta.name,
       widgetTitle: config.title || widgetTypeMeta.name,
@@ -116,6 +116,7 @@ const DashboardPage: React.FC = () => {
   
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isDemoMode = user?.role === 'demo';
 
   useEffect(() => {
       const handleAiChatState = (event: Event) => {
@@ -306,7 +307,7 @@ const DashboardPage: React.FC = () => {
   ];
 
   const dashboardHeaderActions = useMemo(() => {
-    if (loading || error) return null;
+    if (loading || error || isDemoMode) return null;
 
     const isWidgetMenuOpen = Boolean(anchorEl);
 
@@ -384,7 +385,7 @@ const DashboardPage: React.FC = () => {
         )}
       </Box>
     );
-  }, [anchorEl, error, handleOpenAddWidgetMenu, handleSaveConfig, hasUnsavedChanges, isSaving, loading, theme]);
+  }, [anchorEl, error, handleOpenAddWidgetMenu, handleSaveConfig, hasUnsavedChanges, isSaving, isDemoMode, loading, theme]);
 
   useEffect(() => {
     if (isMobile || !dashboardHeaderActions) {
@@ -490,6 +491,7 @@ const DashboardPage: React.FC = () => {
                     size="large" 
                     onClick={isMobile ? handleAddWidgetDialogOpen : handleOpenAddWidgetMenu} 
                     startIcon={<AddCircleOutlineIcon />}
+                    disabled={isDemoMode}
                 >
                     Erstes Widget hinzufügen
                 </Button>
@@ -526,6 +528,7 @@ const DashboardPage: React.FC = () => {
                                         availableWidgetTypes={availableWidgetTypes}
                                         businessPartner={businessPartner}
                                         onDelete={handleDeleteWidget}
+                                        readOnly={isDemoMode}
                                     />
                                 </ErrorBoundary>
                             </Box>
@@ -543,9 +546,9 @@ const DashboardPage: React.FC = () => {
                     cols={{ lg: 12, md: 10, sm: 6, xs: 1 }}
                     margin={{ lg: [15, 15], md: [10, 10], sm: [8, 8], xs: [8, 8] }}
                     rowHeight={30}
-                    isDroppable
-                    isDraggable
-                    isResizable
+                    isDroppable={!isDemoMode}
+                    isDraggable={!isDemoMode}
+                    isResizable={!isDemoMode}
                     draggableHandle=".widget-drag-handle"
                     compactType="vertical"
                 >
@@ -564,6 +567,7 @@ const DashboardPage: React.FC = () => {
                                         availableWidgetTypes={availableWidgetTypes}
                                         businessPartner={businessPartner}
                                         onDelete={handleDeleteWidget}
+                                        readOnly={isDemoMode}
                                     />
                                 </ErrorBoundary>
                             </div>
@@ -573,7 +577,7 @@ const DashboardPage: React.FC = () => {
             </ErrorBoundary>
         )}
 
-        {isMobile && !isAiChatOpen && (
+        {isMobile && !isAiChatOpen && !isDemoMode && (
             <SpeedDial
                 ariaLabel="Dashboard Aktionen"
                 sx={{ position: 'fixed', bottom: 16, right: 16, zIndex: 1400 }}

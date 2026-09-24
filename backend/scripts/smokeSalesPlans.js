@@ -37,6 +37,10 @@ async function run() {
   assert(basic.features.dataQuality && premium.features.dataQuality, 'Datenqualitätsprüfung fehlt in einem Sales-Paket.');
   assert(!basic.features.apiIntegration && premium.features.apiIntegration, 'API-Abgrenzung stimmt nicht.');
   assert(basic.limits.apiTokens === 0 && premium.limits.apiTokens === 5, 'API-Token-Limits stimmen nicht.');
+  assert(basic.limits.triggerProfiles === 0 && premium.limits.triggerProfiles === 25, 'Trigger-Profil-Limits stimmen nicht.');
+  assert(!basic.features.contentTriggers && premium.features.contentTriggers, 'CONTENT-Trigger-Abgrenzung stimmt nicht.');
+  assert(basic.limits.externalSources === 0 && premium.limits.externalSources === 25, 'Externe-Quellen-Limits stimmen nicht.');
+  assert(!basic.features.externalSources && premium.features.externalSources, 'Externe-Quellen-Abgrenzung stimmt nicht.');
   assert(hasSalesFeature('premium', 'aiSalesContext'), 'Premium-KI-Kontext fehlt.');
   assert(!hasSalesFeature('basic', 'aiSalesContext'), 'Basic erhält unerwartet Premium-KI-Kontext.');
   assert(getSalesSubscriptionState({ sales_subscription_status: 'active' }).accessActive, 'Aktives Sales-Abo wird gesperrt.');

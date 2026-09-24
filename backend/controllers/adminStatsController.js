@@ -353,7 +353,8 @@ exports.getUsageStats = async (req, res) => {
                 OR al.action_type LIKE 'AI_%_SUCCESS'
              )
             LEFT JOIN business_partners bp ON u.business_partner_id = bp.id
-            WHERE ($3::uuid IS NULL OR u.business_partner_id = $3::uuid)
+            WHERE u.role <> 'demo'
+              AND ($3::uuid IS NULL OR u.business_partner_id = $3::uuid)
             GROUP BY u.id, u.email, bp.name
             HAVING (
                 COUNT(DISTINCT al.id) +
@@ -371,7 +372,7 @@ exports.getUsageStats = async (req, res) => {
         const availableModelsPromise = db.query(`
             SELECT DISTINCT model FROM ai_usage_events WHERE model IS NOT NULL;
         `);
-        const businessPartnersPromise = db.query(`SELECT id, name FROM business_partners ORDER BY name ASC;`);
+        const businessPartnersPromise = db.query(`SELECT id, name FROM business_partners WHERE COALESCE(is_demo_tenant, FALSE) = FALSE ORDER BY name ASC;`);
 
         const [
             timeSeriesResult,

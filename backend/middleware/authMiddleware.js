@@ -15,8 +15,15 @@ const DEMO_ALLOWED_WRITE_PATHS = new Set([
 
 function rejectDemoMutation(req, res) {
   if (String(req.user?.role || '').toLowerCase() !== 'demo') return false;
-  if (DEMO_SAFE_METHODS.has(String(req.method || '').toUpperCase())) return false;
   const requestPath = String(req.originalUrl || req.url || '').split('?')[0];
+  if (DEMO_SAFE_METHODS.has(String(req.method || '').toUpperCase())) {
+    if (/(?:^|\/)(?:export|exports|download)(?:\/|$)/i.test(requestPath) ||
+        /(?:\/download-source$|\.(?:csv|xlsx?|pdf)$)/i.test(requestPath)) {
+      res.status(403).json({ message: 'Demo-Modus: Exporte sind deaktiviert.' });
+      return true;
+    }
+    return false;
+  }
   if (DEMO_ALLOWED_WRITE_PATHS.has(requestPath)) return false;
   res.status(403).json({ message: 'Demo-Modus: Änderungen sind deaktiviert.' });
   return true;
@@ -95,7 +102,9 @@ const authMiddleware = async (req, res, next) => {
 
     const user = await loadCurrentUser(userId);
     const partnerEnd = user?.business_partner_subscription_end_date ? new Date(user.business_partner_subscription_end_date) : null;
-    if (!user || user.is_active !== true || user.business_partner_is_active !== true || isMembershipExpired(user.active_until) || (partnerEnd && partnerEnd < new Date(new Date().setHours(0, 0, 0, 0)))) {
+    const exactDemoExpiry = user?.role === 'demo' && user.active_until &&
+      new Date(user.active_until).getTime() <= Date.now();
+    if (!user || user.is_active !== true || user.business_partner_is_active !== true || isMembershipExpired(user.active_until) || exactDemoExpiry || (partnerEnd && partnerEnd < new Date(new Date().setHours(0, 0, 0, 0)))) {
       return res.status(401).json({ message: 'Sitzung ist nicht mehr aktiv.' });
     }
     if (Number(decoded.av || 0) !== Number(user.auth_version || 0)) {

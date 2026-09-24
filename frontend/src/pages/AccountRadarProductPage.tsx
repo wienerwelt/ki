@@ -89,7 +89,7 @@ const salesPlans = [
     key: 'premium',
     name: 'Sales Premium',
     subtitle: 'Für aktive Sales-Teams und größere Bestände',
-    features: ['Bis 5.000 Accounts', 'CSV-/Excel-Import mit bis zu 1.000 Zeilen', 'Täglicher, werktäglicher oder wöchentlicher Radar', 'Bis zu 25 Empfänger', 'Wettbewerber-Monitoring', 'Sales-Erfolg, Pipeline-Analyse und Management-PDF', 'KI-Sales-Kontext', 'Mandantengebundene API mit bis zu 5 Tokens'],
+    features: ['Bis 5.000 Accounts', 'Sales-Trigger im Plattform-Datenbestand mit festen Kategorien und eigenen Trigger-Begriffen – ohne separates CONTENT-Abo', 'Bis zu 25 beobachtete RSS-, Atom- oder Website-Quellen', 'CSV-/Excel-Import mit bis zu 1.000 Zeilen', 'Täglicher, werktäglicher oder wöchentlicher Radar', 'Bis zu 25 Empfänger', 'Wettbewerber-Monitoring', 'Sales-Erfolg, Pipeline-Analyse und Management-PDF', 'KI-Sales-Kontext', 'Mandantengebundene API mit bis zu 5 Tokens'],
     highlighted: true,
   },
 ];
@@ -191,7 +191,7 @@ const AccountRadarProductPage: React.FC = () => {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const requestedReason = params.get('request');
-    if (!['upgrade', 'renewal'].includes(String(requestedReason || ''))) return;
+    if (!['pilot', 'upgrade', 'renewal'].includes(String(requestedReason || ''))) return;
     const timeout = window.setTimeout(() => openLeadDialog(
       params.get('plan') === 'basic' ? 'basic' : 'premium',
       requestedReason as RequestReason
@@ -443,7 +443,7 @@ const AccountRadarProductPage: React.FC = () => {
                 Fünf wichtige Signale statt fünfzig offene Tabs.
               </Typography>
               <Typography sx={{ mt: 2, color: '#627086', lineHeight: 1.7 }}>
-                Mobil werden Signale gelesen, bewertet und erledigt. Accounts, Suchprofile und Auswertungen werden komfortabel am Desktop verwaltet.
+                Mobil werden Signale gelesen, bewertet und erledigt. Accounts, Sales-Trigger und Auswertungen werden komfortabel am Desktop verwaltet.
               </Typography>
             </Box>
             <Stack spacing={1.5}>

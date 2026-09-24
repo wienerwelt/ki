@@ -2,7 +2,8 @@
 FROM node:24-bookworm-slim
 
 # Installieren der System-Abhängigkeiten für Puppeteer / Chromium
-RUN apt-get update && apt-get install -y \
+RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 update \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 install -y \
     wget \
     gnupg \
     ca-certificates \

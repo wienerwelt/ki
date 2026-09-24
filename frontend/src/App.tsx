@@ -40,6 +40,7 @@ const PublicBpCard = lazy(() => import('./pages/PublicBpCard'));
 const PublicFileDownloadPage = lazy(() => import('./pages/PublicFileDownloadPage'));
 const PublicAssistantEmbedPage = lazy(() => import('./pages/PublicAssistantEmbedPage'));
 const AccountRadarProductPage = lazy(() => import('./pages/AccountRadarProductPage'));
+const DemoInvitationPage = lazy(() => import('./pages/DemoInvitationPage'));
 
 // Geschützte Seiten – route-level code splitting.
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
@@ -58,6 +59,7 @@ const AccountRadarHelpPage = lazy(() => import('./pages/AccountRadarHelpPage'));
 const AdminDashboardPage = lazy(() => import('./pages/AdminDashboardPage'));
 const AdminBusinessPartnersPage = lazy(() => import('./pages/AdminBusinessPartnersPage'));
 const AdminUserManagementPage = lazy(() => import('./pages/AdminUserManagementPage'));
+const AdminDemoAccessPage = lazy(() => import('./pages/AdminDemoAccessPage'));
 const AdminWidgetTypesPage = lazy(() => import('./pages/AdminWidgetTypesPage'));
 const AdminBpWidgetAccessPage = lazy(() => import('./pages/AdminBpWidgetAccessPage'));
 const AdminScrapedContentPage = lazy(() => import('./pages/AdminScrapedContentPage'));
@@ -275,6 +277,7 @@ function App() {
           <Route path="/f/:fileId/:token" element={lazyRoute(<PublicFileDownloadPage />)} />
           <Route path="/assistant/:siteKey" element={lazyRoute(<PublicAssistantEmbedPage />)} />
           <Route path="/account-radar" element={lazyRoute(<AccountRadarProductPage />)} />
+          <Route path="/demo/accept" element={lazyRoute(<DemoInvitationPage />)} />
 
           {/* Dynamische Route für Partner-Slugs, z. B. /vfa */}
           <Route path="/:partnerSlug" element={lazyRoute(<PublicPortalPage />)} />
@@ -327,6 +330,7 @@ function App() {
               <Route index element={lazyRoute(<AdminDashboardPage />)} />
               <Route path="business-partners" element={lazyRoute(<AdminBusinessPartnersPage />)} />
               <Route path="sales-leads" element={lazyRoute(<AdminSalesLeadsPage />)} />
+              <Route path="demo-access" element={lazyRoute(<AdminDemoAccessPage />)} />
               <Route path="tracked-articles" element={lazyRoute(<AdminBpTrackedArticlesPage />)} />
               <Route path="widget-types" element={lazyRoute(<AdminWidgetTypesPage />)} />
               <Route path="bp-widget-access" element={lazyRoute(<AdminBpWidgetAccessPage />)} />

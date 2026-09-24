@@ -59,6 +59,7 @@ interface BusinessPartner {
     color_scheme_name: string | null;
     primary_color: string | null;
     is_active: boolean;
+    is_demo_tenant: boolean;
     user_count: string;
     widget_count: string;
     url_businesspartner: string | null;
@@ -430,10 +431,11 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                                         <MuiTooltip title={bp.allow_automated_newsletter ? "Newsletter erlaubt" : "Newsletter nicht erlaubt"}><Box component="span" sx={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: bp.allow_automated_newsletter ? 'success.main' : 'error.main', mr: 1.5, flexShrink: 0 }} /></MuiTooltip>
                                                         <Box>
                                                             <Typography component="span" sx={{ fontWeight: 'bold' }}>{bp.name}</Typography>
+                                                            {bp.is_demo_tenant && <Chip label="Demo · Beispieldaten" size="small" color="info" sx={{ ml: 1 }} />}
                                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
                                                                 <Typography variant="body2" color="text.secondary" component="span" sx={{ fontFamily: 'monospace' }}>...<Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>{bp.id.slice(-8)}</Box></Typography>
-                                                                <MuiTooltip title="Registrierungs-Link kopieren"><IconButton size="small" onClick={() => handleCopyPartnerLink(bp.id)} sx={{ padding: '2px' }}><LinkIcon fontSize="small" /></IconButton></MuiTooltip>
-                                                                <MuiTooltip title="Einladungskarte öffnen (QR-Code)"><IconButton size="small" onClick={() => window.open(`/invite/${bp.id}`, '_blank')} sx={{ padding: '2px', ml: 0.5 }}><QrCodeIcon fontSize="small" /></IconButton></MuiTooltip>
+                                                                {!bp.is_demo_tenant && <MuiTooltip title="Registrierungs-Link kopieren"><IconButton size="small" onClick={() => handleCopyPartnerLink(bp.id)} sx={{ padding: '2px' }}><LinkIcon fontSize="small" /></IconButton></MuiTooltip>}
+                                                                {!bp.is_demo_tenant && <MuiTooltip title="Einladungskarte öffnen (QR-Code)"><IconButton size="small" onClick={() => window.open(`/invite/${bp.id}`, '_blank')} sx={{ padding: '2px', ml: 0.5 }}><QrCodeIcon fontSize="small" /></IconButton></MuiTooltip>}
                                                             </Box>
                                                             <Typography variant="caption" color="text.disabled" sx={{ display: 'block', fontSize: '0.7rem', mt: 0.2 }}>{bp.id}</Typography>
                                                             <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mt: 0.7 }}>
@@ -581,6 +583,11 @@ const AdminBusinessPartnersPage: React.FC = () => {
                                                 {formEnabledModules.includes('content') && <MenuItem value="content">Content-Dashboard</MenuItem>}
                                                 {formEnabledModules.includes('sales') && <MenuItem value="sales">Account-Radar</MenuItem>}
                                             </TextField>
+                                        </Grid>
+                                        <Grid item xs={12}>
+                                            <Alert severity="info" variant="outlined">
+                                                CONTENT und SALES sind eigenständige, separat buchbare Produkte. Ein Mandant kann nur CONTENT, nur SALES oder beide Arbeitsbereiche nutzen; Paket und Zugriff werden je Produkt getrennt gesteuert.
+                                            </Alert>
                                         </Grid>
 
                                         {formEnabledModules.includes('content') && (

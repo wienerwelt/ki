@@ -76,7 +76,7 @@ async function resolveBusinessPartnerId(voucher) {
               cs.primary_color, cs.primary_text_color
        FROM business_partners bp
        LEFT JOIN color_schemes cs ON cs.id = bp.color_scheme_id
-       WHERE LOWER(RIGHT(bp.id::text, 8)) = $1
+       WHERE LOWER(RIGHT(bp.id::text, 8)) = $1 AND COALESCE(bp.is_demo_tenant, FALSE) = FALSE
        LIMIT 1`,
       [cleanVoucher]
     );
@@ -499,6 +499,9 @@ exports.login = async (req, res) => {
     if (isMembershipExpired(user.active_until)) {
       return res.status(403).json({ message: 'Account abgelaufen.' });
     }
+    if (user.role === 'demo' && user.active_until && new Date(user.active_until).getTime() <= Date.now()) {
+      return res.status(403).json({ message: 'Demo-Zugang abgelaufen.' });
+    }
 
     if (user.business_partner_id) {
       if (user.business_partner_is_active === false) {
@@ -526,7 +529,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    const pointsForLogin = 1;
+    const pointsForLogin = user.role === 'demo' ? 0 : 1;
     await db.query(
       `UPDATE users
        SET last_login_at = CURRENT_TIMESTAMP,
@@ -536,19 +539,21 @@ exports.login = async (req, res) => {
       [user.id, pointsForLogin]
     );
 
-    const loginEventId = crypto.randomUUID();
-    await db.query(
-      `INSERT INTO user_score_logs (id, reference_id, user_id, points_change, action_type, description)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        crypto.randomUUID(),
-        loginEventId,
-        user.id,
-        pointsForLogin,
-        'LOGIN_REWARD',
-        'Täglicher Login-Bonus',
-      ]
-    );
+    if (pointsForLogin > 0) {
+      const loginEventId = crypto.randomUUID();
+      await db.query(
+        `INSERT INTO user_score_logs (id, reference_id, user_id, points_change, action_type, description)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          crypto.randomUUID(),
+          loginEventId,
+          user.id,
+          pointsForLogin,
+          'LOGIN_REWARD',
+          'Täglicher Login-Bonus',
+        ]
+      );
+    }
 
     user.contribution_score = (user.contribution_score || 0) + pointsForLogin;
 

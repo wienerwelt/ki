@@ -20,7 +20,7 @@ const getDomainFromUrl = (url) => {
 const classifyAccountRadarSignal = (article, type = 'account') => {
   const text = `${article.article_title || ''} ${article.summary || ''}`.toLowerCase();
   const isCompetitor = type === 'competitor';
-  const ageDays = safeDateDiffDays(article.published_at);
+  const ageDays = safeDateDiffDays(article.published_at || article.signal_at);
 
   let signalType = isCompetitor ? 'Wettbewerbsbewegung' : 'Account-Signal';
   let recommendedAction = isCompetitor
@@ -54,6 +54,31 @@ const classifyAccountRadarSignal = (article, type = 'account') => {
     recommendedAction = 'Ansprechpartner und Timing für erneute Kontaktaufnahme prüfen.';
     relevanceScore = 72;
   }
+
+  const triggerKeys = Array.isArray(article.trigger_template_keys)
+    ? article.trigger_template_keys.filter(Boolean)
+    : [];
+  const hasContentTrigger = triggerKeys.length > 0
+    || (Array.isArray(article.trigger_profile_names) && article.trigger_profile_names.length > 0);
+  const triggerClassification = {
+    personnel_change: ['Entscheider-/Personalwechsel', 'Neue Verantwortung als konkreten Anlass für eine persönliche Kontaktaufnahme nutzen.', 82],
+    investment_growth: ['Wachstums-/Investitionssignal', 'Investitionsbedarf prüfen und mit einem passenden Angebot frühzeitig anknüpfen.', 86],
+    fleet_mobility: ['Fuhrpark-/Mobilitätssignal', 'Mit Mobilitäts-, Fuhrpark- oder Flottenangebot anknüpfen.', 91],
+    charging_emobility: ['Lade-/E-Mobilitätschance', 'Bedarf für Ladeinfrastruktur, Betriebskosten oder Elektrifizierung prüfen.', 90],
+    partnership: ['Partnerschaftssignal', 'Beziehung und mögliche Kooperations- oder Vertriebsansätze prüfen.', 80],
+    regulation_compliance: ['Regulatorik-/Compliance-Signal', 'Auswirkungen auf den Account prüfen und ein passendes Briefing oder Beratungsangebot machen.', 79],
+    restructuring: ['Veränderungs-/Risikosignal', 'Veränderten Bedarf, Zuständigkeiten und den richtigen Gesprächszeitpunkt prüfen.', 81],
+  };
+  const triggerRule = triggerKeys.map((key) => triggerClassification[key]).find(Boolean);
+  if (triggerRule) {
+    [signalType, recommendedAction] = triggerRule;
+    relevanceScore = Math.max(relevanceScore, triggerRule[2]);
+  } else if (hasContentTrigger) {
+    signalType = 'Sales-Trigger';
+    recommendedAction = 'Treffer prüfen und als aktuellen, accountbezogenen Gesprächsanlass nutzen.';
+    relevanceScore = Math.max(relevanceScore, 78);
+  }
+  relevanceScore = Math.max(relevanceScore, Number(article.trigger_match_score || 0));
 
   if (isCompetitor) {
     relevanceScore += 4;

@@ -868,11 +868,13 @@ async function triggerSingleRuleScrape(ruleId, jobId) {
         await db.query('UPDATE scraping_rules SET last_scraped_at = CURRENT_TIMESTAMP WHERE id = $1', [ruleId]);
         await db.query(`UPDATE scraping_jobs SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);
         await logToDb(jobId, 'INFO', 'Job erfolgreich abgeschlossen.');
+        return { success: true, itemsProcessed, rule };
 
     } catch (err) {
         console.error(`[Scraping Job ${jobId}] Kritischer Fehler:`, err.message, err.stack);
         await logToDb(jobId, 'ERROR', `Job mit kritischem Fehler abgebrochen: ${err.message}`);
         await db.query(`UPDATE scraping_jobs SET status = 'failed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [jobId]);
+        return { success: false, itemsProcessed, error: err.message };
     }
 }
 
@@ -1718,6 +1720,7 @@ module.exports = {
     extractTextFromUrl,
     processNewsKeywordSearch,
     previewScrapingRule,
+    previewXmlFeedContent: _previewXmlFeed,
     __test: {
         parseDateString,
         processXmlFeedByRule: _processXmlFeedByRule,

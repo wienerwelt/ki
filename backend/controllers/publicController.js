@@ -50,6 +50,7 @@ async function resolvePartnerIdByCode(code) {
                     OR LOWER(bp.name) = LOWER($2)
                    )
                AND bp.is_active = true
+               AND COALESCE(bp.is_demo_tenant, FALSE) = FALSE
              LIMIT 1`,
             [cleanCode, cleanLookup]
         );
@@ -1666,6 +1667,7 @@ exports.getPublicPartnerCard = async (req, res) => {
             FROM business_partners bp
             LEFT JOIN color_schemes cs ON bp.color_scheme_id = cs.id
             WHERE bp.id = $1 AND bp.is_active = TRUE
+              AND COALESCE(bp.is_demo_tenant, FALSE) = FALSE
         `;
         
         const { rows } = await db.query(query, [id]);
