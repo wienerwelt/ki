@@ -1,5 +1,12 @@
 node_modules
 npm-debug.log*
+*.log
+.git
+.gitignore
 .env
 .env.*
 coverage
+.nyc_output
+tmp
+temp
+logs
