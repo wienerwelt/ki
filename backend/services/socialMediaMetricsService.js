@@ -35,6 +35,34 @@ const calculateChangePercent = (currentValue, previousValue) => {
     return ((current - previous) / previous) * 100;
 };
 
+const calculateComparisonRegistrations = (currentValue, changePercent) => {
+    const current = Number(currentValue);
+    const change = Number(changePercent);
+    const factor = 1 + (change / 100);
+    if (!Number.isFinite(current) || !Number.isFinite(change) || factor <= 0) return null;
+    return Math.round(current / factor);
+};
+
+const withSelectedComparison = (metric, comparisonBasis) => {
+    if (!metric) return null;
+
+    const usesPreviousMonth = comparisonBasis === 'previous_month';
+    const comparisonRegistrations = usesPreviousMonth
+        ? metric.previousMonthRegistrations
+        : metric.yearOverYearRegistrations;
+    const comparisonRegistrationsEstimated = !usesPreviousMonth && comparisonRegistrations !== null;
+
+    return {
+        ...metric,
+        comparisonRegistrations,
+        comparisonRegistrationsEstimated,
+        absoluteChange: comparisonRegistrations === null
+            ? null
+            : metric.zulassungen - comparisonRegistrations,
+        absoluteChangeEstimated: comparisonRegistrationsEstimated,
+    };
+};
+
 const getPreviousPeriod = (year, month) => ({
     year: month === 1 ? year - 1 : year,
     month: month === 1 ? 12 : month - 1,
@@ -48,12 +76,14 @@ const buildMetric = ({ entry, previousIndex, previousLabel, yearOverYearLabel })
         ? calculateChangePercent(entry.zulassungen, previousEntry.zulassungen)
         : null;
     const yearOverYearPercent = parsePercentValue(entry.vergleichVorjahr);
+    const yearOverYearRegistrations = calculateComparisonRegistrations(entry.zulassungen, yearOverYearPercent);
     const usesPreviousMonth = monthOverMonthPercent !== null;
 
-    return {
+    return withSelectedComparison({
         name: entry.name,
         zulassungen: Number(entry.zulassungen || 0),
         previousMonthRegistrations: previousEntry ? Number(previousEntry.zulassungen || 0) : null,
+        yearOverYearRegistrations,
         vergleichVorjahr: entry.vergleichVorjahr,
         yearOverYearPercent,
         monthOverMonthPercent,
@@ -62,7 +92,7 @@ const buildMetric = ({ entry, previousIndex, previousLabel, yearOverYearLabel })
         comparisonLabel: usesPreviousMonth ? previousLabel : yearOverYearLabel,
         comparisonStatus: usesPreviousMonth ? 'available' : (yearOverYearPercent !== null ? 'fallback_year_over_year' : 'unavailable'),
         logo_slug: entry.logo_slug,
-    };
+    }, usesPreviousMonth ? 'previous_month' : 'same_month_previous_year');
 };
 
 const buildSocialMetrics = ({
@@ -96,13 +126,13 @@ const buildSocialMetrics = ({
         .filter((metric) => metric.zulassungen > minimumRegistrations && metric.previousMonthRegistrations > minimumRegistrations);
     const yearOverYearTrendCandidates = allBrandMetrics
         .filter((metric) => metric.yearOverYearPercent !== null && metric.zulassungen > minimumRegistrations)
-        .map((metric) => ({
+        .map((metric) => withSelectedComparison({
             ...metric,
             changePercent: metric.yearOverYearPercent,
             comparisonBasis: 'same_month_previous_year',
             comparisonLabel: yearOverYearLabel,
             comparisonStatus: 'fallback_year_over_year',
-        }));
+        }, 'same_month_previous_year'));
 
     const trendCandidates = monthlyTrendCandidates.length > 0
         ? monthlyTrendCandidates
@@ -144,6 +174,7 @@ const buildSocialMetrics = ({
 module.exports = {
     buildSocialMetrics,
     calculateChangePercent,
+    calculateComparisonRegistrations,
     getPreviousPeriod,
     normalizeBrandKey,
     parsePercentValue,

@@ -342,6 +342,7 @@ function App() {
               <Route path="categories" element={lazyRoute(<AdminCategoriesPage />)} />
               <Route path="tags" element={lazyRoute(<AdminTagsPage />)} />
               <Route path="monitor" element={lazyRoute(<AdminMonitorPage />)} />
+              <Route path="email-reports" element={lazyRoute(<AdminMonitorPage mode="email" />)} />
               <Route path="statistics" element={lazyRoute(<AdminStatisticsPage />)} />
               <Route path="advertisements" element={lazyRoute(<AdminAdvertisementsPage />)} />
               <Route path="cronjobs" element={lazyRoute(<AdminCronjobsPage />)} />

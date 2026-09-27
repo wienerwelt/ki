@@ -42,6 +42,9 @@ async function run(){
   const archivePreview=await invoke(controller.archive,{id:users[2],role:'admin',business_partner_id:partners[0]},{since:'2026-09-01',limit:20},{partnerId:partners[0]});
   assert.equal(archivePreview.status,200,'Archive preview is available for a configured tenant');
   assert.equal(archivePreview.data.available,1,'Archive preview follows the same tenant/category/region rules as the scanner');
+  assert.equal(archivePreview.data.diagnostics.potential.new_signal_candidates,1,'Archive preview exposes concrete signal potential');
+  assert.equal(archivePreview.data.diagnostics.potential.candidate_samples[0].signal.toLowerCase(),'übernimmt','Archive preview explains which signal caused the candidate');
+  assert.equal(archivePreview.data.diagnostics.potential.historical_hit_rate,null,'Archive preview does not invent a success rate without history');
   await Promise.all([service.processArticle(a),service.processArticle(a)]);assert.equal(aiCalls,1,'One analysis even with concurrent claims');
   await service.processArticle(a);assert.equal(aiCalls,1,'Cache must not pay again');
   const scanned=await service.scan({limit:1,tenantId:partners[0]});assert.equal(scanned.checked,0);assert.equal(aiCalls,1,'Scheduled queries do not re-analyse checked/cached articles');

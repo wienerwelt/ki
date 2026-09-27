@@ -19,7 +19,16 @@ import { useSnackbar } from '../../context/SnackbarContext';
 
 // --- Interfaces ---
 interface Question { id: string; question_text: string; question_type: 'single-choice' | 'multiple-choice' | 'free-text'; options: string[]; }
-interface Survey { id: string; title: string; description?: string; questions: Question[]; completed_at?: string; }
+interface Survey {
+    id: string;
+    title: string;
+    description?: string;
+    questions: Question[];
+    status?: string;
+    completed_at?: string | null;
+    archive_date?: string | null;
+    participated?: boolean;
+}
 interface SurveyResult { id: string; question_text: string; question_type: 'single-choice' | 'multiple-choice' | 'free-text'; results: any[]; }
 interface SurveyWidgetProps extends BaseWidgetProps { icon?: React.ReactNode; title: string; }
 
@@ -103,6 +112,7 @@ const SurveyResultsCard: React.FC<{ survey: Survey; results: SurveyResult[]; use
 const SurveyWidget: React.FC<SurveyWidgetProps> = ({ onDelete, widgetId, isRemovable, icon, title, widgetTypeKey }) => {
     const { showSnackbar } = useSnackbar();
     const [view, setView] = useState<'loading' | 'active' | 'archive' | 'taking' | 'results' | 'empty' | 'error'>('loading');
+    const [selectedTab, setSelectedTab] = useState<0 | 1>(0);
     const [error, setError] = useState<string | null>(null);
     
     const [activeSurveys, setActiveSurveys] = useState<Survey[]>([]);
@@ -118,6 +128,7 @@ const SurveyWidget: React.FC<SurveyWidgetProps> = ({ onDelete, widgetId, isRemov
 
     // Lade-Funktionen
     const fetchActiveSurveys = useCallback(async () => {
+        setSelectedTab(0);
         setView('loading');
         try {
             const response = await apiClient.get('/api/surveys/active');
@@ -137,19 +148,31 @@ const SurveyWidget: React.FC<SurveyWidgetProps> = ({ onDelete, widgetId, isRemov
         }
     }, []); 
 
+    const loadArchivedSurveys = useCallback(async () => {
+        const response = await apiClient.get('/api/surveys/archive');
+        const surveysData: Survey[] = Array.isArray(response.data) ? response.data : [];
+        setArchivedSurveys(surveysData);
+        return surveysData;
+    }, []);
+
     const fetchArchivedSurveys = useCallback(async () => {
+        setSelectedTab(1);
         setView('loading');
         try {
-            const response = await apiClient.get('/api/surveys/archive');
-            setArchivedSurveys(response.data);
+            await loadArchivedSurveys();
             setView('archive');
         } catch (err: any) {
             setError(err.response?.data?.message || 'Fehler beim Laden des Archivs.');
             setView('error');
         }
-    }, []);
+    }, [loadArchivedSurveys]);
 
-    useEffect(() => { fetchActiveSurveys(); }, [fetchActiveSurveys]);
+    useEffect(() => {
+        fetchActiveSurveys();
+        loadArchivedSurveys().catch(() => {
+            // Die Archiv-Vorschau darf das Laden neuer Umfragen nicht blockieren.
+        });
+    }, [fetchActiveSurveys, loadArchivedSurveys]);
 
     const handleStartSurvey = (survey: Survey) => {
         setCurrentSurvey(survey);
@@ -356,19 +379,34 @@ const renderTakingSurvey = () => {
             );
             case 'archive': return (
                  <List sx={{ p: 2 }}>
-                    {archivedSurveys.length > 0 ? archivedSurveys.map(s => (
-                        <Card key={s.id} variant="outlined" sx={{ mb: 2, borderRadius: 2 }}>
-                            <ListItem disablePadding>
-                                <ListItemButton onClick={() => handleViewArchivedResults(s)} sx={{ p: 2 }}>
-                                    <ListItemText 
-                                        primary={s.title} 
-                                        secondary={`Abgeschlossen am: ${new Date(s.completed_at!).toLocaleDateString('de-DE')}`} 
-                                    />
-                                    <BarChartIcon color="action" />
-                                </ListItemButton>
-                            </ListItem>
-                        </Card>
-                    )) : <Typography color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>Keine abgeschlossenen Umfragen im Archiv.</Typography>}
+                    {archivedSurveys.length > 0 ? archivedSurveys.map(s => {
+                        const rawArchiveDate = s.archive_date || s.completed_at;
+                        const parsedArchiveDate = rawArchiveDate ? new Date(rawArchiveDate) : null;
+                        const archiveDate = parsedArchiveDate && !Number.isNaN(parsedArchiveDate.getTime())
+                            ? parsedArchiveDate.toLocaleDateString('de-DE')
+                            : null;
+                        const archiveStatus = s.participated ? 'Teilgenommen' : 'Beendet';
+
+                        return (
+                            <Card key={s.id} variant="outlined" sx={{ mb: 2, borderRadius: 2 }}>
+                                <ListItem disablePadding>
+                                    <ListItemButton onClick={() => handleViewArchivedResults(s)} sx={{ p: 2 }}>
+                                        <ListItemText
+                                            primary={s.title}
+                                            secondary={`${archiveStatus}${archiveDate ? ` am ${archiveDate}` : ''}`}
+                                        />
+                                        <BarChartIcon color="action" />
+                                    </ListItemButton>
+                                </ListItem>
+                            </Card>
+                        );
+                    }) : (
+                        <Box sx={{ p: 3, textAlign: 'center' }}>
+                            <Typography color="text.secondary">
+                                Für Ihren Mandanten liegen noch keine abgeschlossenen oder von Ihnen beantworteten Umfragen vor.
+                            </Typography>
+                        </Box>
+                    )}
                 </List>
             );
             case 'taking': return renderTakingSurvey();
@@ -377,8 +415,13 @@ const renderTakingSurvey = () => {
                 return (
                     <Box sx={{ p: 2 }}>
                         <SurveyResultsCard {...currentResults} />
-                        <Button variant="outlined" sx={{ mt: 3 }} onClick={fetchActiveSurveys} fullWidth>
-                            Zurück zur Übersicht
+                        <Button
+                            variant="outlined"
+                            sx={{ mt: 3 }}
+                            onClick={() => selectedTab === 1 ? fetchArchivedSurveys() : fetchActiveSurveys()}
+                            fullWidth
+                        >
+                            {selectedTab === 1 ? 'Zurück zum Archiv' : 'Zurück zur Übersicht'}
                         </Button>
                     </Box>
                 );
@@ -392,9 +435,9 @@ const renderTakingSurvey = () => {
             noPadding
         >
             <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-                <Tabs value={view === 'archive' ? 1 : 0} onChange={(_, newValue) => newValue === 1 ? fetchArchivedSurveys() : fetchActiveSurveys()} variant="fullWidth">
+                <Tabs value={selectedTab} onChange={(_, newValue) => newValue === 1 ? fetchArchivedSurveys() : fetchActiveSurveys()} variant="fullWidth">
                     <Tab label="Neue Umfragen" disabled={view === 'taking' || view === 'results'} />
-                    <Tab label="Archiv" disabled={view === 'taking' || view === 'results'} />
+                    <Tab label={`Archiv (${archivedSurveys.length})`} disabled={view === 'taking' || view === 'results'} />
                 </Tabs>
             </Box>
             <Box 

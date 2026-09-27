@@ -10,12 +10,18 @@ const { logActivity } = require('../services/auditLogService');
 
 const isValidUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 
-exports.previewMonthlyReport = async (req, res) => {
-    const businessPartnerId = req.user?.business_partner_id;
-
-    if (!isValidUuid(businessPartnerId)) {
-        return res.status(400).json({ message: 'Dem Benutzer ist kein gültiger Business Partner zugeordnet.' });
+const resolveBusinessPartnerId = (req, res) => {
+    const requested = req.body?.partnerId || req.query?.partnerId || req.user?.business_partner_id;
+    if (!isValidUuid(requested)) {
+        res.status(400).json({ message: 'Bitte einen gültigen Mandanten auswählen.' });
+        return null;
     }
+    return requested;
+};
+
+exports.previewMonthlyReport = async (req, res) => {
+    const businessPartnerId = resolveBusinessPartnerId(req, res);
+    if (!businessPartnerId) return;
 
     try {
         const result = await generateAndSendMonthlyReport({
@@ -66,11 +72,8 @@ exports.previewMonthlyReport = async (req, res) => {
 };
 
 exports.getMonthlyReportDeliveries = async (req, res) => {
-    const businessPartnerId = req.user?.business_partner_id;
-
-    if (!isValidUuid(businessPartnerId)) {
-        return res.status(400).json({ message: 'Dem Benutzer ist kein gültiger Business Partner zugeordnet.' });
-    }
+    const businessPartnerId = resolveBusinessPartnerId(req, res);
+    if (!businessPartnerId) return;
 
     try {
         const [settingsResult, monthlyResult, deliveriesResult, newsletterTotalsResult, newsletterDeliveriesResult] = await Promise.all([

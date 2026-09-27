@@ -51,11 +51,20 @@ assert.equal(metrics.comparisonBasis, 'previous_month');
 assert.equal(metrics.comparisonLabel, 'ggü. April 2026');
 assert.equal(metrics.marketLeader.name, 'Marke 1');
 assert.ok(Math.abs(metrics.marketLeader.changePercent - 11.1111) < 0.01);
+assert.equal(metrics.marketLeader.comparisonRegistrations, 900);
+assert.equal(metrics.marketLeader.absoluteChange, 100);
+assert.equal(metrics.marketLeader.comparisonRegistrationsEstimated, false);
 assert.equal(metrics.strongestGrowth.name, 'Marke 11', 'Auch Marken außerhalb der Top 10 müssen ausgewertet werden.');
 assert.equal(metrics.strongestGrowth.changePercent, 100);
+assert.equal(metrics.strongestGrowth.comparisonRegistrations, 200);
+assert.equal(metrics.strongestGrowth.absoluteChange, 200);
 assert.equal(metrics.strongestDecline.name, 'Marke 2');
 assert.equal(metrics.strongestDecline.changePercent, -20);
+assert.equal(metrics.strongestDecline.comparisonRegistrations, 250);
+assert.equal(metrics.strongestDecline.absoluteChange, -50);
 assert.equal(metrics.topElectricBrand.comparisonLabel, 'ggü. April 2026');
+assert.equal(metrics.topElectricBrand.comparisonRegistrations, 400);
+assert.equal(metrics.topElectricBrand.absoluteChange, 100);
 assert.equal(metrics.trendSelectionLabel, 'Einzelmarken · >100 Zul. je Monat');
 
 const januaryMetrics = buildSocialMetrics({
@@ -77,5 +86,11 @@ const fallbackMetrics = buildSocialMetrics({
 assert.equal(fallbackMetrics.comparisonBasis, 'same_month_previous_year');
 assert.equal(fallbackMetrics.comparisonLabel, 'ggü. Mai 2025');
 assert.equal(fallbackMetrics.strongestGrowth.name, 'Marke 11');
+assert.equal(fallbackMetrics.strongestGrowth.comparisonRegistrations, 222);
+assert.equal(fallbackMetrics.strongestGrowth.absoluteChange, 178);
+assert.equal(fallbackMetrics.strongestGrowth.comparisonRegistrationsEstimated, true);
+assert.equal(fallbackMetrics.topElectricBrand.comparisonRegistrations, 400);
+assert.equal(fallbackMetrics.topElectricBrand.absoluteChange, 100);
+assert.equal(fallbackMetrics.topElectricBrand.comparisonRegistrationsEstimated, true);
 
 console.log('[smoke:social-media-metrics] OK');

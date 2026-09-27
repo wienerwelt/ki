@@ -626,8 +626,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             >
                                 Betrieb & Analyse
                             </ListSubheader>
+                            <ListItem button component={RouterLink} to="/admin/email-reports"><ListItemIcon><EmailIcon /></ListItemIcon><ListItemText primary="E-Mail & Reports" /></ListItem>
                             <ListItem button component={RouterLink} to="/admin/statistics"><ListItemIcon><QueryStatsIcon /></ListItemIcon><ListItemText primary={t('layout.statistics')} /></ListItem>
-                            <ListItem button component={RouterLink} to="/admin/monitor"><ListItemIcon><MonitorIcon /></ListItemIcon><ListItemText primary={t('layout.activityMonitor')} /></ListItem>
+                            <ListItem button component={RouterLink} to="/admin/monitor"><ListItemIcon><MonitorIcon /></ListItemIcon><ListItemText primary="System & Aktivität" /></ListItem>
                             <Divider sx={{ my: 1 }} />                                            
                         </List>
                     </>

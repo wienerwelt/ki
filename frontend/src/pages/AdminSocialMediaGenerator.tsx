@@ -573,6 +573,67 @@ const AdminSocialMediaGenerator: React.FC = () => {
         const metricYearOverYear = (metric: any) => metric?.comparisonBasis === 'previous_month' && metric?.yearOverYearPercent !== null && metric?.yearOverYearPercent !== undefined
             ? `Vorjahr: ${formatPercent(metric.yearOverYearPercent).text}`
             : null;
+        const formatRegistrationValue = (value: any) => Number(value).toLocaleString('de-DE');
+        const metricComparisonPeriod = (metric: any) => metricComparisonLabel(metric).replace(/^ggü\.\s*/i, '');
+        const metricComparisonBasis = (metric: any) => metric?.comparisonBasis === 'previous_month' ? 'Vormonat' : 'Vorjahr';
+        const metricComparisonContext = (metric: any) => `${metricComparisonBasis(metric)} ${metricComparisonPeriod(metric).replace(/\s+\d{4}$/u, '')}`;
+        const metricAbsoluteComparison = (metric: any) => {
+            const current = Number(metric?.zulassungen);
+            if (!Number.isFinite(current)) return null;
+
+            const exactPreviousMonth = metric?.comparisonBasis === 'previous_month'
+                && metric?.previousMonthRegistrations !== null
+                && metric?.previousMonthRegistrations !== undefined
+                ? Number(metric.previousMonthRegistrations)
+                : Number.NaN;
+            let comparison = metric?.comparisonRegistrations !== null && metric?.comparisonRegistrations !== undefined
+                ? Number(metric.comparisonRegistrations)
+                : exactPreviousMonth;
+            let estimated = Boolean(metric?.comparisonRegistrationsEstimated);
+
+            if (!Number.isFinite(comparison)) {
+                const changePercent = Number(metric?.changePercent ?? metric?.vergleichVorjahr);
+                const factor = 1 + (changePercent / 100);
+                if (Number.isFinite(changePercent) && factor > 0) {
+                    comparison = Math.round(current / factor);
+                    estimated = true;
+                }
+            }
+
+            const suppliedAbsoluteChange = metric?.absoluteChange !== null && metric?.absoluteChange !== undefined
+                ? Number(metric.absoluteChange)
+                : Number.NaN;
+            const absoluteChange = Number.isFinite(suppliedAbsoluteChange)
+                ? suppliedAbsoluteChange
+                : (Number.isFinite(comparison) ? current - comparison : Number.NaN);
+            if (!Number.isFinite(comparison) || !Number.isFinite(absoluteChange)) {
+                return `Aktuell ${formatRegistrationValue(current)} · Vergleich n. v. · Δ n. v.`;
+            }
+
+            const approximation = estimated ? 'ca. ' : '';
+            const changeSign = absoluteChange > 0 ? '+' : '';
+            return `Aktuell ${formatRegistrationValue(current)} · Vergleich ${approximation}${formatRegistrationValue(comparison)} · Δ ${approximation}${changeSign}${formatRegistrationValue(absoluteChange)}`;
+        };
+        const renderCardBackgroundLogo = (logoSlug?: string) => logoSlug ? (
+            <Box
+                component="img"
+                src={getSmartLogoUrl(logoSlug)}
+                crossOrigin="anonymous"
+                alt=""
+                aria-hidden="true"
+                onError={(event: React.SyntheticEvent<HTMLImageElement>) => { event.currentTarget.src = EMPTY_PIXEL; }}
+                sx={{
+                    position: 'absolute', right: '-3%', bottom: '-12%', width: '48%', height: '82%',
+                    objectFit: 'contain', opacity: 0.075, filter: 'grayscale(1)', pointerEvents: 'none',
+                    userSelect: 'none', zIndex: 0,
+                }}
+            />
+        ) : null;
+        const isLandscape = aspectRatio === '1.91 / 1';
+        const graphicPadding = isLandscape ? 2.25 : aspectRatio === '1 / 1' ? 3 : 4;
+        const cardPadding = isLandscape ? 1.5 : 2.25;
+        const hasEstimatedComparison = [topMarke, topElektro, topWinner, topLoser]
+            .some((metric) => metric?.comparisonRegistrationsEstimated || metric?.comparisonBasis === 'same_month_previous_year');
         const flagBands = country === 'DE'
             ? ['#111827', '#dc2626', '#facc15']
             : ['#ed2939', '#ffffff', '#ed2939'];
@@ -603,7 +664,7 @@ const AdminSocialMediaGenerator: React.FC = () => {
                 ref={graphicRef}
                 sx={{
                     width: '100%', maxWidth: '800px', aspectRatio,
-                    color: uiColors.text, p: 5, borderRadius: 3,
+                    color: uiColors.text, p: graphicPadding, borderRadius: 3,
                     boxShadow: uiColors.shadow, fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
                     position: 'relative', overflow: 'hidden', ...bgStyle,
                     display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
@@ -617,8 +678,8 @@ const AdminSocialMediaGenerator: React.FC = () => {
                 )}
 
                 <Box sx={{ position: 'relative', zIndex: 1, flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-                    <Box sx={{ textAlign: 'center', mb: 4 }}>
-                        <Typography variant="h3" sx={{ fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, textShadow: isDark ? '0 2px 10px rgba(0,0,0,0.5)' : 'none' }}>
+                    <Box sx={{ textAlign: 'center', mb: isLandscape ? 1 : 2 }}>
+                        <Typography variant="h3" sx={{ fontSize: isLandscape ? '1.75rem' : '2.5rem', lineHeight: 1.05, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, textShadow: isDark ? '0 2px 10px rgba(0,0,0,0.5)' : 'none' }}>
                             Automarkt <Box component="span" sx={{ color: '#eab308' }}>{displayMonth} {year}</Box>
                         </Typography>
                         <Box sx={{ width: '60%', height: '2px', bgcolor: uiColors.textMuted, mx: 'auto', mt: 1, mb: 2.5, boxShadow: isDark ? `0 0 10px ${uiColors.textMuted}` : 'none', position: 'relative' }}>
@@ -636,72 +697,79 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                 {flagBands.map((bandColor, index) => <Box key={`${bandColor}-${index}`} sx={{ bgcolor: bandColor }} />)}
                             </Box>
                         </Box>
-                        <Typography variant="h6" sx={{ fontWeight: 400, color: uiColors.textMuted }}>
+                        <Typography variant="h6" sx={{ fontSize: isLandscape ? '0.9rem' : '1.1rem', fontWeight: 400, color: uiColors.textMuted }}>
                             {countryLabel(country)} im Wandel
                         </Typography>
                     </Box>
 
-                    <Grid container spacing={3} sx={{ mb: 4, flexGrow: 1, alignContent: 'center' }}>
-                        <Grid item xs={6}>
-                            <Paper sx={{ background: 'linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: 3, height: '100%', boxShadow: '0 8px 18px rgba(30, 58, 138, 0.24)' }}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 1 }}>
+                    <Grid container spacing={isLandscape ? 1.25 : 2} sx={{ mb: isLandscape ? 1 : 2, flexGrow: 1, alignContent: 'center' }}>
+                        <Grid item xs={isLandscape ? 3 : 6}>
+                            <Paper sx={{ background: 'linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: cardPadding, height: '100%', boxShadow: '0 8px 18px rgba(30, 58, 138, 0.24)', position: 'relative', overflow: 'hidden' }}>
+                                {renderCardBackgroundLogo(topMarke?.logo_slug)}
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: isLandscape ? 0.75 : 1.25, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 0.75, position: 'relative', zIndex: 1 }}>
                                     <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#fff' }}>Marktführer</Typography>
-                                    <EmojiEventsIcon sx={{ color: '#fde047' }} />
+                                    <EmojiEventsIcon sx={{ color: '#fff' }} />
                                 </Box>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                    <Box sx={{ width: 60, height: 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: isLandscape ? 1 : 2, position: 'relative', zIndex: 1 }}>
+                                    <Box sx={{ width: isLandscape ? 42 : 60, height: isLandscape ? 42 : 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
                                         <img src={getSmartLogoUrl(topMarke?.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                     </Box>
                                     <Box>
-                                        <Typography variant="h4" sx={{ fontWeight: 800, color: '#fff' }}>{topMarke?.zulassungen.toLocaleString('de-DE')}</Typography>
-                                        <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.82)' }}>Neuzulassungen</Typography>
-                                        {topMarke && <Typography variant="subtitle2" sx={{ color: metricPercent(topMarke).isPositive ? '#bbf7d0' : '#fecaca', fontWeight: 'bold' }}>{metricPercent(topMarke).text} {metricComparisonLabel(topMarke)}</Typography>}
+                                        <Typography variant="h4" sx={{ fontSize: isLandscape ? '1.35rem' : undefined, fontWeight: 800, color: '#fff' }}>{topMarke?.zulassungen.toLocaleString('de-DE')}</Typography>
+                                        <Typography variant="body2" sx={{ color: '#fff', fontWeight: 800 }}>{topMarke?.name}</Typography>
+                                        <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.82)', display: 'block' }}>Neuzulassungen</Typography>
+                                        {topMarke && <Typography variant="subtitle2" sx={{ color: metricPercent(topMarke).isPositive ? '#bbf7d0' : '#fecaca', fontWeight: 'bold', fontSize: isLandscape ? '0.68rem' : undefined }}>{metricPercent(topMarke).text} zum {metricComparisonContext(topMarke)}</Typography>}
+                                        {metricAbsoluteComparison(topMarke) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.82)', display: 'block', fontSize: isLandscape ? '0.5rem' : '0.59rem', lineHeight: 1.15 }}>{metricAbsoluteComparison(topMarke)}</Typography>}
                                         {metricYearOverYear(topMarke) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.74)', display: 'block' }}>{metricYearOverYear(topMarke)}</Typography>}
                                     </Box>
                                 </Box>
                             </Paper>
                         </Grid>
-                        <Grid item xs={6}>
-                            <Paper sx={{ background: 'linear-gradient(135deg, #0891b2 0%, #0f766e 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: 3, height: '100%', boxShadow: '0 8px 18px rgba(15, 118, 110, 0.24)' }}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 1 }}>
+                        <Grid item xs={isLandscape ? 3 : 6}>
+                            <Paper sx={{ background: 'linear-gradient(135deg, #0891b2 0%, #0f766e 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: cardPadding, height: '100%', boxShadow: '0 8px 18px rgba(15, 118, 110, 0.24)', position: 'relative', overflow: 'hidden' }}>
+                                {renderCardBackgroundLogo(topElektro?.logo_slug)}
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: isLandscape ? 0.75 : 1.25, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 0.75, position: 'relative', zIndex: 1 }}>
                                     <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#fff' }}>Top E-Auto Marke</Typography>
-                                    <ElectricCarIcon sx={{ color: '#bbf7d0' }} />
+                                    <ElectricCarIcon sx={{ color: '#fff' }} />
                                 </Box>
                                 {topElektro ? (
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                        <Box sx={{ width: 60, height: 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: isLandscape ? 1 : 2, position: 'relative', zIndex: 1 }}>
+                                        <Box sx={{ width: isLandscape ? 42 : 60, height: isLandscape ? 42 : 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
                                             <img src={getSmartLogoUrl(topElektro.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                         </Box>
                                         <Box>
-                                            <Typography variant="h4" sx={{ fontWeight: 800, color: '#fff' }}>{topElektro.zulassungen.toLocaleString('de-DE')}</Typography>
+                                            <Typography variant="h4" sx={{ fontSize: isLandscape ? '1.35rem' : undefined, fontWeight: 800, color: '#fff' }}>{topElektro.zulassungen.toLocaleString('de-DE')}</Typography>
                                             <Typography variant="body2" sx={{ color: '#fff', fontWeight: 800 }}>{topElektro.name}</Typography>
-                                            <Typography variant="subtitle2" sx={{ color: metricPercent(topElektro).isPositive ? '#bbf7d0' : '#fecaca', fontWeight: 'bold' }}>{metricPercent(topElektro).text}</Typography>
+                                            <Typography variant="subtitle2" sx={{ color: metricPercent(topElektro).isPositive ? '#bbf7d0' : '#fecaca', fontWeight: 'bold', fontSize: isLandscape ? '0.68rem' : undefined }}>{metricPercent(topElektro).text} zum {metricComparisonContext(topElektro)}</Typography>
                                             <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.82)', display: 'block', fontSize: '0.68rem', lineHeight: 1.2 }}>
-                                                nur Elektro · {metricComparisonLabel(topElektro)}
+                                                nur Elektro
                                             </Typography>
+                                            {metricAbsoluteComparison(topElektro) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.82)', display: 'block', fontSize: isLandscape ? '0.5rem' : '0.59rem', lineHeight: 1.15 }}>{metricAbsoluteComparison(topElektro)}</Typography>}
                                             {metricYearOverYear(topElektro) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.74)', display: 'block', fontSize: '0.65rem' }}>{metricYearOverYear(topElektro)}</Typography>}
                                         </Box>
                                     </Box>
                                 ) : <Typography color="text.secondary">Keine Daten.</Typography>}
                             </Paper>
                         </Grid>
-                        <Grid item xs={6}>
-                            <Paper sx={{ background: 'linear-gradient(135deg, #16a34a 0%, #166534 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: 3, height: '100%', boxShadow: '0 8px 18px rgba(22, 101, 52, 0.22)' }}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 1 }}>
+                        <Grid item xs={isLandscape ? 3 : 6}>
+                            <Paper sx={{ background: 'linear-gradient(135deg, #16a34a 0%, #166534 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: cardPadding, height: '100%', boxShadow: '0 8px 18px rgba(22, 101, 52, 0.22)', position: 'relative', overflow: 'hidden' }}>
+                                {renderCardBackgroundLogo(topWinner?.logo_slug)}
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: isLandscape ? 0.75 : 1.25, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 0.75, position: 'relative', zIndex: 1 }}>
                                     <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#fff' }}>Stärkstes Wachstum</Typography>
                                     <TrendingUpIcon sx={{ color: '#fff' }} />
                                 </Box>
                                 {topWinner && (
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                        <Box sx={{ width: 60, height: 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: isLandscape ? 1 : 2, position: 'relative', zIndex: 1 }}>
+                                        <Box sx={{ width: isLandscape ? 42 : 60, height: isLandscape ? 42 : 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
                                             <img src={getSmartLogoUrl(topWinner.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                         </Box>
                                         <Box>
-                                            <Typography variant="h3" sx={{ fontWeight: 900, color: '#fff' }}>{metricPercent(topWinner).text}</Typography>
+                                            <Typography variant="h3" sx={{ fontSize: isLandscape ? '1.6rem' : undefined, fontWeight: 900, color: '#fff' }}>{metricPercent(topWinner).text}</Typography>
                                             <Typography variant="body1" sx={{ fontWeight: 'bold', color: '#fff' }}>{topWinner.name}</Typography>
                                             <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.82)', display: 'block', fontSize: '0.66rem', lineHeight: 1.2 }}>
-                                                Gesamtmarkt · {metricComparisonLabel(topWinner)}
+                                                Gesamtmarkt · {metricComparisonContext(topWinner)}
                                             </Typography>
+                                            {metricAbsoluteComparison(topWinner) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.84)', display: 'block', fontSize: isLandscape ? '0.5rem' : '0.59rem', lineHeight: 1.15 }}>{metricAbsoluteComparison(topWinner)}</Typography>}
                                             {metricYearOverYear(topWinner) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)', display: 'block', fontSize: '0.63rem' }}>{metricYearOverYear(topWinner)}</Typography>}
                                             <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.72)', display: 'block', fontSize: '0.61rem', lineHeight: 1.2 }}>
                                                 {trendSelectionLabel}
@@ -711,23 +779,25 @@ const AdminSocialMediaGenerator: React.FC = () => {
                                 )}
                             </Paper>
                         </Grid>
-                        <Grid item xs={6}>
-                            <Paper sx={{ background: 'linear-gradient(135deg, #dc2626 0%, #991b1b 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: 3, height: '100%', boxShadow: '0 8px 18px rgba(153, 27, 27, 0.22)' }}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 1 }}>
+                        <Grid item xs={isLandscape ? 3 : 6}>
+                            <Paper sx={{ background: 'linear-gradient(135deg, #dc2626 0%, #991b1b 100%)', color: '#fff', border: '1px solid rgba(255,255,255,0.22)', borderRadius: 2, p: cardPadding, height: '100%', boxShadow: '0 8px 18px rgba(153, 27, 27, 0.22)', position: 'relative', overflow: 'hidden' }}>
+                                {renderCardBackgroundLogo(topLoser?.logo_slug)}
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: isLandscape ? 0.75 : 1.25, borderBottom: '1px solid rgba(255,255,255,0.25)', pb: 0.75, position: 'relative', zIndex: 1 }}>
                                     <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#fff' }}>Stärkster Rückgang</Typography>
                                     <TrendingDownIcon sx={{ color: '#fff' }} />
                                 </Box>
                                 {topLoser && (
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                        <Box sx={{ width: 60, height: 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: isLandscape ? 1 : 2, position: 'relative', zIndex: 1 }}>
+                                        <Box sx={{ width: isLandscape ? 42 : 60, height: isLandscape ? 42 : 60, bgcolor: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1, border: '1px solid #e2e8f0', flexShrink: 0 }}>
                                             <img src={getSmartLogoUrl(topLoser.logo_slug)} crossOrigin="anonymous" alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
                                         </Box>
                                         <Box>
-                                            <Typography variant="h3" sx={{ fontWeight: 900, color: '#fff' }}>{metricPercent(topLoser).text}</Typography>
+                                            <Typography variant="h3" sx={{ fontSize: isLandscape ? '1.6rem' : undefined, fontWeight: 900, color: '#fff' }}>{metricPercent(topLoser).text}</Typography>
                                             <Typography variant="body1" sx={{ fontWeight: 'bold', color: '#fff' }}>{topLoser.name}</Typography>
                                             <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.82)', display: 'block', fontSize: '0.66rem', lineHeight: 1.2 }}>
-                                                Gesamtmarkt · {metricComparisonLabel(topLoser)}
+                                                Gesamtmarkt · {metricComparisonContext(topLoser)}
                                             </Typography>
+                                            {metricAbsoluteComparison(topLoser) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.84)', display: 'block', fontSize: isLandscape ? '0.5rem' : '0.59rem', lineHeight: 1.15 }}>{metricAbsoluteComparison(topLoser)}</Typography>}
                                             {metricYearOverYear(topLoser) && <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)', display: 'block', fontSize: '0.63rem' }}>{metricYearOverYear(topLoser)}</Typography>}
                                             <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.72)', display: 'block', fontSize: '0.61rem', lineHeight: 1.2 }}>
                                                 {trendSelectionLabel}
@@ -739,16 +809,23 @@ const AdminSocialMediaGenerator: React.FC = () => {
                         </Grid>
                     </Grid>
 
-                    <Box sx={{ mt: 'auto' }}>
-                        <Box sx={{ bgcolor: '#eab308', color: '#0f172a', p: 1.5, textAlign: 'center', fontWeight: 'bold', mb: 3, borderRadius: 1 }}>
+                    <Box sx={{ mt: 'auto', position: 'relative', zIndex: 1 }}>
+                        <Box sx={{ bgcolor: '#eab308', color: '#0f172a', p: isLandscape ? 0.5 : 0.8, textAlign: 'center', fontWeight: 'bold', fontSize: isLandscape ? '0.72rem' : '0.9rem', mb: 1, borderRadius: 1 }}>
                             FAZIT: DER AUTOMARKT TRANSFORMIERT SICH!
                         </Box>
 
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pt: 2, borderTop: uiColors.divider }}>
-                            <Typography variant="body2" sx={{ color: uiColors.textMuted }}>Quelle: {activeArchiveFile?.source_name || (country === 'AT' ? 'Statistik Austria' : 'KBA')}</Typography>
-                            <Box component="a" href="https://mobiliti.at" target="_blank" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, textDecoration: 'none', bgcolor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', px: 2, py: 1, borderRadius: 8 }}>
-                                <img src={getSmartLogoUrl('de-mobiliti')} crossOrigin="anonymous" alt="Mobiliti Logo" style={{ height: '24px' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
-                                <Typography variant="body1" sx={{ fontWeight: 800, color: uiColors.text }}>mobiliti.at</Typography>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pt: 0.75, borderTop: uiColors.divider }}>
+                            <Box>
+                                <Typography variant="caption" sx={{ color: uiColors.textMuted, display: 'block' }}>Quelle: {activeArchiveFile?.source_name || (country === 'AT' ? 'Statistik Austria' : 'KBA')}</Typography>
+                                {hasEstimatedComparison && (
+                                    <Typography variant="caption" sx={{ color: uiColors.textMuted, display: 'block', fontSize: '0.55rem', lineHeight: 1.05 }}>
+                                        ca. = aus publizierter Prozentänderung errechnet
+                                    </Typography>
+                                )}
+                            </Box>
+                            <Box component="a" href="https://mobiliti.at" target="_blank" sx={{ display: 'flex', alignItems: 'center', gap: 0.75, textDecoration: 'none', bgcolor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', px: 1.25, py: 0.5, borderRadius: 8 }}>
+                                <img src={getSmartLogoUrl('de-mobiliti')} crossOrigin="anonymous" alt="Mobiliti Logo" style={{ height: isLandscape ? '16px' : '20px' }} onError={(e) => { e.currentTarget.src = EMPTY_PIXEL; }} />
+                                <Typography variant="caption" sx={{ fontWeight: 800, color: uiColors.text }}>mobiliti.at</Typography>
                             </Box>
                         </Box>
                     </Box>

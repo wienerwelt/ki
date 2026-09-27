@@ -29,6 +29,7 @@ import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
 import ShareIcon from '@mui/icons-material/Share';
 import StorefrontIcon from '@mui/icons-material/Storefront'; // ✅ NEU: Icon für Branchenverzeichnis
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import EmailIcon from '@mui/icons-material/Email';
 
 const AdminDashboardPage: React.FC = () => {
     return (
@@ -246,9 +247,18 @@ const AdminDashboardPage: React.FC = () => {
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
                             <MonitorIcon sx={{ fontSize: 60, mb: 2 }} color="action" />
-                            <Typography variant="h6" component="h2" gutterBottom>Aktivitätsmonitor</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>System- und Benutzeraktivitäten überwachen.</Typography>
+                            <Typography variant="h6" component="h2" gutterBottom>System & Aktivität</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Systemgesundheit, Speicher und Sicherheitsaktivitäten überwachen.</Typography>
                             <Button component={Link} to="/admin/monitor" variant="contained" color="secondary">Anzeigen</Button>
+                        </Paper>
+                    </Grid>
+
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <EmailIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
+                            <Typography variant="h6" component="h2" gutterBottom>E-Mail & Reports</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Mandanten, Empfänger, Versandarten und Zustellstatus zentral prüfen.</Typography>
+                            <Button component={Link} to="/admin/email-reports" variant="contained" color="primary">Öffnen</Button>
                         </Paper>
                     </Grid>
                     

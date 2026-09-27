@@ -62,18 +62,31 @@ exports.getArchivedSurveysForUser = async (req, res) => {
         await autoCloseExpiredSurveys(); // Auch hier kurz aufräumen
         
         const query = `
-            SELECT s.id, s.title, s.description, s.status,
-                   (SELECT MAX(sr.created_at) FROM survey_responses sr WHERE sr.survey_id = s.id AND sr.user_id = $1) as completed_at
+            SELECT
+                s.id,
+                s.title,
+                s.description,
+                s.status,
+                user_response.completed_at,
+                (user_response.completed_at IS NOT NULL) AS participated,
+                COALESCE(
+                    user_response.completed_at,
+                    CASE
+                        WHEN s.end_date IS NOT NULL AND s.end_date <= NOW() THEN s.end_date
+                        ELSE s.updated_at
+                    END,
+                    s.end_date,
+                    s.created_at
+                ) AS archive_date
             FROM surveys s
-            WHERE s.business_partner_id = $2 AND (
-                -- Bedingung 1: User hat teilgenommen
-                EXISTS (
-                    SELECT 1 FROM survey_responses sr WHERE sr.survey_id = s.id AND sr.user_id = $1
-                )
-                -- ODER Bedingung 2: Umfrage ist offiziell beendet
-                OR s.status = 'closed'
-            )
-            ORDER BY COALESCE(completed_at, s.end_date, s.created_at) DESC;
+            LEFT JOIN LATERAL (
+                SELECT MAX(sr.created_at) AS completed_at
+                FROM survey_responses sr
+                WHERE sr.survey_id = s.id AND sr.user_id = $1
+            ) user_response ON TRUE
+            WHERE s.business_partner_id = $2
+              AND (user_response.completed_at IS NOT NULL OR s.status = 'closed')
+            ORDER BY archive_date DESC;
         `;
         const { rows } = await db.query(query, [userId, businessPartnerId]);
         res.json(rows);

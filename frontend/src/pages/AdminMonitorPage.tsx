@@ -4,7 +4,7 @@ import {
     TableContainer, TableHead, TableRow, TextField, Button, Grid, Pagination, Chip,
     Dialog, DialogTitle, DialogContent, DialogActions, IconButton, TableSortLabel,
     Snackbar, Tooltip, Select, MenuItem, FormControl, InputLabel, Card, CardContent, Divider,
-    Avatar, Link
+    Avatar, Link, Stack
 } from '@mui/material';
 import { AlertProps } from '@mui/material/Alert';
 import CloseIcon from '@mui/icons-material/Close';
@@ -21,9 +21,11 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
+import { Link as RouterLink } from 'react-router-dom';
 
 import apiClient from '../apiClient';
 import { resolveAssetUrl } from '../utils/assetUrl';
+import { useAuth } from '../context/AuthContext';
 
 // --- Interfaces & Helper Functions ---
 interface Log {
@@ -181,7 +183,52 @@ const COMMON_ACTION_TYPES = [
     'USER_DELETED', 'PASSWORD_CHANGED', 'DATA_EXPORT', 'SETTINGS_CHANGED', 'MONTHLY_REPORT_PREVIEW'
 ];
 
-const AdminMonitorPage: React.FC = () => {
+const EMAIL_AREAS = [
+    {
+        title: 'Konto & Einwilligung',
+        description: 'Transaktionale Nachrichten für einen sicheren und bestätigten Zugang.',
+        items: ['E-Mail-Verifizierung', 'Passwort zurücksetzen', 'Newsletter-Double-Opt-in', 'Demo-Einladung'],
+        links: [{ label: 'Benutzer verwalten', path: '/admin/users' }, { label: 'Demo-Zugänge', path: '/admin/demo-access' }],
+    },
+    {
+        title: 'Content & Community',
+        description: 'Von Nutzern ausgelöste Hinweise und geteilte Inhalte.',
+        items: ['Neue Fördertreffer', 'Antwort auf Community-Beitrag', 'Artikel teilen', 'Termin teilen'],
+        links: [{ label: 'Benutzer-Empfang', path: '/admin/users' }, { label: 'Cronjobs', path: '/admin/cronjobs' }],
+    },
+    {
+        title: 'Briefings & Newsletter',
+        description: 'Redaktioneller und automatischer Versand an Mitglieder oder eine Exportadresse.',
+        items: ['Branchenbriefing', 'Briefing-Test', 'Briefing-Export', 'Mitglieder-Newsletter', 'Newsletter-Test', 'Newsletter-Export'],
+        links: [{ label: 'Briefing Redaktion', path: '/admin/briefing-editorial' }, { label: 'Mandanten-Einstellungen', path: '/admin/business-partners' }],
+    },
+    {
+        title: 'Sales & Account-Radar',
+        description: 'Periodische Sales-Zusammenfassungen inklusive optionaler Management-Auswertung.',
+        items: ['Account-Radar-Test', 'Periodischer Account-Radar'],
+        links: [{ label: 'Account-Radar öffnen', path: '/radar' }],
+    },
+    {
+        title: 'Leads & Anfragen',
+        description: 'Bestätigung an Interessenten und interne Weiterleitung neuer Anfragen.',
+        items: ['Interne Kontaktbenachrichtigung', 'Eingangsbestätigung an Absender'],
+        links: [{ label: 'Account-Radar Anfragen', path: '/admin/sales-leads' }],
+    },
+    {
+        title: 'Reports & System',
+        description: 'Verwaltungsreports sowie betriebliche Warnungen und Entwarnungen.',
+        items: ['Täglicher Admin-KPI-Report', 'Monatliche Mandantenstatistik', 'Redis-Ausfall', 'Dienstausfall', 'System-Entwarnung'],
+        links: [{ label: 'Cronjobs', path: '/admin/cronjobs' }, { label: 'Systemmonitor', path: '/admin/monitor' }],
+    },
+] as const;
+
+interface AdminMonitorPageProps { mode?: 'system' | 'email'; }
+
+const AdminMonitorPage: React.FC<AdminMonitorPageProps> = ({ mode = 'system' }) => {
+    const { user } = useAuth();
+    const [businessPartners, setBusinessPartners] = useState<Array<{ id: string; name: string; is_active?: boolean }>>([]);
+    const [selectedBusinessPartnerId, setSelectedBusinessPartnerId] = useState(String(user?.business_partner_id || ''));
+    const [partnerLoading, setPartnerLoading] = useState(mode === 'email');
     // Zustand für die Logs
     const [logs, setLogs] = useState<Log[]>([]);
     const [loading, setLoading] = useState(true);
@@ -279,6 +326,26 @@ const AdminMonitorPage: React.FC = () => {
     };
 
     useEffect(() => {
+        if (mode !== 'email') return;
+        let active = true;
+        setPartnerLoading(true);
+        apiClient.get('/api/admin/business-partners').then((response) => {
+            if (!active) return;
+            const partners = Array.isArray(response.data) ? response.data : [];
+            setBusinessPartners(partners);
+            setSelectedBusinessPartnerId((current) => partners.some((partner: any) => partner.id === current)
+                ? current
+                : String(partners.find((partner: any) => partner.is_active)?.id || partners[0]?.id || ''));
+        }).catch(() => {
+            if (active) setMonthlyReportError('Mandanten konnten nicht geladen werden.');
+        }).finally(() => {
+            if (active) setPartnerLoading(false);
+        });
+        return () => { active = false; };
+    }, [mode]);
+
+    useEffect(() => {
+        if (mode !== 'system') return;
         const fetchHealth = async () => {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 10000);
@@ -310,9 +377,10 @@ const AdminMonitorPage: React.FC = () => {
         fetchHealth();
         const interval = setInterval(fetchHealth, 30000);
         return () => clearInterval(interval);
-    }, []);
+    }, [mode]);
 
     const fetchLogs = useCallback(async (currentPage = 1) => {
+        if (mode !== 'system') return;
         setLoading(true);
         setError(null);
         try {
@@ -341,19 +409,21 @@ const AdminMonitorPage: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    }, [filterUsername, filterActionType, filterStartDate, filterEndDate, order, orderBy]);
+    }, [filterUsername, filterActionType, filterStartDate, filterEndDate, order, orderBy, mode]);
 
     useEffect(() => {
+        if (mode !== 'system') return;
         fetchLogs(1);
         const today = new Date();
         today.setDate(today.getDate() - 30);
         setDeleteUntilDate(today.toISOString().split('T')[0]);
-    }, [fetchLogs]);
+    }, [fetchLogs, mode]);
 
     const fetchMonthlyReportData = useCallback(async () => {
+        if (mode !== 'email' || !selectedBusinessPartnerId) return;
         setMonthlyReportLoading(true);
         try {
-            const response = await apiClient.get('/api/admin/monitor/monthly-report-deliveries');
+            const response = await apiClient.get(`/api/admin/monitor/monthly-report-deliveries?partnerId=${encodeURIComponent(selectedBusinessPartnerId)}`);
             setMonthlyReportData(response.data);
             setMonthlyReportError(null);
         } catch (err: any) {
@@ -361,11 +431,12 @@ const AdminMonitorPage: React.FC = () => {
         } finally {
             setMonthlyReportLoading(false);
         }
-    }, []);
+    }, [mode, selectedBusinessPartnerId]);
 
     useEffect(() => {
+        if (mode !== 'email' || !selectedBusinessPartnerId) return;
         fetchMonthlyReportData();
-    }, [fetchMonthlyReportData]);
+    }, [fetchMonthlyReportData, mode, selectedBusinessPartnerId]);
 
     const handlePreviewMonthlyReport = async () => {
         setMonthlyPreviewOpen(true);
@@ -373,7 +444,7 @@ const AdminMonitorPage: React.FC = () => {
         setMonthlyPreviewError(null);
         setMonthlyPreview(null);
         try {
-            const response = await apiClient.post<MonthlyReportPreview>('/api/admin/monitor/monthly-report-preview');
+            const response = await apiClient.post<MonthlyReportPreview>('/api/admin/monitor/monthly-report-preview', { partnerId: selectedBusinessPartnerId });
             const payload = response.data as MonthlyReportPreview | { message?: string } | null;
             if (!response.res.ok) {
                 throw new Error(payload && 'message' in payload && payload.message
@@ -960,15 +1031,84 @@ const AdminMonitorPage: React.FC = () => {
         );
     };
 
+    if (mode === 'email') {
+        const selectedPartner = businessPartners.find((partner) => partner.id === selectedBusinessPartnerId);
+        const mailTypeCount = EMAIL_AREAS.reduce((sum, area) => sum + area.items.length, 0);
+        return (
+            <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 2, mb: 3 }}>
+                    <Box>
+                        <Typography variant="h4" component="h1" fontWeight="bold">E-Mail & Reports</Typography>
+                        <Typography color="text.secondary">Zentrale Übersicht über {mailTypeCount} Versandarten, Empfänger, Einstellungen und Zustellstatus.</Typography>
+                    </Box>
+                    <Chip color="primary" variant="outlined" label="Mandantenbezogene Ansicht" />
+                </Box>
+
+                <Paper variant="outlined" sx={{ p: { xs: 2, sm: 2.5 }, mb: 3, borderRadius: 3 }}>
+                    <Grid container spacing={2} alignItems="center">
+                        <Grid item xs={12} md={7}>
+                            <TextField
+                                select
+                                fullWidth
+                                label="Mandant"
+                                value={selectedBusinessPartnerId}
+                                disabled={partnerLoading}
+                                onChange={(event) => {
+                                    setSelectedBusinessPartnerId(event.target.value);
+                                    setMonthlyReportData(null);
+                                    setMonthlyReportError(null);
+                                }}
+                            >
+                                {businessPartners.map((partner) => <MenuItem key={partner.id} value={partner.id}>{partner.name}{partner.is_active === false ? ' · inaktiv' : ''}</MenuItem>)}
+                            </TextField>
+                        </Grid>
+                        <Grid item xs={12} md={5}>
+                            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent={{ md: 'flex-end' }}>
+                                <Button component={RouterLink} to={`/admin/users/${selectedBusinessPartnerId}`} variant="outlined" disabled={!selectedBusinessPartnerId}>Empfänger verwalten</Button>
+                                <Button component={RouterLink} to="/admin/business-partners" variant="outlined">Mandant konfigurieren</Button>
+                            </Stack>
+                        </Grid>
+                    </Grid>
+                    <Alert severity="info" sx={{ mt: 2 }}>Ausgewählt: <strong>{selectedPartner?.name || '—'}</strong>. Systemwarnungen bleiben global und werden unter „System & Aktivität“ verwaltet.</Alert>
+                </Paper>
+
+                <Typography variant="h5" fontWeight="bold" sx={{ mb: 2 }}>Versandlandkarte</Typography>
+                <Grid container spacing={2} sx={{ mb: 4 }}>
+                    {EMAIL_AREAS.map((area) => (
+                        <Grid item xs={12} md={6} lg={4} key={area.title}>
+                            <Paper variant="outlined" sx={{ p: 2.25, height: '100%', borderRadius: 3, display: 'flex', flexDirection: 'column' }}>
+                                <Typography variant="h6" fontWeight="bold">{area.title}</Typography>
+                                <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>{area.description}</Typography>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mb: 2 }}>
+                                    {area.items.map((item) => <Chip key={item} label={item} size="small" variant="outlined" />)}
+                                </Box>
+                                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 'auto' }}>
+                                    {area.links.map((link) => {
+                                        const target = link.path === '/admin/users'
+                                            ? `/admin/users/${selectedBusinessPartnerId}`
+                                            : link.path;
+                                        return <Button key={link.path + link.label} component={RouterLink} to={target} size="small" disabled={link.path === '/admin/users' && !selectedBusinessPartnerId}>{link.label}</Button>;
+                                    })}
+                                </Stack>
+                            </Paper>
+                        </Grid>
+                    ))}
+                </Grid>
+
+                {selectedBusinessPartnerId ? renderMonthlyReportMonitor() : <Alert severity="info">Bitte einen Mandanten auswählen.</Alert>}
+            </Container>
+        );
+    }
+
     return (
         <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
             <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 'bold' }}>
-                Admin Aktivitätsmonitor
+                System & Aktivität
             </Typography>
 
-            {renderHealthWidget()}
+            <Alert severity="info" sx={{ mb: 3 }}>Globale Systemgesundheit, Speicher und Sicherheitsprotokolle. Mandantenbezogene Newsletter und Reports finden Sie unter „E-Mail & Reports“.</Alert>
 
-            {renderMonthlyReportMonitor()}
+            {renderHealthWidget()}
 
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, mt: 4 }}>
                 <Typography variant="h5" sx={{ fontWeight: 'bold' }}>Sicherheitsprotokolle</Typography>
