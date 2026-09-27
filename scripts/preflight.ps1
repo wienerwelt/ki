@@ -195,8 +195,21 @@ try {
                 throw "Node 24 LTS oder die 512-MiB-Heap-Grenze ist in $runtimeService nicht aktiv."
             }
         }
-        & docker compose exec -T worker-scrape npm run smoke:container-runtime
-        Assert-LastExitCode 'Init-/Chromium-Test im lokalen Scraping-Container fehlgeschlagen.'
+        $containerRuntimeVerified = $false
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            & docker compose exec -T worker-scrape npm run smoke:container-runtime
+            if ($LASTEXITCODE -eq 0) {
+                $containerRuntimeVerified = $true
+                break
+            }
+            if ($attempt -lt 3) {
+                Write-Warning "Init-/Chromium-Test ist in Versuch $attempt fehlgeschlagen; erneuter Startcheck folgt."
+                Start-Sleep -Seconds 5
+            }
+        }
+        if (-not $containerRuntimeVerified) {
+            throw 'Init-/Chromium-Test im lokalen Scraping-Container ist nach drei Versuchen fehlgeschlagen.'
+        }
         $health = $null
         for ($attempt = 1; $attempt -le 18; $attempt++) {
             try {
