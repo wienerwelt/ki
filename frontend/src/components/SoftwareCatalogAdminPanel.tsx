@@ -50,7 +50,7 @@ const PRICING_MODEL_OPTIONS = [
 
 interface BusinessPartner { id: string; name: string; }
 interface ProviderOption { id: string; name: string; logo_url?: string; is_public?: boolean; }
-interface CategoryOption { id: string; slug: string; name: string; }
+interface CategoryOption { id: string; slug: string; name: string; is_active?: boolean; }
 interface RegionOption { id: string; name: string; code: string; }
 interface LogoLibraryItem {
     url: string;
@@ -638,9 +638,20 @@ const SoftwareCatalogAdminPanel: React.FC<SoftwareCatalogAdminPanelProps> = ({
                                     value={form.category_ids}
                                     label="Kategorien *"
                                     onChange={(event) => setForm((current) => ({ ...current, category_ids: typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value }))}
-                                    renderValue={(selected) => selected.map((id) => categoryNames.get(id) || id).join(', ')}
+                                    renderValue={(selected) => selected.map((id) => {
+                                        const category = categories.find((item) => item.id === id);
+                                        return `${categoryNames.get(id) || id}${category?.is_active === false ? ' (inaktiv)' : ''}`;
+                                    }).join(', ')}
                                 >
-                                    {categories.map((category) => <MenuItem key={category.id} value={category.id}>{category.name}</MenuItem>)}
+                                    {categories.map((category) => (
+                                        <MenuItem
+                                            key={category.id}
+                                            value={category.id}
+                                            disabled={category.is_active === false && !form.category_ids.includes(category.id)}
+                                        >
+                                            {category.name}{category.is_active === false ? ' (inaktiv)' : ''}
+                                        </MenuItem>
+                                    ))}
                                 </Select>
                             </FormControl>
                         </Grid>

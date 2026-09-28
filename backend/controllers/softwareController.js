@@ -177,19 +177,32 @@ const assertProviderForTenant = async (client, providerId, businessPartnerId) =>
     return result.rows[0];
 };
 
-const assertCategoriesExist = async (client, categoryIds) => {
+const assertCategoriesSelectable = async (client, categoryIds, softwareToolId = null) => {
     if (categoryIds.length === 0) {
         const error = new Error('Bitte mindestens eine Software-Kategorie auswählen.');
         error.statusCode = 400;
         throw error;
     }
 
-    const result = await client.query(
-        'SELECT id FROM software_categories WHERE id = ANY($1::uuid[])',
-        [categoryIds]
-    );
+    const result = await client.query(`
+        SELECT sc.id
+        FROM software_categories sc
+        WHERE sc.id = ANY($1::uuid[])
+          AND (
+              sc.is_active = TRUE
+              OR (
+                  $2::uuid IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM software_tool_categories stc
+                      WHERE stc.software_tool_id = $2
+                        AND stc.category_id = sc.id
+                  )
+              )
+          )
+    `, [categoryIds, softwareToolId]);
     if (result.rows.length !== categoryIds.length) {
-        const error = new Error('Mindestens eine Software-Kategorie ist ungültig.');
+        const error = new Error('Mindestens eine Software-Kategorie ist ungültig oder nicht mehr aktiv.');
         error.statusCode = 400;
         throw error;
     }
@@ -364,7 +377,7 @@ exports.getManagedOptions = async (req, res) => {
                 WHERE business_partner_id = $1 AND status <> 'archived'
                 ORDER BY name
             `, [businessPartnerId]),
-            db.query('SELECT id, slug, name FROM software_categories ORDER BY sort_order, name'),
+            db.query('SELECT id, slug, name, is_active FROM software_categories ORDER BY is_active DESC, sort_order, name'),
             db.query('SELECT id, name, UPPER(code) AS code FROM regions WHERE code IS NOT NULL ORDER BY name'),
         ]);
 
@@ -702,7 +715,7 @@ exports.createSoftware = async (req, res) => {
             error.statusCode = 400;
             throw error;
         }
-        await assertCategoriesExist(client, payload.category_ids);
+        await assertCategoriesSelectable(client, payload.category_ids);
         await assertCountriesExist(client, payload.country_codes);
 
         const inserted = await client.query(`
@@ -781,7 +794,7 @@ exports.updateSoftware = async (req, res) => {
             error.statusCode = 400;
             throw error;
         }
-        await assertCategoriesExist(client, payload.category_ids);
+        await assertCategoriesSelectable(client, payload.category_ids, req.params.id);
         await assertCountriesExist(client, payload.country_codes);
 
         await client.query(`
