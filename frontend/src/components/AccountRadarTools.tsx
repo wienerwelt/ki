@@ -93,6 +93,7 @@ interface AccountRadarToolsProps {
   openTriggerKeyword?: string | null;
   onPanelOpened?: () => void;
   entitlements?: SalesEntitlements | null;
+  showLabel?: boolean;
 }
 
 export interface SalesEntitlements {
@@ -173,6 +174,7 @@ const AccountRadarTools: React.FC<AccountRadarToolsProps> = ({
   openTriggerKeyword = null,
   onPanelOpened,
   entitlements: entitlementProp = null,
+  showLabel = false,
 }) => {
   const hasNoAccounts = accountCount === 0;
   const [importOpen, setImportOpen] = useState(false);
@@ -377,18 +379,37 @@ const AccountRadarTools: React.FC<AccountRadarToolsProps> = ({
   return (
     <>
       <Tooltip title={hasNoAccounts ? 'Einstellungen öffnen – zuerst einen Account anlegen' : 'Radar-Werkzeuge und Einstellungen'}>
-        <IconButton
-          onClick={(event) => setToolsAnchor(event.currentTarget)}
-          aria-label="Radar-Werkzeuge öffnen"
-          aria-controls={toolsAnchor ? 'account-radar-tools-menu' : undefined}
-          aria-haspopup="true"
-          aria-expanded={toolsAnchor ? 'true' : undefined}
-          sx={{ width: 42, height: 42, border: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}
-        >
-          <Badge color="error" badgeContent={hasNoAccounts ? '!' : 0} overlap="circular">
-            <SettingsOutlinedIcon />
-          </Badge>
-        </IconButton>
+        {showLabel ? (
+          <Button
+            variant="outlined"
+            onClick={(event) => setToolsAnchor(event.currentTarget)}
+            aria-label="Radar-Einstellungen öffnen"
+            aria-controls={toolsAnchor ? 'account-radar-tools-menu' : undefined}
+            aria-haspopup="true"
+            aria-expanded={toolsAnchor ? 'true' : undefined}
+            startIcon={(
+              <Badge color="error" badgeContent={hasNoAccounts ? '!' : 0} overlap="circular">
+                <SettingsOutlinedIcon />
+              </Badge>
+            )}
+            sx={{ minHeight: 42, whiteSpace: 'nowrap', bgcolor: 'background.paper', fontWeight: 850 }}
+          >
+            Einstellungen
+          </Button>
+        ) : (
+          <IconButton
+            onClick={(event) => setToolsAnchor(event.currentTarget)}
+            aria-label="Radar-Einstellungen öffnen"
+            aria-controls={toolsAnchor ? 'account-radar-tools-menu' : undefined}
+            aria-haspopup="true"
+            aria-expanded={toolsAnchor ? 'true' : undefined}
+            sx={{ width: 42, height: 42, border: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}
+          >
+            <Badge color="error" badgeContent={hasNoAccounts ? '!' : 0} overlap="circular">
+              <SettingsOutlinedIcon />
+            </Badge>
+          </IconButton>
+        )}
       </Tooltip>
       <Menu
         id="account-radar-tools-menu"

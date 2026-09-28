@@ -20,6 +20,7 @@ import {
   InputAdornment,
   LinearProgress,
   Link,
+  Menu,
   MenuItem,
   Paper,
   Slider,
@@ -62,6 +63,11 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import SearchIcon from '@mui/icons-material/Search';
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
+import FilterAltOutlinedIcon from '@mui/icons-material/FilterAltOutlined';
+import ViewListOutlinedIcon from '@mui/icons-material/ViewListOutlined';
+import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
+import TimelineOutlinedIcon from '@mui/icons-material/TimelineOutlined';
 import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 import VideocamOutlinedIcon from '@mui/icons-material/VideocamOutlined';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -665,6 +671,8 @@ const AccountRadarPage: React.FC = () => {
   const [marketSignalNewAccountWebsite, setMarketSignalNewAccountWebsite] = useState('');
   const [marketSignalBusy, setMarketSignalBusy] = useState(false);
   const [articleHeatmapOpen, setArticleHeatmapOpen] = useState(false);
+  const [worklistFiltersOpen, setWorklistFiltersOpen] = useState(false);
+  const [mobileNavAnchor, setMobileNavAnchor] = useState<HTMLElement | null>(null);
   const resultsSectionRef = useRef<HTMLDivElement | null>(null);
   const marketSignalsSectionRef = useRef<HTMLDivElement | null>(null);
   const pipelineSectionRef = useRef<HTMLDivElement | null>(null);
@@ -717,6 +725,13 @@ const AccountRadarPage: React.FC = () => {
     next.set('view', nextView);
     setSearchParams(next, { replace: true });
     window.setTimeout(() => resultsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  }, [searchParams, setSearchParams]);
+
+  const openRadarSettings = useCallback(() => {
+    const next = new URLSearchParams(searchParams);
+    next.set('panel', 'settings');
+    setSearchParams(next);
+    setMobileNavAnchor(null);
   }, [searchParams, setSearchParams]);
 
   const requestedToolsPanel = canConfigureRadar && ['import', 'settings', 'triggers', 'sources'].includes(searchParams.get('panel') || '')
@@ -2125,6 +2140,15 @@ const AccountRadarPage: React.FC = () => {
   const todayDateKey = toLocalDateKey(new Date(clockNow));
   const contactsToday = calendarEntries.filter((entry) => entry.dateKey === todayDateKey && entry.calendarStatus !== 'done').length;
   const overdueContacts = calendarEntries.filter((entry) => entry.calendarStatus === 'overdue').length;
+  const activePipelineCount = funnelStageCounts.contacted + funnelStageCounts.meeting + funnelStageCounts.offer;
+  const worklistFilterCount = [days !== 30, assigneeFilter !== 'all', campaignFilter !== 'all', salesStageFilter !== 'all'].filter(Boolean).length;
+  const primaryNavigationItems: Array<{ key: RadarPrimarySection; label: string; icon: React.ReactNode; count: number | null; premium?: boolean }> = [
+    { key: 'today', label: 'Aufgaben', icon: <ViewListOutlinedIcon />, count: tabCounts.today },
+    { key: 'triggers', label: 'Signale', icon: triggerFeatureIncluded ? <AutoAwesomeOutlinedIcon /> : <LockOutlinedIcon />, count: triggerFeatureActive ? marketSignalCounts.active : null, premium: !triggerFeatureIncluded },
+    { key: 'accounts', label: 'Accounts', icon: <BusinessCenterIcon />, count: stats.accounts },
+    { key: 'pipeline', label: 'Pipeline', icon: <TimelineOutlinedIcon />, count: activePipelineCount },
+    { key: 'calendar', label: 'Kalender', icon: <CalendarMonthOutlinedIcon />, count: stats.planned },
+  ];
   const compactActionButtonSx = {
     minHeight: 42,
     minWidth: 0,
@@ -2137,18 +2161,18 @@ const AccountRadarPage: React.FC = () => {
 
   const worklistSection = (
     <Box ref={resultsSectionRef} sx={{ mt: 2.2, scrollMarginTop: { xs: 138, md: 92 } }}>
-      <Paper elevation={0} sx={{ p: { xs: 1, sm: 1.2 }, borderRadius: 3.5, border: '1px solid', borderColor: 'divider', bgcolor: alpha(theme.palette.background.paper, 0.97), backdropFilter: 'blur(12px)' }}>
-        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.1} alignItems={{ lg: 'center' }}>
-          <Box sx={{ minWidth: { lg: 165 } }}>
-            <Typography sx={{ fontWeight: 950, lineHeight: 1.2 }}>{view === 'accounts' ? 'Accounts' : 'Arbeitsliste'}</Typography>
+      <Paper elevation={0} sx={{ p: { xs: 1.1, sm: 1.3 }, borderRadius: 3.5, border: '1px solid', borderColor: 'divider', bgcolor: alpha(theme.palette.background.paper, 0.97), backdropFilter: 'blur(12px)' }}>
+        <Stack direction={{ xs: 'column', xl: 'row' }} spacing={1.1} alignItems={{ xl: 'center' }}>
+          <Box sx={{ minWidth: { xl: 150 } }}>
+            <Typography sx={{ fontWeight: 950, lineHeight: 1.2 }}>{view === 'accounts' ? 'Accounts' : 'Aufgaben'}</Typography>
             <Typography variant="caption" color="text.secondary">
-              {view === 'accounts' ? `${cockpitAccounts.length} im Bestand` : 'Signale prüfen → nächste Schritte → Sales-Pipeline'}
+              {view === 'accounts' ? `${cockpitAccounts.length} im Bestand` : 'Prüfen → entscheiden → Pipeline'}
             </Typography>
           </Box>
           {view !== 'accounts' && (
-            <Stack direction="row" spacing={0.6} sx={{ overflowX: 'auto', pb: { xs: 0.2, lg: 0 } }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(4, auto)' }, gap: 0.6 }}>
               {([
-                ['today', `Offen ${tabCounts.today}`, <RadarIcon fontSize="small" />],
+                ['today', `Offen ${tabCounts.today}`, <ViewListOutlinedIcon fontSize="small" />],
                 ['planned', `Geplant ${tabCounts.planned}`, <ScheduleIcon fontSize="small" />],
                 ['done', `Erledigt ${tabCounts.done}`, <DoneAllIcon fontSize="small" />],
                 ['ignored', `Ausgeblendet ${tabCounts.ignored}`, <VisibilityIcon fontSize="small" />],
@@ -2161,66 +2185,92 @@ const AccountRadarPage: React.FC = () => {
                     variant={view === value ? 'contained' : 'outlined'}
                     startIcon={icon}
                     onClick={() => selectRadarView(value)}
-                    sx={{ ...compactActionButtonSx, flexShrink: 0, color: view === value ? theme.palette.getContrastText(tone) : tone, borderColor: alpha(tone, 0.42), bgcolor: view === value ? tone : alpha(tone, 0.055), '&:hover': { borderColor: tone, bgcolor: view === value ? tone : alpha(tone, 0.12) } }}
+                    sx={{ ...compactActionButtonSx, width: { xs: '100%', sm: 'auto' }, color: view === value ? theme.palette.getContrastText(tone) : tone, borderColor: alpha(tone, 0.42), bgcolor: view === value ? tone : alpha(tone, 0.055), '&:hover': { borderColor: tone, bgcolor: view === value ? tone : alpha(tone, 0.12) } }}
                   >
                     {label}
                   </Button>
                 );
               })}
-            </Stack>
+            </Box>
           )}
           <Box sx={{ flexGrow: 1 }} />
-          <TextField
-            size="small"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={view === 'accounts' ? 'Account suchen …' : 'Signal oder Account suchen …'}
-            InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
-            sx={{ minWidth: { lg: 270 }, '& .MuiOutlinedInput-root': { minHeight: 42, bgcolor: 'background.paper' } }}
-          />
-          {view !== 'accounts' && (
-            <>
-              <TextField
-                select
-                size="small"
-                label="Zeitraum"
-                value={days}
-                onChange={(event) => setDays(Number(event.target.value))}
-                sx={{ minWidth: { xs: '100%', sm: 128 }, '& .MuiOutlinedInput-root': { minHeight: 42, bgcolor: 'background.paper' } }}
-              >
+          <Stack direction="row" spacing={0.7} alignItems="center" sx={{ minWidth: 0, width: { xs: '100%', xl: 'auto' } }}>
+            <TextField
+              size="small"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={view === 'accounts' ? 'Account suchen …' : 'Signal oder Account suchen …'}
+              InputProps={{
+                startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>,
+                endAdornment: search ? <InputAdornment position="end"><IconButton size="small" onClick={() => setSearch('')} aria-label="Suche löschen"><CloseIcon fontSize="small" /></IconButton></InputAdornment> : undefined,
+              }}
+              sx={{ flex: 1, minWidth: { xl: 260 }, '& .MuiOutlinedInput-root': { minHeight: 42, bgcolor: 'background.paper' } }}
+            />
+            {view !== 'accounts' && (
+              <>
+                <Button
+                  size="small"
+                  variant={worklistFiltersOpen || worklistFilterCount > 0 ? 'contained' : 'outlined'}
+                  startIcon={<FilterAltOutlinedIcon />}
+                  onClick={() => setWorklistFiltersOpen((current) => !current)}
+                  aria-expanded={worklistFiltersOpen}
+                  sx={{ ...compactActionButtonSx, flexShrink: 0 }}
+                >
+                  Filter{worklistFilterCount > 0 ? ` ${worklistFilterCount}` : ''}
+                </Button>
+                <Button
+                  size="small"
+                  variant={articleHeatmapOpen ? 'contained' : 'outlined'}
+                  startIcon={articleHeatmapOpen ? <ViewListOutlinedIcon /> : <CalendarMonthOutlinedIcon />}
+                  onClick={() => setArticleHeatmapOpen((current) => !current)}
+                  aria-pressed={articleHeatmapOpen}
+                  sx={{ ...compactActionButtonSx, flexShrink: 0 }}
+                >
+                  {articleHeatmapOpen ? 'Liste' : 'Heatmap'}
+                </Button>
+              </>
+            )}
+          </Stack>
+        </Stack>
+
+        {view !== 'accounts' && (
+          <Collapse in={worklistFiltersOpen} timeout="auto" unmountOnExit>
+            <Divider sx={{ my: 1.2 }} />
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' }, gap: 1 }}>
+              <TextField select size="small" label="Zeitraum" value={days} onChange={(event) => setDays(Number(event.target.value))}>
                 <MenuItem value={7}>7 Tage</MenuItem>
                 <MenuItem value={30}>30 Tage</MenuItem>
                 <MenuItem value={90}>90 Tage</MenuItem>
                 <MenuItem value={365}>1 Jahr</MenuItem>
               </TextField>
-              <TextField
-                select
-                size="small"
-                label="Verantwortlich"
-                value={assigneeFilter}
-                onChange={(event) => setAssigneeFilter(event.target.value)}
-                sx={{ minWidth: { xs: '100%', sm: 190 }, '& .MuiOutlinedInput-root': { minHeight: 42, bgcolor: 'background.paper' } }}
-              >
+              <TextField select size="small" label="Verantwortlich" value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}>
                 <MenuItem value="all">Alle im Team</MenuItem>
                 {user?.id && <MenuItem value={user.id}>Meine Aufgaben</MenuItem>}
                 <MenuItem value="unassigned">Nicht zugewiesen</MenuItem>
-                {teamMembers.filter((member) => member.id !== user?.id).map((member) => (
-                  <MenuItem key={member.id} value={member.id}>{member.name}</MenuItem>
-                ))}
+                {teamMembers.filter((member) => member.id !== user?.id).map((member) => <MenuItem key={member.id} value={member.id}>{member.name}</MenuItem>)}
               </TextField>
-              <Button
+              <TextField
+                select
                 size="small"
-                variant={articleHeatmapOpen ? 'contained' : 'outlined'}
-                startIcon={<CalendarMonthOutlinedIcon />}
-                onClick={() => setArticleHeatmapOpen((current) => !current)}
-                aria-expanded={articleHeatmapOpen}
-                sx={{ ...compactActionButtonSx, flexShrink: 0 }}
+                label="Kampagne"
+                value={campaignFilter}
+                onChange={(event) => { setCampaignFilter(event.target.value); setSelectedAccountId(null); }}
               >
-                Artikel-Heatmap
+                <MenuItem value="all">Alle Kampagnen</MenuItem>
+                {campaigns.filter((campaign) => campaign.status !== 'archived').map((campaign) => <MenuItem key={campaign.id} value={campaign.id}>{campaign.name}</MenuItem>)}
+              </TextField>
+              <TextField select size="small" label="Pipeline-Phase" value={salesStageFilter} onChange={(event) => setSalesStageFilter(event.target.value as SalesStage | 'all')}>
+                <MenuItem value="all">Alle Phasen</MenuItem>
+                {(Object.keys(salesStageLabels) as SalesStage[]).map((stage) => <MenuItem key={stage} value={stage}>{salesStageLabels[stage]}</MenuItem>)}
+              </TextField>
+            </Box>
+            <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end' }}>
+              <Button size="small" onClick={() => { setDays(30); setAssigneeFilter('all'); setCampaignFilter('all'); setSalesStageFilter('all'); }} disabled={worklistFilterCount === 0}>
+                Filter zurücksetzen
               </Button>
-            </>
-          )}
-        </Stack>
+            </Box>
+          </Collapse>
+        )}
       </Paper>
 
       {view !== 'accounts' && (
@@ -2228,7 +2278,7 @@ const AccountRadarPage: React.FC = () => {
           <Paper variant="outlined" sx={{ mt: 1, p: 1.4, borderRadius: 3, bgcolor: alpha(primary, 0.025) }}>
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" spacing={0.8} sx={{ mb: 1 }}>
               <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Artikelaktivität · letzte 12 Wochen</Typography>
+                <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Artikelaktivität · {days >= 90 ? 'letzte 12 Wochen' : `letzte ${days} Tage`}</Typography>
                 <Typography variant="caption" color="text.secondary">Berücksichtigt Account-, Kampagnen-, Team- und Suchfilter. Dunklere Felder bedeuten mehr veröffentlichte Artikel.</Typography>
               </Box>
               <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>{scopedSignals.length} Artikel im geladenen Bestand</Typography>
@@ -2344,6 +2394,7 @@ const AccountRadarPage: React.FC = () => {
               openTriggerKeyword={requestedTriggerKeyword}
               onPanelOpened={clearRequestedToolsPanel}
               entitlements={entitlements}
+              showLabel={!isMobile}
             />
           )}
         </Stack>
@@ -2411,23 +2462,15 @@ const AccountRadarPage: React.FC = () => {
           border: '1px solid',
           borderColor: 'divider',
           bgcolor: alpha(theme.palette.background.paper, 0.97),
-          position: { xs: 'sticky', md: 'static' },
-          top: { xs: 64 },
-          zIndex: 7,
+          display: { xs: 'none', sm: 'block' },
           backdropFilter: 'blur(14px)',
         }}
       >
-        <Box sx={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: { xs: 'minmax(132px, 1fr)', md: 'minmax(0, 1fr)' }, gap: 0.55, overflowX: 'auto', scrollbarWidth: 'none' }}>
-          {([
-            { key: 'today', label: 'Arbeitsliste', icon: <RadarIcon />, count: tabCounts.today },
-            { key: 'triggers', label: 'Trigger-Treffer', icon: triggerFeatureIncluded ? <AutoAwesomeOutlinedIcon /> : <LockOutlinedIcon />, count: triggerFeatureActive ? marketSignalCounts.active : null, premium: !triggerFeatureIncluded },
-            { key: 'accounts', label: 'Accounts', icon: <BusinessCenterIcon />, count: stats.accounts },
-            { key: 'pipeline', label: 'Sales-Pipeline', icon: <TrackChangesIcon />, count: salesOverview.due + salesOverview.waiting || null },
-            { key: 'calendar', label: 'Kalender', icon: <CalendarMonthOutlinedIcon />, count: stats.planned || null },
-          ] as Array<{ key: RadarPrimarySection; label: string; icon: React.ReactNode; count: number | null; premium?: boolean }>).map((item) => {
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 0.55 }}>
+          {primaryNavigationItems.map((item) => {
             const selected = primarySection === item.key;
             return (
-              <Tooltip key={item.key} title={item.premium ? 'Trigger-Treffer und beobachtete Quellen sind in Sales Premium enthalten.' : ''}>
+              <Tooltip key={item.key} title={item.premium ? 'Signale aus Sales-Triggern und beobachtete Quellen sind in Sales Premium enthalten.' : ''}>
                 <Button
                   type="button"
                   aria-current={selected ? 'page' : undefined}
@@ -2464,6 +2507,113 @@ const AccountRadarPage: React.FC = () => {
         </Box>
       </Paper>
 
+      <Paper
+        component="nav"
+        aria-label="Mobile Sales-Radar Navigation"
+        elevation={10}
+        sx={{
+          display: { xs: 'block', sm: 'none' },
+          position: 'fixed',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: theme.zIndex.appBar + 1,
+          borderRadius: 0,
+          borderTop: '1px solid',
+          borderColor: 'divider',
+          bgcolor: alpha(theme.palette.background.paper, 0.98),
+          backdropFilter: 'blur(14px)',
+          pb: 'env(safe-area-inset-bottom)',
+        }}
+      >
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
+          {primaryNavigationItems.slice(0, 3).map((item) => {
+            const selected = primarySection === item.key;
+            return (
+              <Button
+                key={item.key}
+                aria-current={selected ? 'page' : undefined}
+                onClick={() => item.premium
+                  ? window.open('/account-radar?request=upgrade#pakete', '_blank', 'noopener,noreferrer')
+                  : selectPrimarySection(item.key)}
+                sx={{
+                  minWidth: 0,
+                  minHeight: 58,
+                  px: 0.4,
+                  py: 0.65,
+                  borderRadius: 0,
+                  flexDirection: 'column',
+                  gap: 0.15,
+                  color: selected ? 'primary.main' : 'text.secondary',
+                  bgcolor: selected ? alpha(primary, 0.08) : 'transparent',
+                }}
+              >
+                <Box sx={{ position: 'relative', display: 'grid', placeItems: 'center', '& svg': { fontSize: 22 } }}>
+                  {item.icon}
+                  {item.count !== null && item.count !== undefined && (
+                    <Box component="span" sx={{ position: 'absolute', left: 'calc(100% - 2px)', top: -7, minWidth: 17, height: 17, px: 0.4, display: 'grid', placeItems: 'center', borderRadius: 99, bgcolor: 'primary.main', color: 'primary.contrastText', fontSize: '0.58rem', fontWeight: 950, border: '2px solid', borderColor: 'background.paper' }}>
+                      {item.count > 99 ? '99+' : item.count}
+                    </Box>
+                  )}
+                </Box>
+                <Typography variant="caption" sx={{ maxWidth: '100%', fontSize: '0.66rem', fontWeight: 900, lineHeight: 1.1 }} noWrap>{item.label}</Typography>
+              </Button>
+            );
+          })}
+          <Button
+            aria-haspopup="menu"
+            aria-expanded={Boolean(mobileNavAnchor)}
+            aria-current={primarySection === 'pipeline' || primarySection === 'calendar' ? 'page' : undefined}
+            onClick={(event) => setMobileNavAnchor(event.currentTarget)}
+            sx={{
+              minWidth: 0,
+              minHeight: 58,
+              px: 0.4,
+              py: 0.65,
+              borderRadius: 0,
+              flexDirection: 'column',
+              gap: 0.15,
+              color: primarySection === 'pipeline' || primarySection === 'calendar' ? 'primary.main' : 'text.secondary',
+              bgcolor: primarySection === 'pipeline' || primarySection === 'calendar' ? alpha(primary, 0.08) : 'transparent',
+            }}
+          >
+            <MoreHorizIcon sx={{ fontSize: 22 }} />
+            <Typography variant="caption" sx={{ fontSize: '0.66rem', fontWeight: 900, lineHeight: 1.1 }}>Mehr</Typography>
+          </Button>
+        </Box>
+      </Paper>
+      <Menu
+        anchorEl={mobileNavAnchor}
+        open={Boolean(mobileNavAnchor)}
+        onClose={() => setMobileNavAnchor(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        slotProps={{ paper: { sx: { mb: 0.7, minWidth: 230, borderRadius: 2.5 } } }}
+      >
+        {primaryNavigationItems.slice(3).map((item) => (
+          <MenuItem
+            key={item.key}
+            selected={primarySection === item.key}
+            disabled={!salesAccessActive}
+            onClick={() => { setMobileNavAnchor(null); selectPrimarySection(item.key); }}
+            sx={{ gap: 1.2, minHeight: 48 }}
+          >
+            <Box sx={{ display: 'grid', placeItems: 'center', color: primarySection === item.key ? 'primary.main' : 'text.secondary' }}>{item.icon}</Box>
+            <Typography sx={{ flex: 1, fontWeight: 850 }}>{item.label}</Typography>
+            <Chip size="small" label={item.count ?? 0} sx={{ height: 23, fontWeight: 900 }} />
+          </MenuItem>
+        ))}
+        {canConfigureRadar && (
+          <>
+            <Divider />
+            <MenuItem onClick={openRadarSettings} sx={{ gap: 1.2, minHeight: 48 }}>
+              <SettingsOutlinedIcon color="action" />
+              <Typography sx={{ fontWeight: 850 }}>Einstellungen</Typography>
+            </MenuItem>
+          </>
+        )}
+      </Menu>
+
       {selectedAccount && (
         <Box sx={{ mt: 1.2, display: 'flex', justifyContent: 'center' }}>
           <Paper
@@ -2487,37 +2637,38 @@ const AccountRadarPage: React.FC = () => {
         </Box>
       )}
 
-      <Box sx={{ mt: 1.4, display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' }, gap: 1 }}>
+      <Paper elevation={0} sx={{ mt: 1.2, p: 0.65, borderRadius: 3, border: '1px solid', borderColor: 'divider', bgcolor: alpha(theme.palette.background.paper, 0.82) }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', md: 'repeat(4, minmax(0, 1fr))' }, gap: 0.35 }}>
         {[
           {
             key: 'triggers' as const,
             icon: triggerFeatureIncluded ? <AutoAwesomeOutlinedIcon /> : <LockOutlinedIcon />,
             value: triggerFeatureActive ? marketSignalCounts.active : triggerFeatureIncluded ? 'Pausiert' : 'Premium',
-            label: triggerFeatureActive ? 'neue Trigger-Treffer' : triggerFeatureIncluded ? 'Sales-Zugriff reaktivieren' : 'Trigger-Treffer freischalten',
+            label: triggerFeatureActive ? 'neue Signale' : triggerFeatureIncluded ? 'Sales-Zugriff reaktivieren' : 'Signale freischalten',
             color: theme.palette.info.main,
             action: () => triggerFeatureActive ? selectPrimarySection('triggers') : window.open('/account-radar?request=upgrade#pakete', '_blank', 'noopener,noreferrer'),
           },
           {
             key: 'today' as const,
-            icon: <LocalFireDepartmentIcon />,
-            value: stats.open,
-            label: 'Signale mit Handlungsbedarf',
+            icon: <ViewListOutlinedIcon />,
+            value: tabCounts.today,
+            label: 'offene Aufgaben',
             color: theme.palette.error.main,
             action: () => selectRadarView('today'),
           },
           {
             key: 'calendar' as const,
             icon: <EventAvailableIcon />,
-            value: contactsToday,
-            label: overdueContacts > 0 ? `${overdueContacts} überfällig · heute geplant` : 'Kontakte heute geplant',
+            value: overdueContacts > 0 ? overdueContacts : contactsToday,
+            label: overdueContacts > 0 ? 'überfällige Kontakte' : 'Kontakte heute',
             color: overdueContacts > 0 ? theme.palette.warning.main : theme.palette.success.main,
             action: () => selectPrimarySection('calendar'),
           },
           {
             key: 'pipeline' as const,
-            icon: <TrackChangesIcon />,
-            value: funnelStageCounts.contacted + funnelStageCounts.meeting + funnelStageCounts.offer,
-            label: 'Vorgänge in der Sales-Pipeline',
+            icon: <TimelineOutlinedIcon />,
+            value: activePipelineCount,
+            label: 'aktive Pipeline-Vorgänge',
             color: theme.palette.primary.main,
             action: () => selectPrimarySection('pipeline'),
           },
@@ -2526,27 +2677,26 @@ const AccountRadarPage: React.FC = () => {
             key={item.key}
             onClick={item.action}
             sx={{
-              minHeight: 76,
-              p: 1.4,
+              minHeight: 58,
+              p: 0.85,
               justifyContent: 'flex-start',
               textAlign: 'left',
               textTransform: 'none',
               color: 'text.primary',
-              border: '1px solid',
-              borderColor: alpha(item.color, 0.24),
-              borderRadius: 3,
-              bgcolor: alpha(item.color, 0.055),
-              '&:hover': { bgcolor: alpha(item.color, 0.11), borderColor: alpha(item.color, 0.44) },
+              borderRadius: 2.3,
+              bgcolor: 'transparent',
+              '&:hover': { bgcolor: alpha(item.color, 0.09) },
             }}
           >
-            <Box sx={{ width: 42, height: 42, flexShrink: 0, mr: 1.25, display: 'grid', placeItems: 'center', borderRadius: 2.5, color: item.color, bgcolor: alpha(item.color, 0.12) }}>{item.icon}</Box>
+            <Box sx={{ width: 34, height: 34, flexShrink: 0, mr: 1, display: 'grid', placeItems: 'center', borderRadius: 2, color: item.color, bgcolor: alpha(item.color, 0.1), '& svg': { fontSize: 20 } }}>{item.icon}</Box>
             <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ fontSize: { xs: '1.1rem', md: '1.3rem' }, fontWeight: 950, lineHeight: 1.1 }}>{item.value}</Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.35, fontWeight: 750, lineHeight: 1.25 }}>{item.label}</Typography>
+              <Typography sx={{ fontSize: '1rem', fontWeight: 950, lineHeight: 1.05 }}>{item.value}</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.2, fontWeight: 750, lineHeight: 1.2 }}>{item.label}</Typography>
             </Box>
           </Button>
         ))}
-      </Box>
+        </Box>
+      </Paper>
 
       {worklistSection}
 
@@ -2568,7 +2718,7 @@ const AccountRadarPage: React.FC = () => {
             <Box sx={{ minWidth: 0 }}>
               <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
                 <AutoAwesomeOutlinedIcon color="info" />
-                <Typography variant="h6" sx={{ fontWeight: 950 }}>Trigger-Treffer</Typography>
+                <Typography variant="h6" sx={{ fontWeight: 950 }}>Signale aus Sales-Triggern</Typography>
                 <Chip size="small" color="info" variant="outlined" label={`${marketSignalCounts.active} aktuell`} />
                 {marketSignalCounts.ignored > 0 && <Chip size="small" variant="outlined" label={`${marketSignalCounts.ignored} ausgeblendet`} />}
               </Stack>
@@ -2587,8 +2737,8 @@ const AccountRadarPage: React.FC = () => {
                   </Button>
                 </>
               )}
-              <Tooltip title={marketSignalsOpen ? 'Trigger-Treffer einklappen' : 'Trigger-Treffer öffnen'}>
-                <IconButton onClick={() => setMarketSignalsOpen((current) => !current)} aria-expanded={marketSignalsOpen} aria-label="Trigger-Treffer ein- oder ausklappen">
+              <Tooltip title={marketSignalsOpen ? 'Signale einklappen' : 'Signale öffnen'}>
+                <IconButton onClick={() => setMarketSignalsOpen((current) => !current)} aria-expanded={marketSignalsOpen} aria-label="Signale ein- oder ausklappen">
                   {marketSignalsOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
                 </IconButton>
               </Tooltip>
@@ -2660,7 +2810,7 @@ const AccountRadarPage: React.FC = () => {
             {!marketSignals.length && (
               <Alert severity="info" sx={{ mt: 1.5 }}>
                 {marketSignalFilter === 'active'
-                  ? 'Noch keine offenen Trigger-Treffer. Sales-Trigger anlegen oder bestehende Sales-Trigger jetzt prüfen.'
+                  ? 'Noch keine offenen Signale. Sales-Trigger anlegen oder bestehende Sales-Trigger jetzt prüfen.'
                   : 'Keine ausgeblendeten Markt- oder Ereignistreffer vorhanden.'}
               </Alert>
             )}
@@ -2849,17 +2999,17 @@ const AccountRadarPage: React.FC = () => {
       >
         <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1.5}>
           <Box>
-            <Typography variant="h6" sx={{ fontWeight: 950 }}>Sales-Pipeline &amp; Cockpit</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 950 }}>Pipeline &amp; Fortschritt</Typography>
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 750 }}>
               {selectedAccount
                 ? `Account-Fokus: ${selectedAccount.name} – alle Cockpit-Werte beziehen sich auf diesen Account.`
                 : selectedCampaign
                   ? `Kampagnen-Fokus: ${selectedCampaign.name} – Accounts, Signale und Kennzahlen sind entsprechend gefiltert.`
-                : 'Aus der Arbeitsliste werden geplante Kontakte, Opportunities und messbare Ergebnisse.'}
+                : 'Aus den Aufgaben werden geplante Kontakte, Opportunities und messbare Ergebnisse.'}
               </Typography>
           </Box>
-          <Tooltip title={cockpitOpen ? 'Sales-Pipeline einklappen' : 'Sales-Pipeline öffnen'}>
-            <IconButton onClick={() => setCockpitOpen((current) => !current)} aria-expanded={cockpitOpen} aria-label="Sales-Pipeline ein- oder ausklappen">
+          <Tooltip title={cockpitOpen ? 'Pipeline einklappen' : 'Pipeline öffnen'}>
+            <IconButton onClick={() => setCockpitOpen((current) => !current)} aria-expanded={cockpitOpen} aria-label="Pipeline ein- oder ausklappen">
               {cockpitOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
             </IconButton>
           </Tooltip>
@@ -2949,7 +3099,7 @@ const AccountRadarPage: React.FC = () => {
             </Typography>
             <Stack spacing={1.2} sx={{ mt: 1.3 }}>
               {[
-                { label: `Offene Arbeitsliste · ${days} Tage`, value: cockpitCounts.today, color: primary, target: 'today' as RadarView },
+                { label: `Offene Aufgaben · ${days} Tage`, value: cockpitCounts.today, color: primary, target: 'today' as RadarView },
                 { label: 'Geplant', value: cockpitCounts.planned, color: theme.palette.info.main, target: 'planned' as RadarView },
                 { label: 'Erledigt', value: cockpitCounts.done, color: theme.palette.success.main, target: 'done' as RadarView },
               ].map((item) => {
@@ -3063,7 +3213,7 @@ const AccountRadarPage: React.FC = () => {
         <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={0.5}>
           <Box>
             <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>
-              Sales-Pipeline · {selectedAccount ? selectedAccount.name : 'aktueller Filter'}
+              Pipeline · {selectedAccount ? selectedAccount.name : 'aktueller Filter'}
             </Typography>
             <Typography variant="caption" color="text.secondary">Eine Phase mit 0 Treffern ist bewusst nicht auswählbar.</Typography>
           </Box>

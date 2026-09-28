@@ -44,7 +44,8 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
 import ContactMailOutlinedIcon from '@mui/icons-material/ContactMailOutlined';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import TrackChangesIcon from '@mui/icons-material/TrackChanges';
+import ViewListOutlinedIcon from '@mui/icons-material/ViewListOutlined';
+import TimelineOutlinedIcon from '@mui/icons-material/TimelineOutlined';
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -417,13 +418,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             Sales-Radar
                         </ListSubheader>
                         <ListItem button component={RouterLink} to="/radar?view=today">
-                            <ListItemIcon><RadarIcon /></ListItemIcon>
-                            <ListItemText primary="Arbeitsliste" secondary="Heute priorisieren" />
+                            <ListItemIcon><ViewListOutlinedIcon /></ListItemIcon>
+                            <ListItemText primary="Aufgaben" secondary="Offene Arbeit priorisieren" />
                         </ListItem>
                         {salesPlan === 'premium' && (
                             <ListItem button component={RouterLink} to="/radar?view=triggers">
                                 <ListItemIcon><AutoAwesomeIcon /></ListItemIcon>
-                                <ListItemText primary="Trigger-Treffer" secondary="Märkte & Ereignisse" />
+                                <ListItemText primary="Signale" secondary="Märkte & Ereignisse" />
                             </ListItem>
                         )}
                         <ListItem button component={RouterLink} to="/radar?view=accounts">
@@ -431,8 +432,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItemText primary="Accounts" secondary="Gesamter Bestand" />
                         </ListItem>
                         <ListItem button component={RouterLink} to="/radar?view=pipeline">
-                            <ListItemIcon><TrackChangesIcon /></ListItemIcon>
-                            <ListItemText primary="Sales-Pipeline" secondary="Fortschritt & Ergebnisse" />
+                            <ListItemIcon><TimelineOutlinedIcon /></ListItemIcon>
+                            <ListItemText primary="Pipeline" secondary="Fortschritt & Ergebnisse" />
                         </ListItem>
                         <ListItem button component={RouterLink} to="/radar?view=calendar">
                             <ListItemIcon><CalendarMonthIcon /></ListItemIcon>
