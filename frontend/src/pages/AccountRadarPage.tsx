@@ -20,7 +20,6 @@ import {
   InputAdornment,
   LinearProgress,
   Link,
-  Menu,
   MenuItem,
   Paper,
   Slider,
@@ -63,10 +62,8 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import SearchIcon from '@mui/icons-material/Search';
-import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import FilterAltOutlinedIcon from '@mui/icons-material/FilterAltOutlined';
 import ViewListOutlinedIcon from '@mui/icons-material/ViewListOutlined';
-import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import TimelineOutlinedIcon from '@mui/icons-material/TimelineOutlined';
 import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 import VideocamOutlinedIcon from '@mui/icons-material/VideocamOutlined';
@@ -93,6 +90,25 @@ type RelevanceReason = 'false_positive' | 'outdated' | 'duplicate' | 'wrong_acco
 type WorkflowMode = SignalActionType | 'note';
 type RadarView = 'today' | 'accounts' | 'planned' | 'done' | 'ignored';
 type RadarPrimarySection = 'today' | 'triggers' | 'accounts' | 'pipeline' | 'calendar';
+type RadarWorkspace = 'cockpit' | 'insights' | 'sales';
+
+interface AccountRadarPageProps {
+  workspace?: RadarWorkspace;
+}
+
+const radarWorkspacePaths: Record<RadarWorkspace, string> = {
+  cockpit: '/radar',
+  insights: '/radar/insights',
+  sales: '/radar/pipeline',
+};
+
+const radarSectionWorkspace: Record<RadarPrimarySection, RadarWorkspace> = {
+  today: 'cockpit',
+  triggers: 'insights',
+  accounts: 'insights',
+  pipeline: 'sales',
+  calendar: 'sales',
+};
 
 interface RadarSignal {
   id: string;
@@ -591,7 +607,7 @@ const createCalendarFile = (signal: RadarSignal) => {
   });
 };
 
-const AccountRadarPage: React.FC = () => {
+const AccountRadarPage: React.FC<AccountRadarPageProps> = ({ workspace = 'cockpit' }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
@@ -605,7 +621,7 @@ const AccountRadarPage: React.FC = () => {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<RadarView>('today');
-  const [primarySection, setPrimarySection] = useState<RadarPrimarySection>('today');
+  const [primarySection, setPrimarySection] = useState<RadarPrimarySection>(workspace === 'insights' ? 'accounts' : workspace === 'sales' ? 'pipeline' : 'today');
   const [search, setSearch] = useState('');
   const [days, setDays] = useState(30);
   const [assigneeFilter, setAssigneeFilter] = useState('all');
@@ -673,7 +689,6 @@ const AccountRadarPage: React.FC = () => {
   const [marketSignalBusy, setMarketSignalBusy] = useState(false);
   const [articleHeatmapOpen, setArticleHeatmapOpen] = useState(false);
   const [worklistFiltersOpen, setWorklistFiltersOpen] = useState(false);
-  const [mobileNavAnchor, setMobileNavAnchor] = useState<HTMLElement | null>(null);
   const resultsSectionRef = useRef<HTMLDivElement | null>(null);
   const marketSignalsSectionRef = useRef<HTMLDivElement | null>(null);
   const pipelineSectionRef = useRef<HTMLDivElement | null>(null);
@@ -694,6 +709,11 @@ const AccountRadarPage: React.FC = () => {
   useEffect(() => {
     const requestedView = searchParams.get('view');
     if (requestedView && ['today', 'accounts', 'planned', 'done', 'ignored'].includes(requestedView)) {
+      const targetWorkspace = requestedView === 'accounts' ? 'insights' : 'cockpit';
+      if (targetWorkspace !== workspace) {
+        navigate({ pathname: radarWorkspacePaths[targetWorkspace], search: `?${searchParams.toString()}` }, { replace: true });
+        return;
+      }
       setView(requestedView as RadarView);
       setPrimarySection(requestedView === 'accounts' ? 'accounts' : 'today');
       window.setTimeout(() => resultsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
@@ -701,6 +721,11 @@ const AccountRadarPage: React.FC = () => {
     }
     if (requestedView && ['triggers', 'pipeline', 'calendar'].includes(requestedView)) {
       const requestedSection = requestedView as RadarPrimarySection;
+      const targetWorkspace = radarSectionWorkspace[requestedSection];
+      if (targetWorkspace !== workspace) {
+        navigate({ pathname: radarWorkspacePaths[targetWorkspace], search: `?${searchParams.toString()}` }, { replace: true });
+        return;
+      }
       setPrimarySection(requestedSection);
       if (requestedSection === 'triggers') setMarketSignalsOpen(true);
       if (requestedSection === 'pipeline') setCockpitOpen(true);
@@ -710,30 +735,42 @@ const AccountRadarPage: React.FC = () => {
         if (requestedSection === 'pipeline') pipelineSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         if (requestedSection === 'calendar') calendarSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 0);
+      return;
     }
-  }, [searchParams]);
+    const defaultSection: RadarPrimarySection = workspace === 'insights' ? 'accounts' : workspace === 'sales' ? 'pipeline' : 'today';
+    setPrimarySection(defaultSection);
+    if (workspace === 'insights') setView('accounts');
+    if (workspace === 'cockpit') setView('today');
+  }, [navigate, searchParams, workspace]);
 
   const selectPrimarySection = useCallback((section: RadarPrimarySection) => {
     const next = new URLSearchParams(searchParams);
     next.set('view', section);
-    setSearchParams(next);
-  }, [searchParams, setSearchParams]);
+    next.delete('panel');
+    navigate({ pathname: radarWorkspacePaths[radarSectionWorkspace[section]], search: `?${next.toString()}` });
+  }, [navigate, searchParams]);
 
   const selectRadarView = useCallback((nextView: RadarView) => {
     setPrimarySection(nextView === 'accounts' ? 'accounts' : 'today');
     setView(nextView);
     const next = new URLSearchParams(searchParams);
     next.set('view', nextView);
-    setSearchParams(next, { replace: true });
+    next.delete('panel');
+    navigate({ pathname: nextView === 'accounts' ? radarWorkspacePaths.insights : radarWorkspacePaths.cockpit, search: `?${next.toString()}` });
     window.setTimeout(() => resultsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
-  }, [searchParams, setSearchParams]);
+  }, [navigate, searchParams]);
 
-  const openRadarSettings = useCallback(() => {
+  const selectWorkspace = useCallback((nextWorkspace: RadarWorkspace) => {
     const next = new URLSearchParams(searchParams);
-    next.set('panel', 'settings');
-    setSearchParams(next);
-    setMobileNavAnchor(null);
-  }, [searchParams, setSearchParams]);
+    const defaultSection: RadarPrimarySection = nextWorkspace === 'insights'
+      ? entitlements?.features.contentTriggers ? 'triggers' : 'accounts'
+      : nextWorkspace === 'sales' ? 'pipeline' : 'today';
+    next.set('view', defaultSection);
+    next.delete('panel');
+    next.delete('triggerProfileId');
+    next.delete('triggerKeyword');
+    navigate({ pathname: radarWorkspacePaths[nextWorkspace], search: `?${next.toString()}` });
+  }, [entitlements?.features.contentTriggers, navigate, searchParams]);
 
   const requestedToolsPanel = canConfigureRadar && ['import', 'settings', 'triggers', 'sources'].includes(searchParams.get('panel') || '')
     ? searchParams.get('panel') as 'import' | 'settings' | 'triggers' | 'sources'
@@ -2158,13 +2195,22 @@ const AccountRadarPage: React.FC = () => {
   const overdueContacts = calendarEntries.filter((entry) => entry.calendarStatus === 'overdue').length;
   const activePipelineCount = funnelStageCounts.contacted + funnelStageCounts.meeting + funnelStageCounts.offer;
   const worklistFilterCount = [days !== 30, assigneeFilter !== 'all', campaignFilter !== 'all', salesStageFilter !== 'all'].filter(Boolean).length;
-  const primaryNavigationItems: Array<{ key: RadarPrimarySection; label: string; icon: React.ReactNode; count: number | null; premium?: boolean }> = [
-    { key: 'today', label: 'Aufgaben', icon: <ViewListOutlinedIcon />, count: tabCounts.today },
-    { key: 'triggers', label: 'Signale', icon: triggerFeatureIncluded ? <AutoAwesomeOutlinedIcon /> : <LockOutlinedIcon />, count: triggerFeatureActive ? marketSignalCounts.active : null, premium: !triggerFeatureIncluded },
-    { key: 'accounts', label: 'Accounts', icon: <BusinessCenterIcon />, count: stats.accounts },
-    { key: 'pipeline', label: 'Pipeline', icon: <TimelineOutlinedIcon />, count: activePipelineCount },
-    { key: 'calendar', label: 'Kalender', icon: <CalendarMonthOutlinedIcon />, count: stats.planned },
+  const workspaceNavigationItems: Array<{ key: RadarWorkspace; label: string; description: string; icon: React.ReactNode }> = [
+    { key: 'cockpit', label: 'Cockpit', description: 'Aufgaben & Prioritäten', icon: <ViewListOutlinedIcon /> },
+    { key: 'insights', label: 'Beobachtung', description: 'Signale & Accounts', icon: <AutoAwesomeOutlinedIcon /> },
+    { key: 'sales', label: 'Vertrieb', description: 'Pipeline & Termine', icon: <TimelineOutlinedIcon /> },
   ];
+  const secondaryNavigationItems: Array<{ key: RadarPrimarySection; label: string; icon: React.ReactNode; count: number | null; premium?: boolean }> = workspace === 'insights'
+    ? [
+        { key: 'triggers', label: 'Signale', icon: triggerFeatureIncluded ? <AutoAwesomeOutlinedIcon /> : <LockOutlinedIcon />, count: triggerFeatureActive ? marketSignalCounts.active : null, premium: !triggerFeatureIncluded },
+        { key: 'accounts', label: 'Accounts', icon: <BusinessCenterIcon />, count: stats.accounts },
+      ]
+    : workspace === 'sales'
+      ? [
+          { key: 'pipeline', label: 'Pipeline', icon: <TimelineOutlinedIcon />, count: activePipelineCount },
+          { key: 'calendar', label: 'Kalender', icon: <CalendarMonthOutlinedIcon />, count: stats.planned },
+        ]
+      : [];
   const compactActionButtonSx = {
     minHeight: 42,
     minWidth: 0,
@@ -2368,12 +2414,18 @@ const AccountRadarPage: React.FC = () => {
   );
 
   return (
-    <Container maxWidth="xl" sx={{ py: { xs: 2, md: 4 }, pb: { xs: 12, md: 5 } }}>
+    <Container maxWidth="xl" sx={{ py: { xs: 2, md: 4 }, pb: { xs: 4, md: 5 } }}>
       <Box sx={{ display: 'flex', alignItems: { xs: 'flex-start', md: 'center' }, justifyContent: 'space-between', gap: 2, flexDirection: { xs: 'column', md: 'row' } }}>
         <Box>
           <Stack direction="row" spacing={1} alignItems="center">
             <RadarIcon sx={{ color: 'primary.main', fontSize: 30 }} />
             <Typography component="h1" variant="h4" sx={{ fontWeight: 950, letterSpacing: '-0.025em' }}>Sales-Radar</Typography>
+            <Chip
+              size="small"
+              variant="outlined"
+              label={workspace === 'insights' ? 'Beobachtung' : workspace === 'sales' ? 'Vertrieb' : 'Cockpit'}
+              sx={{ display: { xs: 'none', sm: 'inline-flex' }, fontWeight: 850 }}
+            />
           </Stack>
           <Typography color="text.secondary" sx={{ mt: 0.6, textTransform: 'capitalize' }}>{todayLabel} · {businessPartner?.name || 'Ihr Unternehmen'}</Typography>
           {entitlements && (
@@ -2508,7 +2560,7 @@ const AccountRadarPage: React.FC = () => {
 
       <Paper
         component="nav"
-        aria-label="Sales-Radar Bereiche"
+        aria-label="Sales-Radar Arbeitsbereiche"
         elevation={0}
         sx={{
           mt: 2.5,
@@ -2517,157 +2569,72 @@ const AccountRadarPage: React.FC = () => {
           border: '1px solid',
           borderColor: 'divider',
           bgcolor: alpha(theme.palette.background.paper, 0.97),
-          display: { xs: 'none', sm: 'block' },
           backdropFilter: 'blur(14px)',
         }}
       >
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 0.55 }}>
-          {primaryNavigationItems.map((item) => {
-            const selected = primarySection === item.key;
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 0.55 }}>
+          {workspaceNavigationItems.map((item) => {
+            const selected = workspace === item.key;
             return (
-              <Tooltip key={item.key} title={item.premium ? 'Signale aus Sales-Triggern und beobachtete Quellen sind in Sales Premium enthalten.' : ''}>
-                <Button
-                  type="button"
-                  aria-current={selected ? 'page' : undefined}
-                  variant={selected ? 'contained' : 'text'}
-                  startIcon={item.icon}
-                  disabled={!salesAccessActive && !item.premium}
-                  onClick={() => item.premium
-                    ? window.open('/account-radar?request=upgrade#pakete', '_blank', 'noopener,noreferrer')
-                    : selectPrimarySection(item.key)}
-                  sx={{
-                    minHeight: 48,
-                    minWidth: 0,
-                    px: { xs: 1.2, sm: 1.5 },
-                    borderRadius: 2.6,
-                    whiteSpace: 'nowrap',
-                    fontWeight: 900,
-                    color: item.premium ? 'text.secondary' : selected ? 'primary.contrastText' : 'text.primary',
-                    bgcolor: selected ? 'primary.main' : item.premium ? alpha(theme.palette.text.primary, 0.035) : 'transparent',
-                    '&:hover': { bgcolor: selected ? 'primary.dark' : alpha(primary, 0.08) },
-                    '& .MuiButton-startIcon': { mr: 0.8 },
-                  }}
-                >
-                  {item.label}
-                  {item.count !== null && item.count !== undefined && (
-                    <Box component="span" sx={{ ml: 0.8, minWidth: 22, height: 22, px: 0.65, display: 'inline-grid', placeItems: 'center', borderRadius: 99, bgcolor: selected ? alpha(theme.palette.common.white, 0.22) : alpha(primary, 0.11), color: selected ? 'inherit' : 'primary.main', fontSize: '0.68rem', fontWeight: 950 }}>
-                      {item.count}
-                    </Box>
-                  )}
-                  {item.premium && <Box component="span" sx={{ ml: 0.7, fontSize: '0.62rem', fontWeight: 950 }}>PREMIUM</Box>}
-                </Button>
-              </Tooltip>
+              <Button
+                key={item.key}
+                type="button"
+                aria-current={selected ? 'page' : undefined}
+                variant={selected ? 'contained' : 'text'}
+                onClick={() => selectWorkspace(item.key)}
+                sx={{
+                  minHeight: { xs: 52, sm: 58 },
+                  minWidth: 0,
+                  px: { xs: 0.6, sm: 1.5 },
+                  borderRadius: 2.6,
+                  color: selected ? 'primary.contrastText' : 'text.primary',
+                  bgcolor: selected ? 'primary.main' : 'transparent',
+                  '&:hover': { bgcolor: selected ? 'primary.dark' : alpha(primary, 0.08) },
+                }}
+              >
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 0.15, sm: 1 }} alignItems="center" sx={{ minWidth: 0 }}>
+                  <Box sx={{ display: 'grid', placeItems: 'center', '& svg': { fontSize: { xs: 21, sm: 24 } } }}>{item.icon}</Box>
+                  <Box sx={{ minWidth: 0, textAlign: { xs: 'center', sm: 'left' } }}>
+                    <Typography sx={{ fontSize: { xs: '0.7rem', sm: '0.88rem' }, fontWeight: 950, lineHeight: 1.1 }} noWrap>{item.label}</Typography>
+                    <Typography variant="caption" sx={{ display: { xs: 'none', md: 'block' }, color: selected ? alpha(theme.palette.common.white, 0.78) : 'text.secondary', lineHeight: 1.15 }} noWrap>{item.description}</Typography>
+                  </Box>
+                </Stack>
+              </Button>
             );
           })}
         </Box>
       </Paper>
 
-      <Paper
-        component="nav"
-        aria-label="Mobile Sales-Radar Navigation"
-        elevation={10}
-        sx={{
-          display: { xs: 'block', sm: 'none' },
-          position: 'fixed',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: theme.zIndex.appBar + 1,
-          borderRadius: 0,
-          borderTop: '1px solid',
-          borderColor: 'divider',
-          bgcolor: alpha(theme.palette.background.paper, 0.98),
-          backdropFilter: 'blur(14px)',
-          pb: 'env(safe-area-inset-bottom)',
-        }}
-      >
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
-          {primaryNavigationItems.slice(0, 3).map((item) => {
-            const selected = primarySection === item.key;
-            return (
-              <Button
-                key={item.key}
-                aria-current={selected ? 'page' : undefined}
-                onClick={() => item.premium
-                  ? window.open('/account-radar?request=upgrade#pakete', '_blank', 'noopener,noreferrer')
-                  : selectPrimarySection(item.key)}
-                sx={{
-                  minWidth: 0,
-                  minHeight: 58,
-                  px: 0.4,
-                  py: 0.65,
-                  borderRadius: 0,
-                  flexDirection: 'column',
-                  gap: 0.15,
-                  color: selected ? 'primary.main' : 'text.secondary',
-                  bgcolor: selected ? alpha(primary, 0.08) : 'transparent',
-                }}
-              >
-                <Box sx={{ position: 'relative', display: 'grid', placeItems: 'center', '& svg': { fontSize: 22 } }}>
-                  {item.icon}
-                  {item.count !== null && item.count !== undefined && (
-                    <Box component="span" sx={{ position: 'absolute', left: 'calc(100% - 2px)', top: -7, minWidth: 17, height: 17, px: 0.4, display: 'grid', placeItems: 'center', borderRadius: 99, bgcolor: 'primary.main', color: 'primary.contrastText', fontSize: '0.58rem', fontWeight: 950, border: '2px solid', borderColor: 'background.paper' }}>
-                      {item.count > 99 ? '99+' : item.count}
-                    </Box>
-                  )}
-                </Box>
-                <Typography variant="caption" sx={{ maxWidth: '100%', fontSize: '0.66rem', fontWeight: 900, lineHeight: 1.1 }} noWrap>{item.label}</Typography>
-              </Button>
-            );
-          })}
-          <Button
-            aria-haspopup="menu"
-            aria-expanded={Boolean(mobileNavAnchor)}
-            aria-current={primarySection === 'pipeline' || primarySection === 'calendar' ? 'page' : undefined}
-            onClick={(event) => setMobileNavAnchor(event.currentTarget)}
-            sx={{
-              minWidth: 0,
-              minHeight: 58,
-              px: 0.4,
-              py: 0.65,
-              borderRadius: 0,
-              flexDirection: 'column',
-              gap: 0.15,
-              color: primarySection === 'pipeline' || primarySection === 'calendar' ? 'primary.main' : 'text.secondary',
-              bgcolor: primarySection === 'pipeline' || primarySection === 'calendar' ? alpha(primary, 0.08) : 'transparent',
-            }}
-          >
-            <MoreHorizIcon sx={{ fontSize: 22 }} />
-            <Typography variant="caption" sx={{ fontSize: '0.66rem', fontWeight: 900, lineHeight: 1.1 }}>Mehr</Typography>
-          </Button>
-        </Box>
-      </Paper>
-      <Menu
-        anchorEl={mobileNavAnchor}
-        open={Boolean(mobileNavAnchor)}
-        onClose={() => setMobileNavAnchor(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        slotProps={{ paper: { sx: { mb: 0.7, minWidth: 230, borderRadius: 2.5 } } }}
-      >
-        {primaryNavigationItems.slice(3).map((item) => (
-          <MenuItem
-            key={item.key}
-            selected={primarySection === item.key}
-            disabled={!salesAccessActive}
-            onClick={() => { setMobileNavAnchor(null); selectPrimarySection(item.key); }}
-            sx={{ gap: 1.2, minHeight: 48 }}
-          >
-            <Box sx={{ display: 'grid', placeItems: 'center', color: primarySection === item.key ? 'primary.main' : 'text.secondary' }}>{item.icon}</Box>
-            <Typography sx={{ flex: 1, fontWeight: 850 }}>{item.label}</Typography>
-            <Chip size="small" label={item.count ?? 0} sx={{ height: 23, fontWeight: 900 }} />
-          </MenuItem>
-        ))}
-        {canConfigureRadar && (
-          <>
-            <Divider />
-            <MenuItem onClick={openRadarSettings} sx={{ gap: 1.2, minHeight: 48 }}>
-              <SettingsOutlinedIcon color="action" />
-              <Typography sx={{ fontWeight: 850 }}>Einstellungen</Typography>
-            </MenuItem>
-          </>
-        )}
-      </Menu>
+      {secondaryNavigationItems.length > 0 && (
+        <Paper component="nav" aria-label={workspace === 'insights' ? 'Beobachtung Ansichten' : 'Vertrieb Ansichten'} elevation={0} sx={{ mt: 1, p: 0.5, borderRadius: 3, border: '1px solid', borderColor: 'divider', bgcolor: alpha(theme.palette.background.paper, 0.8) }}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 0.5 }}>
+            {secondaryNavigationItems.map((item) => {
+              const selected = primarySection === item.key;
+              return (
+                <Tooltip key={item.key} title={item.premium ? 'Signale aus Sales-Triggern sind in Sales Premium enthalten.' : ''}>
+                  <Button
+                    variant={selected ? 'contained' : 'text'}
+                    startIcon={item.icon}
+                    aria-current={selected ? 'page' : undefined}
+                    onClick={() => item.premium
+                      ? window.open('/account-radar?request=upgrade#pakete', '_blank', 'noopener,noreferrer')
+                      : selectPrimarySection(item.key)}
+                    sx={{ minHeight: 42, minWidth: 0, borderRadius: 2.4, fontWeight: 900, whiteSpace: 'nowrap' }}
+                  >
+                    {item.label}
+                    {item.count !== null && item.count !== undefined && (
+                      <Box component="span" sx={{ ml: 0.7, minWidth: 21, height: 21, px: 0.55, display: 'inline-grid', placeItems: 'center', borderRadius: 99, bgcolor: selected ? alpha(theme.palette.common.white, 0.2) : alpha(primary, 0.1), color: selected ? 'inherit' : 'primary.main', fontSize: '0.66rem', fontWeight: 950 }}>
+                        {item.count}
+                      </Box>
+                    )}
+                    {item.premium && <Box component="span" sx={{ ml: 0.6, fontSize: '0.58rem' }}>PREMIUM</Box>}
+                  </Button>
+                </Tooltip>
+              );
+            })}
+          </Box>
+        </Paper>
+      )}
 
       {selectedAccount && (
         <Box sx={{ mt: 1.2, display: 'flex', justifyContent: 'center' }}>
@@ -2692,6 +2659,7 @@ const AccountRadarPage: React.FC = () => {
         </Box>
       )}
 
+      {workspace === 'cockpit' && (
       <Paper elevation={0} sx={{ mt: 1.2, p: 0.65, borderRadius: 3, border: '1px solid', borderColor: 'divider', bgcolor: alpha(theme.palette.background.paper, 0.82) }}>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', md: 'repeat(4, minmax(0, 1fr))' }, gap: 0.35 }}>
         {[
@@ -2752,10 +2720,11 @@ const AccountRadarPage: React.FC = () => {
         ))}
         </Box>
       </Paper>
+      )}
 
-      {worklistSection}
+      {(workspace === 'cockpit' || (workspace === 'insights' && primarySection === 'accounts')) && worklistSection}
 
-      {entitlements?.features.contentTriggers && entitlements.subscription?.accessActive !== false && (
+      {workspace === 'insights' && primarySection === 'triggers' && entitlements?.features.contentTriggers && entitlements.subscription?.accessActive !== false && (
         <Paper
           ref={marketSignalsSectionRef}
           elevation={0}
@@ -2878,7 +2847,21 @@ const AccountRadarPage: React.FC = () => {
         </Paper>
       )}
 
-      {campaigns.some((campaign) => campaign.status !== 'archived') && entitlements?.subscription?.accessActive !== false && (
+      {workspace === 'insights' && primarySection === 'triggers' && !triggerFeatureIncluded && (
+        <Alert
+          severity="info"
+          sx={{ mt: 2.5 }}
+          action={(
+            <Button component="a" href="/account-radar?request=upgrade#pakete" target="_blank" rel="noopener noreferrer" color="inherit">
+              Sales Premium ansehen
+            </Button>
+          )}
+        >
+          Sales-Trigger und Markt-/Ereignissignale sind in Sales Premium enthalten. Ihre Accounts bleiben unter „Accounts“ verfügbar.
+        </Alert>
+      )}
+
+      {workspace === 'sales' && primarySection === 'pipeline' && campaigns.some((campaign) => campaign.status !== 'archived') && entitlements?.subscription?.accessActive !== false && (
         <Paper
           elevation={0}
           sx={{
@@ -3035,10 +3018,11 @@ const AccountRadarPage: React.FC = () => {
         </Paper>
       )}
 
-      {entitlements?.features.advancedAnalytics && entitlements.subscription?.accessActive !== false && (
+      {workspace === 'sales' && primarySection === 'pipeline' && entitlements?.features.advancedAnalytics && entitlements.subscription?.accessActive !== false && (
         <Box sx={{ mt: 3 }}><AccountRadarAnalytics tenantName={businessPartner?.name} /></Box>
       )}
 
+      {workspace === 'sales' && primarySection === 'pipeline' && (
       <Paper
         ref={pipelineSectionRef}
         elevation={0}
@@ -3322,7 +3306,9 @@ const AccountRadarPage: React.FC = () => {
           </Box>
         </Collapse>
       </Paper>
+      )}
 
+      {workspace === 'sales' && primarySection === 'calendar' && (
       <Paper ref={calendarSectionRef} elevation={0} sx={{ mt: 2.5, p: { xs: 1.5, md: 2 }, borderRadius: 4, border: '1px solid', borderColor: 'divider', scrollMarginTop: 88 }}>
         <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1.5}>
           <Box sx={{ minWidth: 0 }}>
@@ -3464,6 +3450,7 @@ const AccountRadarPage: React.FC = () => {
           </Box>
         </Collapse>
       </Paper>
+      )}
 
       <AccountDetailDialog
         open={Boolean(detailAccountId)}

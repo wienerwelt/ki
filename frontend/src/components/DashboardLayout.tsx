@@ -24,7 +24,6 @@ import QueryStatsIcon from '@mui/icons-material/QueryStats';
 import StarsIcon from '@mui/icons-material/Stars';
 import FeedbackIcon from '@mui/icons-material/Feedback';
 import FolderIcon from '@mui/icons-material/Folder';
-import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import LogoutIcon from '@mui/icons-material/Logout';
 import SearchIcon from '@mui/icons-material/Search';
@@ -379,7 +378,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const handleSearchClose = () => setSearchOpen(false);
     const handleBriefingOpen = () => {
         if (isSalesWorkspace) {
-            navigate('/radar?view=today');
+            navigate('/radar');
             return;
         }
         setBriefingOpen(true);
@@ -417,27 +416,17 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         >
                             Sales-Radar
                         </ListSubheader>
-                        <ListItem button component={RouterLink} to="/radar?view=today">
+                        <ListItem button component={RouterLink} to="/radar">
                             <ListItemIcon><ViewListOutlinedIcon /></ListItemIcon>
-                            <ListItemText primary="Aufgaben" secondary="Offene Arbeit priorisieren" />
+                            <ListItemText primary="Cockpit" secondary="Aufgaben & Prioritäten" />
                         </ListItem>
-                        {salesPlan === 'premium' && (
-                            <ListItem button component={RouterLink} to="/radar?view=triggers">
-                                <ListItemIcon><AutoAwesomeIcon /></ListItemIcon>
-                                <ListItemText primary="Signale" secondary="Märkte & Ereignisse" />
-                            </ListItem>
-                        )}
-                        <ListItem button component={RouterLink} to="/radar?view=accounts">
-                            <ListItemIcon><BusinessIcon /></ListItemIcon>
-                            <ListItemText primary="Accounts" secondary="Gesamter Bestand" />
+                        <ListItem button component={RouterLink} to="/radar/insights">
+                            <ListItemIcon><AutoAwesomeIcon /></ListItemIcon>
+                            <ListItemText primary="Beobachtung" secondary="Signale & Accounts" />
                         </ListItem>
-                        <ListItem button component={RouterLink} to="/radar?view=pipeline">
+                        <ListItem button component={RouterLink} to="/radar/pipeline">
                             <ListItemIcon><TimelineOutlinedIcon /></ListItemIcon>
-                            <ListItemText primary="Pipeline" secondary="Fortschritt & Ergebnisse" />
-                        </ListItem>
-                        <ListItem button component={RouterLink} to="/radar?view=calendar">
-                            <ListItemIcon><CalendarMonthIcon /></ListItemIcon>
-                            <ListItemText primary="Kalender" secondary="Kontakte & Wiedervorlagen" />
+                            <ListItemText primary="Vertrieb" secondary="Pipeline & Termine" />
                         </ListItem>
                         <ListItem button component={RouterLink} to="/radar?panel=settings">
                             <ListItemIcon><QueryStatsIcon /></ListItemIcon>

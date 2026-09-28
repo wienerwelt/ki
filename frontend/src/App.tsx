@@ -302,7 +302,9 @@ function App() {
             </Route>
 
             <Route element={<AccountRadarAllowedRoutes />}>
-              <Route path="/radar" element={lazyRoute(<AccountRadarPage />)} />
+              <Route path="/radar" element={lazyRoute(<AccountRadarPage workspace="cockpit" />)} />
+              <Route path="/radar/insights" element={lazyRoute(<AccountRadarPage workspace="insights" />)} />
+              <Route path="/radar/pipeline" element={lazyRoute(<AccountRadarPage workspace="sales" />)} />
               <Route path="/radar/help" element={lazyRoute(<AccountRadarHelpPage />)} />
             </Route>
 
