@@ -4,7 +4,8 @@ import { useNavigate, useParams, useSearchParams, Link as RouterLink } from 'rea
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
-    TextField, MenuItem, Tooltip as MuiTooltip, TableSortLabel, InputAdornment, Chip, Grid, Breadcrumbs, Link as MuiLink, Stack, Avatar
+    TextField, MenuItem, Tooltip as MuiTooltip, TableSortLabel, InputAdornment, Chip, Grid, Breadcrumbs, Link as MuiLink, Stack, Avatar,
+    Autocomplete, Checkbox, FormControlLabel
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -16,6 +17,8 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined';
 import PhotoLibraryOutlinedIcon from '@mui/icons-material/PhotoLibraryOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import PersonAddAltOutlinedIcon from '@mui/icons-material/PersonAddAltOutlined';
+import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
 import DashboardLayout from '../components/DashboardLayout';
 import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
@@ -46,6 +49,8 @@ interface Account {
     notes: string | null;
     competitor_count: string | number;
     contact_count: string | number;
+    article_count?: string | number;
+    activity_count?: string | number;
     competitors: Array<{ id: string; name: string; website_url?: string | null; linkedin_url?: string | null; notes?: string | null }>;
     regions: Region[];
     categories: Category[];
@@ -94,10 +99,10 @@ function descendingComparator<T>(a: T, b: T, orderBy: keyof T) {
     return 0;
 }
 
-function getComparator<Key extends keyof any>(
+function getComparator<T>(
     order: Order,
-    orderBy: Key,
-): (a: { [key in Key]: any }, b: { [key in Key]: any }) => number {
+    orderBy: keyof T,
+): (a: T, b: T) => number {
     return order === 'desc'
         ? (a, b) => descendingComparator(a, b, orderBy)
         : (a, b) => -descendingComparator(a, b, orderBy);
@@ -144,6 +149,9 @@ const AdminBpAccountsPage: React.FC = () => {
     const [logoLibrarySearch, setLogoLibrarySearch] = useState('');
     const [logoLibraryLoading, setLogoLibraryLoading] = useState(false);
     const [logoLibraryError, setLogoLibraryError] = useState<string | null>(null);
+    const [deleteCandidate, setDeleteCandidate] = useState<Account | null>(null);
+    const [deleteRelated, setDeleteRelated] = useState(false);
+    const [deleteBusy, setDeleteBusy] = useState(false);
 
     const fetchData = async () => {
         if (!effectiveBpId) {
@@ -272,14 +280,70 @@ const AdminBpAccountsPage: React.FC = () => {
         }
     };
 
-    const handleDelete = async (id: string) => {
-        if (!window.confirm('Sind Sie sicher? Dieser Account wird endgültig gelöscht.')) return;
+    const accountPayload = (account: Account, status: Account['status'] = account.status) => ({
+        name: account.name,
+        website_url: account.website_url || '',
+        linkedin_url: account.linkedin_url || '',
+        logo_url: account.logo_url || '',
+        address: account.address || '',
+        contact_email: account.contact_email || '',
+        contact_phone: account.contact_phone || '',
+        owner_user_id: account.owner_user_id || null,
+        status,
+        region_ids: account.regions.map((region) => region.id),
+        category_ids: account.categories.map((category) => category.id),
+        notes: account.notes || '',
+    });
+
+    const openDeleteDialog = (account: Account) => {
+        setDeleteCandidate(account);
+        setDeleteRelated(false);
+        setError(null);
+    };
+
+    const closeDeleteDialog = () => {
+        if (deleteBusy) return;
+        setDeleteCandidate(null);
+        setDeleteRelated(false);
+    };
+
+    const handleDeactivateAccount = async () => {
+        if (!deleteCandidate) return;
+        setDeleteBusy(true);
+        setError(null);
         try {
-            const response = await apiClient.delete(`/api/admin/accounts/${id}`);
-            if (!response.res.ok) throw new Error((response.data as any)?.message || 'Account konnte nicht gelöscht werden.');
-            fetchData();
+            const response = await apiClient.put(`/api/admin/accounts/${deleteCandidate.id}`, accountPayload(deleteCandidate, 'churned'));
+            if (!response.res.ok) throw new Error((response.data as any)?.message || 'Account konnte nicht deaktiviert werden.');
+            setDeleteCandidate(null);
+            setDeleteRelated(false);
+            await fetchData();
         } catch (err: any) {
-            alert(err?.message || 'Fehler beim Löschen.');
+            setError(err?.message || 'Fehler beim Deaktivieren.');
+        } finally {
+            setDeleteBusy(false);
+        }
+    };
+
+    const handleDelete = async () => {
+        if (!deleteCandidate) return;
+        const hasRelatedData = Number(deleteCandidate.competitor_count || 0) > 0
+            || Number(deleteCandidate.article_count || 0) > 0
+            || Number(deleteCandidate.contact_count || 0) > 0
+            || Number(deleteCandidate.activity_count || 0) > 0;
+        if (hasRelatedData && !deleteRelated) return;
+        setDeleteBusy(true);
+        setError(null);
+        try {
+            const query = deleteRelated ? '?deleteRelated=true' : '';
+            const response = await apiClient.delete(`/api/admin/accounts/${deleteCandidate.id}${query}`);
+            if (!response.res.ok) throw new Error((response.data as any)?.message || 'Account konnte nicht gelöscht werden.');
+            setDeleteCandidate(null);
+            setDeleteRelated(false);
+            await fetchData();
+        } catch (err: any) {
+            setError(err?.message || 'Fehler beim Löschen.');
+        } finally {
+            setDeleteBusy(false);
         }
     };
 
@@ -356,14 +420,14 @@ const AdminBpAccountsPage: React.FC = () => {
         <DashboardLayout>
             <Container maxWidth={false} sx={{ mt: 4, mb: 4 }}>
                 <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />} sx={{ mb: 2 }}>
-                    <MuiLink component={RouterLink} underline="hover" color="inherit" to="/radar">Account-Radar</MuiLink>
+                    <MuiLink component={RouterLink} underline="hover" color="inherit" to="/radar">Sales-Radar</MuiLink>
                     {!isTenantScoped && <MuiLink component={RouterLink} underline="hover" color="inherit" to="/admin/business-partners">Mandanten</MuiLink>}
                     <Typography color="text.primary">{businessPartner?.name || '...'}</Typography>
                 </Breadcrumbs>
                 
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
                     <Box>
-                        <Typography variant="h4" component="h1">Account Management</Typography>
+                        <Typography variant="h4" component="h1">Accounts verwalten</Typography>
                         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
                             <Typography variant="body2" color="text.secondary">Mandant: {businessPartner?.name || 'wird geladen'}</Typography>
                             {businessPartner?.sales_plan && (
@@ -431,7 +495,7 @@ const AdminBpAccountsPage: React.FC = () => {
                                             <TableCell>
                                                 <MuiTooltip title="Details"><IconButton onClick={() => setDetailAccountId(acc.id)}><VisibilityIcon /></IconButton></MuiTooltip>
                                                 <MuiTooltip title="Bearbeiten"><IconButton color="primary" onClick={() => handleOpenEditDialog(acc)}><EditIcon /></IconButton></MuiTooltip>
-                                                <MuiTooltip title="Löschen"><IconButton color="error" onClick={() => handleDelete(acc.id)}><DeleteIcon /></IconButton></MuiTooltip>
+                                                <MuiTooltip title="Deaktivieren oder löschen"><IconButton color="error" onClick={() => openDeleteDialog(acc)}><DeleteIcon /></IconButton></MuiTooltip>
                                             </TableCell>
                                         </TableRow>
                                     ))}
@@ -454,20 +518,35 @@ const AdminBpAccountsPage: React.FC = () => {
                                     <MenuItem value="churned">{statusMapping.churned}</MenuItem>
                                 </TextField>
                             </Grid>
-                            <Grid item xs={12} md={6}>
-                                <TextField select label="Account-Verantwortung" fullWidth value={formOwnerUserId} onChange={(event) => setFormOwnerUserId(event.target.value)} helperText="Nur aktive Mitglieder des Sales-Teams dieses Mandanten">
-                                    <MenuItem value="">Nicht zugewiesen</MenuItem>
-                                    {accountTeam.map((member) => (
-                                        <MenuItem key={member.id} value={member.id}>
-                                            <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
-                                                <Avatar src={resolveAssetUrl(member.profile_image_url) || undefined} sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
+                            <Grid item xs={12} md={8}>
+                                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'flex-start' }}>
+                                    <Autocomplete
+                                        fullWidth
+                                        options={accountTeam}
+                                        value={accountTeam.find((member) => member.id === formOwnerUserId) || null}
+                                        onChange={(_event, member) => setFormOwnerUserId(member?.id || '')}
+                                        getOptionLabel={(member) => formatAccountOwner(member.name, member.email)}
+                                        isOptionEqualToValue={(option, value) => option.id === value.id}
+                                        noOptionsText="Kein aktives Teammitglied gefunden"
+                                        renderOption={(props, member) => (
+                                            <Box component="li" {...props} key={member.id}>
+                                                <Avatar src={resolveAssetUrl(member.profile_image_url) || undefined} sx={{ width: 30, height: 30, mr: 1, fontSize: '0.75rem' }}>
                                                     {member.name.trim().charAt(0).toUpperCase() || 'U'}
                                                 </Avatar>
-                                                <Typography variant="body2" noWrap>{formatAccountOwner(member.name, member.email)}</Typography>
-                                            </Stack>
-                                        </MenuItem>
-                                    ))}
-                                </TextField>
+                                                <Box sx={{ minWidth: 0 }}>
+                                                    <Typography variant="body2" fontWeight={800}>{member.name}</Typography>
+                                                    {member.email && <Typography variant="caption" color="text.secondary">{member.email}</Typography>}
+                                                </Box>
+                                            </Box>
+                                        )}
+                                        renderInput={(params) => <TextField {...params} label="Account-Verantwortung" placeholder="Name oder E-Mail suchen" helperText="Aus dem aktiven Sales-Team auswählen" />}
+                                    />
+                                    {user?.id && accountTeam.some((member) => member.id === user.id) && formOwnerUserId !== user.id && (
+                                        <Button variant="outlined" startIcon={<PersonAddAltOutlinedIcon />} onClick={() => setFormOwnerUserId(user.id)} sx={{ whiteSpace: 'nowrap', minHeight: 56 }}>
+                                            Mir zuweisen
+                                        </Button>
+                                    )}
+                                </Stack>
                             </Grid>
                             <Grid item xs={12} md={7}><TextField label="Website URL" placeholder="https://…" fullWidth value={formWebsite} onChange={(e) => setFormWebsite(e.target.value)} /></Grid>
                             <Grid item xs={12} md={5}><TextField label="LinkedIn URL" placeholder="https://…" fullWidth value={formLinkedinUrl} onChange={(e) => setFormLinkedinUrl(e.target.value)} /></Grid>
@@ -509,6 +588,77 @@ const AdminBpAccountsPage: React.FC = () => {
                     <DialogActions>
                         <Button onClick={handleCloseDialog} color="secondary">Abbrechen</Button>
                         <Button onClick={handleSubmit} color="primary" disabled={loading}>{editingAccount ? 'Speichern' : 'Hinzufügen'}</Button>
+                    </DialogActions>
+                </Dialog>
+
+                <Dialog open={Boolean(deleteCandidate)} onClose={closeDeleteDialog} fullWidth maxWidth="sm">
+                    <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <WarningAmberOutlinedIcon color="warning" />
+                        Account entfernen
+                    </DialogTitle>
+                    <DialogContent dividers>
+                        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+                        {deleteCandidate && (() => {
+                            const competitors = Number(deleteCandidate.competitor_count || 0);
+                            const articles = Number(deleteCandidate.article_count || 0);
+                            const contacts = Number(deleteCandidate.contact_count || 0);
+                            const activities = Number(deleteCandidate.activity_count || 0);
+                            const hasRelatedData = competitors > 0 || articles > 0 || contacts > 0 || activities > 0;
+                            return (
+                                <Stack spacing={2}>
+                                    <Box>
+                                        <Typography fontWeight={900}>{deleteCandidate.name}</Typography>
+                                        <Typography variant="body2" color="text.secondary">
+                                            Wählen Sie bewusst zwischen einer reversiblen Deaktivierung und der endgültigen Löschung.
+                                        </Typography>
+                                    </Box>
+                                    <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1 }}>
+                                        {[
+                                            ['Wettbewerber', competitors],
+                                            ['Artikel & Texte', articles],
+                                            ['Kontakte', contacts],
+                                            ['Aktivitäten', activities],
+                                        ].map(([label, value]) => (
+                                            <Paper key={String(label)} variant="outlined" sx={{ p: 1.2, textAlign: 'center', borderRadius: 2 }}>
+                                                <Typography variant="h6" fontWeight={950}>{value}</Typography>
+                                                <Typography variant="caption" color="text.secondary">{label}</Typography>
+                                            </Paper>
+                                        ))}
+                                    </Box>
+                                    <Alert severity={hasRelatedData ? 'warning' : 'info'}>
+                                        „Nur deaktivieren“ setzt den Status auf „Abgewandert“ und bewahrt alle Daten. Die endgültige Löschung entfernt auch zugehörige Wettbewerber, Artikeltexte, Kontakte und den Aktivitätsverlauf.
+                                    </Alert>
+                                    {hasRelatedData && (
+                                        <FormControlLabel
+                                            control={<Checkbox checked={deleteRelated} onChange={(event) => setDeleteRelated(event.target.checked)} color="error" />}
+                                            label="Zugehörige Wettbewerber, Texte, Kontakte und Aktivitäten endgültig mitlöschen"
+                                            sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.45, fontWeight: 800 } }}
+                                        />
+                                    )}
+                                </Stack>
+                            );
+                        })()}
+                    </DialogContent>
+                    <DialogActions sx={{ p: 2, flexWrap: 'wrap', gap: 1 }}>
+                        <Button onClick={closeDeleteDialog} disabled={deleteBusy}>Abbrechen</Button>
+                        <Button variant="outlined" onClick={handleDeactivateAccount} disabled={deleteBusy} sx={{ whiteSpace: 'nowrap' }}>
+                            Nur deaktivieren
+                        </Button>
+                        <Button
+                            variant="contained"
+                            color="error"
+                            startIcon={deleteBusy ? <CircularProgress size={17} color="inherit" /> : <DeleteOutlineIcon />}
+                            onClick={handleDelete}
+                            disabled={deleteBusy || Boolean(deleteCandidate && (
+                                Number(deleteCandidate.competitor_count || 0) > 0
+                                || Number(deleteCandidate.article_count || 0) > 0
+                                || Number(deleteCandidate.contact_count || 0) > 0
+                                || Number(deleteCandidate.activity_count || 0) > 0
+                            ) && !deleteRelated)}
+                            sx={{ whiteSpace: 'nowrap' }}
+                        >
+                            Endgültig löschen
+                        </Button>
                     </DialogActions>
                 </Dialog>
 

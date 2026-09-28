@@ -183,6 +183,10 @@ exports.getAccountsForBusinessPartner = async (req, res) => {
                 owner.profile_image_url AS owner_profile_image_url,
                 (SELECT COUNT(*)::int FROM business_partner_competitors c WHERE c.account_id = a.id) as competitor_count,
                 (SELECT COUNT(*)::int FROM business_partner_account_contacts contact WHERE contact.account_id = a.id) as contact_count,
+                (SELECT COUNT(*)::int FROM business_partner_tracked_articles article WHERE article.account_id = a.id) as article_count,
+                ((SELECT COUNT(*)::int FROM account_radar_content_trigger_matches trigger_match WHERE trigger_match.account_id = a.id)
+                  + (SELECT COUNT(*)::int FROM account_radar_campaign_accounts campaign_account WHERE campaign_account.account_id = a.id)
+                  + (SELECT COUNT(*)::int FROM business_partner_intelligence_briefings briefing WHERE briefing.account_id = a.id)) as activity_count,
                 (SELECT COALESCE(json_agg(json_build_object(
                     'id', competitor.id,
                     'name', competitor.name,
@@ -347,8 +351,45 @@ exports.deleteAccount = async (req, res) => {
     const { accountId } = req.params;
     if (!isValidUUID(accountId)) return res.status(400).json({ message: 'Invalid Account ID.' });
 
+    const client = await db.connect();
     try {
-        const result = await db.query(
+        await client.query('BEGIN');
+        const account = await client.query(
+            `SELECT account.id,
+                    (SELECT COUNT(*)::int FROM business_partner_competitors competitor WHERE competitor.account_id = account.id) AS competitor_count,
+                    (SELECT COUNT(*)::int FROM business_partner_tracked_articles article WHERE article.account_id = account.id) AS article_count,
+                    (SELECT COUNT(*)::int FROM business_partner_account_contacts contact WHERE contact.account_id = account.id) AS contact_count,
+                    ((SELECT COUNT(*)::int FROM account_radar_content_trigger_matches trigger_match WHERE trigger_match.account_id = account.id)
+                      + (SELECT COUNT(*)::int FROM account_radar_campaign_accounts campaign_account WHERE campaign_account.account_id = account.id)
+                      + (SELECT COUNT(*)::int FROM business_partner_intelligence_briefings briefing WHERE briefing.account_id = account.id)) AS activity_count
+             FROM business_partner_accounts account
+             WHERE account.id = $1
+               AND ($2::uuid IS NULL OR account.business_partner_id = $2::uuid)
+             FOR UPDATE`,
+            [accountId, getTenantScope(req)]
+        );
+        if (account.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Account not found.' });
+        }
+
+        const related = {
+            competitors: Number(account.rows[0].competitor_count || 0),
+            articles: Number(account.rows[0].article_count || 0),
+            contacts: Number(account.rows[0].contact_count || 0),
+            activities: Number(account.rows[0].activity_count || 0),
+        };
+        const hasRelatedData = related.competitors > 0 || related.articles > 0 || related.contacts > 0 || related.activities > 0;
+        if (hasRelatedData && req.query.deleteRelated !== 'true') {
+            await client.query('ROLLBACK');
+            return res.status(409).json({
+                message: 'Der Account enthält noch verknüpfte Daten. Bestätigen Sie deren endgültige Löschung oder deaktivieren Sie den Account stattdessen.',
+                code: 'ACCOUNT_RELATED_DATA_CONFIRMATION_REQUIRED',
+                related,
+            });
+        }
+
+        const result = await client.query(
             `DELETE FROM business_partner_accounts
              WHERE id = $1
                AND ($2::uuid IS NULL OR business_partner_id = $2::uuid)
@@ -356,12 +397,17 @@ exports.deleteAccount = async (req, res) => {
             [accountId, getTenantScope(req)]
         );
         if (result.rowCount === 0) {
+            await client.query('ROLLBACK');
             return res.status(404).json({ message: 'Account not found.' });
         }
+        await client.query('COMMIT');
         res.status(204).send();
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error('Error deleting account:', err.message);
         res.status(500).send('Server error');
+    } finally {
+        client.release();
     }
 };
 

@@ -65,6 +65,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 import VideocamOutlinedIcon from '@mui/icons-material/VideocamOutlined';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import RssFeedOutlinedIcon from '@mui/icons-material/RssFeedOutlined';
@@ -663,6 +664,7 @@ const AccountRadarPage: React.FC = () => {
   const [marketSignalNewAccountName, setMarketSignalNewAccountName] = useState('');
   const [marketSignalNewAccountWebsite, setMarketSignalNewAccountWebsite] = useState('');
   const [marketSignalBusy, setMarketSignalBusy] = useState(false);
+  const [articleHeatmapOpen, setArticleHeatmapOpen] = useState(false);
   const resultsSectionRef = useRef<HTMLDivElement | null>(null);
   const marketSignalsSectionRef = useRef<HTMLDivElement | null>(null);
   const pipelineSectionRef = useRef<HTMLDivElement | null>(null);
@@ -1083,6 +1085,7 @@ const AccountRadarPage: React.FC = () => {
   const baseFilteredSignals = useMemo(() => {
     const query = search.trim().toLocaleLowerCase('de');
     return signals.filter((signal) => {
+        const matchesAccount = !selectedAccount || signal.account_id === selectedAccount.id;
         const matchesCampaign = !selectedCampaign
           || selectedCampaignSignalIds.has(signal.id)
           || selectedCampaignAccountIds.has(signal.account_id || '');
@@ -1092,9 +1095,9 @@ const AccountRadarPage: React.FC = () => {
           .filter(Boolean)
           .join(' ')
           .toLocaleLowerCase('de');
-        return matchesCampaign && matchesAssignee && (!query || haystack.includes(query));
+        return matchesAccount && matchesCampaign && matchesAssignee && (!query || haystack.includes(query));
       });
-  }, [assigneeFilter, search, selectedCampaign, selectedCampaignAccountIds, selectedCampaignSignalIds, signals]);
+  }, [assigneeFilter, search, selectedAccount, selectedCampaign, selectedCampaignAccountIds, selectedCampaignSignalIds, signals]);
 
   const scopedSignals = useMemo(
     () => baseFilteredSignals.filter((signal) => salesStageFilter === 'all' || signal.sales_stage === salesStageFilter),
@@ -1130,6 +1133,25 @@ const AccountRadarPage: React.FC = () => {
     done: scopedSignals.filter((signal) => matchesView(signal, 'done')).length,
     ignored: scopedSignals.filter((signal) => matchesView(signal, 'ignored')).length,
   }), [matchesView, scopedSignals]);
+
+  const articleHeatmapDays = useMemo(() => {
+    const countByDate = new Map<string, number>();
+    scopedSignals.forEach((signal) => {
+      const publishedAt = new Date(signal.published_at);
+      if (Number.isNaN(publishedAt.getTime())) return;
+      const key = toLocalDateKey(publishedAt);
+      countByDate.set(key, (countByDate.get(key) || 0) + 1);
+    });
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Array.from({ length: 84 }, (_, index) => {
+      const date = new Date(today);
+      date.setDate(today.getDate() - (83 - index));
+      const dateKey = toLocalDateKey(date);
+      return { date, dateKey, count: countByDate.get(dateKey) || 0 };
+    });
+  }, [scopedSignals]);
+  const articleHeatmapMax = Math.max(1, ...articleHeatmapDays.map((day) => day.count));
 
   const funnelContextView: RadarView = view === 'accounts' ? 'today' : view;
   const cockpitBaseFilteredSignals = useMemo(
@@ -1517,6 +1539,28 @@ const AccountRadarPage: React.FC = () => {
           transition: 'opacity 160ms ease, border-color 160ms ease',
         }}
       >
+        {!isDemoMode && (
+          <Stack direction="row" spacing={0.8} justifyContent="flex-end" useFlexGap flexWrap="wrap" sx={{ mb: 1.1 }}>
+            {status === 'done' ? (
+              <Button size="small" variant="outlined" startIcon={<RestartAltIcon />} onClick={() => updateStatus(signal, 'read')} disabled={saving} sx={{ fontWeight: 900, whiteSpace: 'nowrap' }}>
+                Wieder öffnen
+              </Button>
+            ) : status !== 'ignored' && (
+              <Button size="small" variant="contained" color="success" startIcon={<DoneAllIcon />} onClick={() => updateStatus(signal, 'done')} disabled={saving} sx={{ fontWeight: 900, whiteSpace: 'nowrap', boxShadow: 1 }}>
+                Erledigt
+              </Button>
+            )}
+            {status === 'ignored' ? (
+              <Button size="small" variant="outlined" startIcon={<RestartAltIcon />} onClick={() => saveRelevance('relevant', signal)} disabled={saving || relevanceSaving} sx={{ fontWeight: 900, whiteSpace: 'nowrap' }}>
+                Wieder relevant
+              </Button>
+            ) : (
+              <Button size="small" variant="outlined" color="inherit" startIcon={<VisibilityOffOutlinedIcon />} onClick={() => openRelevanceDialog(signal)} disabled={saving} sx={{ fontWeight: 900, whiteSpace: 'nowrap' }}>
+                Nicht relevant
+              </Button>
+            )}
+          </Stack>
+        )}
         <Stack direction="row" spacing={1.5} alignItems="flex-start">
           <Avatar
             variant="rounded"
@@ -1756,17 +1800,6 @@ const AccountRadarPage: React.FC = () => {
                   <Button size={isMobile ? 'medium' : 'small'} variant="contained" startIcon={<PhoneInTalkIcon />} onClick={() => openWorkflow(signal, 'contact_planned')} disabled={saving}>Kontakt planen</Button>
                   <Button size={isMobile ? 'medium' : 'small'} variant="outlined" startIcon={<ScheduleIcon />} onClick={() => openWorkflow(signal, 'follow_up')} disabled={saving}>Wiedervorlage</Button>
                   <Button size={isMobile ? 'medium' : 'small'} variant="outlined" startIcon={<EditNoteIcon />} onClick={() => openWorkflow(signal, 'note')} disabled={saving}>Notiz</Button>
-                  {status !== 'done' && (
-                    <Button size={isMobile ? 'medium' : 'small'} variant="outlined" color="success" startIcon={<DoneAllIcon />} onClick={() => updateStatus(signal, 'done')} disabled={saving}>Erledigt</Button>
-                  )}
-                  {status === 'done' && (
-                    <Button size={isMobile ? 'medium' : 'small'} variant="outlined" startIcon={<VisibilityIcon />} onClick={() => updateStatus(signal, 'read')} disabled={saving}>Wieder öffnen</Button>
-                  )}
-                  {status === 'ignored' ? (
-                    <Button size={isMobile ? 'medium' : 'small'} variant="outlined" onClick={() => saveRelevance('relevant', signal)} disabled={saving || relevanceSaving}>Wieder relevant</Button>
-                  ) : (
-                    <Button size={isMobile ? 'medium' : 'small'} variant="text" color="inherit" startIcon={<DeleteOutlineIcon />} onClick={() => openRelevanceDialog(signal)} disabled={saving}>Nicht relevant</Button>
-                  )}
                 </>
               )}
             </Box>
@@ -1782,31 +1815,6 @@ const AccountRadarPage: React.FC = () => {
 
     return (
       <Stack spacing={1.5}>
-        {selectedAccount && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', px: 1 }}>
-            <Paper
-              role="status"
-              variant="outlined"
-              sx={{ py: 0.55, pl: 1.4, pr: 0.45, borderRadius: 99, borderColor: alpha(primary, 0.28), bgcolor: alpha(primary, 0.06), maxWidth: '100%' }}
-            >
-              <Stack direction="row" spacing={0.8} alignItems="center">
-                <Typography variant="body2" noWrap sx={{ minWidth: 0, fontWeight: 750 }}>
-                  Ausgewählt: <strong>{selectedAccount.name}</strong>
-                </Typography>
-                <Tooltip title="Auswahl aufheben">
-                  <IconButton
-                    size="small"
-                    color="primary"
-                    onClick={() => { setSelectedAccountId(null); setSearch(''); }}
-                    aria-label="Account-Auswahl aufheben"
-                  >
-                    <CloseIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
-            </Paper>
-          </Box>
-        )}
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 1.5 }}>
         {visibleAccounts.map((account) => {
           const accountSignals = [...(account.account_news || []), ...(account.competitor_news || [])];
@@ -2134,13 +2142,13 @@ const AccountRadarPage: React.FC = () => {
           <Box sx={{ minWidth: { lg: 165 } }}>
             <Typography sx={{ fontWeight: 950, lineHeight: 1.2 }}>{view === 'accounts' ? 'Accounts' : 'Arbeitsliste'}</Typography>
             <Typography variant="caption" color="text.secondary">
-              {view === 'accounts' ? `${cockpitAccounts.length} im Bestand` : 'Priorisiert entscheiden'}
+              {view === 'accounts' ? `${cockpitAccounts.length} im Bestand` : 'Signale prüfen → nächste Schritte → Sales-Pipeline'}
             </Typography>
           </Box>
           {view !== 'accounts' && (
             <Stack direction="row" spacing={0.6} sx={{ overflowX: 'auto', pb: { xs: 0.2, lg: 0 } }}>
               {([
-                ['today', `Aktuell ${tabCounts.today}`, <RadarIcon fontSize="small" />],
+                ['today', `Offen ${tabCounts.today}`, <RadarIcon fontSize="small" />],
                 ['planned', `Geplant ${tabCounts.planned}`, <ScheduleIcon fontSize="small" />],
                 ['done', `Erledigt ${tabCounts.done}`, <DoneAllIcon fontSize="small" />],
                 ['ignored', `Ausgeblendet ${tabCounts.ignored}`, <VisibilityIcon fontSize="small" />],
@@ -2165,30 +2173,81 @@ const AccountRadarPage: React.FC = () => {
           <TextField
             size="small"
             value={search}
-            onChange={(event) => { setSearch(event.target.value); setSelectedAccountId(null); }}
+            onChange={(event) => setSearch(event.target.value)}
             placeholder={view === 'accounts' ? 'Account suchen …' : 'Signal oder Account suchen …'}
             InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
             sx={{ minWidth: { lg: 270 }, '& .MuiOutlinedInput-root': { minHeight: 42, bgcolor: 'background.paper' } }}
           />
           {view !== 'accounts' && (
-            <TextField
-              select
-              size="small"
-              label="Verantwortlich"
-              value={assigneeFilter}
-              onChange={(event) => setAssigneeFilter(event.target.value)}
-              sx={{ minWidth: { xs: '100%', sm: 190 }, '& .MuiOutlinedInput-root': { minHeight: 42, bgcolor: 'background.paper' } }}
-            >
-              <MenuItem value="all">Alle im Team</MenuItem>
-              {user?.id && <MenuItem value={user.id}>Meine Aufgaben</MenuItem>}
-              <MenuItem value="unassigned">Nicht zugewiesen</MenuItem>
-              {teamMembers.filter((member) => member.id !== user?.id).map((member) => (
-                <MenuItem key={member.id} value={member.id}>{member.name}</MenuItem>
-              ))}
-            </TextField>
+            <>
+              <TextField
+                select
+                size="small"
+                label="Zeitraum"
+                value={days}
+                onChange={(event) => setDays(Number(event.target.value))}
+                sx={{ minWidth: { xs: '100%', sm: 128 }, '& .MuiOutlinedInput-root': { minHeight: 42, bgcolor: 'background.paper' } }}
+              >
+                <MenuItem value={7}>7 Tage</MenuItem>
+                <MenuItem value={30}>30 Tage</MenuItem>
+                <MenuItem value={90}>90 Tage</MenuItem>
+                <MenuItem value={365}>1 Jahr</MenuItem>
+              </TextField>
+              <TextField
+                select
+                size="small"
+                label="Verantwortlich"
+                value={assigneeFilter}
+                onChange={(event) => setAssigneeFilter(event.target.value)}
+                sx={{ minWidth: { xs: '100%', sm: 190 }, '& .MuiOutlinedInput-root': { minHeight: 42, bgcolor: 'background.paper' } }}
+              >
+                <MenuItem value="all">Alle im Team</MenuItem>
+                {user?.id && <MenuItem value={user.id}>Meine Aufgaben</MenuItem>}
+                <MenuItem value="unassigned">Nicht zugewiesen</MenuItem>
+                {teamMembers.filter((member) => member.id !== user?.id).map((member) => (
+                  <MenuItem key={member.id} value={member.id}>{member.name}</MenuItem>
+                ))}
+              </TextField>
+              <Button
+                size="small"
+                variant={articleHeatmapOpen ? 'contained' : 'outlined'}
+                startIcon={<CalendarMonthOutlinedIcon />}
+                onClick={() => setArticleHeatmapOpen((current) => !current)}
+                aria-expanded={articleHeatmapOpen}
+                sx={{ ...compactActionButtonSx, flexShrink: 0 }}
+              >
+                Artikel-Heatmap
+              </Button>
+            </>
           )}
         </Stack>
       </Paper>
+
+      {view !== 'accounts' && (
+        <Collapse in={articleHeatmapOpen} timeout="auto">
+          <Paper variant="outlined" sx={{ mt: 1, p: 1.4, borderRadius: 3, bgcolor: alpha(primary, 0.025) }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" spacing={0.8} sx={{ mb: 1 }}>
+              <Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Artikelaktivität · letzte 12 Wochen</Typography>
+                <Typography variant="caption" color="text.secondary">Berücksichtigt Account-, Kampagnen-, Team- und Suchfilter. Dunklere Felder bedeuten mehr veröffentlichte Artikel.</Typography>
+              </Box>
+              <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>{scopedSignals.length} Artikel im geladenen Bestand</Typography>
+            </Stack>
+            <Box sx={{ overflowX: 'auto', pb: 0.5 }}>
+              <Box sx={{ display: 'grid', gridTemplateRows: 'repeat(7, 13px)', gridAutoFlow: 'column', gridAutoColumns: '13px', gap: '4px', width: 'max-content' }}>
+                {articleHeatmapDays.map((day) => {
+                  const intensity = day.count === 0 ? 0 : 0.18 + (day.count / articleHeatmapMax) * 0.72;
+                  return (
+                    <Tooltip key={day.dateKey} title={`${day.date.toLocaleDateString('de-AT')}: ${day.count} Artikel`} arrow>
+                      <Box sx={{ width: 13, height: 13, borderRadius: 0.6, bgcolor: day.count ? alpha(primary, intensity) : alpha(theme.palette.text.primary, 0.07), border: '1px solid', borderColor: day.count ? alpha(primary, 0.2) : alpha(theme.palette.text.primary, 0.04) }} />
+                    </Tooltip>
+                  );
+                })}
+              </Box>
+            </Box>
+          </Paper>
+        </Collapse>
+      )}
 
       <Box sx={{ mt: 1.5 }}>
         {loading ? (
@@ -2224,7 +2283,7 @@ const AccountRadarPage: React.FC = () => {
         <Box>
           <Stack direction="row" spacing={1} alignItems="center">
             <RadarIcon sx={{ color: 'primary.main', fontSize: 30 }} />
-            <Typography component="h1" variant="h4" sx={{ fontWeight: 950, letterSpacing: '-0.025em' }}>Account-Radar</Typography>
+            <Typography component="h1" variant="h4" sx={{ fontWeight: 950, letterSpacing: '-0.025em' }}>Sales-Radar</Typography>
           </Stack>
           <Typography color="text.secondary" sx={{ mt: 0.6, textTransform: 'capitalize' }}>{todayLabel} · {businessPartner?.name || 'Ihr Unternehmen'}</Typography>
           {entitlements && (
@@ -2343,7 +2402,7 @@ const AccountRadarPage: React.FC = () => {
 
       <Paper
         component="nav"
-        aria-label="Account-Radar Bereiche"
+        aria-label="Sales-Radar Bereiche"
         elevation={0}
         sx={{
           mt: 2.5,
@@ -2360,10 +2419,10 @@ const AccountRadarPage: React.FC = () => {
       >
         <Box sx={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: { xs: 'minmax(132px, 1fr)', md: 'minmax(0, 1fr)' }, gap: 0.55, overflowX: 'auto', scrollbarWidth: 'none' }}>
           {([
-            { key: 'today', label: 'Heute', icon: <RadarIcon />, count: tabCounts.today },
+            { key: 'today', label: 'Arbeitsliste', icon: <RadarIcon />, count: tabCounts.today },
             { key: 'triggers', label: 'Trigger-Treffer', icon: triggerFeatureIncluded ? <AutoAwesomeOutlinedIcon /> : <LockOutlinedIcon />, count: triggerFeatureActive ? marketSignalCounts.active : null, premium: !triggerFeatureIncluded },
             { key: 'accounts', label: 'Accounts', icon: <BusinessCenterIcon />, count: stats.accounts },
-            { key: 'pipeline', label: 'Pipeline', icon: <TrackChangesIcon />, count: salesOverview.due + salesOverview.waiting || null },
+            { key: 'pipeline', label: 'Sales-Pipeline', icon: <TrackChangesIcon />, count: salesOverview.due + salesOverview.waiting || null },
             { key: 'calendar', label: 'Kalender', icon: <CalendarMonthOutlinedIcon />, count: stats.planned || null },
           ] as Array<{ key: RadarPrimarySection; label: string; icon: React.ReactNode; count: number | null; premium?: boolean }>).map((item) => {
             const selected = primarySection === item.key;
@@ -2405,7 +2464,30 @@ const AccountRadarPage: React.FC = () => {
         </Box>
       </Paper>
 
-      <Box sx={{ mt: 1.4, display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 1 }}>
+      {selectedAccount && (
+        <Box sx={{ mt: 1.2, display: 'flex', justifyContent: 'center' }}>
+          <Paper
+            role="status"
+            variant="outlined"
+            sx={{ py: 0.65, pl: 0.8, pr: 0.35, borderRadius: 99, borderColor: alpha(primary, 0.38), bgcolor: alpha(primary, 0.08), maxWidth: '100%', boxShadow: `0 5px 18px ${alpha(primary, 0.08)}` }}
+          >
+            <Stack direction="row" spacing={0.8} alignItems="center" sx={{ minWidth: 0 }}>
+              <Avatar src={resolveAssetUrl(selectedAccount.logo_url) || undefined} sx={{ width: 28, height: 28, bgcolor: alpha(primary, 0.12), fontSize: 12 }}>{selectedAccount.name.slice(0, 1)}</Avatar>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="caption" color="primary" sx={{ display: 'block', fontWeight: 900, lineHeight: 1 }}>Account-Filter aktiv</Typography>
+                <Typography variant="body2" noWrap sx={{ maxWidth: { xs: 210, sm: 420 }, fontWeight: 850 }}>{selectedAccount.name}</Typography>
+              </Box>
+              <Tooltip title="Account-Filter aufheben">
+                <IconButton size="small" color="primary" onClick={() => { setSelectedAccountId(null); setSearch(''); }} aria-label="Account-Filter aufheben">
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Stack>
+          </Paper>
+        </Box>
+      )}
+
+      <Box sx={{ mt: 1.4, display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' }, gap: 1 }}>
         {[
           {
             key: 'triggers' as const,
@@ -2430,6 +2512,14 @@ const AccountRadarPage: React.FC = () => {
             label: overdueContacts > 0 ? `${overdueContacts} überfällig · heute geplant` : 'Kontakte heute geplant',
             color: overdueContacts > 0 ? theme.palette.warning.main : theme.palette.success.main,
             action: () => selectPrimarySection('calendar'),
+          },
+          {
+            key: 'pipeline' as const,
+            icon: <TrackChangesIcon />,
+            value: funnelStageCounts.contacted + funnelStageCounts.meeting + funnelStageCounts.offer,
+            label: 'Vorgänge in der Sales-Pipeline',
+            color: theme.palette.primary.main,
+            action: () => selectPrimarySection('pipeline'),
           },
         ].map((item) => (
           <Button
@@ -2759,17 +2849,17 @@ const AccountRadarPage: React.FC = () => {
       >
         <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1.5}>
           <Box>
-            <Typography variant="h6" sx={{ fontWeight: 950 }}>Sales-Cockpit</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 950 }}>Sales-Pipeline &amp; Cockpit</Typography>
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 750 }}>
               {selectedAccount
                 ? `Account-Fokus: ${selectedAccount.name} – alle Cockpit-Werte beziehen sich auf diesen Account.`
                 : selectedCampaign
                   ? `Kampagnen-Fokus: ${selectedCampaign.name} – Accounts, Signale und Kennzahlen sind entsprechend gefiltert.`
-                : 'Gesamtansicht: Was ist jetzt wichtig und wo lohnt sich der nächste Kontakt?'}
+                : 'Aus der Arbeitsliste werden geplante Kontakte, Opportunities und messbare Ergebnisse.'}
               </Typography>
           </Box>
-          <Tooltip title={cockpitOpen ? 'Sales-Cockpit einklappen' : 'Sales-Cockpit öffnen'}>
-            <IconButton onClick={() => setCockpitOpen((current) => !current)} aria-expanded={cockpitOpen} aria-label="Sales-Cockpit ein- oder ausklappen">
+          <Tooltip title={cockpitOpen ? 'Sales-Pipeline einklappen' : 'Sales-Pipeline öffnen'}>
+            <IconButton onClick={() => setCockpitOpen((current) => !current)} aria-expanded={cockpitOpen} aria-label="Sales-Pipeline ein- oder ausklappen">
               {cockpitOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
             </IconButton>
           </Tooltip>
@@ -2853,13 +2943,13 @@ const AccountRadarPage: React.FC = () => {
           </Stack>
 
           <Box sx={{ borderLeft: { md: '1px solid' }, borderColor: { md: 'divider' }, pl: { md: 3 } }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Radar-Pipeline · aktueller Filter</Typography>
+            <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Arbeitsfluss · aktueller Filter</Typography>
             <Typography variant="caption" color="text.secondary">
               {selectedAccount ? `Nur Signale von ${selectedAccount.name}. Ein Klick übernimmt den Account-Filter.` : 'Die Werte entsprechen exakt den Tabs darunter.'}
             </Typography>
             <Stack spacing={1.2} sx={{ mt: 1.3 }}>
               {[
-                { label: `Aktuell · ${days} Tage`, value: cockpitCounts.today, color: primary, target: 'today' as RadarView },
+                { label: `Offene Arbeitsliste · ${days} Tage`, value: cockpitCounts.today, color: primary, target: 'today' as RadarView },
                 { label: 'Geplant', value: cockpitCounts.planned, color: theme.palette.info.main, target: 'planned' as RadarView },
                 { label: 'Erledigt', value: cockpitCounts.done, color: theme.palette.success.main, target: 'done' as RadarView },
               ].map((item) => {
@@ -2973,7 +3063,7 @@ const AccountRadarPage: React.FC = () => {
         <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={0.5}>
           <Box>
             <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>
-              Vertriebs-Funnel · {selectedAccount ? selectedAccount.name : 'aktueller Tab'}
+              Sales-Pipeline · {selectedAccount ? selectedAccount.name : 'aktueller Filter'}
             </Typography>
             <Typography variant="caption" color="text.secondary">Eine Phase mit 0 Treffern ist bewusst nicht auswählbar.</Typography>
           </Box>

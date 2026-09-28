@@ -44,6 +44,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import SwitchAccountIcon from '@mui/icons-material/SwitchAccount';
 import ContactMailOutlinedIcon from '@mui/icons-material/ContactMailOutlined';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -375,7 +376,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     
     const handleSearchOpen = () => setSearchOpen(true);
     const handleSearchClose = () => setSearchOpen(false);
-    const handleBriefingOpen = () => setBriefingOpen(true);
+    const handleBriefingOpen = () => {
+        if (isSalesWorkspace) {
+            navigate('/radar?view=today');
+            return;
+        }
+        setBriefingOpen(true);
+    };
     const handleBriefingClose = () => setBriefingOpen(false);
 
     const handleWorkspaceChange = async (workspace: WorkspaceModule) => {
@@ -390,7 +397,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     };
 
     const dashboardTitle = isSalesWorkspace
-        ? 'Account Radar'
+        ? 'Sales-Radar'
         : businessPartner?.dashboard_title || businessPartner?.name || 'KI-Dashboard';
     const showOnboarding = user && user.has_completed_onboarding === false && user.role !== 'demo';
     const adBannerHeight = !isSalesWorkspace && isAdVisible && ad ? 40 : 0;
@@ -407,11 +414,11 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             disableSticky
                             sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
                         >
-                            Account Radar
+                            Sales-Radar
                         </ListSubheader>
                         <ListItem button component={RouterLink} to="/radar?view=today">
                             <ListItemIcon><RadarIcon /></ListItemIcon>
-                            <ListItemText primary="Heute" secondary="Priorisierte Arbeitsliste" />
+                            <ListItemText primary="Arbeitsliste" secondary="Heute priorisieren" />
                         </ListItem>
                         {salesPlan === 'premium' && (
                             <ListItem button component={RouterLink} to="/radar?view=triggers">
@@ -424,8 +431,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItemText primary="Accounts" secondary="Gesamter Bestand" />
                         </ListItem>
                         <ListItem button component={RouterLink} to="/radar?view=pipeline">
-                            <ListItemIcon><InsightsIcon /></ListItemIcon>
-                            <ListItemText primary="Pipeline" secondary="Cockpit & Sales-Erfolg" />
+                            <ListItemIcon><TrackChangesIcon /></ListItemIcon>
+                            <ListItemText primary="Sales-Pipeline" secondary="Fortschritt & Ergebnisse" />
                         </ListItem>
                         <ListItem button component={RouterLink} to="/radar?view=calendar">
                             <ListItemIcon><CalendarMonthIcon /></ListItemIcon>
@@ -763,7 +770,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     )}
 
                     <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', ml: { xs: 1, md: 3 }, mr: 2 }}>
-                        {!isSalesWorkspace && (isMobile ? (
+                        {isSalesWorkspace ? (
+                            <Tooltip title="Sales-Tagescockpit öffnen">
+                                <IconButton color="inherit" onClick={handleBriefingOpen} aria-label="Sales-Tagescockpit öffnen">
+                                    <RadarIcon />
+                                </IconButton>
+                            </Tooltip>
+                        ) : (isMobile ? (
                             <>
                                 <IconButton color="inherit" onClick={handleBriefingOpen}>
                                     <InsightsIcon />
@@ -789,7 +802,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                     </IconButton>
                                 </Tooltip>
 
-                                <Tooltip title="Tägliches Briefing anzeigen">
+                                <Tooltip title="Tägliches Content-Cockpit anzeigen">
                                     <IconButton color="inherit" onClick={handleBriefingOpen} sx={{ ml: 1 }}>
                                         <InsightsIcon />
                                     </IconButton>
@@ -1119,7 +1132,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 fullScreen={isMobile}
             >
                 <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    Tägliches Cockpit
+                    Tägliches Content-Cockpit
                     <IconButton onClick={handleBriefingClose}>
                         <CloseIcon />
                     </IconButton>

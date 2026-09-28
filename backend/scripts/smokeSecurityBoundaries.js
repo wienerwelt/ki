@@ -182,6 +182,14 @@ async function checkAccountTenantBoundary(assistant, assistantToken) {
     assert(Array.isArray(accountDetail.body?.competitors), 'Account-Detailansicht enthält keine Wettbewerber-Liste.');
     assert(accountDetail.body.competitors.some((competitor) => competitor.id === fixtures.createdOwnCompetitorId), 'Neu angelegter Wettbewerber fehlt in der Account-Detailansicht.');
 
+    const guardedDelete = await request(`/api/admin/accounts/${fixtures.createdOwnAccountId}`, assistantToken, { method: 'DELETE' });
+    assert(guardedDelete.response.status === 409, `Account mit verknüpften Daten wurde ohne ausdrückliche Bestätigung gelöscht: HTTP ${guardedDelete.response.status}`);
+    assert(guardedDelete.body?.code === 'ACCOUNT_RELATED_DATA_CONFIRMATION_REQUIRED', 'Löschschutz liefert keinen eindeutigen Fehlercode.');
+    assert(Number(guardedDelete.body?.related?.competitors || 0) >= 1, 'Löschschutz weist den verknüpften Wettbewerber nicht aus.');
+
+    const preservedAccount = await request(`/api/admin/accounts/${fixtures.createdOwnAccountId}`, assistantToken);
+    assert(preservedAccount.response.status === 200, `Account wurde trotz Löschschutz entfernt: HTTP ${preservedAccount.response.status}`);
+
     for (const [label, route, options] of [
       ['Account lesen', `/api/admin/accounts/${fixtures.foreignAccountId}`, {}],
       ['Account ändern', `/api/admin/accounts/${fixtures.foreignAccountId}`, {
@@ -221,9 +229,18 @@ async function checkAccountTenantBoundary(assistant, assistantToken) {
     assert(deletedContact.response.status === 204, `Mandantenassistenz kann eigenen Ansprechpartner nicht löschen: HTTP ${deletedContact.response.status}`);
     fixtures.createdOwnContactId = null;
 
-    const deletedAccount = await request(`/api/admin/accounts/${fixtures.createdOwnAccountId}`, assistantToken, { method: 'DELETE' });
-    assert(deletedAccount.response.status === 204, `Mandantenassistenz kann eigenen Account nicht löschen: HTTP ${deletedAccount.response.status}`);
+    const confirmedCompetitor = await request(`/api/admin/competitors/for-account/${fixtures.createdOwnAccountId}`, assistantToken, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: `Security Smoke Confirmed Delete ${Date.now()}` }),
+    });
+    assert(confirmedCompetitor.response.status === 201, `Fixture für bestätigte Account-Löschung konnte nicht angelegt werden: HTTP ${confirmedCompetitor.response.status}`);
+    fixtures.createdOwnCompetitorId = confirmedCompetitor.body?.id;
+
+    const deletedAccount = await request(`/api/admin/accounts/${fixtures.createdOwnAccountId}?deleteRelated=true`, assistantToken, { method: 'DELETE' });
+    assert(deletedAccount.response.status === 204, `Mandantenassistenz kann eigenen Account nicht ausdrücklich samt abhängigen Daten löschen: HTTP ${deletedAccount.response.status}`);
     fixtures.createdOwnAccountId = null;
+    fixtures.createdOwnCompetitorId = null;
   } finally {
     await cleanupAccountBoundaryFixtures(fixtures);
   }
