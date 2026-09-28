@@ -1,6 +1,6 @@
 // frontend/src/pages/AdminBpAccountsPage.tsx
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate, useParams, Link as RouterLink } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams, Link as RouterLink } from 'react-router-dom';
 import {
     Box, Typography, Container, Paper, CircularProgress, Alert, Button, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
@@ -106,6 +106,7 @@ function getComparator<Key extends keyof any>(
 const AdminBpAccountsPage: React.FC = () => {
     const { bpId } = useParams<{ bpId: string }>();
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
     const { user, businessPartner: authenticatedBusinessPartner } = useAuth();
     const isTenantScoped = user?.role !== 'admin';
     const effectiveBpId = isTenantScoped ? user?.business_partner_id : bpId;
@@ -222,6 +223,17 @@ const AdminBpAccountsPage: React.FC = () => {
         setFormNotes(acc.notes || '');
         setOpenDialog(true);
     };
+
+    useEffect(() => {
+        const requestedAccountId = searchParams.get('edit');
+        if (!requestedAccountId || loading || openDialog) return;
+        const requestedAccount = accounts.find((account) => account.id === requestedAccountId);
+        if (!requestedAccount) return;
+        handleOpenEditDialog(requestedAccount);
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('edit');
+        setSearchParams(nextParams, { replace: true });
+    }, [accounts, loading, openDialog, searchParams, setSearchParams]);
 
     const handleCloseDialog = () => {
         setOpenDialog(false);

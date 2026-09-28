@@ -7,7 +7,7 @@ function assert(condition, message) {
     if (!condition) throw new Error(message);
 }
 
-function buildProviderForm(name, mandantSettings) {
+function buildProviderForm(name, mandantSettings, logoUrl) {
     const form = new FormData();
     form.append('name', name);
     form.append('description', 'Automatischer Test der transaktionssicheren Mandanten-Zuordnung.');
@@ -20,14 +20,27 @@ function buildProviderForm(name, mandantSettings) {
     form.append('categories', '[]');
     form.append('tags', '[]');
     form.append('mandant_settings', JSON.stringify(mandantSettings));
+    if (logoUrl !== undefined) form.append('logo_url', logoUrl || '');
     return form;
 }
 
-async function updateProvider(providerId, token, name, mandantSettings) {
+async function updateProvider(providerId, token, name, mandantSettings, logoUrl) {
     const response = await fetch(`${BASE_URL}/api/admin/directory/${providerId}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` },
-        body: buildProviderForm(name, mandantSettings),
+        body: buildProviderForm(name, mandantSettings, logoUrl),
+    });
+    const text = await response.text();
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch (_error) { body = { message: text }; }
+    return { response, body };
+}
+
+async function createProvider(token, name, mandantSettings, logoUrl) {
+    const response = await fetch(`${BASE_URL}/api/admin/directory`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: buildProviderForm(name, mandantSettings, logoUrl),
     });
     const text = await response.text();
     let body = null;
@@ -58,18 +71,27 @@ async function run() {
 
         const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
         const providerName = `Directory Update Smoke ${suffix}`;
-        const providerResult = await db.query(`
-            INSERT INTO directory_providers (name, is_public, subscription_tier)
-            VALUES ($1, FALSE, 'free')
-            RETURNING id
-        `, [providerName]);
-        providerId = providerResult.rows[0].id;
+        const token = jwt.sign({
+            sub: subject.id,
+            role: 'admin',
+            business_partner_id: subject.business_partner_id,
+            av: Number(subject.auth_version || 0),
+        }, process.env.JWT_SECRET, { expiresIn: '5m', algorithm: 'HS256' });
 
-        await db.query(`
-            INSERT INTO directory_provider_mandant_settings (
-                provider_id, business_partner_id, status, is_recommended, is_tenant_entry
-            ) VALUES ($1, $2, 'active', FALSE, FALSE)
-        `, [providerId, subject.business_partner_id]);
+        const retainedSetting = [{
+            business_partner_id: subject.business_partner_id,
+            status: 'active',
+            is_recommended: true,
+            is_tenant_entry: false,
+        }];
+        const initialLogoUrl = 'https://example.invalid/initial-directory-logo.webp';
+        const createResult = await createProvider(token, providerName, retainedSetting, initialLogoUrl);
+        assert(createResult.response.status === 201, `Anbieter mit bestehender Logo-Referenz konnte nicht angelegt werden (${createResult.response.status}): ${createResult.body?.message || 'unbekannt'}`);
+        providerId = createResult.body?.id;
+        assert(providerId, 'Der neu angelegte Anbieter hat keine ID zurückgegeben.');
+
+        const createdLogo = await db.query('SELECT logo_url FROM directory_providers WHERE id = $1', [providerId]);
+        assert(createdLogo.rows[0]?.logo_url === initialLogoUrl, 'Die bestehende Logo-Referenz wurde beim Anlegen nicht gespeichert.');
 
         const softwareResult = await db.query(`
             INSERT INTO software_tools (
@@ -85,21 +107,12 @@ async function run() {
         ]);
         softwareId = softwareResult.rows[0].id;
 
-        const token = jwt.sign({
-            sub: subject.id,
-            role: 'admin',
-            business_partner_id: subject.business_partner_id,
-            av: Number(subject.auth_version || 0),
-        }, process.env.JWT_SECRET, { expiresIn: '5m', algorithm: 'HS256' });
-
-        const retainedSetting = [{
-            business_partner_id: subject.business_partner_id,
-            status: 'active',
-            is_recommended: true,
-            is_tenant_entry: false,
-        }];
-        const updateResult = await updateProvider(providerId, token, providerName, retainedSetting);
+        const reusedLogoUrl = 'https://example.invalid/reused-directory-logo.webp';
+        const updateResult = await updateProvider(providerId, token, providerName, retainedSetting, reusedLogoUrl);
         assert(updateResult.response.status === 200, `Verknüpfter Anbieter konnte nicht aktualisiert werden (${updateResult.response.status}): ${updateResult.body?.message || 'unbekannt'}`);
+
+        const updatedLogo = await db.query('SELECT logo_url FROM directory_providers WHERE id = $1', [providerId]);
+        assert(updatedLogo.rows[0]?.logo_url === reusedLogoUrl, 'Die ausgewählte bestehende Logo-Referenz wurde nicht gespeichert.');
 
         const updatedRelation = await db.query(`
             SELECT status, is_recommended
@@ -135,10 +148,12 @@ async function run() {
 
         console.log(JSON.stringify({
             ok: true,
+            linkedProviderCreate: 201,
             linkedProviderUpdate: 200,
             usedRelationRemoval: 409,
             unusedRelationRemoval: 200,
             rollbackPreservedRelation: true,
+            reusedLogoReference: true,
         }));
     } finally {
         if (softwareId) await db.query('DELETE FROM software_tools WHERE id = $1', [softwareId]);

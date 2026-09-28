@@ -455,7 +455,14 @@ const SoftwareCatalogAdminPanel: React.FC<SoftwareCatalogAdminPanelProps> = ({
                             </Select>
                         </FormControl>
                     )}
-                    <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>Software eintragen</Button>
+                    <Button
+                        variant="contained"
+                        startIcon={<AddIcon />}
+                        onClick={openCreate}
+                        sx={{ whiteSpace: 'nowrap', flexShrink: 0, minWidth: 'max-content' }}
+                    >
+                        Software eintragen
+                    </Button>
                 </Stack>
             </Stack>
 

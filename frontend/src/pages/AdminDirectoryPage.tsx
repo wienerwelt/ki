@@ -5,7 +5,7 @@ import {
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow, IconButton, Tooltip,
     Dialog, DialogTitle, DialogContent, DialogActions, TextField, Grid, Select, MenuItem,
     FormControl, InputLabel, Chip, FormControlLabel, Switch, Divider, Tabs, Tab, Autocomplete, Checkbox,
-    TableSortLabel, Avatar, alpha, useTheme
+    TableSortLabel, Avatar, alpha, useTheme, Alert, InputAdornment
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -20,11 +20,14 @@ import {
     Search as SearchIcon,
     CalendarToday as CalendarTodayIcon,
     LocationOn as LocationOnIcon,
-    EditNotifications as EditNotificationsIcon
+    EditNotifications as EditNotificationsIcon,
+    PhotoLibraryOutlined as PhotoLibraryOutlinedIcon,
+    CheckCircleOutline as CheckCircleOutlineIcon
 } from '@mui/icons-material';
 
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
+import { useAuth } from '../context/AuthContext';
 
 // --- UTILS ---
 const sanitizeEmail = (email: string) => email.toLowerCase().trim().replace(/\/+$/, '');
@@ -94,6 +97,17 @@ interface ProviderMandantSetting {
     secondary_color?: string | null;
 }
 
+interface LogoLibraryItem {
+    url: string;
+    label: string;
+    source: string;
+    usageCount?: number;
+    usedBy?: string[];
+    deletable?: boolean;
+    storageKind?: 's3' | 'directory';
+    storageKey?: string;
+}
+
 interface DirectoryProvider {
     id?: string;
     name: string;
@@ -124,6 +138,7 @@ function CustomTabPanel(props: TabPanelProps) {
 
 const AdminDirectoryPage: React.FC = () => {
     const { showSnackbar } = useSnackbar();
+    const { user } = useAuth();
     const theme = useTheme();
     const [providers, setProviders] = useState<any[]>([]);
     const [businessPartners, setBusinessPartners] = useState<any[]>([]);
@@ -153,9 +168,37 @@ const AdminDirectoryPage: React.FC = () => {
     
     const [logoFile, setLogoFile] = useState<File | null>(null);
     const [deleteLogo, setDeleteLogo] = useState(false);
+    const [logoLibraryOpen, setLogoLibraryOpen] = useState(false);
+    const [logoLibrary, setLogoLibrary] = useState<LogoLibraryItem[]>([]);
+    const [logoLibrarySearch, setLogoLibrarySearch] = useState('');
+    const [visibleLogoCount, setVisibleLogoCount] = useState(80);
+    const [logoLibraryLoading, setLogoLibraryLoading] = useState(false);
+    const [logoLibraryError, setLogoLibraryError] = useState<string | null>(null);
+    const [unavailableLogoUrls, setUnavailableLogoUrls] = useState<Set<string>>(() => new Set());
 
     const [addressSearchLoading, setAddressSearchLoading] = useState(false);
     const [addressOptions, setAddressOptions] = useState<any[]>([]);
+
+    const logoLibraryBusinessPartnerId = useMemo(() => (
+        currentProvider.mandant_settings?.find((setting) => setting.business_partner_id)?.business_partner_id
+        || user?.business_partner_id
+        || (bpFilter !== 'all' ? bpFilter : '')
+        || businessPartners[0]?.id
+        || ''
+    ), [bpFilter, businessPartners, currentProvider.mandant_settings, user?.business_partner_id]);
+    const filteredLogoLibrary = useMemo(() => {
+        const needle = logoLibrarySearch.trim().toLowerCase();
+        if (!needle) return logoLibrary;
+        return logoLibrary.filter((item) => `${item.label} ${item.source} ${item.url}`.toLowerCase().includes(needle));
+    }, [logoLibrary, logoLibrarySearch]);
+    const visibleLogoLibrary = useMemo(
+        () => filteredLogoLibrary.slice(0, visibleLogoCount),
+        [filteredLogoLibrary, visibleLogoCount]
+    );
+
+    useEffect(() => {
+        setVisibleLogoCount(80);
+    }, [logoLibraryOpen, logoLibrarySearch]);
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -178,6 +221,49 @@ const AdminDirectoryPage: React.FC = () => {
     }, [showSnackbar]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    const openLogoLibrary = async () => {
+        if (!logoLibraryBusinessPartnerId) {
+            showSnackbar('Bitte zuerst einen Mandanten zuordnen.', 'warning');
+            return;
+        }
+        setLogoLibraryOpen(true);
+        setLogoLibrarySearch('');
+        setLogoLibraryLoading(true);
+        setLogoLibraryError(null);
+        try {
+            const response = await apiClient.get('/api/admin/actions/software-logo/library', {
+                params: { businessPartnerId: logoLibraryBusinessPartnerId },
+            });
+            if (!response.res.ok) throw new Error((response.data as any)?.message || 'Bestehende Logos konnten nicht geladen werden.');
+            setLogoLibrary((response.data as any)?.items || []);
+            setUnavailableLogoUrls(new Set());
+        } catch (err: any) {
+            setLogoLibraryError(err?.message || 'Bestehende Logos konnten nicht geladen werden.');
+        } finally {
+            setLogoLibraryLoading(false);
+        }
+    };
+
+    const deleteLogoFromLibrary = async (item: LogoLibraryItem) => {
+        if (!item.deletable || !item.storageKind || !item.storageKey || !logoLibraryBusinessPartnerId) return;
+        if (!window.confirm(`„${item.label}“ dauerhaft aus dem Logo-Archiv löschen?`)) return;
+        setLogoLibraryError(null);
+        try {
+            const response = await apiClient.delete('/api/admin/actions/software-logo/library', {
+                body: JSON.stringify({
+                    businessPartnerId: logoLibraryBusinessPartnerId,
+                    storageKind: item.storageKind,
+                    storageKey: item.storageKey,
+                    url: item.url,
+                }),
+            });
+            if (!response.res.ok) throw new Error((response.data as any)?.message || 'Logo konnte nicht gelöscht werden.');
+            setLogoLibrary((current) => current.filter((candidate) => candidate.url !== item.url));
+        } catch (err: any) {
+            setLogoLibraryError(err?.message || 'Logo konnte nicht gelöscht werden.');
+        }
+    };
 
     const handleGoogleImport = async () => {
         if (!(currentProvider.name || '').trim() || (currentProvider.name || '').trim().length < 3) {
@@ -267,9 +353,9 @@ const AdminDirectoryPage: React.FC = () => {
         formData.append('categories', JSON.stringify(currentProvider.categories || []));
         formData.append('tags', JSON.stringify(currentProvider.tags || []));
         formData.append('mandant_settings', JSON.stringify(currentProvider.mandant_settings || []));
+        formData.append('logo_url', deleteLogo ? '' : (currentProvider.logo_url || ''));
 
         if (logoFile) {
-            URL.revokeObjectURL(URL.createObjectURL(logoFile));
             formData.append('logo', logoFile); // NEU: Fehlendes 'logo' Append ergänzt
         }
         if (deleteLogo) formData.append('delete_logo', 'true');
@@ -771,6 +857,20 @@ const AdminDirectoryPage: React.FC = () => {
                                             setDeleteLogo(false);
                                         }} />
                                     </Button>
+                                    <Button
+                                        variant="outlined"
+                                        startIcon={<PhotoLibraryOutlinedIcon />}
+                                        onClick={openLogoLibrary}
+                                        disabled={!logoLibraryBusinessPartnerId}
+                                        sx={{ mt: 1, textTransform: 'none', whiteSpace: 'nowrap' }}
+                                    >
+                                        Bestehende Logos durchsuchen
+                                    </Button>
+                                    {!logoLibraryBusinessPartnerId && (
+                                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, textAlign: 'center' }}>
+                                            Für die Logo-Bibliothek zuerst einen Mandanten zuordnen.
+                                        </Typography>
+                                    )}
                                 </Box>
                             </Grid>
                         </Grid>
@@ -1041,6 +1141,101 @@ const AdminDirectoryPage: React.FC = () => {
                     <Button onClick={() => setDialogOpen(false)} color="inherit">Abbrechen</Button>
                     <Button onClick={handleSubmit} variant="contained" disabled={!(currentProvider.name || '').trim()}>Dienstleister speichern</Button>
                 </DialogActions>
+            </Dialog>
+
+            <Dialog open={logoLibraryOpen} onClose={() => setLogoLibraryOpen(false)} fullWidth maxWidth="md">
+                <DialogTitle>Bestehendes Logo auswählen</DialogTitle>
+                <DialogContent dividers>
+                    <TextField
+                        fullWidth
+                        autoFocus
+                        size="small"
+                        label="Logos durchsuchen"
+                        placeholder="Name, Herkunft oder URL"
+                        value={logoLibrarySearch}
+                        onChange={(event) => setLogoLibrarySearch(event.target.value)}
+                        InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
+                        sx={{ mb: 2 }}
+                    />
+                    {logoLibraryError && <Alert severity="error" sx={{ mb: 2 }}>{logoLibraryError}</Alert>}
+                    {logoLibraryLoading ? (
+                        <Box sx={{ display: 'grid', placeItems: 'center', py: 5 }}><CircularProgress /></Box>
+                    ) : (
+                        <>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                                {visibleLogoLibrary.length} von {filteredLogoLibrary.length} Treffern angezeigt · insgesamt {logoLibrary.length} Logos
+                                {user?.role === 'admin' ? ' · mandantenübergreifendes Admin-Archiv' : ' · Archiv des eigenen Mandanten'}
+                            </Typography>
+                            <Grid container spacing={1.5}>
+                                {visibleLogoLibrary.map((item) => (
+                                    <Grid item xs={6} sm={4} md={3} key={item.url}>
+                                        <Box sx={{ position: 'relative', height: '100%' }}>
+                                            <Button
+                                                variant="outlined"
+                                                onClick={() => {
+                                                    setLogoFile(null);
+                                                    setDeleteLogo(false);
+                                                    setCurrentProvider((current) => ({ ...current, logo_url: item.url }));
+                                                    setLogoLibraryOpen(false);
+                                                }}
+                                                sx={{ width: '100%', height: '100%', minHeight: 168, p: 1.2, textTransform: 'none', display: 'flex', flexDirection: 'column', gap: 0.65, alignItems: 'stretch' }}
+                                            >
+                                                <Box
+                                                    component="img"
+                                                    src={getBackendAssetUrl(item.url)}
+                                                    alt={`${item.label} Logo`}
+                                                    onError={(event: React.SyntheticEvent<HTMLImageElement>) => {
+                                                        setUnavailableLogoUrls((current) => new Set(current).add(item.url));
+                                                        event.currentTarget.style.visibility = 'hidden';
+                                                    }}
+                                                    sx={{ width: '100%', height: 64, objectFit: 'contain', bgcolor: 'background.paper', borderRadius: 1 }}
+                                                />
+                                                <Typography variant="caption" fontWeight={800} noWrap title={item.label}>{item.label}</Typography>
+                                                <Typography variant="caption" color="text.secondary" noWrap title={item.source}>{item.source}</Typography>
+                                                {Number(item.usageCount || 0) > 0 ? (
+                                                    <Tooltip title={`Verwendet in: ${(item.usedBy || []).join(', ')}`}>
+                                                        <Chip size="small" color="success" variant="outlined" icon={<CheckCircleOutlineIcon />} label={`Verwendet (${item.usageCount})`} />
+                                                    </Tooltip>
+                                                ) : (
+                                                    <Chip size="small" variant="outlined" label="Unbenutzt" />
+                                                )}
+                                                {unavailableLogoUrls.has(item.url) && <Chip size="small" color="warning" variant="outlined" label="Datei nicht erreichbar" />}
+                                            </Button>
+                                            {item.storageKind && item.storageKey && (
+                                                <Tooltip title={item.deletable ? 'Unbenutztes Logo löschen' : 'Logo wird verwendet und kann nicht gelöscht werden'}>
+                                                    <span style={{ position: 'absolute', top: 4, right: 4 }}>
+                                                        <IconButton
+                                                            size="small"
+                                                            color="error"
+                                                            disabled={!item.deletable}
+                                                            onClick={(event) => {
+                                                                event.stopPropagation();
+                                                                deleteLogoFromLibrary(item);
+                                                            }}
+                                                            aria-label={`${item.label} löschen`}
+                                                            sx={{ bgcolor: 'background.paper', boxShadow: 1, '&:hover': { bgcolor: 'background.paper' } }}
+                                                        >
+                                                            <DeleteIcon fontSize="small" />
+                                                        </IconButton>
+                                                    </span>
+                                                </Tooltip>
+                                            )}
+                                        </Box>
+                                    </Grid>
+                                ))}
+                                {filteredLogoLibrary.length === 0 && <Grid item xs={12}><Alert severity="info">Keine passenden bestehenden Logos gefunden.</Alert></Grid>}
+                                {visibleLogoLibrary.length < filteredLogoLibrary.length && (
+                                    <Grid item xs={12}>
+                                        <Button fullWidth variant="outlined" onClick={() => setVisibleLogoCount((current) => current + 80)}>
+                                            Weitere Logos laden
+                                        </Button>
+                                    </Grid>
+                                )}
+                            </Grid>
+                        </>
+                    )}
+                </DialogContent>
+                <DialogActions><Button onClick={() => setLogoLibraryOpen(false)}>Schließen</Button></DialogActions>
             </Dialog>
         </Container>
     );

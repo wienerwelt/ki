@@ -52,7 +52,9 @@ import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment';
 import EditNoteIcon from '@mui/icons-material/EditNote';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import LanguageOutlinedIcon from '@mui/icons-material/LanguageOutlined';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
 import PhoneInTalkIcon from '@mui/icons-material/PhoneInTalk';
@@ -1455,6 +1457,15 @@ const AccountRadarPage: React.FC = () => {
     setDetailAccountId(accountId);
   };
 
+  const openAccountEditor = (accountId: string) => {
+    const partnerId = businessPartner?.id || user?.business_partner_id;
+    if (!partnerId) {
+      goToAccountManagement();
+      return;
+    }
+    navigate(`/admin/business-partners/${partnerId}/accounts?edit=${encodeURIComponent(accountId)}`);
+  };
+
   const openCompetitorDetails = (account: RadarAccount, competitor: RadarCompetitor, signal?: RadarSignal | null) => {
     setSelectedAccountId(account.id);
     setCompetitorDetail({
@@ -1772,19 +1783,40 @@ const AccountRadarPage: React.FC = () => {
     return (
       <Stack spacing={1.5}>
         {selectedAccount && (
-          <Alert
-            severity="info"
-            action={<Button color="inherit" size="small" onClick={() => { setSelectedAccountId(null); setSearch(''); }}>Auswahl aufheben</Button>}
-            sx={{ '& .MuiAlert-message': { minWidth: 0 }, '& .MuiAlert-action': { alignItems: 'center' } }}
-          >
-            Explizit ausgewählt: <strong>{selectedAccount.name}</strong>. Die Account-Karte ist farblich hervorgehoben.
-          </Alert>
+          <Box sx={{ display: 'flex', justifyContent: 'center', px: 1 }}>
+            <Paper
+              role="status"
+              variant="outlined"
+              sx={{ py: 0.55, pl: 1.4, pr: 0.45, borderRadius: 99, borderColor: alpha(primary, 0.28), bgcolor: alpha(primary, 0.06), maxWidth: '100%' }}
+            >
+              <Stack direction="row" spacing={0.8} alignItems="center">
+                <Typography variant="body2" noWrap sx={{ minWidth: 0, fontWeight: 750 }}>
+                  Ausgewählt: <strong>{selectedAccount.name}</strong>
+                </Typography>
+                <Tooltip title="Auswahl aufheben">
+                  <IconButton
+                    size="small"
+                    color="primary"
+                    onClick={() => { setSelectedAccountId(null); setSearch(''); }}
+                    aria-label="Account-Auswahl aufheben"
+                  >
+                    <CloseIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Stack>
+            </Paper>
+          </Box>
         )}
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 1.5 }}>
         {visibleAccounts.map((account) => {
           const accountSignals = [...(account.account_news || []), ...(account.competitor_news || [])];
           const open = accountSignals.filter((signal) => ['new', 'read'].includes(getSignalStatus(signal))).length;
           const selected = selectedAccountId === account.id;
+          const contactCount = (account.contacts || []).length;
+          const qualityScore = calculateAccountQuality(account);
+          const qualityColor = qualityScore >= 75 ? theme.palette.success.main : qualityScore >= 50 ? theme.palette.warning.main : theme.palette.error.main;
+          const accountWebsiteUrl = getSafeExternalUrl(account.website_url);
+          const backgroundLogoUrl = account.logo_url ? resolveAssetUrl(account.logo_url) : '';
           return (
             <Paper
               key={account.id}
@@ -1796,9 +1828,21 @@ const AccountRadarPage: React.FC = () => {
                 borderColor: selected ? 'primary.main' : 'divider',
                 bgcolor: selected ? alpha(primary, 0.055) : 'background.paper',
                 boxShadow: selected ? `0 0 0 4px ${alpha(primary, 0.09)}` : 'none',
+                position: 'relative',
+                overflow: 'hidden',
               }}
             >
-              <Stack direction="row" spacing={1.4} alignItems="flex-start">
+              {backgroundLogoUrl && (
+                <Box
+                  component="img"
+                  src={backgroundLogoUrl}
+                  alt=""
+                  aria-hidden="true"
+                  onError={(event: React.SyntheticEvent<HTMLImageElement>) => { event.currentTarget.style.display = 'none'; }}
+                  sx={{ position: 'absolute', right: '-3%', top: '50%', transform: 'translateY(-50%)', width: '52%', height: '88%', objectFit: 'contain', opacity: 0.045, filter: 'grayscale(1)', pointerEvents: 'none', userSelect: 'none' }}
+                />
+              )}
+              <Stack direction="row" spacing={1.4} alignItems="flex-start" sx={{ position: 'relative', zIndex: 1 }}>
                 <Avatar
                   variant="rounded"
                   src={resolveAssetUrl(account.logo_url) || '/logos/default-company.svg'}
@@ -1813,15 +1857,39 @@ const AccountRadarPage: React.FC = () => {
                     <Button size="small" variant="text" onClick={() => openAccountDetails(account.id)} sx={{ minWidth: 0, p: 0, color: 'text.primary', textAlign: 'left', justifyContent: 'flex-start', fontWeight: 950, textTransform: 'none' }}>{account.name}</Button>
                     <Stack direction="row" spacing={0.5} alignItems="center">
                       {selected && <Chip size="small" color="primary" label="Ausgewählt" sx={{ fontWeight: 850 }} />}
-                      <Button size="small" variant="text" onClick={() => openAccountDetails(account.id)} sx={{ minWidth: 0, p: 0.3, fontWeight: 850 }}>Details</Button>
+                      <Tooltip title="Account-Details">
+                        <IconButton size="small" onClick={() => openAccountDetails(account.id)} aria-label={`${account.name}: Details öffnen`}>
+                          <VisibilityIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      {canManageAccounts && !isDemoMode && (
+                        <Tooltip title="Account bearbeiten">
+                          <IconButton size="small" onClick={() => openAccountEditor(account.id)} aria-label={`${account.name}: bearbeiten`}>
+                            <EditOutlinedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      {accountWebsiteUrl && (
+                        <Tooltip title="Homepage öffnen">
+                          <IconButton component="a" href={accountWebsiteUrl} target="_blank" rel="noopener noreferrer" size="small" aria-label={`${account.name}: Homepage öffnen`}>
+                            <LanguageOutlinedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </Stack>
                   </Stack>
                   {account.owner_user_name && <Chip size="small" avatar={<Avatar src={account.owner_profile_image_url || undefined}>{account.owner_user_name.slice(0, 1)}</Avatar>} label={`Account: ${account.owner_user_name}`} variant="outlined" sx={{ mt: 0.7 }} />}
                   <Stack direction="row" spacing={0.7} flexWrap="wrap" useFlexGap sx={{ mt: 0.8 }}>
-                    <Chip size="small" label={accountStatusLabels[account.account_status || ''] || account.account_status || 'Account'} variant="outlined" />
+                    <Chip size="small" label={accountStatusLabels[account.account_status || ''] || account.account_status || 'Account'} color={account.account_status === 'active_customer' ? 'success' : account.account_status === 'churned' ? 'default' : 'info'} variant="outlined" />
                     <Chip size="small" label={`${open} offen`} color={open > 0 ? 'primary' : 'default'} />
                     <Chip size="small" label={`${accountSignals.length} Signale`} variant="outlined" />
-                    <Chip size="small" icon={<PersonOutlineIcon />} label={`${(account.contacts || []).length} Kontakte`} variant="outlined" />
+                    <Chip size="small" icon={<PersonOutlineIcon />} label={`${contactCount} Kontakte`} color={contactCount === 0 ? 'error' : 'success'} variant={contactCount === 0 ? 'filled' : 'outlined'} />
+                    <Chip
+                      size="small"
+                      label={`Daten ${qualityScore}%`}
+                      variant="outlined"
+                      sx={{ color: qualityColor, borderColor: alpha(qualityColor, 0.55), bgcolor: alpha(qualityColor, 0.06), fontWeight: 850, '&::before': { content: '""', width: 7, height: 7, borderRadius: '50%', bgcolor: qualityColor, ml: 1 } }}
+                    />
                   </Stack>
                   <Box sx={{ mt: 1.1 }}>
                     <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 850 }}>Wettbewerber</Typography>
@@ -1834,7 +1902,6 @@ const AccountRadarPage: React.FC = () => {
                       {(account.competitors || []).length === 0 && <Typography variant="caption" color="text.secondary">Noch keine Zuordnung</Typography>}
                     </Stack>
                   </Box>
-                  {account.website_url && <Link href={account.website_url} target="_blank" rel="noopener noreferrer" sx={{ mt: 1.2, display: 'inline-block', fontSize: '0.82rem', fontWeight: 750 }}>{getDomain(account.website_url)}</Link>}
                 </Box>
               </Stack>
             </Paper>

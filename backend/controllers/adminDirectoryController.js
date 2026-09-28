@@ -23,6 +23,26 @@ const normalizeUrl = (url) => {
     return /^https?:\/\//i.test(normalized) ? normalized : `https://${normalized}`;
 };
 
+const normalizeLogoReference = (value) => {
+    const normalized = normalizeOptionalText(value);
+    if (!normalized) return null;
+    if (normalized.length > 2048) {
+        const error = new Error('Die Logo-Referenz ist zu lang.');
+        error.statusCode = 400;
+        throw error;
+    }
+    if (normalized.startsWith('/') && !normalized.startsWith('//')) return normalized;
+    try {
+        const parsed = new URL(normalized);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.toString();
+    } catch {
+        // Einheitliche Fehlermeldung unterhalb.
+    }
+    const error = new Error('Die ausgewählte Logo-Referenz ist ungültig.');
+    error.statusCode = 400;
+    throw error;
+};
+
 const normalizePhoneNumber = (phone) => {
     let cleaned = normalizeOptionalText(phone);
     if (!cleaned) return null;
@@ -213,6 +233,21 @@ const deletePhysicalLogo = (logoUrl) => {
     }
 };
 
+const deletePhysicalLogoIfUnused = async (logoUrl) => {
+    if (!logoUrl || !String(logoUrl).startsWith('/directory_logos/')) return;
+    const usage = await db.query(`
+        SELECT (
+            (SELECT COUNT(*) FROM directory_providers WHERE logo_url = $1)
+          + (SELECT COUNT(*) FROM software_tools WHERE logo_url = $1)
+          + (SELECT COUNT(*) FROM business_partners WHERE logo_url = $1)
+          + (SELECT COUNT(*) FROM sources WHERE logo_url = $1)
+          + (SELECT COUNT(*) FROM tags WHERE logo_url = $1)
+          + (SELECT COUNT(*) FROM business_partner_accounts WHERE logo_url = $1)
+        )::int AS usage_count
+    `, [logoUrl]);
+    if (Number(usage.rows[0]?.usage_count || 0) === 0) deletePhysicalLogo(logoUrl);
+};
+
 // @desc    Alle Dienstleister abrufen (Listenansicht)
 exports.getAllProvidersAdmin = async (req, res) => {
     try {
@@ -318,7 +353,7 @@ exports.createProviderAdmin = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        const { name, description, website_url, contact_email, contact_phone, is_public, subscription_tier } = req.body;
+        const { name, description, website_url, contact_email, contact_phone, is_public, subscription_tier, logo_url } = req.body;
         const normalizedName = normalizeOptionalText(name);
         const normalizedDescription = normalizeOptionalText(description);
         const normalizedWebsiteUrl = normalizeUrl(website_url);
@@ -335,14 +370,14 @@ exports.createProviderAdmin = async (req, res) => {
         const tags = safeParseJsonArray(req.body.tags);
         const mandantSettings = safeParseJsonArray(req.body.mandant_settings);
 
-        let logoUrl = null;
-if (req.file) {
-    logoUrl = await processAndSaveProviderLogo(
-        req.file.buffer,
-        req.file.mimetype,
-        normalizedName || 'provider'
-    );
-}
+        let logoUrl = normalizeLogoReference(logo_url);
+        if (req.file) {
+            logoUrl = await processAndSaveProviderLogo(
+                req.file.buffer,
+                req.file.mimetype,
+                normalizedName || 'provider'
+            );
+        }
 
         const providerQuery = `
             INSERT INTO directory_providers 
@@ -394,6 +429,7 @@ if (req.file) {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Error creating provider:', err.message);
+        if (err.statusCode === 400) return res.status(400).json({ message: err.message });
         if (err.code === '23505') return res.status(409).json({ message: 'Ein Dienstleister mit diesem Namen existiert bereits.' });
         res.status(500).json({ message: 'Fehler beim Anlegen: ' + err.message });
     } finally {
@@ -414,7 +450,7 @@ exports.updateProviderAdmin = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        const { name, description, website_url, contact_email, contact_phone, is_public, subscription_tier, delete_logo } = req.body;
+        const { name, description, website_url, contact_email, contact_phone, is_public, subscription_tier, delete_logo, logo_url } = req.body;
         const normalizedName = normalizeOptionalText(name);
         const normalizedDescription = normalizeOptionalText(description);
         const normalizedWebsiteUrl = normalizeUrl(website_url);
@@ -426,8 +462,11 @@ exports.updateProviderAdmin = async (req, res) => {
             return res.status(400).json({ message: 'Firmenname ist erforderlich.' });
         }
         
-        // Wir merken uns das alte Logo VOR dem Update, um es später physisch zu löschen
-        if (req.file || delete_logo === 'true') {
+        const logoReferenceProvided = Object.prototype.hasOwnProperty.call(req.body, 'logo_url');
+        const selectedLogoUrl = logoReferenceProvided ? normalizeLogoReference(logo_url) : undefined;
+
+        // Wir merken uns das alte Logo VOR dem Update, um eine nicht mehr verwendete lokale Datei aufzuräumen.
+        if (req.file || delete_logo === 'true' || logoReferenceProvided) {
             const oldProviderRes = await client.query('SELECT logo_url FROM directory_providers WHERE id = $1', [id]);
             if (oldProviderRes.rows.length > 0) {
                 oldLogoUrl = oldProviderRes.rows[0].logo_url;
@@ -450,19 +489,24 @@ exports.updateProviderAdmin = async (req, res) => {
         let paramIndex = 8;
         let newLogoUrl = oldLogoUrl;
 
-if (req.file) {
-    newLogoUrl = await processAndSaveProviderLogo(
-        req.file.buffer,
-        req.file.mimetype,
-        normalizedName || 'provider'
-    );
+        if (req.file) {
+            newLogoUrl = await processAndSaveProviderLogo(
+                req.file.buffer,
+                req.file.mimetype,
+                normalizedName || 'provider'
+            );
 
-    updateQuery += `, logo_url = $${paramIndex}`;
-    values.push(newLogoUrl);
-    paramIndex++;
-} else if (delete_logo === 'true') {
+            updateQuery += `, logo_url = $${paramIndex}`;
+            values.push(newLogoUrl);
+            paramIndex++;
+        } else if (delete_logo === 'true') {
             newLogoUrl = null;
             updateQuery += `, logo_url = NULL`;
+        } else if (logoReferenceProvided) {
+            newLogoUrl = selectedLogoUrl;
+            updateQuery += `, logo_url = $${paramIndex}`;
+            values.push(selectedLogoUrl);
+            paramIndex++;
         }
 
         values.push(id);
@@ -503,7 +547,7 @@ if (req.file) {
 
         // WENN ALLES GEKLAPPT HAT: Altes Logo physisch von der Platte putzen!
         if (oldLogoUrl && oldLogoUrl !== newLogoUrl) {
-            deletePhysicalLogo(oldLogoUrl);
+            await deletePhysicalLogoIfUnused(oldLogoUrl);
         }
 
         res.json({ message: 'Provider updated successfully' });
@@ -542,7 +586,7 @@ exports.deleteProviderAdmin = async (req, res) => {
         // Physisches Bild löschen!
         const deletedLogoUrl = result.rows[0].logo_url;
         if (deletedLogoUrl) {
-            deletePhysicalLogo(deletedLogoUrl);
+            await deletePhysicalLogoIfUnused(deletedLogoUrl);
         }
         
         res.json({ message: 'Provider deleted successfully' });
