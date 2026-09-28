@@ -71,6 +71,100 @@ exports.previewMonthlyReport = async (req, res) => {
     }
 };
 
+exports.sendMonthlyReport = async (req, res) => {
+    const businessPartnerId = resolveBusinessPartnerId(req, res);
+    if (!businessPartnerId) return;
+
+    if (req.body?.confirmSend !== true) {
+        return res.status(400).json({ message: 'Bitte den manuellen Versand ausdrücklich bestätigen.' });
+    }
+
+    try {
+        const { rows } = await db.query(`
+            SELECT
+                bp.id,
+                bp.name,
+                bp.monthly_report_enabled,
+                COUNT(u.id) FILTER (
+                    WHERE u.is_active = TRUE
+                      AND (u.active_until IS NULL OR (u.active_until AT TIME ZONE 'Europe/Vienna')::date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Vienna')::date)
+                      AND u.role IN ('assistenz', 'admin')
+                      AND u.monthly_report_email_enabled = TRUE
+                      AND u.email IS NOT NULL
+                      AND TRIM(u.email) <> ''
+                )::int AS eligible_recipients
+            FROM business_partners bp
+            LEFT JOIN users u ON u.business_partner_id = bp.id
+            WHERE bp.id = $1
+              AND bp.is_active = TRUE
+              AND COALESCE(bp.is_demo_tenant, FALSE) = FALSE
+            GROUP BY bp.id, bp.name, bp.monthly_report_enabled
+        `, [businessPartnerId]);
+        const partner = rows[0];
+
+        if (!partner) {
+            return res.status(404).json({ message: 'Der ausgewählte aktive Mandant wurde nicht gefunden.' });
+        }
+        if (!partner.monthly_report_enabled) {
+            return res.status(409).json({ message: `Der automatische Monatsreport ist für ${partner.name} deaktiviert.` });
+        }
+        if (Number(partner.eligible_recipients || 0) === 0) {
+            return res.status(409).json({ message: `Für ${partner.name} ist kein aktiver Monatsreport-Empfänger eingerichtet.` });
+        }
+
+        const result = await generateAndSendMonthlyReport({
+            targetBusinessPartnerId: businessPartnerId,
+        });
+
+        await logActivity({
+            userId: req.user.id,
+            username: req.user.username || req.user.email,
+            actionType: 'MONTHLY_REPORT_MANUAL_SEND',
+            status: 'success',
+            targetId: businessPartnerId,
+            targetType: 'business_partner',
+            details: {
+                reportMonth: result.reportMonth,
+                eligibleRecipients: Number(partner.eligible_recipients || 0),
+                sentCount: result.sentCount,
+                skippedAlreadySentCount: result.skippedAlreadySentCount,
+            },
+            ipAddress: req.ip,
+        });
+
+        const sentCount = Number(result.sentCount || 0);
+        const skippedAlreadySentCount = Number(result.skippedAlreadySentCount || 0);
+        const message = sentCount > 0
+            ? `${sentCount} Monatsreport${sentCount === 1 ? '' : 's'} wurde${sentCount === 1 ? '' : 'n'} an den Mailserver übergeben.`
+            : skippedAlreadySentCount > 0
+                ? 'Für diesen Berichtsmonat wurden alle aktivierten Empfänger bereits verarbeitet. Es wurde keine weitere E-Mail versendet.'
+                : 'Es wurde keine E-Mail versendet.';
+
+        return res.json({
+            ok: true,
+            message,
+            partner: { id: partner.id, name: partner.name },
+            reportMonth: result.reportMonth,
+            eligibleRecipients: Number(partner.eligible_recipients || 0),
+            sentCount,
+            skippedAlreadySentCount,
+        });
+    } catch (error) {
+        await logActivity({
+            userId: req.user?.id,
+            username: req.user?.username || req.user?.email,
+            actionType: 'MONTHLY_REPORT_MANUAL_SEND',
+            status: 'failure',
+            targetId: businessPartnerId,
+            targetType: 'business_partner',
+            details: { error: String(error?.message || 'Unbekannter Fehler').slice(0, 500) },
+            ipAddress: req.ip,
+        });
+        console.error('Fehler beim manuellen Monatsreport-Versand:', error);
+        return res.status(500).json({ message: 'Der Monatsreport konnte nicht versendet werden. Bitte das Versandprotokoll prüfen.' });
+    }
+};
+
 exports.getMonthlyReportDeliveries = async (req, res) => {
     const businessPartnerId = resolveBusinessPartnerId(req, res);
     if (!businessPartnerId) return;

@@ -19,6 +19,7 @@ import CloudQueueIcon from '@mui/icons-material/CloudQueue'; // NEU: Icon für S
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
+import SendOutlinedIcon from '@mui/icons-material/SendOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 import { Link as RouterLink } from 'react-router-dom';
@@ -178,9 +179,20 @@ interface MonthlyReportPreview {
     }>;
 }
 
+interface MonthlyReportSendResult {
+    ok: true;
+    message: string;
+    partner: { id: string; name: string };
+    reportMonth: string;
+    eligibleRecipients: number;
+    sentCount: number;
+    skippedAlreadySentCount: number;
+}
+
 const COMMON_ACTION_TYPES = [
-    'LOGIN', 'LOGOUT', 'FAILED_LOGIN', 'USER_CREATED', 'USER_UPDATED', 
-    'USER_DELETED', 'PASSWORD_CHANGED', 'DATA_EXPORT', 'SETTINGS_CHANGED', 'MONTHLY_REPORT_PREVIEW'
+    'LOGIN', 'LOGOUT', 'FAILED_LOGIN', 'USER_CREATED', 'USER_UPDATED',
+    'USER_DELETED', 'PASSWORD_CHANGED', 'DATA_EXPORT', 'SETTINGS_CHANGED', 'MONTHLY_REPORT_PREVIEW',
+    'MONTHLY_REPORT_MANUAL_SEND'
 ];
 
 const EMAIL_AREAS = [
@@ -258,6 +270,8 @@ const AdminMonitorPage: React.FC<AdminMonitorPageProps> = ({ mode = 'system' }) 
     const [monthlyReportLoading, setMonthlyReportLoading] = useState(true);
     const [monthlyReportError, setMonthlyReportError] = useState<string | null>(null);
     const [monthlyPreviewOpen, setMonthlyPreviewOpen] = useState(false);
+    const [monthlySendConfirmOpen, setMonthlySendConfirmOpen] = useState(false);
+    const [monthlySendLoading, setMonthlySendLoading] = useState(false);
     const [monthlyPreviewLoading, setMonthlyPreviewLoading] = useState(false);
     const [monthlyPreviewError, setMonthlyPreviewError] = useState<string | null>(null);
     const [monthlyPreview, setMonthlyPreview] = useState<MonthlyReportPreview | null>(null);
@@ -467,6 +481,40 @@ const AdminMonitorPage: React.FC<AdminMonitorPageProps> = ({ mode = 'system' }) 
             setMonthlyPreviewError(err?.message || 'Monatsreport-Simulation konnte nicht erstellt werden.');
         } finally {
             setMonthlyPreviewLoading(false);
+        }
+    };
+
+    const handleSendMonthlyReport = async () => {
+        if (!selectedBusinessPartnerId) return;
+        setMonthlySendLoading(true);
+        try {
+            const response = await apiClient.post<MonthlyReportSendResult>('/api/admin/monitor/monthly-report-send', {
+                partnerId: selectedBusinessPartnerId,
+                confirmSend: true,
+            });
+            const payload = response.data as MonthlyReportSendResult | { message?: string } | null;
+            if (!response.res.ok || !payload || !('ok' in payload) || payload.ok !== true) {
+                throw new Error(payload && 'message' in payload && payload.message
+                    ? payload.message
+                    : `Monatsreport-Versand fehlgeschlagen (HTTP ${response.res.status}).`);
+            }
+
+            setMonthlySendConfirmOpen(false);
+            setSnackbar({
+                open: true,
+                message: payload.message,
+                severity: payload.sentCount > 0 ? 'success' : 'info',
+            });
+            await fetchMonthlyReportData();
+        } catch (err: any) {
+            setSnackbar({
+                open: true,
+                message: err?.message || 'Der Monatsreport konnte nicht versendet werden.',
+                severity: 'error',
+            });
+            await fetchMonthlyReportData();
+        } finally {
+            setMonthlySendLoading(false);
         }
     };
 
@@ -794,14 +842,33 @@ const AdminMonitorPage: React.FC<AdminMonitorPageProps> = ({ mode = 'system' }) 
 
         return (
             <Box sx={{ mb: 4 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, mb: 2 }}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 2, mb: 2 }}>
                     <Typography variant="h5" sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
                         <EmailOutlinedIcon color="primary" /> Monatlicher E-Mail-Report
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        <Tooltip title={!settings?.monthly_report_enabled
+                            ? 'Zuerst den Monatsreport beim Mandanten aktivieren.'
+                            : Number(settings?.eligible_recipients || 0) === 0
+                                ? 'Zuerst mindestens einen aktiven Empfänger festlegen.'
+                                : 'Report für den ausgewählten Mandanten versenden'}>
+                            <span>
+                                <Button
+                                    size="small"
+                                    variant="contained"
+                                    color="success"
+                                    startIcon={<SendOutlinedIcon />}
+                                    onClick={() => setMonthlySendConfirmOpen(true)}
+                                    disabled={monthlySendLoading || !settings?.monthly_report_enabled || Number(settings?.eligible_recipients || 0) === 0}
+                                    sx={{ whiteSpace: 'nowrap' }}
+                                >
+                                    Jetzt senden
+                                </Button>
+                            </span>
+                        </Tooltip>
                         <Button
                             size="small"
-                            variant="contained"
+                            variant="outlined"
                             startIcon={monthlyPreviewLoading ? <CircularProgress size={16} color="inherit" /> : <VisibilityOutlinedIcon />}
                             onClick={handlePreviewMonthlyReport}
                             disabled={monthlyPreviewLoading}
@@ -1025,6 +1092,46 @@ const AdminMonitorPage: React.FC<AdminMonitorPageProps> = ({ mode = 'system' }) 
                     </DialogContent>
                     <DialogActions>
                         <Button onClick={() => setMonthlyPreviewOpen(false)} disabled={monthlyPreviewLoading}>Schließen</Button>
+                    </DialogActions>
+                </Dialog>
+
+                <Dialog
+                    open={monthlySendConfirmOpen}
+                    onClose={() => !monthlySendLoading && setMonthlySendConfirmOpen(false)}
+                    fullWidth
+                    maxWidth="sm"
+                >
+                    <DialogTitle>Monatsreport jetzt senden?</DialogTitle>
+                    <DialogContent dividers>
+                        <Stack spacing={2}>
+                            <Alert severity="warning">
+                                Der Report für den letzten vollständig abgeschlossenen Kalendermonat wird jetzt an den Mailserver übergeben.
+                            </Alert>
+                            <Box>
+                                <Typography variant="caption" color="text.secondary">Mandant</Typography>
+                                <Typography fontWeight={800}>{settings?.name || '—'}</Typography>
+                            </Box>
+                            <Box>
+                                <Typography variant="caption" color="text.secondary">Aktivierte Empfänger</Typography>
+                                <Typography fontWeight={800}>{Number(settings?.eligible_recipients || 0)}</Typography>
+                            </Box>
+                            <Typography variant="body2" color="text.secondary">
+                                Bereits erfolgreich verarbeitete Empfänger dieses Berichtsmonats erhalten keine zweite E-Mail. Fehlgeschlagene Zustellversuche dürfen erneut verarbeitet werden.
+                            </Typography>
+                        </Stack>
+                    </DialogContent>
+                    <DialogActions sx={{ px: 3, py: 2 }}>
+                        <Button onClick={() => setMonthlySendConfirmOpen(false)} disabled={monthlySendLoading}>Abbrechen</Button>
+                        <Button
+                            variant="contained"
+                            color="success"
+                            startIcon={monthlySendLoading ? <CircularProgress size={17} color="inherit" /> : <SendOutlinedIcon />}
+                            onClick={handleSendMonthlyReport}
+                            disabled={monthlySendLoading}
+                            sx={{ whiteSpace: 'nowrap' }}
+                        >
+                            {monthlySendLoading ? 'Wird versendet …' : 'Jetzt verbindlich senden'}
+                        </Button>
                     </DialogActions>
                 </Dialog>
             </Box>

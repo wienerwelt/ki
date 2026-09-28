@@ -321,6 +321,9 @@ async function run() {
     '/api/admin/business-partners',
     '/api/admin/advertisements',
     '/api/admin/cronjobs/emails',
+    '/api/admin/monitor/monthly-report-deliveries',
+    '/api/admin/monitor/monthly-report-preview',
+    '/api/admin/monitor/monthly-report-send',
   ]) {
     const result = await request(route, assistantToken);
     assert(result.response.status === 403, `Mandantenassistenz erreicht globale Admin-Route ${route}: HTTP ${result.response.status}`);

@@ -60,7 +60,7 @@ async function run() {
         const assistant = await createUser('assistant', 'assistenz');
         await createUser('inactive', 'assistenz', { active: false });
         await createUser('expired', 'assistenz', { until: '2000-01-01' });
-        await createUser('disabled', 'admin', { monthly: false });
+        const admin = await createUser('disabled', 'admin', { monthly: false });
         const member = await createUser('member', 'user', { consent: true });
         const foreign = await client.query(`SELECT id FROM business_partners WHERE id <> $1 LIMIT 1`, [partnerId]);
         assert.ok(foreign.rows[0], 'A second tenant is required to test isolation');
@@ -106,16 +106,43 @@ async function run() {
         await client.query('UPDATE users SET newsletter_opt_in = FALSE WHERE id = $1', [member.id]);
         assert.equal((await loadEligibleRecipients(partnerId)).length, 0, 'Activation must not bypass an unsubscribe');
 
-        const first = await generateAndSendMonthlyReport({ targetBusinessPartnerId: partnerId });
-        assert.equal(first.sentCount, 1);
-        const second = await generateAndSendMonthlyReport({ targetBusinessPartnerId: partnerId });
-        assert.equal(second.sentCount, 0);
-        assert.equal(second.skippedAlreadySentCount, 1);
+        const adminMonitorController = require('../controllers/adminMonitorController');
+        const invokeManualSend = async (body) => {
+            const res = {
+                statusCode: 200,
+                status(code) { this.statusCode = code; return this; },
+                json(value) { this.body = value; return this; },
+            };
+            await adminMonitorController.sendMonthlyReport({
+                body,
+                query: {},
+                user: {
+                    id: admin.id,
+                    username: admin.username,
+                    email: admin.email,
+                    role: 'admin',
+                    business_partner_id: partnerId,
+                },
+                ip: '127.0.0.1',
+            }, res);
+            return res;
+        };
+        assert.equal((await invokeManualSend({ partnerId })).statusCode, 400, 'Manual send requires explicit confirmation');
+        const first = await invokeManualSend({ partnerId, confirmSend: true });
+        assert.equal(first.statusCode, 200);
+        assert.equal(first.body.sentCount, 1);
+        assert.equal(first.body.eligibleRecipients, 1);
+        assert.match(first.body.reportMonth, /^\d{4}-\d{2}-01$/);
+        const second = await invokeManualSend({ partnerId, confirmSend: true });
+        assert.equal(second.statusCode, 200);
+        assert.equal(second.body.sentCount, 0);
+        assert.equal(second.body.skippedAlreadySentCount, 1);
         assert.equal(simulatedSends, 1);
         await client.query('UPDATE business_partners SET monthly_report_enabled = FALSE WHERE id = $1', [partnerId]);
         assert.equal((await generateAndSendMonthlyReport({ dryRun: true, targetBusinessPartnerId: partnerId })).plannedCount, 0);
+        assert.equal((await invokeManualSend({ partnerId, confirmSend: true })).statusCode, 409, 'Disabled tenant must not send manually');
         console.log(JSON.stringify({ ok: true, timeZoneAndDst: true, separateReportRecipients: true,
-            adminOnlyPreferences: true, newsletterPauseAndConsent: true, tenantIsolation: true,
+            adminOnlyPreferences: true, manualTenantSend: true, newsletterPauseAndConsent: true, tenantIsolation: true,
             duplicateProtection: true, realEmailsSent: 0, fixturesRolledBack: true }));
     } finally {
         await client.query('ROLLBACK');

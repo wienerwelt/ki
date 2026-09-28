@@ -974,6 +974,7 @@ exports.generateAndSendMonthlyReport = async (options = {}) => {
 
         return {
             ok: true,
+            reportMonth,
             sentCount,
             plannedCount,
             skippedPartnerCount,
