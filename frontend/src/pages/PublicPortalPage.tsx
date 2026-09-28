@@ -4,6 +4,7 @@ import PublicCareerTeaser from '../components/PublicCareerTeaser';
 import React, { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useSearchParams, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
+    Alert,
     Avatar,
     Badge,
     Box,
@@ -86,10 +87,14 @@ interface PublicPortalPageProps {
 }
 
 const DEFAULT_COMPANY_LOGO = '/logos/default-company.svg';
-const formatSoftwareSolutionCount = (value: unknown) => {
+const formatSoftwareProductCount = (value: unknown) => {
     const count = Number(value) || 0;
-    return `${count} ${count === 1 ? 'Softwarelösung' : 'Softwarelösungen'}`;
+    return `${count} ${count === 1 ? 'Softwareprodukt' : 'Softwareprodukte'}`;
 };
+
+const getProviderSoftwareEntries = (provider: any): any[] => (
+    Array.isArray(provider?.software_entries) ? provider.software_entries : []
+);
 
 // --- HILFSKOMPONENTE FÜR FEHLENDE BILDER ---
 const ImageWithFallback = ({ src, alt, fallbackColor, sx, ...props }: any) => {
@@ -875,6 +880,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         : tenantIndustryName
             ? `${tenantIndustryName}-Veranstaltung hinzufügen`
             : 'Branchen-Veranstaltung hinzufügen';
+    const publicCalendarMemberLabel = `${partnerName.replace(/\s+(Austria|Österreich)$/i, '').trim() || 'Community'} Mitglied`;
 
     const eventCalendarCategory = useMemo(() => {
         const bpCategories = normalizeEventCategoryList(
@@ -1015,7 +1021,22 @@ const renderProviderPreviewCard = (provider: any) => {
 
             {(Number(provider.software_count) > 0 || Number(provider.action_count) > 0) && (
                 <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap" sx={{ mb: 1.2 }}>
-                    {Number(provider.software_count) > 0 && <Chip icon={<AppsOutlinedIcon />} size="small" label={formatSoftwareSolutionCount(provider.software_count)} sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900 }} />}
+                    {Number(provider.software_count) > 0 && (
+                        <Chip
+                            component="button"
+                            clickable
+                            icon={<AppsOutlinedIcon />}
+                            size="small"
+                            label={formatSoftwareProductCount(provider.software_count)}
+                            aria-label={`${formatSoftwareProductCount(provider.software_count)} von ${provider.name} anzeigen`}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedTeaserProvider(provider);
+                                setTeaserTab(1);
+                            }}
+                            sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900, '&:hover': { bgcolor: alpha(primaryColor, 0.18) } }}
+                        />
+                    )}
                     {Number(provider.action_count) > 0 && <Chip icon={<LocalOfferOutlinedIcon />} size="small" label={`Angebote ${provider.action_count}`} sx={{ bgcolor: alpha(secondaryColor, 0.1), color: secondaryColor, fontWeight: 900 }} />}
                 </Stack>
             )}
@@ -1388,6 +1409,17 @@ const renderProviderPreviewCard = (provider: any) => {
                             <Stack direction="row" alignItems="center" spacing={1} sx={{ minHeight: 56, borderRadius: 2, px: 2, border: `1px solid ${alpha(darkBlue, 0.14)}`, bgcolor: '#fff' }}>
                                 <SearchIcon sx={{ color: alpha(darkBlue, 0.45) }} />
                                 <InputBase fullWidth value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} inputProps={{ maxLength: 120, 'aria-label': 'Branchenverzeichnis durchsuchen' }} placeholder="Dienstleistung, Anbieter, News ..." sx={{ color: darkBlue, fontWeight: 700 }} />
+                                {searchTerm && (
+                                    <IconButton
+                                        size="small"
+                                        aria-label="Suchbegriff löschen"
+                                        title="Suchbegriff löschen"
+                                        onClick={() => setSearchTerm('')}
+                                        sx={{ color: alpha(darkBlue, 0.5), flexShrink: 0 }}
+                                    >
+                                        <CloseIcon fontSize="small" />
+                                    </IconButton>
+                                )}
                             </Stack>
                         </Grid>
                         <Grid item xs={12} md={3.1}>
@@ -1537,6 +1569,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                     onDelete={() => {}}
                                     primaryColor={primaryColor}
                                     publicContributionLabel={eventContributionLabel}
+                                    publicMemberLabel={publicCalendarMemberLabel}
                                     onPublicLogin={handleLoginCta}
                                 />
                             </Suspense>
@@ -1840,7 +1873,17 @@ const renderProviderPreviewCard = (provider: any) => {
                                             {selectedTeaserProvider.category && <Chip label={selectedTeaserProvider.category} size="small" sx={{ bgcolor: alpha(primaryColor, 0.08), color: primaryColor, fontWeight: 900, height: 24 }} />}
                                             {selectedTeaserProvider.is_tenant_entry && <Chip label="Mandant" size="small" sx={{ bgcolor: primaryColor, color: '#fff', fontWeight: 900, height: 24 }} />}
                                             {selectedTeaserProvider.is_recommended && <Chip icon={<VerifiedUserIcon fontSize="small" />} label="Offizieller Partner" size="small" sx={{ bgcolor: alpha(primaryColor, 0.14), color: primaryColor, fontWeight: 900, height: 24 }} />}
-                                            {Number(selectedTeaserProvider.software_count) > 0 && <Chip icon={<AppsOutlinedIcon />} label={formatSoftwareSolutionCount(selectedTeaserProvider.software_count)} size="small" sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900, height: 24 }} />}
+                                            {Number(selectedTeaserProvider.software_count) > 0 && (
+                                                <Chip
+                                                    component="button"
+                                                    clickable
+                                                    icon={<AppsOutlinedIcon />}
+                                                    label={formatSoftwareProductCount(selectedTeaserProvider.software_count)}
+                                                    size="small"
+                                                    onClick={() => setTeaserTab(1)}
+                                                    sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900, height: 24, '&:hover': { bgcolor: alpha(primaryColor, 0.18) } }}
+                                                />
+                                            )}
                                             {Number(selectedTeaserProvider.action_count) > 0 && <Chip icon={<LocalOfferOutlinedIcon />} label={`Angebote ${selectedTeaserProvider.action_count}`} size="small" sx={{ bgcolor: alpha(secondaryColor, 0.1), color: secondaryColor, fontWeight: 900, height: 24 }} />}
                                         </Stack>
                                     </Box>
@@ -1858,9 +1901,10 @@ const renderProviderPreviewCard = (provider: any) => {
                                 </Stack>
                             </Box>
                             
-                            <Tabs value={teaserTab} onChange={(_, val) => setTeaserTab(val)} variant="fullWidth" sx={{ mt: 3, '& .MuiTab-root': { color: alpha(darkBlue, 0.56), fontWeight: 900, px: 1 }, '& .Mui-selected': { color: primaryColor } }} TabIndicatorProps={{ style: { backgroundColor: primaryColor } }}>
+                            <Tabs value={teaserTab} onChange={(_, val) => setTeaserTab(val)} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile sx={{ mt: 3, '& .MuiTab-root': { color: alpha(darkBlue, 0.56), fontWeight: 900, px: 1.5, whiteSpace: 'nowrap' }, '& .Mui-selected': { color: primaryColor } }} TabIndicatorProps={{ style: { backgroundColor: primaryColor } }}>
                                 <Tab label="Übersicht & Kontakt" />
-                                <Tab label={`Bewertungen (${selectedTeaserProvider.review_count || 0})`} />
+                                {Number(selectedTeaserProvider.software_count) > 0 && <Tab value={1} label={`Software (${selectedTeaserProvider.software_count})`} />}
+                                <Tab value={2} label={`Bewertungen (${selectedTeaserProvider.review_count || 0})`} />
                             </Tabs>
                         </DialogTitle>
 
@@ -1940,7 +1984,46 @@ const renderProviderPreviewCard = (provider: any) => {
                                     )}
                                 </Box>
                             )}
-                            {teaserTab === 1 && (
+                            {teaserTab === 1 && Number(selectedTeaserProvider.software_count) > 0 && (
+                                <Box sx={{ p: { xs: 2, sm: 3 } }}>
+                                    <Stack spacing={2}>
+                                        <Box>
+                                            <Typography variant="h6" color={darkBlue} fontWeight={950}>Software-Portfolio</Typography>
+                                            <Typography variant="body2" sx={{ color: alpha(darkBlue, 0.66) }}>Diese öffentlich freigegebenen Produkte werden von {selectedTeaserProvider.name} angeboten.</Typography>
+                                        </Box>
+                                        {getProviderSoftwareEntries(selectedTeaserProvider).map((software: any) => (
+                                            <Paper key={software.id} elevation={0} sx={{ p: 2, borderRadius: 3, border: `1px solid ${alpha(primaryColor, 0.16)}` }}>
+                                                <Stack direction="row" spacing={1.5} alignItems="flex-start">
+                                                    <Box sx={{ width: 48, height: 48, flexShrink: 0, borderRadius: 2, bgcolor: alpha(primaryColor, 0.06), display: 'grid', placeItems: 'center', overflow: 'hidden', p: 0.5 }}>
+                                                        <ImageWithFallback src={software.logo_url ? getAssetUrl(software.logo_url) : (selectedTeaserProvider.logo_url ? getAssetUrl(selectedTeaserProvider.logo_url) : null)} alt={software.name} fallbackColor={primaryColor} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                                                    </Box>
+                                                    <Box sx={{ minWidth: 0, flex: 1 }}>
+                                                        <Typography fontWeight={950} color={darkBlue}>{software.name}</Typography>
+                                                        <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap" sx={{ mt: 0.75 }}>
+                                                            {(software.categories || []).map((softwareCategory: any) => <Chip key={softwareCategory.id} size="small" label={softwareCategory.name} sx={{ fontWeight: 800, bgcolor: alpha(primaryColor, 0.09), color: primaryColor }} />)}
+                                                        </Stack>
+                                                        {software.short_description && <Typography variant="body2" sx={{ mt: 1, color: alpha(darkBlue, 0.72), display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{software.short_description}</Typography>}
+                                                        {getExternalUrl(software.product_url) && <Button size="small" href={getExternalUrl(software.product_url)} target="_blank" rel="noopener noreferrer" endIcon={<ArrowForwardIcon />} sx={{ mt: 0.75, px: 0, textTransform: 'none', fontWeight: 900, color: primaryColor }}>Produkt ansehen</Button>}
+                                                    </Box>
+                                                </Stack>
+                                            </Paper>
+                                        ))}
+                                        {getProviderSoftwareEntries(selectedTeaserProvider).length === 0 && <Alert severity="info">Die Softwareangaben werden gerade aktualisiert.</Alert>}
+                                        <Button
+                                            variant="outlined"
+                                            startIcon={<AppsOutlinedIcon />}
+                                            onClick={() => {
+                                                handleCloseProviderDetail();
+                                                window.setTimeout(() => document.getElementById('software-lexikon')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+                                            }}
+                                            sx={{ alignSelf: 'flex-start', textTransform: 'none', fontWeight: 900, borderColor: primaryColor, color: primaryColor }}
+                                        >
+                                            Zum Software-Lexikon
+                                        </Button>
+                                    </Stack>
+                                </Box>
+                            )}
+                            {teaserTab === 2 && (
                                 <Box sx={{ p: { xs: 2, sm: 3 } }}>
                                     <Box sx={{ position: 'relative', borderRadius: 3, overflow: 'hidden', border: `1px solid ${alpha(darkBlue, 0.08)}` }}>
                                         <Box sx={{ filter: 'blur(8px)', opacity: 0.5, pointerEvents: 'none', userSelect: 'none', p: 3, bgcolor: alpha(darkBlue, 0.03) }}>

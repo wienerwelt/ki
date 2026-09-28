@@ -13,7 +13,6 @@ import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import CloseIcon from '@mui/icons-material/Close';
 import CelebrationIcon from '@mui/icons-material/Celebration';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import CheckIcon from '@mui/icons-material/Check';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
@@ -47,6 +46,7 @@ export interface EventCalendarWidgetProps extends Partial<BaseWidgetProps> {
     primaryColor?: string; // NEU: Für nahtlose Farb-Übergabe aus dem Public Portal
     partnerId?: string;
     publicContributionLabel?: string;
+    publicMemberLabel?: string;
     onPublicLogin?: () => void;
 }
 
@@ -118,11 +118,11 @@ const getUserStatus = (lastLoginDate?: string) => {
     return 'offline';
 };
 
-const MemberAvatar: React.FC<{ member: Participant, size?: number, showStatus?: boolean }> = ({ member, size = 24, showStatus = true }) => {
+const MemberAvatar: React.FC<{ member: Participant, size?: number, showStatus?: boolean, publicLabel?: string }> = ({ member, size = 24, showStatus = true, publicLabel }) => {
     const status = getUserStatus(member.last_login_at);
-    const invisible = !showStatus || status === 'offline';
+    const invisible = Boolean(publicLabel) || !showStatus || status === 'offline';
     const statusColor = status === 'online' ? '#44b700' : '#ffa726';
-    const tooltipText = `${member.first_name} ${member.last_name} (${status === 'online' ? 'Online' : (status === 'active_today' ? 'Heute aktiv' : 'Offline')})`;
+    const tooltipText = publicLabel || `${member.first_name} ${member.last_name} (${status === 'online' ? 'Online' : (status === 'active_today' ? 'Heute aktiv' : 'Offline')})`;
 
     return (
         <Tooltip title={tooltipText}>
@@ -147,8 +147,8 @@ const MemberAvatar: React.FC<{ member: Participant, size?: number, showStatus?: 
                     },
                 }}
             >
-                <Avatar src={member.profile_image_url || undefined} alt={member.first_name} sx={{ width: size, height: size, fontSize: size * 0.5 }}>
-                    {member.first_name?.charAt(0)}
+                <Avatar src={publicLabel ? undefined : (member.profile_image_url || undefined)} alt={publicLabel || member.first_name} sx={{ width: size, height: size, fontSize: size * 0.5 }}>
+                    {publicLabel ? 'M' : member.first_name?.charAt(0)}
                 </Avatar>
             </Badge>
         </Tooltip>
@@ -216,7 +216,7 @@ const normalizeEventCategories = (value: unknown): string[] => {
   return Array.from(new Set(values.map(normalizeEventCategoryKey).filter(Boolean)));
 };
 
-const ParticipantsPreview: React.FC<{ yes: Participant[]; maybe: Participant[] }> = ({ yes, maybe }) => {
+const ParticipantsPreview: React.FC<{ yes: Participant[]; maybe: Participant[]; publicLabel?: string }> = ({ yes, maybe, publicLabel }) => {
     if (yes.length === 0 && maybe.length === 0) return null;
 
     return (
@@ -224,16 +224,15 @@ const ParticipantsPreview: React.FC<{ yes: Participant[]; maybe: Participant[] }
             {yes.length > 0 && (
                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
                     <AvatarGroup max={3} spacing="small" sx={{ '& .MuiAvatar-root': { width: 22, height: 22, fontSize: 10, borderColor: 'background.paper' } }}>
-                        {yes.map(p => <MemberAvatar key={p.id} member={p} size={22} showStatus={false} />)}
+                        {yes.map(p => <MemberAvatar key={p.id} member={p} size={22} showStatus={false} publicLabel={publicLabel} />)}
                     </AvatarGroup>
                 </Box>
             )}
             {maybe.length > 0 && (
                 <Box sx={{ display: 'flex', alignItems: 'center', opacity: 0.7 }}>
                     <AvatarGroup max={2} spacing="small" sx={{ '& .MuiAvatar-root': { width: 20, height: 20, fontSize: 10, borderColor: 'background.paper', ml: -1 } }}>
-                        {maybe.map(p => <MemberAvatar key={p.id} member={p} size={20} showStatus={false} />)}
+                        {maybe.map(p => <MemberAvatar key={p.id} member={p} size={20} showStatus={false} publicLabel={publicLabel} />)}
                     </AvatarGroup>
-                    <HelpOutlineIcon sx={{ fontSize: 14, ml: 0.5, color: 'text.secondary' }} />
                 </Box>
             )}
         </Stack>
@@ -242,7 +241,7 @@ const ParticipantsPreview: React.FC<{ yes: Participant[]; maybe: Participant[] }
 
 const EventCalendarWidget: React.FC<EventCalendarWidgetProps> = ({
   onDelete, widgetId, isRemovable, icon, title, category, widgetTypeKey, isPublic = false, partnerName, defaultRegion = 'all', primaryColor, partnerId,
-  publicContributionLabel = 'Branchen-Veranstaltung hinzufügen', onPublicLogin
+  publicContributionLabel = 'Branchen-Veranstaltung hinzufügen', publicMemberLabel = 'Community-Mitglied', onPublicLogin
 }) => {
   const navigate = useNavigate();
   const theme = useTheme();
@@ -804,7 +803,7 @@ return (
                             </Typography>
 
                             <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" sx={{ mb: (e.url || e.full_text) && !isHoliday && !isAction ? 0.5 : 0 }}>
-                              {e.type === 'event' && <ParticipantsPreview yes={e.participants} maybe={e.maybeParticipants} />}
+                              {e.type === 'event' && <ParticipantsPreview yes={e.participants} maybe={e.maybeParticipants} publicLabel={isPublic ? publicMemberLabel : undefined} />}
                               
                               <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
                                 {isAction ? e.summary?.substring(0,60) + '...' : (diffDays === 0 ? 'Heute' : diffDays === 1 ? 'Morgen' : `In ${diffDays} Tagen`)}
@@ -1032,8 +1031,8 @@ return (
                         Vorgeschlagen von
                       </Typography>
                       <Chip 
-                          avatar={<Avatar src={selectedEvent.suggestedBy.profile_image_url || undefined} />} 
-                          label={`${selectedEvent.suggestedBy.first_name} ${selectedEvent.suggestedBy.last_name}`} 
+                          avatar={<Avatar src={isPublic ? undefined : (selectedEvent.suggestedBy.profile_image_url || undefined)}>{isPublic ? 'M' : undefined}</Avatar>}
+                          label={isPublic ? publicMemberLabel : `${selectedEvent.suggestedBy.first_name} ${selectedEvent.suggestedBy.last_name}`}
                           onClick={() => handleOpenCommunityProfile(selectedEvent.suggestedBy)}
                           variant="outlined" 
                           sx={{ cursor: isPublic ? 'default' : 'pointer', '&:hover': { bgcolor: isPublic ? 'transparent' : 'action.hover' } }} 
@@ -1050,7 +1049,7 @@ return (
                               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                                   {selectedEvent.participants.map(p => (
                                       <Chip 
-                                        key={p.id} avatar={<Avatar src={p.profile_image_url || undefined} />} label={p.first_name} 
+                                        key={p.id} avatar={<Avatar src={isPublic ? undefined : (p.profile_image_url || undefined)}>{isPublic ? 'M' : undefined}</Avatar>} label={isPublic ? publicMemberLabel : p.first_name}
                                         onClick={() => handleOpenCommunityProfile(p)}
                                         variant="outlined" sx={{ cursor: isPublic ? 'default' : 'pointer', '&:hover': { bgcolor: isPublic ? 'transparent' : 'action.hover' } }} 
                                       />
@@ -1064,7 +1063,7 @@ return (
                               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                                   {selectedEvent.maybeParticipants.map(p => (
                                       <Chip 
-                                        key={p.id} avatar={<Avatar src={p.profile_image_url || undefined} />} label={p.first_name} 
+                                        key={p.id} avatar={<Avatar src={isPublic ? undefined : (p.profile_image_url || undefined)}>{isPublic ? 'M' : undefined}</Avatar>} label={isPublic ? publicMemberLabel : p.first_name}
                                         onClick={() => handleOpenCommunityProfile(p)}
                                         variant="outlined" sx={{ cursor: isPublic ? 'default' : 'pointer', opacity: 0.8, '&:hover': { opacity: 1, bgcolor: isPublic ? 'transparent' : 'action.hover' } }} 
                                       />
@@ -1131,7 +1130,7 @@ return (
                 >Dabei</Button>
                 <Button 
                     onClick={() => handleVote(selectedEvent?.id || '', 0)} 
-                    size="small" startIcon={<HelpOutlineIcon />} color="warning"
+                    size="small" color="warning"
                     variant={selectedEvent?.userVote === 0 ? "contained" : "outlined"}
                     sx={{ borderRadius: 5, px: 2, flex: { xs: 1, sm: 'none' } }}
                 >Vielleicht</Button>

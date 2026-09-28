@@ -1501,6 +1501,7 @@ exports.getPublicDirectory = async (req, res) => {
                 COALESCE(ms.is_recommended, false) AS is_recommended,
                 COALESCE(ms.is_tenant_entry, false) AS is_tenant_entry,
                 COALESCE(linked_entries.software_count, 0)::int AS software_count,
+                COALESCE(linked_entries.software_entries, '[]'::json) AS software_entries,
                 COALESCE(linked_entries.action_count, 0)::int AS action_count,
                 COALESCE(locations.locations, '[]'::json) AS locations
             FROM directory_providers p
@@ -1538,11 +1539,38 @@ exports.getPublicDirectory = async (req, res) => {
                 SELECT
                     (SELECT COUNT(*)
                      FROM software_tools linked_software
-                     WHERE linked_software.provider_id = p.id
+                    WHERE linked_software.provider_id = p.id
                        AND linked_software.business_partner_id = $1
                        AND linked_software.status = 'published'
                        AND linked_software.is_active = true
                        AND linked_software.is_public = true) AS software_count,
+                    (SELECT json_agg(
+                        json_build_object(
+                            'id', linked_software.id,
+                            'name', linked_software.name,
+                            'short_description', linked_software.short_description,
+                            'product_url', linked_software.product_url,
+                            'logo_url', linked_software.logo_url,
+                            'coverage_scope', linked_software.coverage_scope,
+                            'categories', COALESCE(linked_categories.categories, '[]'::json)
+                        )
+                        ORDER BY linked_software.is_featured DESC, linked_software.name ASC
+                    )
+                     FROM software_tools linked_software
+                     LEFT JOIN LATERAL (
+                         SELECT json_agg(
+                             json_build_object('id', sc.id, 'name', sc.name)
+                             ORDER BY sc.sort_order, sc.name
+                         ) AS categories
+                         FROM software_tool_categories stc
+                         JOIN software_categories sc ON sc.id = stc.category_id
+                         WHERE stc.software_tool_id = linked_software.id
+                     ) linked_categories ON true
+                     WHERE linked_software.provider_id = p.id
+                       AND linked_software.business_partner_id = $1
+                       AND linked_software.status = 'published'
+                       AND linked_software.is_active = true
+                       AND linked_software.is_public = true) AS software_entries,
                     (SELECT COUNT(*)
                      FROM business_partner_actions linked_action
                      WHERE linked_action.directory_provider_id = p.id

@@ -289,7 +289,25 @@ const SoftwareCatalogWidget: React.FC<SoftwareCatalogWidgetProps> = ({
                 </Box>
                 <Box sx={{ display: 'grid', gridTemplateColumns: standalone ? 'minmax(0, 2fr) repeat(3, minmax(140px, 1fr))' : 'minmax(0, 2fr) repeat(2, minmax(140px, 1fr))', gap: 1.3, '@container (max-width: 820px)': { gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }, '@container (max-width: 420px)': { gridTemplateColumns: 'minmax(0, 1fr)' } }}>
                     <Box sx={{ minWidth: 0, '@container (max-width: 820px)': { gridColumn: '1 / -1' } }}>
-                        <TextField fullWidth size={isPublic ? 'medium' : 'small'} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Software oder Anbieter suchen" inputProps={{ maxLength: 120 }} InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }} sx={{ '& .MuiOutlinedInput-root': { minHeight: isPublic ? 56 : 48, borderRadius: 2, bgcolor: '#fff' } }} />
+                        <TextField
+                            fullWidth
+                            size={isPublic ? 'medium' : 'small'}
+                            value={search}
+                            onChange={(event) => setSearch(event.target.value)}
+                            placeholder="Software oder Anbieter suchen"
+                            inputProps={{ maxLength: 120, 'aria-label': 'Software-Lexikon durchsuchen' }}
+                            InputProps={{
+                                startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>,
+                                endAdornment: search ? (
+                                    <InputAdornment position="end">
+                                        <IconButton size="small" aria-label="Software-Suche löschen" title="Suchbegriff löschen" onClick={() => setSearch('')}>
+                                            <CloseIcon fontSize="small" />
+                                        </IconButton>
+                                    </InputAdornment>
+                                ) : undefined,
+                            }}
+                            sx={{ '& .MuiOutlinedInput-root': { minHeight: isPublic ? 56 : 48, borderRadius: 2, bgcolor: '#fff' } }}
+                        />
                     </Box>
                     <Box sx={{ minWidth: 0 }}>
                         <Select fullWidth size={isPublic ? 'medium' : 'small'} value={category} onChange={(event) => setCategory(event.target.value)} sx={{ minHeight: isPublic ? 56 : 48, borderRadius: 2, bgcolor: '#fff' }}>
@@ -322,7 +340,7 @@ const SoftwareCatalogWidget: React.FC<SoftwareCatalogWidgetProps> = ({
                     <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: 1.8 }}>
                         {visibleEntries.map((entry) => (
                             <Box key={entry.id} sx={{ minWidth: 0 }}>
-                                <Box sx={{ p: 2, minWidth: 0, height: '100%', borderRadius: 3, border: `1px solid ${alpha(accent, 0.2)}`, borderTop: `4px solid ${entry.is_featured ? accent : alpha(accent, 0.38)}`, bgcolor: 'background.paper', boxShadow: `0 12px 28px ${alpha(accent, 0.08)}`, display: 'flex', flexDirection: 'column' }}>
+                                <Box sx={{ p: isPublic ? 1.6 : 2, minWidth: 0, height: '100%', borderRadius: 3, border: `1px solid ${alpha(accent, 0.2)}`, borderTop: `4px solid ${entry.is_featured ? accent : alpha(accent, 0.38)}`, bgcolor: 'background.paper', boxShadow: `0 12px 28px ${alpha(accent, 0.08)}`, display: 'flex', flexDirection: 'column' }}>
                                     <Stack direction="row" justifyContent="space-between" spacing={1.2} alignItems="flex-start">
                                         <Stack direction="row" spacing={1.2} sx={{ minWidth: 0 }}>
                                             <Box sx={{ width: 46, height: 46, flexShrink: 0, borderRadius: 2, bgcolor: alpha(accent, 0.08), display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
@@ -345,25 +363,37 @@ const SoftwareCatalogWidget: React.FC<SoftwareCatalogWidgetProps> = ({
                                         </Stack>
                                         <Stack spacing={0.5} alignItems="flex-end">
                                             {entry.is_featured && <Chip size="small" label="Empfohlen" sx={{ bgcolor: alpha(accent, 0.1), color: accent, fontWeight: 900 }} />}
-                                            {Number(entry.rating_count || 0) === 0 && <Chip size="small" label="Noch ohne Bewertung" variant="outlined" />}
+                                            {!isPublic && Number(entry.rating_count || 0) === 0 && <Chip size="small" label="Noch ohne Bewertung" variant="outlined" />}
                                         </Stack>
                                     </Stack>
                                     <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap" sx={{ my: 1.4 }}>
-                                        <Chip size="small" variant="outlined" label={scopeLabel[entry.coverage_scope] || entry.coverage_scope} />
-                                        {(entry.country_codes || []).slice(0, 4).map((code) => <Chip key={code} size="small" label={code} />)}
-                                        {(entry.categories || []).slice(0, 2).map((item) => (
-                                            <Chip
-                                                key={item.id}
-                                                size="small"
-                                                clickable
-                                                label={item.name}
-                                                onClick={() => handleCategoryFilter(item.id)}
-                                                color={category === item.id ? 'primary' : 'default'}
-                                                sx={{ fontWeight: 800, '&:hover': { bgcolor: alpha(accent, 0.14) } }}
-                                            />
-                                        ))}
+                                        {isPublic ? (
+                                            <>
+                                                {(entry.categories || []).slice(0, 1).map((item) => (
+                                                    <Chip key={item.id} size="small" clickable label={item.name} onClick={() => handleCategoryFilter(item.id)} sx={{ bgcolor: alpha(accent, 0.12), color: accent, fontWeight: 900, '&:hover': { bgcolor: alpha(accent, 0.2) } }} />
+                                                ))}
+                                                {(entry.categories || []).length > 1 && <Chip size="small" variant="outlined" label={`+${(entry.categories || []).length - 1} weitere`} />}
+                                                <Chip size="small" variant="outlined" label={scopeLabel[entry.coverage_scope] || entry.coverage_scope} />
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Chip size="small" variant="outlined" label={scopeLabel[entry.coverage_scope] || entry.coverage_scope} />
+                                                {(entry.country_codes || []).slice(0, 4).map((code) => <Chip key={code} size="small" label={code} />)}
+                                                {(entry.categories || []).slice(0, 2).map((item) => (
+                                                    <Chip
+                                                        key={item.id}
+                                                        size="small"
+                                                        clickable
+                                                        label={item.name}
+                                                        onClick={() => handleCategoryFilter(item.id)}
+                                                        color={category === item.id ? 'primary' : 'default'}
+                                                        sx={{ fontWeight: 800, '&:hover': { bgcolor: alpha(accent, 0.14) } }}
+                                                    />
+                                                ))}
+                                            </>
+                                        )}
                                     </Stack>
-                                    <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{entry.short_description || 'Details folgen.'}</Typography>
+                                    {!isPublic && <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{entry.short_description || 'Details folgen.'}</Typography>}
                                     <Stack spacing={0.35} sx={{ mt: 1.5 }}>
                                         <Stack direction="row" alignItems="center" spacing={1} useFlexGap flexWrap="wrap">
                                             <Rating
@@ -374,7 +404,7 @@ const SoftwareCatalogWidget: React.FC<SoftwareCatalogWidgetProps> = ({
                                                 onChange={(_, value) => handleRating(entry, value)}
                                                 size="small"
                                             />
-                                            <Typography variant="caption" fontWeight={800} sx={{ whiteSpace: 'nowrap' }}>{entry.rating_count || 0} Bewertungen · Ø {Number(entry.average_rating || 0).toFixed(1)}</Typography>
+                                            <Typography variant="caption" fontWeight={800} sx={{ whiteSpace: 'nowrap' }}>{isPublic ? `Ø ${Number(entry.average_rating || 0).toFixed(1)} · ${entry.rating_count || 0}` : `${entry.rating_count || 0} Bewertungen · Ø ${Number(entry.average_rating || 0).toFixed(1)}`}</Typography>
                                         </Stack>
                                         {!isPublic && (
                                             <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap" alignItems="center">
@@ -385,21 +415,12 @@ const SoftwareCatalogWidget: React.FC<SoftwareCatalogWidgetProps> = ({
                                             </Stack>
                                         )}
                                     </Stack>
-                                    {(Number(entry.in_use_count) > 0 || Number(entry.evaluated_count) > 0 || Number(entry.general_count) > 0) && (
+                                    {!isPublic && (Number(entry.in_use_count) > 0 || Number(entry.evaluated_count) > 0 || Number(entry.general_count) > 0) && (
                                         <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap" sx={{ mt: 1 }}>
                                             {Number(entry.in_use_count) > 0 && <Chip size="small" label={`${entry.in_use_count} im Einsatz`} color="success" variant="outlined" />}
                                             {Number(entry.evaluated_count) > 0 && <Chip size="small" label={`${entry.evaluated_count} evaluiert`} color="info" variant="outlined" />}
                                             {Number(entry.general_count) > 0 && <Chip size="small" label={`${entry.general_count} allgemein`} variant="outlined" />}
                                         </Stack>
-                                    )}
-                                    {isPublic && (
-                                        <Box sx={{ mt: 1.2, p: 1.1, borderRadius: 2, bgcolor: alpha(accent, 0.055), overflow: 'hidden' }}>
-                                            <Stack direction="row" spacing={0.7} alignItems="center"><LockOutlinedIcon sx={{ fontSize: 15, color: accent }} /><Typography variant="caption" fontWeight={800}>{entry.experience_count || 0} Erfahrungsbeiträge aus der Mitglieder-Community</Typography></Stack>
-                                            <Box sx={{ mt: 0.7, filter: 'blur(3px)', opacity: 0.38 }}>
-                                                <Box sx={{ height: 6, width: '92%', bgcolor: 'text.secondary', borderRadius: 1, mb: 0.5 }} />
-                                                <Box sx={{ height: 6, width: '68%', bgcolor: 'text.secondary', borderRadius: 1 }} />
-                                            </Box>
-                                        </Box>
                                     )}
                                     <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 1.2 }}>
                                         <Button onClick={() => setSelectedSoftware(entry)} startIcon={<InfoOutlinedIcon />} sx={{ textTransform: 'none', fontWeight: 900, color: accent }}>Details</Button>

@@ -3880,8 +3880,35 @@ exports.getEnhancedCalendarEvents = async (req, res) => {
             regionsData = regionsResult.rows;
         }
 
+        const responseEvents = req.user?.role === 'guest'
+            ? events.map((event) => ({
+                ...event,
+                participants_data: (event.participants_data || []).map((participant, index) => ({
+                    id: `${event.id}-participant-${index + 1}`,
+                    first_name: 'Mitglied',
+                    last_name: '',
+                    profile_image_url: null,
+                    last_login_at: null,
+                })),
+                maybe_participants_data: (event.maybe_participants_data || []).map((participant, index) => ({
+                    id: `${event.id}-maybe-${index + 1}`,
+                    first_name: 'Mitglied',
+                    last_name: '',
+                    profile_image_url: null,
+                    last_login_at: null,
+                })),
+                suggested_by_data: event.suggested_by_data ? {
+                    id: `${event.id}-suggested-by`,
+                    first_name: 'Mitglied',
+                    last_name: '',
+                    profile_image_url: null,
+                    last_login_at: null,
+                } : null,
+            }))
+            : events;
+
         res.json({
-            events,
+            events: responseEvents,
             totalPages,
             currentPage: parseInt(page, 10),
             availableRegions: regionsData
