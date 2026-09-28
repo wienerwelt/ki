@@ -308,7 +308,7 @@ const statusLabels: Record<SignalStatus, string> = {
   new: 'Neu',
   read: 'Gelesen',
   done: 'Erledigt',
-  ignored: 'Ausgeblendet',
+  ignored: 'Nicht relevant',
 };
 
 const accountStatusLabels: Record<string, string> = {
@@ -601,6 +601,7 @@ const AccountRadarPage: React.FC = () => {
   const [entitlements, setEntitlements] = useState<SalesEntitlements | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [lastRadarLoadedAt, setLastRadarLoadedAt] = useState<Date | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<RadarView>('today');
@@ -779,7 +780,7 @@ const AccountRadarPage: React.FC = () => {
         body: JSON.stringify({ status }),
       });
       if (!res.ok) throw new Error(data?.message || 'Trefferstatus konnte nicht geändert werden.');
-      setNotice(data?.message || (status === 'ignored' ? 'Treffer wurde ausgeblendet.' : 'Treffer wurde wiederhergestellt.'));
+      setNotice(data?.message || (status === 'ignored' ? 'Treffer wurde als nicht relevant markiert.' : 'Treffer wurde wiederhergestellt.'));
       await fetchRadar(true);
     } catch (statusError: any) {
       setError(statusError?.message || 'Trefferstatus konnte nicht geändert werden.');
@@ -855,6 +856,7 @@ const AccountRadarPage: React.FC = () => {
         setMarketSignalTotal(0);
         setMarketSignalCounts({ active: 0, ignored: 0 });
       }
+      setLastRadarLoadedAt(new Date());
     } catch (err: any) {
       setError(err?.message || 'Account-Radar konnte nicht geladen werden.');
     } finally {
@@ -1157,16 +1159,30 @@ const AccountRadarPage: React.FC = () => {
       const key = toLocalDateKey(publishedAt);
       countByDate.set(key, (countByDate.get(key) || 0) + 1);
     });
-    const today = new Date();
+    const today = new Date(clockNow);
     today.setHours(0, 0, 0, 0);
-    return Array.from({ length: 84 }, (_, index) => {
-      const date = new Date(today);
-      date.setDate(today.getDate() - (83 - index));
+    const selectedPeriodStart = new Date(today);
+    selectedPeriodStart.setDate(today.getDate() - Math.max(0, days - 1));
+    const firstMonday = new Date(selectedPeriodStart);
+    firstMonday.setDate(selectedPeriodStart.getDate() - ((selectedPeriodStart.getDay() + 6) % 7));
+    const lastSunday = new Date(today);
+    lastSunday.setDate(today.getDate() + (6 - ((today.getDay() + 6) % 7)));
+    const heatmapDays: Array<{ date: Date; dateKey: string; count: number; isToday: boolean; isFuture: boolean }> = [];
+    for (const cursor = new Date(firstMonday); cursor <= lastSunday; cursor.setDate(cursor.getDate() + 1)) {
+      const date = new Date(cursor);
       const dateKey = toLocalDateKey(date);
-      return { date, dateKey, count: countByDate.get(dateKey) || 0 };
-    });
-  }, [scopedSignals]);
+      heatmapDays.push({
+        date,
+        dateKey,
+        count: countByDate.get(dateKey) || 0,
+        isToday: date.getTime() === today.getTime(),
+        isFuture: date.getTime() > today.getTime(),
+      });
+    }
+    return heatmapDays;
+  }, [clockNow, days, scopedSignals]);
   const articleHeatmapMax = Math.max(1, ...articleHeatmapDays.map((day) => day.count));
+  const articleHeatmapWeeks = Math.max(1, articleHeatmapDays.length / 7);
 
   const funnelContextView: RadarView = view === 'accounts' ? 'today' : view;
   const cockpitBaseFilteredSignals = useMemo(
@@ -1390,7 +1406,7 @@ const AccountRadarPage: React.FC = () => {
         relevance_reason: data?.relevance_reason || null,
         relevance_note: data?.relevance_note || null,
       });
-      setNotice(relevanceStatus === 'irrelevant' ? 'Treffer ausgeblendet und Qualitätsgrund gespeichert.' : 'Signal wieder als relevant markiert.');
+      setNotice(relevanceStatus === 'irrelevant' ? 'Treffer als nicht relevant markiert und Qualitätsgrund gespeichert.' : 'Signal wieder als relevant markiert.');
       setRelevanceSignal(null);
     } catch (requestError: any) {
       setError(requestError?.message || 'Relevanzbewertung konnte nicht gespeichert werden.');
@@ -2175,7 +2191,7 @@ const AccountRadarPage: React.FC = () => {
                 ['today', `Offen ${tabCounts.today}`, <ViewListOutlinedIcon fontSize="small" />],
                 ['planned', `Geplant ${tabCounts.planned}`, <ScheduleIcon fontSize="small" />],
                 ['done', `Erledigt ${tabCounts.done}`, <DoneAllIcon fontSize="small" />],
-                ['ignored', `Ausgeblendet ${tabCounts.ignored}`, <VisibilityIcon fontSize="small" />],
+                ['ignored', `Nicht relevant ${tabCounts.ignored}`, <VisibilityOffOutlinedIcon fontSize="small" />],
               ] as Array<[RadarView, string, React.ReactNode]>).map(([value, label, icon]) => {
                 const tone = value === 'planned' ? theme.palette.warning.main : value === 'done' ? theme.palette.success.main : value === 'ignored' ? theme.palette.grey[600] : primary;
                 return (
@@ -2278,18 +2294,42 @@ const AccountRadarPage: React.FC = () => {
           <Paper variant="outlined" sx={{ mt: 1, p: 1.4, borderRadius: 3, bgcolor: alpha(primary, 0.025) }}>
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" spacing={0.8} sx={{ mb: 1 }}>
               <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Artikelaktivität · {days >= 90 ? 'letzte 12 Wochen' : `letzte ${days} Tage`}</Typography>
-                <Typography variant="caption" color="text.secondary">Berücksichtigt Account-, Kampagnen-, Team- und Suchfilter. Dunklere Felder bedeuten mehr veröffentlichte Artikel.</Typography>
+                <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Artikelaktivität · letzte {days} Tage</Typography>
+                <Typography variant="caption" color="text.secondary">{articleHeatmapWeeks} vollständige Kalenderwochen (Mo–So) · berücksichtigt Account-, Kampagnen-, Team- und Suchfilter.</Typography>
               </Box>
-              <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>{scopedSignals.length} Artikel im geladenen Bestand</Typography>
+              <Stack direction="row" spacing={1.2} alignItems="center" useFlexGap flexWrap="wrap">
+                <Stack direction="row" spacing={0.45} alignItems="center">
+                  <Box sx={{ width: 13, height: 13, display: 'grid', placeItems: 'center', borderRadius: 0.6, border: '2px solid', borderColor: 'primary.main', color: 'primary.main', fontSize: '0.45rem', fontWeight: 950 }}>H</Box>
+                  <Typography variant="caption" color="text.secondary">Heute</Typography>
+                </Stack>
+                <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>{scopedSignals.length} Artikel im geladenen Bestand</Typography>
+              </Stack>
             </Stack>
             <Box sx={{ overflowX: 'auto', pb: 0.5 }}>
               <Box sx={{ display: 'grid', gridTemplateRows: 'repeat(7, 13px)', gridAutoFlow: 'column', gridAutoColumns: '13px', gap: '4px', width: 'max-content' }}>
                 {articleHeatmapDays.map((day) => {
                   const intensity = day.count === 0 ? 0 : 0.18 + (day.count / articleHeatmapMax) * 0.72;
                   return (
-                    <Tooltip key={day.dateKey} title={`${day.date.toLocaleDateString('de-AT')}: ${day.count} Artikel`} arrow>
-                      <Box sx={{ width: 13, height: 13, borderRadius: 0.6, bgcolor: day.count ? alpha(primary, intensity) : alpha(theme.palette.text.primary, 0.07), border: '1px solid', borderColor: day.count ? alpha(primary, 0.2) : alpha(theme.palette.text.primary, 0.04) }} />
+                    <Tooltip key={day.dateKey} title={`${day.isToday ? 'Heute · ' : ''}${day.date.toLocaleDateString('de-AT')}: ${day.isFuture ? 'noch nicht erreicht' : `${day.count} Artikel`}`} arrow>
+                      <Box
+                        sx={{
+                          width: 13,
+                          height: 13,
+                          display: 'grid',
+                          placeItems: 'center',
+                          borderRadius: 0.6,
+                          bgcolor: day.isFuture ? 'transparent' : day.count ? alpha(primary, intensity) : alpha(theme.palette.text.primary, 0.07),
+                          border: day.isToday ? '2px solid' : '1px solid',
+                          borderColor: day.isToday ? 'primary.main' : day.isFuture ? alpha(theme.palette.text.primary, 0.08) : day.count ? alpha(primary, 0.2) : alpha(theme.palette.text.primary, 0.04),
+                          color: day.count && intensity > 0.55 ? 'primary.contrastText' : 'primary.main',
+                          fontSize: '0.45rem',
+                          fontWeight: 950,
+                          opacity: day.isFuture ? 0.42 : 1,
+                          boxShadow: day.isToday ? `0 0 0 2px ${alpha(primary, 0.12)}` : 'none',
+                        }}
+                      >
+                        {day.isToday ? 'H' : ''}
+                      </Box>
                     </Tooltip>
                   );
                 })}
@@ -2312,7 +2352,7 @@ const AccountRadarPage: React.FC = () => {
             <Typography variant="h6" sx={{ mt: 1, fontWeight: 950 }}>
               {view === 'done'
                 ? 'Noch keine erledigten Signale.'
-                : view === 'ignored' ? 'Keine ausgeblendeten Treffer.'
+                : view === 'ignored' ? 'Keine als nicht relevant markierten Treffer.'
                 : view === 'planned' ? 'Noch keine Kontakte oder Wiedervorlagen geplant.' : 'Für diesen Filter ist alles erledigt.'}
             </Typography>
             <Typography color="text.secondary" sx={{ mt: 0.6 }}>
@@ -2381,7 +2421,22 @@ const AccountRadarPage: React.FC = () => {
             },
           }}
         >
-          <Tooltip title={entitlements?.subscription?.accessActive === false ? 'Nach Freischaltung wieder verfügbar' : 'Signale aktualisieren'}><span><IconButton onClick={() => fetchRadar(true)} disabled={refreshing || entitlements?.subscription?.accessActive === false} sx={{ border: '1px solid', borderColor: 'divider' }}><RefreshIcon /></IconButton></span></Tooltip>
+          <Tooltip title={entitlements?.subscription?.accessActive === false
+            ? 'Nach Freischaltung wieder verfügbar'
+            : lastRadarLoadedAt
+              ? `Signale aktualisieren · zuletzt geladen: ${lastRadarLoadedAt.toLocaleString('de-AT', { dateStyle: 'short', timeStyle: 'medium' })}`
+              : 'Signale aktualisieren'}>
+            <span>
+              <IconButton
+                onClick={() => fetchRadar(true)}
+                disabled={refreshing || entitlements?.subscription?.accessActive === false}
+                aria-label={lastRadarLoadedAt ? `Signale aktualisieren, zuletzt geladen ${lastRadarLoadedAt.toLocaleString('de-AT')}` : 'Signale aktualisieren'}
+                sx={{ border: '1px solid', borderColor: 'divider' }}
+              >
+                <RefreshIcon />
+              </IconButton>
+            </span>
+          </Tooltip>
           {canConfigureRadar && entitlements?.subscription?.accessActive !== false && (
             <AccountRadarTools
               onImported={() => fetchRadar(true)}
@@ -2720,7 +2775,7 @@ const AccountRadarPage: React.FC = () => {
                 <AutoAwesomeOutlinedIcon color="info" />
                 <Typography variant="h6" sx={{ fontWeight: 950 }}>Signale aus Sales-Triggern</Typography>
                 <Chip size="small" color="info" variant="outlined" label={`${marketSignalCounts.active} aktuell`} />
-                {marketSignalCounts.ignored > 0 && <Chip size="small" variant="outlined" label={`${marketSignalCounts.ignored} ausgeblendet`} />}
+                {marketSignalCounts.ignored > 0 && <Chip size="small" variant="outlined" label={`${marketSignalCounts.ignored} nicht relevant`} />}
               </Stack>
               <Typography variant="caption" color="text.secondary">
                 Markt- und Ereignistreffer aus dem Datenbestand und beobachteten Quellen – auch ohne eigenes CONTENT-Abo nutzbar.
@@ -2750,7 +2805,7 @@ const AccountRadarPage: React.FC = () => {
                 Aktuell · {marketSignalCounts.active}
               </Button>
               <Button size="small" startIcon={<VisibilityIcon />} variant={marketSignalFilter === 'ignored' ? 'contained' : 'outlined'} color="inherit" onClick={() => setMarketSignalFilter('ignored')} sx={compactActionButtonSx}>
-                Ausgeblendet · {marketSignalCounts.ignored}
+                Nicht relevant · {marketSignalCounts.ignored}
               </Button>
             </Stack>
             <Box sx={{ mt: 1.7, display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' }, gap: 1.2 }}>
@@ -2795,7 +2850,7 @@ const AccountRadarPage: React.FC = () => {
                     </Button>
                     {canConfigureRadar && signal.review_status === 'new' && (
                       <Button size="small" color="inherit" startIcon={<DeleteOutlineIcon />} onClick={() => updateMarketSignalReviewStatus(signal, 'ignored')} disabled={marketSignalBusy} sx={compactActionButtonSx}>
-                        Ausblenden
+                        Nicht relevant
                       </Button>
                     )}
                     {canConfigureRadar && signal.review_status === 'ignored' && (
@@ -2811,7 +2866,7 @@ const AccountRadarPage: React.FC = () => {
               <Alert severity="info" sx={{ mt: 1.5 }}>
                 {marketSignalFilter === 'active'
                   ? 'Noch keine offenen Signale. Sales-Trigger anlegen oder bestehende Sales-Trigger jetzt prüfen.'
-                  : 'Keine ausgeblendeten Markt- oder Ereignistreffer vorhanden.'}
+                  : 'Keine als nicht relevant markierten Markt- oder Ereignistreffer vorhanden.'}
               </Alert>
             )}
             {marketSignalTotal > marketSignals.length && (
@@ -4138,7 +4193,7 @@ const AccountRadarPage: React.FC = () => {
             <TextField label="Optionaler Hinweis" value={relevanceNote} onChange={(event) => setRelevanceNote(event.target.value.slice(0, 500))} multiline minRows={3} helperText={`${relevanceNote.length}/500 Zeichen`} fullWidth />
           </Stack>
         </DialogContent>
-        <DialogActions><Button onClick={() => setRelevanceSignal(null)} disabled={relevanceSaving}>Abbrechen</Button><Button variant="contained" color="error" onClick={() => saveRelevance('irrelevant')} disabled={relevanceSaving || !relevanceReason}>{relevanceSaving ? 'Speichert …' : 'Ausblenden'}</Button></DialogActions>
+        <DialogActions><Button onClick={() => setRelevanceSignal(null)} disabled={relevanceSaving}>Abbrechen</Button><Button variant="contained" color="error" onClick={() => saveRelevance('irrelevant')} disabled={relevanceSaving || !relevanceReason}>{relevanceSaving ? 'Speichert …' : 'Nicht relevant'}</Button></DialogActions>
       </Dialog>
 
       <Dialog

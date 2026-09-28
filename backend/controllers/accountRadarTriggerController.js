@@ -225,7 +225,7 @@ exports.updateMarketSignalStatus = async (req, res) => {
     await client.query('COMMIT');
     await audit(req, 'ACCOUNT_RADAR_MARKET_SIGNAL_STATUS_CHANGED', req.params.matchId, { status: result.review_status }, 'account_radar_market_signal');
     return res.json({
-      message: result.review_status === 'ignored' ? 'Treffer wurde ausgeblendet.' : 'Treffer wurde wiederhergestellt.',
+      message: result.review_status === 'ignored' ? 'Treffer wurde als nicht relevant markiert.' : 'Treffer wurde wiederhergestellt.',
       signal: result,
     });
   } catch (error) {
