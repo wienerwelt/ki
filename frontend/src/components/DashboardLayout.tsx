@@ -377,13 +377,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     
     const handleSearchOpen = () => setSearchOpen(true);
     const handleSearchClose = () => setSearchOpen(false);
-    const handleBriefingOpen = () => {
-        if (isSalesWorkspace) {
-            navigate('/radar');
-            return;
-        }
-        setBriefingOpen(true);
-    };
+    const handleBriefingOpen = () => setBriefingOpen(true);
     const handleBriefingClose = () => setBriefingOpen(false);
 
     const handleWorkspaceChange = async (workspace: WorkspaceModule) => {
@@ -766,9 +760,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
                     <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', ml: { xs: 1, md: 3 }, mr: 2 }}>
                         {isSalesWorkspace ? (
-                            <Tooltip title="Sales-Tagescockpit öffnen">
-                                <IconButton color="inherit" onClick={handleBriefingOpen} aria-label="Sales-Tagescockpit öffnen">
-                                    <RadarIcon />
+                            <Tooltip title="Tägliches Content-Cockpit anzeigen">
+                                <IconButton color="inherit" onClick={handleBriefingOpen} aria-label="Tägliches Content-Cockpit anzeigen">
+                                    <InsightsIcon />
                                 </IconButton>
                             </Tooltip>
                         ) : (isMobile ? (
@@ -1133,7 +1127,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     </IconButton>
                 </DialogTitle>
                 <DialogContent dividers>
-                    <DailyBriefingContent />
+                    <DailyBriefingContent onClose={handleBriefingClose} />
                 </DialogContent>
             </Dialog>
 

@@ -45,7 +45,6 @@ import PublicPortalHeader, { PublicPortalNavItem } from '../components/PublicPor
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import CloseIcon from '@mui/icons-material/Close';
 import DirectionsCarOutlinedIcon from '@mui/icons-material/DirectionsCarOutlined';
-import ElectricCarOutlinedIcon from '@mui/icons-material/ElectricCarOutlined';
 import EmailIcon from '@mui/icons-material/Email';
 import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
 import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
@@ -123,6 +122,17 @@ const formatSoftwareProductCount = (value: unknown) => {
 const getProviderSoftwareEntries = (provider: any): any[] => (
     Array.isArray(provider?.software_entries) ? provider.software_entries : []
 );
+
+const getCountryFlag = (value?: string) => {
+    const countryCode = String(value || 'AT').trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(countryCode)) return 'AT';
+
+    try {
+        return String.fromCodePoint(...Array.from(countryCode).map((letter) => 127397 + letter.charCodeAt(0)));
+    } catch {
+        return countryCode || 'AT';
+    }
+};
 
 // --- HILFSKOMPONENTE FÜR FEHLENDE BILDER ---
 const ImageWithFallback = ({ src, alt, fallbackColor, sx, ...props }: any) => {
@@ -739,12 +749,12 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
                 const providerName = escapeMapHtml(provider.name || 'Brancheneintrag');
                 const isTenantEntry = provider.is_tenant_entry === true;
                 const markerSize = isTenantEntry ? 60 : 52;
-                const markerBorderColor = isTenantEntry ? primaryColor : '#061b33';
-                const markerShadowColor = isTenantEntry ? alpha(primaryColor, 0.42) : 'rgba(6,27,51,.24)';
+                const markerBorderColor = '#cbd5e1';
+                const markerShadowColor = 'rgba(71,85,105,.2)';
                 const visual = `<span aria-hidden="true" style="position:relative;width:42px;height:42px;display:block;background:#f5f7fa url('${DEFAULT_COMPANY_LOGO}') center/38px 38px no-repeat;border-radius:10px;overflow:hidden">${customLogoUrl ? `<img data-provider-logo="custom" src="${escapeMapHtml(customLogoUrl)}" alt="" style="position:absolute;inset:0;width:42px;height:42px;object-fit:contain;display:block;background:#fff" />` : ''}</span>`;
                 const icon = L.divIcon({
                     className: 'mobiliti-directory-logo-marker',
-                    html: `<a href="#branchenverzeichnis" aria-label="${providerName} öffnen" style="width:${markerSize}px;height:${markerSize}px;border-radius:18px;background:#fff;border:${isTenantEntry ? 4 : 2}px solid ${escapeMapHtml(markerBorderColor)};box-shadow:0 8px 24px ${escapeMapHtml(markerShadowColor)};display:flex;align-items:center;justify-content:center;overflow:hidden;text-decoration:none;padding:5px;box-sizing:border-box">${visual}</a>`,
+                    html: `<a href="#branchenverzeichnis" aria-label="${providerName} öffnen" style="width:${markerSize}px;height:${markerSize}px;border-radius:18px;background:#fff;border:${isTenantEntry ? 3 : 2}px solid ${escapeMapHtml(markerBorderColor)};box-shadow:0 6px 18px ${escapeMapHtml(markerShadowColor)};display:flex;align-items:center;justify-content:center;overflow:hidden;text-decoration:none;padding:5px;box-sizing:border-box">${visual}</a>`,
                     iconSize: [markerSize, markerSize],
                     iconAnchor: [markerSize / 2, markerSize / 2],
                 });
@@ -926,10 +936,8 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         && Boolean(registrationHighlights?.source?.url)
         && Boolean(registrationHighlights?.latestPeriod)
         && Boolean(registrationHighlights?.previousPeriod);
-    const registrationMetricIcons = {
+    const registrationMetricIcons: Partial<Record<RegistrationHighlightMetric['key'], React.ElementType>> = {
         total: DirectionsCarOutlinedIcon,
-        electric: ElectricCarOutlinedIcon,
-        electrified: InsightsOutlinedIcon,
     };
     const formatPeriod = (value?: string) => value
         ? new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value.slice(0, 10)}T00:00:00.000Z`))
@@ -1399,7 +1407,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                 <>
                                     <Grid container spacing={1.5}>
                                         {publicProviders.map((provider: any) => (
-                                            <Grid item xs={12} sm={6} key={provider.id}>
+                                            <Grid item xs={12} sm={6} lg={4} key={provider.id}>
                                                 {renderProviderPreviewCard(provider)}
                                             </Grid>
                                         ))}
@@ -1478,7 +1486,17 @@ const renderProviderPreviewCard = (provider: any) => {
                             <Box>
                                 <Typography variant="h5" fontWeight={950} color={darkBlue}>Branche auf einen Blick</Typography>
                                 <Typography variant="body2" sx={{ color: alpha(darkBlue, 0.66), mt: 0.4 }}>
-                                    Neuzulassungen {registrationHighlights?.countryCode} · {formatPeriod(registrationHighlights?.latestPeriod)} im Vergleich zu {formatPeriod(registrationHighlights?.previousPeriod)}
+                                    Neuzulassungen{' '}
+                                    <Box
+                                        component="span"
+                                        role="img"
+                                        aria-label={String(registrationHighlights?.countryCode || 'AT').toUpperCase()}
+                                        title={String(registrationHighlights?.countryCode || 'AT').toUpperCase()}
+                                        sx={{ display: 'inline-block', lineHeight: 1 }}
+                                    >
+                                        {getCountryFlag(registrationHighlights?.countryCode)}
+                                    </Box>
+                                    {' '}· {formatPeriod(registrationHighlights?.latestPeriod)} im Vergleich zu {formatPeriod(registrationHighlights?.previousPeriod)}
                                 </Typography>
                             </Box>
                             <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
@@ -1497,6 +1515,10 @@ const renderProviderPreviewCard = (provider: any) => {
                         <Grid container spacing={1.5}>
                             {registrationMetrics.map((metric) => {
                                 const Icon = registrationMetricIcons[metric.key];
+                                const metricShare = metric.share === null || metric.share === undefined
+                                    ? null
+                                    : Math.min(100, Math.max(0, metric.share));
+                                const metricShareColor = metric.key === 'electric' ? primaryColor : secondaryColor;
                                 const comparisonLabel = metric.changeAbsolute === 0
                                     ? `Vormonat ${formatNumber(metric.comparisonValue)} · unverändert`
                                     : `Vormonat ${formatNumber(metric.comparisonValue)} · ${formatSignedNumber(metric.changeAbsolute)} absolut`;
@@ -1509,7 +1531,48 @@ const renderProviderPreviewCard = (provider: any) => {
                                                     <Typography variant="h4" fontWeight={950} color={darkBlue} sx={{ mt: 0.5 }}>{formatNumber(metric.value)}</Typography>
                                                     <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.58) }}>{metric.unit}</Typography>
                                                 </Box>
-                                                <Box sx={{ width: 44, height: 44, borderRadius: 2.2, display: 'grid', placeItems: 'center', color: primaryColor, bgcolor: alpha(primaryColor, 0.1), flexShrink: 0 }}><Icon /></Box>
+                                                {Icon && (
+                                                    <Box sx={{ width: 44, height: 44, borderRadius: 2.2, display: 'grid', placeItems: 'center', color: primaryColor, bgcolor: alpha(primaryColor, 0.1), flexShrink: 0 }}>
+                                                        <Icon />
+                                                    </Box>
+                                                )}
+                                                {!Icon && metricShare !== null && (
+                                                    <Box
+                                                        role="progressbar"
+                                                        aria-label={`${metric.label}: ${metricShare.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Prozent Marktanteil`}
+                                                        aria-valuemin={0}
+                                                        aria-valuemax={100}
+                                                        aria-valuenow={metricShare}
+                                                        title={`${metricShare.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} % Marktanteil`}
+                                                        sx={{
+                                                            width: 72,
+                                                            height: 72,
+                                                            borderRadius: '50%',
+                                                            flexShrink: 0,
+                                                            display: 'grid',
+                                                            placeItems: 'center',
+                                                            background: `conic-gradient(${metricShareColor} 0 ${metricShare}%, ${alpha(darkBlue, 0.1)} ${metricShare}% 100%)`,
+                                                            boxShadow: `inset 0 0 0 1px ${alpha(darkBlue, 0.04)}`,
+                                                        }}
+                                                    >
+                                                        <Box
+                                                            sx={{
+                                                                width: 52,
+                                                                height: 52,
+                                                                borderRadius: '50%',
+                                                                bgcolor: '#fff',
+                                                                display: 'grid',
+                                                                placeItems: 'center',
+                                                                color: darkBlue,
+                                                                fontSize: '0.78rem',
+                                                                fontWeight: 950,
+                                                                lineHeight: 1,
+                                                            }}
+                                                        >
+                                                            {metricShare.toLocaleString('de-DE', { maximumFractionDigits: 1 })} %
+                                                        </Box>
+                                                    </Box>
+                                                )}
                                             </Stack>
                                             <Stack direction="row" spacing={0.8} alignItems="center" sx={{ mt: 1.5 }}>
                                                 <Typography variant="body2" fontWeight={950} sx={{ color: metric.changeAbsolute >= 0 ? '#237A3B' : '#B43A35' }}>{formatSignedPercent(metric.changePercent)}</Typography>

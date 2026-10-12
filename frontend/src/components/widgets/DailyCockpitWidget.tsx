@@ -412,10 +412,13 @@ const items = data?.items || [];
               </Button>
             ) : (!isPublic && deliveryMode === 'export') ? (
               <Chip size="small" label="Zentraler Versand" variant="outlined" />
+            ) : (!isPublic && !isNewsletterAllowed) ? (
+              <Button size="small" variant="outlined" onClick={() => navigate('/profile?tab=email')}>
+                Gesperrt · Einstellungen
+              </Button>
             ) : <Tooltip
                 title={
                     isPublic ? "Login erforderlich, um Briefings zu abonnieren" : 
-                    !isNewsletterAllowed ? "E-Mail-Versand ist für Ihr Unternehmen durch den Administrator deaktiviert." : 
                     (isSubscribed ? "Briefing abbestellen" : "Briefing abonnieren")
                 }
                 placement="top-end"
@@ -433,8 +436,8 @@ const items = data?.items || [];
                     label={
                         <Chip 
                             size="small" 
-                            label={isPublic ? "Login" : (!isNewsletterAllowed ? "Gesperrt" : (isSubscribed ? "Aktiv" : "Inaktiv"))}
-                            color={isPublic ? "default" : (!isNewsletterAllowed ? "default" : (isSubscribed ? "primary" : "default"))}
+                            label={isPublic ? "Login" : (isSubscribed ? "Aktiv" : "Inaktiv")}
+                            color={isPublic ? "default" : (isSubscribed ? "primary" : "default")}
                             variant={isSubscribed && !isPublic ? "filled" : "outlined"}
                             sx={{ ml: 1, fontSize: '0.7rem', height: 20, fontWeight: 'bold' }}
                         />

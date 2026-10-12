@@ -36,6 +36,7 @@ import { useNavigate } from 'react-router-dom';
 import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import EvStationIcon from '@mui/icons-material/EvStation';
 import PowerIcon from '@mui/icons-material/Power';
+import ElectricCarOutlinedIcon from '@mui/icons-material/ElectricCarOutlined';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import DownloadIcon from '@mui/icons-material/Download';
@@ -71,11 +72,11 @@ interface EconomicStatWidgetProps extends BaseWidgetProps {
 const subtypeIcons: { [key: string]: { icon: React.ReactElement; tooltip: string } } = {
   Benzin: { icon: <LocalGasStationIcon />, tooltip: 'Benzin' },
   Diesel: { icon: <LocalGasStationIcon />, tooltip: 'Diesel' },
-  'Hybrid (ohne Plug-in)': { icon: <PowerIcon />, tooltip: 'Hybrid' },
-  'Plug-in-Hybrid': { icon: <PowerIcon />, tooltip: 'Plug-in-Hybrid' },
-  Hybrid: { icon: <PowerIcon />, tooltip: 'Hybrid' },
-  'Elektro (BEV)': { icon: <EvStationIcon />, tooltip: 'Elektro' },
-  Elektro: { icon: <EvStationIcon />, tooltip: 'Elektro' },
+  'Hybrid (ohne Plug-in)': { icon: <ElectricCarOutlinedIcon />, tooltip: 'Hybrid' },
+  'Plug-in-Hybrid': { icon: <EvStationIcon />, tooltip: 'Plug-in-Hybrid' },
+  Hybrid: { icon: <ElectricCarOutlinedIcon />, tooltip: 'Hybrid' },
+  'Elektro (BEV)': { icon: <PowerIcon />, tooltip: 'Elektro (BEV)' },
+  Elektro: { icon: <PowerIcon />, tooltip: 'Elektro (BEV)' },
   default: { icon: <HelpOutlineIcon />, tooltip: 'Unbekannt' }
 };
 

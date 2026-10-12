@@ -7,9 +7,7 @@ import {
 import { alpha } from '@mui/material/styles';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CloseIcon from '@mui/icons-material/Close';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LaunchIcon from '@mui/icons-material/Launch';
-import UpdateIcon from '@mui/icons-material/Update';
 import apiClient from '../apiClient';
 import PublicPortalHeader, { PublicPortalNavItem } from '../components/PublicPortalHeader';
 import { useSnackbar } from '../context/SnackbarContext';
@@ -120,16 +118,6 @@ const PublicPlatformUpdatesPage: React.FC = () => {
   ];
 
   const itemUrl = (item: PlatformUpdate) => `${window.location.origin}${updatesPath}?update=${encodeURIComponent(item.slug)}`;
-  const newsletterText = (item: PlatformUpdate) => [
-    item.title, '', item.summary,
-    item.benefits ? `Ihr Nutzen: ${item.benefits}` : '',
-    item.action_required && item.action_text ? `Bitte beachten: ${item.action_text}` : '',
-    '', `Alle Details: ${itemUrl(item)}`,
-  ].filter(Boolean).join('\n');
-  const copyNewsletter = async (item: PlatformUpdate) => {
-    await navigator.clipboard.writeText(newsletterText(item));
-    showSnackbar('Newsletter-Baustein kopiert.', 'success');
-  };
   const openItem = (item: PlatformUpdate) => { const next = new URLSearchParams(searchParams); next.set('update', item.slug); setSearchParams(next); };
   const closeItem = () => { const next = new URLSearchParams(searchParams); next.delete('update'); setSearchParams(next, { replace: true }); };
 
@@ -138,7 +126,7 @@ const PublicPlatformUpdatesPage: React.FC = () => {
   return <Box sx={{ minHeight: '100vh', bgcolor: '#f5f8fb', color: darkColor }}>
     <PublicPortalHeader logoUrl={logoUrl} homeHref={homePath} partnerName={partnerName} partnerClaim={partnerClaim} primaryColor={primaryColor} secondaryColor={secondaryColor} darkColor={darkColor} navItems={navItems} activeLabel="Neu im Dashboard" onLogin={() => navigate(`${homePath}?login=1`)} />
     <Box sx={{ background: `linear-gradient(135deg, ${darkColor} 0%, ${primaryColor} 160%)`, color: '#fff', py: { xs: 5, md: 8 } }}>
-      <Container maxWidth="lg"><Button startIcon={<ArrowBackIcon />} onClick={() => navigate(homePath)} sx={{ color: alpha('#fff', 0.82), mb: 3 }}>Zur Public Page</Button><Chip icon={<UpdateIcon />} label="Dauerhaftes Änderungsarchiv" sx={{ bgcolor: alpha('#fff', 0.12), color: '#fff', fontWeight: 900, mb: 2 }} /><Typography variant="h2" fontWeight={950} sx={{ fontSize: { xs: 38, md: 62 }, letterSpacing: '-0.045em' }}>Neu im Mitglieder-Dashboard</Typography><Typography sx={{ mt: 2, maxWidth: 760, color: alpha('#fff', 0.82), fontSize: { xs: 17, md: 20 } }}>Neue Funktionen und Verbesserungen – verständlich erklärt und dauerhaft zum Nachlesen.</Typography></Container>
+      <Container maxWidth="lg"><Button startIcon={<ArrowBackIcon />} onClick={() => navigate(homePath)} sx={{ color: alpha('#fff', 0.82), mb: 3 }}>Startseite</Button><Typography variant="h2" fontWeight={950} sx={{ fontSize: { xs: 38, md: 62 }, letterSpacing: '-0.045em' }}>Neu im Mitglieder-Dashboard</Typography><Typography sx={{ mt: 2, maxWidth: 760, color: alpha('#fff', 0.82), fontSize: { xs: 17, md: 20 } }}>Neue Funktionen und Verbesserungen – verständlich erklärt und dauerhaft zum Nachlesen.</Typography></Container>
     </Box>
     <Container maxWidth="lg" sx={{ py: { xs: 4, md: 6 } }}>
       {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
@@ -170,7 +158,7 @@ const PublicPlatformUpdatesPage: React.FC = () => {
         <Stack direction="row" justifyContent="space-between" gap={1}><Typography variant="caption" fontWeight={800} color="text.secondary">{new Date(item.published_at).toLocaleDateString('de-AT')}</Typography>{item.action_required && <Chip size="small" color="warning" label="Bitte beachten" />}</Stack>
         <Typography variant="h5" fontWeight={900} sx={{ mt: 1 }}>{item.title}</Typography><Typography color="text.secondary" sx={{ mt: 1, lineHeight: 1.65 }}>{item.summary}</Typography>
         <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 2 }}>{item.modules.map((key) => <Chip key={key} size="small" variant="outlined" label={MODULE_LABELS[key]} />)}</Stack>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 'auto', pt: 2.5 }}><Button onClick={(event) => { event.stopPropagation(); void copyNewsletter(item); }} startIcon={<ContentCopyIcon />} size="small" sx={{ color: primaryColor, fontWeight: 850 }}>Newsletter-Text</Button><Button endIcon={<LaunchIcon />} size="small" sx={{ color: primaryColor, fontWeight: 850 }}>Details</Button></Stack>
+        <Stack direction="row" justifyContent="flex-end" alignItems="center" sx={{ mt: 'auto', pt: 2.5 }}><Button endIcon={<LaunchIcon />} size="small" sx={{ color: primaryColor, fontWeight: 850 }}>Details</Button></Stack>
       </Paper></Grid>)}</Grid>}
     </Container>
 
@@ -180,7 +168,7 @@ const PublicPlatformUpdatesPage: React.FC = () => {
         <Typography variant="h6" color="text.secondary" sx={{ mb: 3 }}>{selected.summary}</Typography><Typography sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.75 }}>{selected.body}</Typography>
         {selected.benefits && <Paper elevation={0} sx={{ mt: 3, p: 2.5, borderRadius: 3, bgcolor: alpha(primaryColor, 0.08) }}><Typography fontWeight={900} color={primaryColor}>Ihr Nutzen</Typography><Typography sx={{ mt: 0.6, whiteSpace: 'pre-wrap' }}>{selected.benefits}</Typography></Paper>}
         {selected.action_required && selected.action_text && <Alert severity="warning" sx={{ mt: 2.5 }}><Typography fontWeight={850}>Bitte beachten</Typography>{selected.action_text}</Alert>}
-        <Stack direction={{ xs: 'column', sm: 'row' }} gap={1.5} sx={{ mt: 3 }}><Button variant="contained" startIcon={<ContentCopyIcon />} onClick={() => void copyNewsletter(selected)} sx={{ bgcolor: primaryColor, '&:hover': { bgcolor: primaryColor, filter: 'brightness(.94)' } }}>Newsletter-Text kopieren</Button><Button variant="outlined" onClick={() => navigator.clipboard.writeText(itemUrl(selected))} sx={{ color: primaryColor, borderColor: alpha(primaryColor, 0.55), '&:hover': { borderColor: primaryColor, bgcolor: alpha(primaryColor, 0.06) } }}>Link kopieren</Button></Stack>
+        <Stack direction={{ xs: 'column', sm: 'row' }} gap={1.5} sx={{ mt: 3 }}><Button variant="outlined" onClick={() => navigator.clipboard.writeText(itemUrl(selected))} sx={{ color: primaryColor, borderColor: alpha(primaryColor, 0.55), '&:hover': { borderColor: primaryColor, bgcolor: alpha(primaryColor, 0.06) } }}>Link kopieren</Button></Stack>
       </DialogContent></>}
     </Dialog>
   </Box>;

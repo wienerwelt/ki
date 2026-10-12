@@ -33,15 +33,21 @@ async function run(){
  try{
   savedSettings=(await db.query('SELECT * FROM career_ai_settings')).rows[0];
   for(const id of partners)await db.query("INSERT INTO business_partners(id,name,enabled_modules) VALUES($1,$2,ARRAY['content'])",[id,`Career smoke ${id}`]);
+  const testRegions=(await db.query("SELECT id,code FROM regions WHERE code IN ('AT','DE') ORDER BY code")).rows;
+  assert.equal(testRegions.length,2,'AT and DE regions are available for the multi-region test');
+  for(const partnerId of partners){
+   for(const region of testRegions)await db.query('INSERT INTO business_partner_regions(business_partner_id,region_id,is_default) VALUES($1,$2,$3)',[partnerId,region.id,region.code==='AT']);
+  }
+  assert.equal((await db.query('SELECT mobiliti_article_matches_partner_region($1,$2) AS matches',[partners[0],'DACH'])).rows[0].matches,true,'Database job detection accepts DACH for an AT/DE tenant');
   for(const [i,id]of users.entries())await db.query('INSERT INTO users(id,username,email,role,business_partner_id,is_active) VALUES($1,$2,$3,$4,$5,true)',[id,`career-smoke-${id}`,`career-${id}@example.invalid`,['user','assistenz','admin','demo'][i],partners[0]]);
   await db.query("INSERT INTO categories(id,name,category_type) VALUES($1,'Career smoke category','content')",[category]);
-  await db.query("INSERT INTO scraped_content(id,title,summary,original_url,category_id,region,published_date,scraped_at,source_identifier) VALUES($1,$2,$5,$3,$4,'AT','2026-09-14',now(),'career-smoke')",[article,text,`https://example.invalid/career-smoke-${article}`,category,text]);
+  await db.query("INSERT INTO scraped_content(id,title,summary,original_url,category_id,region,published_date,scraped_at,source_identifier) VALUES($1,$2,$5,$3,$4,'DACH','2026-09-14',now(),'career-smoke')",[article,text,`https://example.invalid/career-smoke-${article}`,category,text]);
   for(const id of partners)await db.query('INSERT INTO career_tenant_settings(business_partner_id,enabled,public_enabled,category_ids) VALUES($1,true,true,ARRAY[$2::uuid])',[id,category]);
   await db.query("UPDATE career_ai_settings SET enabled=true,auto_since=now()+interval '2 days',daily_calls=100,monthly_tokens=1000000");
   const a=(await db.query('SELECT * FROM scraped_content WHERE id=$1',[article])).rows[0];
   const archivePreview=await invoke(controller.archive,{id:users[2],role:'admin',business_partner_id:partners[0]},{since:'2026-09-01',limit:20},{partnerId:partners[0]});
   assert.equal(archivePreview.status,200,'Archive preview is available for a configured tenant');
-  assert.equal(archivePreview.data.available,1,'Archive preview follows the same tenant/category/region rules as the scanner');
+  assert.equal(archivePreview.data.available,1,'Archive preview accepts a DACH article for a tenant with multiple AT/DE regions');
   assert.equal(archivePreview.data.diagnostics.potential.new_signal_candidates,1,'Archive preview exposes concrete signal potential');
   assert.equal(archivePreview.data.diagnostics.potential.candidate_samples[0].signal.toLowerCase(),'übernimmt','Archive preview explains which signal caused the candidate');
   assert.equal(archivePreview.data.diagnostics.potential.historical_hit_rate,null,'Archive preview does not invent a success rate without history');

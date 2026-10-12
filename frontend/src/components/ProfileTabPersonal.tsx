@@ -8,6 +8,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneIcon from '@mui/icons-material/Phone';
 import LinkedInIcon from '@mui/icons-material/LinkedIn';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
@@ -109,6 +110,7 @@ const ProfileTabPersonal: React.FC<{ user: any; isDemoUser: boolean }> = ({ user
   };
 
   const previewName = [firstName, lastName].filter(Boolean).join(' ').trim() || user.username || 'Mein Profil';
+  const publicProfileUrl = `${window.location.origin}/p/${user.id}`;
   const renderBusinessCardPreview = (compact = false) => (
     <Paper
       elevation={0}
@@ -147,7 +149,7 @@ const ProfileTabPersonal: React.FC<{ user: any; isDemoUser: boolean }> = ({ user
   );
 
   return (
-    <Box component="form" onSubmit={handleSave}>
+    <Box component="form" onSubmit={handleSave} sx={{ pb: 10 }}>
       <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 3 }}>
       <Typography variant="h6" fontWeight={800}>Persönliche Angaben</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>Profilbild, Kontaktdaten und Organisation für Ihr internes Profil.</Typography>
@@ -173,15 +175,6 @@ const ProfileTabPersonal: React.FC<{ user: any; isDemoUser: boolean }> = ({ user
           <Button color="error" size="small" onClick={handleAvatarDelete} disabled={avatarLoading || isDemoUser} sx={{ mt: 1 }}>Bild entfernen</Button>
         )}
         
-        <Button
-          variant="outlined"
-          startIcon={<QrCodeIcon />}
-          onClick={() => setQrDialogOpen(true)}
-          disabled={isDemoUser}
-          sx={{ mt: 2 }}
-        >
-          Digitale Visitenkarte
-        </Button>
       </Box>
 
       <Grid container spacing={3}>
@@ -249,25 +242,88 @@ const ProfileTabPersonal: React.FC<{ user: any; isDemoUser: boolean }> = ({ user
             <Typography fontWeight={800}>Darstellungs-Vorschau</Typography>
             <Chip size="small" label={publicProfileEnabled ? 'Öffentlich aktiv' : 'Nicht öffentlich'} color={publicProfileEnabled ? 'success' : 'default'} />
           </Stack>
-          {renderBusinessCardPreview(true)}
+          <Grid container spacing={2} alignItems="stretch">
+            <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+              <Paper variant="outlined" sx={{ width: '100%', p: 1.5, borderRadius: 2.5, bgcolor: 'background.default' }}>
+                <Typography variant="caption" fontWeight={900} color="text.secondary" display="block" sx={{ mb: 1 }}>DESKTOP</Typography>
+                {renderBusinessCardPreview(false)}
+              </Paper>
+            </Grid>
+            <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+              <Paper variant="outlined" sx={{ width: '100%', p: 1.5, borderRadius: 2.5, bgcolor: 'background.default' }}>
+                <Typography variant="caption" fontWeight={900} color="text.secondary" display="block" sx={{ mb: 1 }}>MOBIL</Typography>
+                <Box
+                  aria-label="Smartphone-Vorschau der öffentlichen Visitenkarte"
+                  sx={{
+                    width: '100%',
+                    maxWidth: 360,
+                    mx: 'auto',
+                    p: '9px',
+                    bgcolor: '#111827',
+                    border: '1px solid #334155',
+                    borderRadius: '38px',
+                    boxShadow: '0 18px 42px rgba(15, 23, 42, 0.22)',
+                  }}
+                >
+                  <Box sx={{ position: 'relative', bgcolor: '#fff', borderRadius: '29px', overflow: 'hidden', pt: 3.5, px: 0.75, pb: 1.5 }}>
+                    <Box sx={{ position: 'absolute', top: 7, left: '50%', transform: 'translateX(-50%)', width: 92, height: 20, borderRadius: 10, bgcolor: '#111827', zIndex: 2 }} />
+                    {renderBusinessCardPreview(true)}
+                    <Box sx={{ width: 92, height: 4, borderRadius: 4, bgcolor: '#cbd5e1', mx: 'auto', mt: 1.25 }} />
+                  </Box>
+                </Box>
+              </Paper>
+            </Grid>
+          </Grid>
+          <Divider sx={{ my: 2 }} />
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="center" alignItems="center">
+            <Button variant="outlined" startIcon={<QrCodeIcon />} onClick={() => setQrDialogOpen(true)} disabled={isDemoUser}>
+              QR-Code anzeigen
+            </Button>
+            <Button
+              component="a"
+              href={`/p/${user.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="outlined"
+              startIcon={<OpenInNewIcon />}
+              disabled={isDemoUser || !publicProfileEnabled}
+            >
+              Visitenkarten-Seite öffnen
+            </Button>
+          </Stack>
         </Box>
       </Paper>
 
-      <Box sx={{ mt: 4, display: 'flex', justifyContent: 'flex-end' }}>
-        <Button type="submit" variant="contained" startIcon={<SaveIcon />} disabled={isDemoUser} size="large">
+      <Paper
+        elevation={10}
+        sx={{
+          position: 'fixed',
+          left: '50%',
+          right: 'auto',
+          bottom: { xs: 16, sm: 20 },
+          transform: 'translateX(-50%)',
+          zIndex: (theme) => theme.zIndex.drawer + 1,
+          p: 0.75,
+          borderRadius: 3,
+          border: '1px solid',
+          borderColor: 'divider',
+          maxWidth: { xs: 'calc(100vw - 24px)', sm: 'none' },
+        }}
+      >
+        <Button type="submit" variant="contained" startIcon={<SaveIcon />} disabled={isDemoUser} size="large" sx={{ whiteSpace: 'nowrap' }}>
           Persönliche Daten speichern
         </Button>
-      </Box>
+      </Paper>
 
       <Dialog open={qrDialogOpen} onClose={() => setQrDialogOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ textAlign: 'center' }}>Digitale Visitenkarte</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 3 }}>
             {!publicProfileEnabled && <Alert severity="info" sx={{ mb: 2, width: '100%' }} action={<Button color="inherit" size="small" sx={{ whiteSpace: 'nowrap' }} onClick={() => { setQrDialogOpen(false); window.setTimeout(() => document.getElementById('public-business-card-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100); }}>Öffentlich sichtbar machen</Button>}>Diese Visitenkarte ist momentan nicht öffentlich erreichbar.</Alert>}
             <Box sx={{ p: 2, bgcolor: 'white', borderRadius: 2, border: '1px solid #eee', mb: 2 }}>
-                <QRCodeCanvas value={`${window.location.origin}/p/${user.id}`} size={200} level="M" />
+                <QRCodeCanvas value={publicProfileUrl} size={200} level="M" />
             </Box>
             <Typography variant="body2" align="center" color="text.secondary">Scannen Sie diesen Code, um Ihre Kontaktdaten zu teilen.</Typography>
-            <Button startIcon={<ShareIcon />} sx={{ mt: 2 }} onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/p/${user.id}`); setSnackbar({ open: true, message: 'Link kopiert!' }); }}>Link kopieren</Button>
+            <Button startIcon={<ShareIcon />} sx={{ mt: 2 }} onClick={() => { navigator.clipboard.writeText(publicProfileUrl); setSnackbar({ open: true, message: 'Link kopiert!' }); }}>Link kopieren</Button>
         </DialogContent>
         <DialogActions><Button onClick={() => setQrDialogOpen(false)}>Schließen</Button><Button component="a" href={`/p/${user.id}`} target="_blank" disabled={!publicProfileEnabled}>Öffentlichen Link öffnen</Button></DialogActions>
       </Dialog>

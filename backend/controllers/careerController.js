@@ -247,11 +247,13 @@ exports.settings=wrap(async(req,res)=>{
  await db.query('INSERT INTO career_tenant_settings(business_partner_id) VALUES($1) ON CONFLICT DO NOTHING',[id]);
  const settings=(await db.query('SELECT * FROM career_tenant_settings WHERE business_partner_id=$1',[id])).rows[0];
  const categories=(await db.query("SELECT id,name FROM categories WHERE category_type IN ('content','scraped','news') OR id IN (SELECT DISTINCT category_id FROM scraped_content WHERE event_date IS NULL) ORDER BY name")).rows;
+ const regions=(await db.query(`SELECT r.id,r.code,r.name FROM business_partner_regions br
+  JOIN regions r ON r.id=br.region_id WHERE br.business_partner_id=$1 ORDER BY r.name`,[id])).rows;
  const global=(await db.query('SELECT * FROM career_ai_settings')).rows[0];
  const usage=(await db.query(`SELECT COUNT(*)::int AS calls,COALESCE(SUM(prompt_tokens),0)::bigint AS input_tokens,
  COALESCE(SUM(completion_tokens),0)::bigint AS output_tokens,COALESCE(SUM(total_tokens),0)::bigint AS total_tokens,
  COUNT(*) FILTER(WHERE status<>'completed')::int AS unknown_calls FROM ai_call_usage WHERE feature='people_career' AND created_at>=date_trunc('month',now())`)).rows[0];
- res.json({settings,categories,global,usage});
+ res.json({settings,categories,regions,global,usage});
 });
 exports.saveSettings=wrap(async(req,res)=>{
  if(req.user.role!=='admin')throw fail('Einstellungen nur für Admin.',403);

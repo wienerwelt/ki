@@ -3,6 +3,17 @@ const { callOpenAI } = require('./aiService');
 const c = require('../utils/careerContent');
 const { createNotificationInternal } = require('../controllers/notificationController');
 const RESERVE = 6000; // UTF-8 prompt bytes + output + message framing; conservative upper bound.
+const regionScopeSql = (partnerIdSql, articleRegionSql) => `(
+ NOT EXISTS(SELECT 1 FROM business_partner_regions WHERE business_partner_id=${partnerIdSql})
+ OR NULLIF(BTRIM(COALESCE((${articleRegionSql})::text,'')),'') IS NULL
+ OR EXISTS(SELECT 1 FROM business_partner_regions br JOIN regions r ON r.id=br.region_id
+  WHERE br.business_partner_id=${partnerIdSql} AND (
+   UPPER(r.code)=UPPER((${articleRegionSql})::text)
+   OR UPPER((${articleRegionSql})::text) IN ('EU','GLOBAL','WORLD')
+   OR (UPPER((${articleRegionSql})::text)='DACH' AND UPPER(r.code) IN ('AT','DE','CH','DACH'))
+   OR (UPPER(r.code)='DACH' AND UPPER((${articleRegionSql})::text) IN ('AT','DE','CH'))
+  ))
+)`;
 
 async function notifyReview(partnerId, id, client = db) {
  const { rows } = await client.query("SELECT id FROM users WHERE is_active=true AND (role='admin' OR (business_partner_id=$1 AND role='assistenz'))",[partnerId]);
@@ -13,9 +24,7 @@ async function distribute(extraction, article, onlyTenant = null) {
  JOIN business_partners bp ON bp.id=cs.business_partner_id
  WHERE cs.enabled AND bp.is_active AND 'content'=ANY(bp.enabled_modules)
  AND $1::uuid=ANY(cs.category_ids) AND ($2::uuid IS NULL OR cs.business_partner_id=$2)
- AND (NOT EXISTS(SELECT 1 FROM business_partner_regions WHERE business_partner_id=bp.id)
- OR EXISTS(SELECT 1 FROM business_partner_regions br JOIN regions r ON r.id=br.region_id
- WHERE br.business_partner_id=bp.id AND (r.code=$3 OR $3 IN ('EU','GLOBAL','WORLD'))))`,[article.category_id,onlyTenant,article.region]);
+ AND ${regionScopeSql('bp.id','$3')}`,[article.category_id,onlyTenant,article.region]);
  for (const tenant of tenants.rows) {
   for (const [index,item] of extraction.items.entries()) {
    const result = await db.query(`INSERT INTO career_entries(business_partner_id,extraction_id,item_index,person_name,organization,role_title,
@@ -112,9 +121,7 @@ async function getArchiveDiagnostics(tenantId, since, previewLimit = 100) {
   ), eligible_articles AS (
    SELECT sc.*
    FROM category_articles sc
-   WHERE NOT EXISTS(SELECT 1 FROM business_partner_regions WHERE business_partner_id=$1)
-      OR EXISTS(SELECT 1 FROM business_partner_regions br JOIN regions r ON r.id=br.region_id
-       WHERE br.business_partner_id=$1 AND (r.code=sc.region OR sc.region IN ('EU','GLOBAL','WORLD')))
+   WHERE ${regionScopeSql('$1','sc.region')}
   ), annotated AS (
    SELECT sc.id,cc.article_id AS checked_article_id,e.status,
           CASE WHEN e.status='completed' THEN jsonb_array_length(COALESCE(e.items,'[]'::jsonb)) ELSE 0 END AS item_count
@@ -149,9 +156,7 @@ async function getArchiveDiagnostics(tenantId, since, previewLimit = 100) {
    AND COALESCE(sc.published_date::date,sc.scraped_at::date,sc.created_at::date) >= $2::date
    AND cs.enabled AND bp.is_active AND 'content'=ANY(bp.enabled_modules)
    AND sc.category_id=ANY(cs.category_ids)
-   AND (NOT EXISTS(SELECT 1 FROM business_partner_regions WHERE business_partner_id=bp.id)
-    OR EXISTS(SELECT 1 FROM business_partner_regions br JOIN regions r ON r.id=br.region_id
-     WHERE br.business_partner_id=bp.id AND (r.code=sc.region OR sc.region IN ('EU','GLOBAL','WORLD'))))
+   AND ${regionScopeSql('bp.id','sc.region')}
    AND NOT EXISTS(SELECT 1 FROM career_article_checks cc WHERE cc.article_id=sc.id AND cc.prompt_version=$3
     AND cc.checked_at>=COALESCE(sc.updated_at,sc.scraped_at,sc.created_at))
   ORDER BY sc.scraped_at DESC LIMIT $4`,[tenantId,since,c.VERSION,boundedPreviewLimit]);
@@ -212,9 +217,7 @@ async function prepareArchiveRecheck(tenantId, since, limit) {
    AND COALESCE(sc.published_date::date,sc.scraped_at::date,sc.created_at::date) >= $2::date
    AND cs.enabled AND bp.is_active AND 'content'=ANY(bp.enabled_modules)
    AND sc.category_id=ANY(cs.category_ids)
-   AND (NOT EXISTS(SELECT 1 FROM business_partner_regions WHERE business_partner_id=bp.id)
-    OR EXISTS(SELECT 1 FROM business_partner_regions br JOIN regions r ON r.id=br.region_id
-     WHERE br.business_partner_id=bp.id AND (r.code=sc.region OR sc.region IN ('EU','GLOBAL','WORLD'))))
+   AND ${regionScopeSql('bp.id','sc.region')}
    AND (e.status IN ('excluded','failed') OR (e.status='completed' AND jsonb_array_length(COALESCE(e.items,'[]'::jsonb))=0))
   ORDER BY cc.checked_at DESC LIMIT $4`,[tenantId,since,c.VERSION,boundedLimit]);
  if(!candidates.rowCount)return [];
@@ -239,9 +242,7 @@ async function scan(options = {}) {
  SELECT 1 FROM career_tenant_settings cs JOIN business_partners bp ON bp.id=cs.business_partner_id
  WHERE cs.enabled AND bp.is_active AND 'content'=ANY(bp.enabled_modules) AND sc.category_id=ANY(cs.category_ids)
  AND ($1::uuid IS NULL OR cs.business_partner_id=$1)
- AND (NOT EXISTS(SELECT 1 FROM business_partner_regions WHERE business_partner_id=bp.id)
- OR EXISTS(SELECT 1 FROM business_partner_regions br JOIN regions r ON r.id=br.region_id
- WHERE br.business_partner_id=bp.id AND (r.code=sc.region OR sc.region IN ('EU','GLOBAL','WORLD'))))
+ AND ${regionScopeSql('bp.id','sc.region')}
  AND NOT EXISTS(SELECT 1 FROM career_entries ce WHERE ce.extraction_id=e.id AND ce.business_partner_id=cs.business_partner_id)) LIMIT 100`,[options.tenantId||null]);
  for(const extraction of cached.rows)await distribute(extraction,extraction.article,options.tenantId);
  const limit = Math.min(Math.max(Number(options.limit)||50,1),100);
@@ -253,9 +254,7 @@ async function scan(options = {}) {
  WHERE sc.event_date IS NULL AND EXISTS(SELECT 1 FROM career_tenant_settings cs JOIN business_partners bp ON bp.id=cs.business_partner_id
  WHERE cs.enabled AND bp.is_active AND 'content'=ANY(bp.enabled_modules) AND sc.category_id=ANY(cs.category_ids)
  AND ($3::uuid IS NULL OR cs.business_partner_id=$3)
- AND (NOT EXISTS(SELECT 1 FROM business_partner_regions WHERE business_partner_id=bp.id)
- OR EXISTS(SELECT 1 FROM business_partner_regions br JOIN regions r ON r.id=br.region_id
- WHERE br.business_partner_id=bp.id AND (r.code=sc.region OR sc.region IN ('EU','GLOBAL','WORLD')))))
+ AND ${regionScopeSql('bp.id','sc.region')})
  AND ($1::boolean OR sc.scraped_at >= $2)
  AND ($4::date IS NULL OR COALESCE(sc.published_date::date,sc.scraped_at::date,sc.created_at::date) >= $4)
  AND NOT EXISTS(SELECT 1 FROM career_article_checks cc WHERE cc.article_id=sc.id AND cc.prompt_version=$6
@@ -269,9 +268,7 @@ async function scan(options = {}) {
   WHERE e.status='waiting' AND sc.event_date IS NULL AND EXISTS(
   SELECT 1 FROM career_tenant_settings cs JOIN business_partners bp ON bp.id=cs.business_partner_id
   WHERE cs.enabled AND bp.is_active AND 'content'=ANY(bp.enabled_modules) AND sc.category_id=ANY(cs.category_ids)
-  AND (NOT EXISTS(SELECT 1 FROM business_partner_regions WHERE business_partner_id=bp.id)
-  OR EXISTS(SELECT 1 FROM business_partner_regions br JOIN regions r ON r.id=br.region_id
-  WHERE br.business_partner_id=bp.id AND (r.code=sc.region OR sc.region IN ('EU','GLOBAL','WORLD')))))
+  AND ${regionScopeSql('bp.id','sc.region')})
   ORDER BY e.created_at LIMIT 10`);
   for (const article of waiting.rows) await processArticle(article);
  }

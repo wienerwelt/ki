@@ -4653,6 +4653,8 @@ exports.getDailyBriefing = async (req, res) => {
         `;
 
         const canAccessAccountRadar = hasTenantModule(req.user, 'sales')
+            && String(req.user?.tenant_sales_plan || 'basic').toLowerCase() === 'premium'
+            && req.user?.tenant_sales_access_active !== false
             && ['admin', 'assistenz', 'sales_manager', 'sales_user'].includes(String(req.user?.role || '').toLowerCase());
         const emptyRows = () => Promise.resolve({ rows: [] });
 
