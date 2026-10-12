@@ -264,7 +264,7 @@ exports.getPublicContext = async (req, res) => {
         let colorScheme = null;
         let allowedWidgets = []; 
         let defaultRegionCode = 'AT'; 
-        let stats = { total_directory_entries: 0, total_software_entries: 0, community_members: 0, community_activity: 0 };
+        let stats = { total_directory_entries: 0, total_software_entries: 0, community_members: 0, community_activity: 0, platform_updates: 0 };
         let assistant = null;
 
         if (partnerCode && partnerCode !== 'undefined' && partnerCode !== 'null') {
@@ -352,8 +352,26 @@ exports.getPublicContext = async (req, res) => {
                             (SELECT COUNT(cc.id) FROM community_comments cc JOIN community_posts cp ON cc.post_id = cp.id WHERE cp.business_partner_id = $1) AS count
                     `, [partnerData.id]);
                     stats.community_activity = parseInt(activityCount.rows[0].count, 10);
-                } catch(e) { 
-                    console.error('Fehler beim Zählen der Community-Aktivität:', e.message); 
+                } catch(e) {
+                    console.error('Fehler beim Zählen der Community-Aktivität:', e.message);
+                }
+
+                try {
+                    const updateCount = await db.query(`
+                        SELECT COUNT(*)::int AS count
+                        FROM platform_updates
+                        WHERE status = 'published'
+                          AND published_at IS NOT NULL
+                          AND published_at <= NOW()
+                          AND (audience_scope = 'all' OR EXISTS (
+                            SELECT 1 FROM platform_update_partners pup
+                            WHERE pup.update_id = platform_updates.id
+                              AND pup.business_partner_id = $1
+                          ))
+                    `, [partnerData.id]);
+                    stats.platform_updates = Number(updateCount.rows[0]?.count || 0);
+                } catch (e) {
+                    console.error('Fehler beim Zählen der Plattform-Updates:', e.message);
                 }
 
                 try {
@@ -393,11 +411,7 @@ exports.getPublicContext = async (req, res) => {
             stats: stats,
             allowedWidgets: allowedWidgets,
             defaultRegion: defaultRegionCode,
-            assistant,
-            newsPreview: [
-                { id: '1', title: 'E-Mobilitätsoffensive startet', published_date: new Date().toISOString(), relevance_score: 95 },
-                { id: '2', title: 'Neue Förderrichtlinien 2026', published_date: new Date().toISOString(), relevance_score: 88 }
-            ]
+            assistant
         });
     } catch (err) {
         console.error('Public Context Error:', err);
@@ -1071,6 +1085,177 @@ exports.getPublicEconomicStatistics = async (req, res) => {
 exports.getPublicEconomicStatCountries = async (req, res) => {
     req.user = dummyGuestUser; // Simuliert einen Gast-Nutzer
     return dataController.getUniqueStatCountries(req, res);
+};
+
+const REGISTRATION_MAX_AGE_MONTHS = 18;
+const OFFICIAL_REGISTRATION_SOURCES = [
+    /statistik austria/i,
+    /kraftfahrt-bundesamt/i,
+];
+
+const monthDistance = (newerDate, olderDate) => (
+    (newerDate.getUTCFullYear() - olderDate.getUTCFullYear()) * 12
+    + newerDate.getUTCMonth()
+    - olderDate.getUTCMonth()
+);
+
+const percentChange = (current, previous) => {
+    if (!Number.isFinite(previous) || previous <= 0) return null;
+    return Number((((current - previous) / previous) * 100).toFixed(1));
+};
+
+const percentShare = (part, total) => {
+    if (!Number.isFinite(total) || total <= 0) return null;
+    return Number(((part / total) * 100).toFixed(1));
+};
+
+exports.getPublicRegistrationHighlights = async (req, res) => {
+    const countryCode = normalizePublicFilter(req.query.countryCode, 2).toUpperCase();
+    res.set('Cache-Control', 'public, max-age=900, stale-while-revalidate=1800');
+
+    if (!/^[A-Z]{2}$/.test(countryCode)) {
+        return res.status(400).json({ available: false, message: 'Ein gültiger Ländercode ist erforderlich.' });
+    }
+
+    try {
+        const result = await db.query(`
+            WITH recent_periods AS (
+                SELECT DISTINCT time_period
+                FROM economic_statistics
+                WHERE country_code = $1
+                  AND statistic_type = 'fleet_statistics'
+                  AND value IS NOT NULL
+                  AND value >= 0
+                ORDER BY time_period DESC
+                LIMIT 2
+            )
+            SELECT
+                es.time_period,
+                es.statistic_subtype,
+                es.value,
+                es.unit,
+                es.source_name,
+                es.source_url,
+                es.last_updated,
+                COALESCE(s.status = 'approved', false) AS is_trusted_source
+            FROM economic_statistics es
+            JOIN recent_periods rp ON rp.time_period = es.time_period
+            LEFT JOIN sources s ON es.source_url LIKE s.url || '%'
+            WHERE es.country_code = $1
+              AND es.statistic_type = 'fleet_statistics'
+              AND es.value IS NOT NULL
+              AND es.value >= 0
+            ORDER BY es.time_period DESC, es.statistic_subtype ASC
+        `, [countryCode]);
+
+        const periods = [...new Set(result.rows.map((row) => new Date(row.time_period).toISOString().slice(0, 10)))];
+        if (periods.length < 2) {
+            return res.json({ available: false, reason: 'insufficient_data' });
+        }
+
+        const latestPeriod = periods[0];
+        const previousPeriod = periods[1];
+        const latestDate = new Date(`${latestPeriod}T00:00:00.000Z`);
+        const now = new Date();
+        if (monthDistance(now, latestDate) > REGISTRATION_MAX_AGE_MONTHS) {
+            return res.json({ available: false, reason: 'stale_data', latestPeriod });
+        }
+
+        const latestRows = result.rows.filter((row) => new Date(row.time_period).toISOString().slice(0, 10) === latestPeriod);
+        const previousRows = result.rows.filter((row) => new Date(row.time_period).toISOString().slice(0, 10) === previousPeriod);
+        const sourceRow = latestRows.find((row) => row.source_name && row.source_url);
+        const sourceIsOfficial = Boolean(sourceRow) && (
+            sourceRow.is_trusted_source
+            || OFFICIAL_REGISTRATION_SOURCES.some((pattern) => pattern.test(String(sourceRow.source_name || '')))
+            || /(?:statistik\.at|kba\.de)(?:\/|$)/i.test(String(sourceRow.source_url || ''))
+        );
+
+        if (!sourceRow || !sourceIsOfficial) {
+            return res.json({ available: false, reason: 'unverified_source' });
+        }
+
+        const toMap = (rows) => new Map(rows.map((row) => [String(row.statistic_subtype), Number(row.value)]));
+        const latest = toMap(latestRows);
+        const previous = toMap(previousRows);
+        const sum = (map, keys) => keys.reduce((total, key) => total + (Number(map.get(key)) || 0), 0);
+        const driveKeys = ['Benzin', 'Diesel', 'Elektro', 'Elektro (BEV)', 'Hybrid (ohne Plug-in)', 'Plug-in-Hybrid'];
+        const electricKeys = latest.has('Elektro') ? ['Elektro'] : ['Elektro (BEV)'];
+        const previousElectricKeys = previous.has('Elektro') ? ['Elektro'] : ['Elektro (BEV)'];
+        const electrifiedKeys = [...electricKeys, 'Hybrid (ohne Plug-in)', 'Plug-in-Hybrid'];
+        const previousElectrifiedKeys = [...previousElectricKeys, 'Hybrid (ohne Plug-in)', 'Plug-in-Hybrid'];
+
+        const total = sum(latest, driveKeys);
+        const previousTotal = sum(previous, driveKeys);
+        const electric = sum(latest, electricKeys);
+        const previousElectric = sum(previous, previousElectricKeys);
+        const electrified = sum(latest, electrifiedKeys);
+        const previousElectrified = sum(previous, previousElectrifiedKeys);
+
+        if (total <= 0 || previousTotal <= 0 || electric <= 0 || electrified <= 0) {
+            return res.json({ available: false, reason: 'incomplete_data' });
+        }
+
+        const electricShare = percentShare(electric, total);
+        const previousElectricShare = percentShare(previousElectric, previousTotal);
+        const electrifiedShare = percentShare(electrified, total);
+        const previousElectrifiedShare = percentShare(previousElectrified, previousTotal);
+        const lastUpdated = latestRows
+            .map((row) => row.last_updated ? new Date(row.last_updated) : null)
+            .filter((value) => value && !Number.isNaN(value.getTime()))
+            .sort((a, b) => b.getTime() - a.getTime())[0];
+
+        return res.json({
+            available: true,
+            countryCode,
+            latestPeriod,
+            previousPeriod,
+            updatedAt: lastUpdated ? lastUpdated.toISOString() : null,
+            source: {
+                name: String(sourceRow.source_name),
+                url: String(sourceRow.source_url),
+            },
+            metrics: [
+                {
+                    key: 'total',
+                    label: 'Neuzulassungen gesamt',
+                    value: total,
+                    unit: 'Fahrzeuge',
+                    comparisonValue: previousTotal,
+                    changeAbsolute: total - previousTotal,
+                    changePercent: percentChange(total, previousTotal),
+                },
+                {
+                    key: 'electric',
+                    label: 'Elektro-Neuzulassungen',
+                    value: electric,
+                    unit: 'Fahrzeuge',
+                    comparisonValue: previousElectric,
+                    changeAbsolute: electric - previousElectric,
+                    changePercent: percentChange(electric, previousElectric),
+                    share: electricShare,
+                    shareChange: electricShare !== null && previousElectricShare !== null
+                        ? Number((electricShare - previousElectricShare).toFixed(1))
+                        : null,
+                },
+                {
+                    key: 'electrified',
+                    label: 'Elektrifizierte Antriebe',
+                    value: electrified,
+                    unit: 'Fahrzeuge',
+                    comparisonValue: previousElectrified,
+                    changeAbsolute: electrified - previousElectrified,
+                    changePercent: percentChange(electrified, previousElectrified),
+                    share: electrifiedShare,
+                    shareChange: electrifiedShare !== null && previousElectrifiedShare !== null
+                        ? Number((electrifiedShare - previousElectrifiedShare).toFixed(1))
+                        : null,
+                },
+            ],
+        });
+    } catch (error) {
+        console.error('[Public Registration Highlights] Fehler:', error.message);
+        return res.status(500).json({ available: false, message: 'Zulassungsdaten konnten nicht geladen werden.' });
+    }
 };
 
 exports.getPublicRegions = async (req, res) => {

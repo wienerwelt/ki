@@ -167,7 +167,7 @@ const PublicAiAssistantWidget: React.FC<Props> = ({
         <Avatar
           src={avatarUrl || undefined}
           alt={config?.assistantName || 'Digitaler Branchenassistent'}
-          sx={{ width: 46, height: 46, bgcolor: '#fff', color: primaryColor, '& img': { objectFit: 'cover', objectPosition: 'center top' } }}
+          sx={{ width: 52, height: 52, bgcolor: '#fff', color: primaryColor, flexShrink: 0, '& img': { objectFit: 'cover', objectPosition: 'center top' } }}
         >
           <AutoAwesomeIcon />
         </Avatar>
@@ -271,7 +271,7 @@ const PublicAiAssistantWidget: React.FC<Props> = ({
     <>
       {!open && (
         <Tooltip title={`Fragen an ${partnerName}`}>
-          <Fab onClick={() => setOpen(true)} aria-label="Digitalen Assistenten öffnen" sx={{ position: 'fixed', right: { xs: 18, sm: 24 }, bottom: { xs: 82, sm: 24 }, zIndex: 1600, bgcolor: primaryColor, color: '#fff', overflow: 'hidden', p: 0.35, '&:hover': { bgcolor: primaryColor, filter: 'brightness(.92)' } }}>
+          <Fab onClick={() => setOpen(true)} aria-label="Digitalen Assistenten öffnen" sx={{ position: 'fixed', right: { xs: 18, sm: 24 }, bottom: { xs: 82, sm: 24 }, zIndex: 1600, width: { xs: 66, sm: 74 }, height: { xs: 66, sm: 74 }, bgcolor: primaryColor, color: '#fff', overflow: 'hidden', p: 0.4, boxShadow: 8, '&:hover': { bgcolor: primaryColor, filter: 'brightness(.92)' } }}>
             <Avatar
               src={avatarUrl || undefined}
               alt="Digitaler Assistent"

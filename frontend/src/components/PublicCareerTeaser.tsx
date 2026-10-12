@@ -23,8 +23,10 @@ import CloseIcon from '@mui/icons-material/Close';
 import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
 import ShareIcon from '@mui/icons-material/Share';
+import WorkOutlineIcon from '@mui/icons-material/WorkOutline';
 import AiContentLabel from './AiContentLabel';
 import { CareerCard, CareerEntry, careerKinds, careerRequest } from './CareerPanel';
+import { CareerJob } from './CareerJobsPanel';
 import { resolveAssetUrl } from '../utils/assetUrl';
 
 const formatDate = (value?: string) => value
@@ -41,6 +43,7 @@ export default function PublicCareerTeaser({
     primaryColor: string;
 }) {
     const [entries, setEntries] = useState<CareerEntry[]>([]);
+    const [jobs, setJobs] = useState<CareerJob[]>([]);
     const [enabled, setEnabled] = useState(false);
     const [selected, setSelected] = useState<CareerEntry | null>(null);
     const [notice, setNotice] = useState('');
@@ -50,26 +53,29 @@ export default function PublicCareerTeaser({
         let live = true;
         setEnabled(false);
         setEntries([]);
+        setJobs([]);
         setSelected(null);
         if (!partnerId) return undefined;
 
-        careerRequest(`/api/public/career?partnerId=${encodeURIComponent(partnerId)}`)
-            .then(async (data) => {
+        Promise.all([
+            careerRequest(`/api/public/career?partnerId=${encodeURIComponent(partnerId)}`),
+            careerRequest(`/api/public/career-jobs?partnerId=${encodeURIComponent(partnerId)}&limit=3`),
+        ]).then(async ([data, jobData]) => {
                 if (!live) return;
                 setEnabled(true);
-                setEntries(data.entries);
+                setEntries(data.entries || []);
+                setJobs(jobData.jobs || []);
                 const id = new URLSearchParams(window.location.search).get('career');
                 if (id) {
                     const detail = await careerRequest(`/api/public/career?partnerId=${encodeURIComponent(partnerId)}&id=${encodeURIComponent(id)}`);
                     if (live) setSelected(detail.entries[0] || null);
                 }
-            })
-            .catch(() => {});
+            }).catch(() => {});
 
         return () => { live = false; };
     }, [partnerId]);
 
-    if (!enabled || entries.length === 0) return null;
+    if (!enabled || (entries.length === 0 && jobs.length === 0)) return null;
 
     const login = `/login?partner=${encodeURIComponent(partnerPath.replace(/^\//, ''))}&next=${encodeURIComponent(selected ? `/career?entry=${selected.id}` : '/career')}`;
     const columnWidth = entries.length === 1 ? 12 : entries.length === 2 ? 6 : 4;
@@ -124,7 +130,7 @@ export default function PublicCareerTeaser({
                     </Typography>
                 </Box>
                 <Chip
-                    label={`${entries.length} ${entries.length === 1 ? 'aktuelle Personalie' : 'aktuelle Personalien'}`}
+                    label={`${entries.length + jobs.length} aktuelle Hinweise`}
                     sx={{ bgcolor: primaryColor, color: '#fff', fontWeight: 900, flexShrink: 0 }}
                 />
             </Stack>
@@ -206,6 +212,21 @@ export default function PublicCareerTeaser({
                 })}
             </Grid>
 
+            {jobs.length > 0 && <Box sx={{ position: 'relative', zIndex: 1, mt: entries.length ? 3 : 0 }}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'flex-start', sm: 'center' }} justifyContent="space-between" sx={{ mb: 1.5 }}>
+                    <Stack direction="row" spacing={1} alignItems="center"><WorkOutlineIcon sx={{ color: primaryColor }} /><Box><Typography variant="h6" fontWeight={950}>Branchen-Jobmarkt</Typography><Typography variant="body2" color="text.secondary">Aktuelle Chancen aus dem Branchennetzwerk.</Typography></Box></Stack>
+                    <Chip size="small" variant="outlined" label={`${jobs.length} ${jobs.length === 1 ? 'Stelle' : 'Stellen'}`} sx={{ color: primaryColor, borderColor: alpha(primaryColor, 0.4), fontWeight: 800 }} />
+                </Stack>
+                <Grid container spacing={1.5}>{jobs.map((job) => {
+                    return <Grid item xs={12} md={4} key={job.id}><Paper variant="outlined" sx={{ p: 2, height: '100%', borderRadius: 3, bgcolor: alpha('#fff', 0.94), borderColor: alpha(primaryColor, 0.18) }}>
+                        <Stack direction="row" spacing={1.25} alignItems="flex-start"><Avatar variant="rounded" src={job.organization_logo ? resolveAssetUrl(job.organization_logo) : undefined} sx={{ bgcolor: alpha(primaryColor, 0.09), color: primaryColor }}><WorkOutlineIcon /></Avatar><Box sx={{ minWidth: 0 }}><Typography fontWeight={900} sx={{ overflowWrap: 'anywhere' }}>{job.title}</Typography><Typography variant="body2" color="text.secondary" fontWeight={700}>{job.organization}{job.location ? ` · ${job.location}` : ''}</Typography></Box></Stack>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1.25, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{job.summary}</Typography>
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.25 }}>{job.valid_until ? `Bewerbung bis ${formatDate(job.valid_until)}` : job.published_date ? `Vom ${formatDate(job.published_date)}` : 'Aktuelle Stelle'}</Typography>
+                        <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ mt: 0.75 }}>{job.application_url && <Button size="small" component="a" href={job.application_url} target="_blank" rel="noopener noreferrer" endIcon={<ArrowForwardRoundedIcon />} sx={{ color: primaryColor, fontWeight: 900 }}>Zur Stelle</Button>}{job.source_url && <Button size="small" variant="text" component="a" href={job.source_url} target="_blank" rel="noopener noreferrer" sx={{ color: primaryColor, fontWeight: 800 }}>Quelle</Button>}{!job.application_url && !job.source_url && <Typography variant="caption" color="text.secondary">Bestandseintrag ohne Quellenlink</Typography>}</Stack>
+                    </Paper></Grid>;
+                })}</Grid>
+            </Box>}
+
             <Dialog open={Boolean(selected)} onClose={() => setSelected(null)} maxWidth="sm" fullWidth>
                 <DialogTitle sx={{ pr: 7 }}>
                     {selected?.person_name}
@@ -217,7 +238,7 @@ export default function PublicCareerTeaser({
                     {selected && (
                         <>
                             <CareerCard entry={selected} onOpen={() => {}} detail />
-                            {selected.source_url && <Button component="a" href={selected.source_url} target="_blank" rel="noopener noreferrer" sx={{ color: primaryColor }}>Originalmeldung öffnen</Button>}
+                            <Paper variant="outlined" sx={{ mt: 1.5, p: 1.5, borderRadius: 2 }}><Typography variant="caption" color="text.secondary" display="block">Quelle der Meldung</Typography>{selected.source_url ? <Button component="a" href={selected.source_url} target="_blank" rel="noopener noreferrer" endIcon={<ArrowForwardRoundedIcon />} sx={{ color: primaryColor, p: 0, minHeight: 'auto', justifyContent: 'flex-start' }}>Originalmeldung öffnen</Button> : <Typography variant="body2" color="text.secondary">Bestandseintrag ohne hinterlegten externen Quellenlink.</Typography>}</Paper>
                             <Typography variant="body2" sx={{ mt: 2 }}>Austausch und Kommentare bleiben der Community vorbehalten.</Typography>
                         </>
                     )}

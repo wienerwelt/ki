@@ -7,7 +7,7 @@ param(
     [string]$OutputDirectory = 'releases',
 
     [ValidateRange(1, 100)]
-    [double]$MinimumFreeGiB = 5,
+    [double]$MinimumFreeGiB = 20,
 
     [switch]$PreserveDependencyVolumes
 )

@@ -134,7 +134,7 @@ const AdminUserManagementPage: React.FC = () => {
   const [formMonthlyReportEmailEnabled, setFormMonthlyReportEmailEnabled] = useState(false);
   const [formActiveUntil, setFormActiveUntil] = useState('');
   const [formProfileImageUrl, setFormProfileImageUrl] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(() => new URLSearchParams(location.search).get('search') || '');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedBpFilter, setSelectedBpFilter] = useState<string>('all'); 
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -147,6 +147,11 @@ const AdminUserManagementPage: React.FC = () => {
   const [snackbar, setSnackbar] = useState<{ open: boolean, message: string, severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
 
   // Debounce für Serverseitige Suche
+  useEffect(() => {
+      const linkedSearch = new URLSearchParams(location.search).get('search') || '';
+      setSearchTerm(linkedSearch);
+  }, [location.search]);
+
   useEffect(() => {
       const timer = setTimeout(() => setDebouncedSearch(searchTerm), 500);
       return () => clearTimeout(timer);

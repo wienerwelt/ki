@@ -6,7 +6,6 @@ import { useSearchParams, useLocation, useNavigate, useParams } from 'react-rout
 import {
     Alert,
     Avatar,
-    Badge,
     Box,
     Button,
     Chip,
@@ -17,8 +16,6 @@ import {
     DialogContent,
     DialogTitle,
     Divider,
-    Drawer,
-    Fab,
     Grid,
     IconButton,
     InputBase,
@@ -42,21 +39,18 @@ import 'leaflet/dist/leaflet.css';
 import apiClient from '../apiClient';
 import { useSnackbar } from '../context/SnackbarContext';
 import LoginForm from '../components/LoginForm';
+import PublicPortalHeader, { PublicPortalNavItem } from '../components/PublicPortalHeader';
 
 // Icons
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import CloseIcon from '@mui/icons-material/Close';
+import DirectionsCarOutlinedIcon from '@mui/icons-material/DirectionsCarOutlined';
+import ElectricCarOutlinedIcon from '@mui/icons-material/ElectricCarOutlined';
 import EmailIcon from '@mui/icons-material/Email';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
+import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import KeyboardDoubleArrowDownIcon from '@mui/icons-material/KeyboardDoubleArrowDown';
 import LanguageIcon from '@mui/icons-material/Language';
-import MenuIcon from '@mui/icons-material/Menu';
 import LockIcon from '@mui/icons-material/Lock';
 import PhoneIcon from '@mui/icons-material/Phone';
 import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
@@ -86,7 +80,41 @@ interface PublicPortalPageProps {
     isRegister?: boolean;
 }
 
+type RegistrationHighlightMetric = {
+    key: 'total' | 'electric' | 'electrified';
+    label: string;
+    value: number;
+    unit: string;
+    comparisonValue: number;
+    changeAbsolute: number;
+    changePercent: number | null;
+    share?: number | null;
+    shareChange?: number | null;
+};
+
+type RegistrationHighlights = {
+    available: boolean;
+    countryCode?: string;
+    latestPeriod?: string;
+    previousPeriod?: string;
+    updatedAt?: string | null;
+    source?: { name: string; url: string };
+    metrics?: RegistrationHighlightMetric[];
+};
+
 const DEFAULT_COMPANY_LOGO = '/logos/default-company.svg';
+const PUBLIC_PREVIEW_WIDGET_KEYS = new Set([
+    'EVStation',
+    'CommodityPrices',
+    'sentiment_widget',
+    'daily_cockpit',
+    'business-partner-actions',
+    'BusinessPartnerAktionen',
+    'BusinessPartnerActionsWidget',
+    'funding_widget',
+    'Funding',
+    'FundingWidget',
+]);
 const formatSoftwareProductCount = (value: unknown) => {
     const count = Number(value) || 0;
     return `${count} ${count === 1 ? 'Softwareprodukt' : 'Softwareprodukte'}`;
@@ -269,7 +297,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     const [selectedTeaserProvider, setSelectedTeaserProvider] = useState<any | null>(null);
     const [teaserTab, setTeaserTab] = useState(0);
     const [loginDialogOpen, setLoginDialogOpen] = useState(false);
-    const [mobileNavOpen, setMobileNavOpen] = useState(false);
+    const [registrationHighlights, setRegistrationHighlights] = useState<RegistrationHighlights | null>(null);
 
     const mapContainerRef = useRef<HTMLDivElement | null>(null);
     const mapInstanceRef = useRef<any>(null);
@@ -339,6 +367,8 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     const canonicalPartnerPath = canonicalPartnerSlug ? `/${encodeURIComponent(canonicalPartnerSlug)}` : '/';
     const canonicalPartnerHomePath = canonicalPartnerPath === '/' ? '/' : `${canonicalPartnerPath}/`;
     const loginRoute = `${canonicalPartnerPath}${canonicalPartnerPath.includes('?') ? '&' : '?'}login=1`;
+    const assistantSiteKey = String(publicContext?.assistant?.siteKey || '').trim();
+    const showPublicAssistant = Boolean(publicContext?.assistant?.enabled && assistantSiteKey);
 
     useEffect(() => {
         if (!partner?.slug || location.pathname.toLowerCase() !== '/login') return;
@@ -346,10 +376,29 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     }, [partner?.slug, location.pathname, navigate]);
 
     useEffect(() => {
+        if (!partner?.id) {
+            setRegistrationHighlights(null);
+            return;
+        }
+
+        let active = true;
+        setRegistrationHighlights(null);
+        apiClient.get('/api/public/registration-highlights', { params: { countryCode: defaultRegion } })
+            .then((response) => {
+                if (active) setRegistrationHighlights(response.data || null);
+            })
+            .catch(() => {
+                if (active) setRegistrationHighlights(null);
+            });
+
+        return () => { active = false; };
+    }, [partner?.id, defaultRegion]);
+
+    useEffect(() => {
         if (!partner) return;
         const canonicalUrl = `${window.location.origin}${canonicalPartnerPath}`;
-        const seoTitle = `${partner.dashboard_title || partner.name} | Branchenverzeichnis & Software-Lexikon`;
-        const seoDescription = `${partner.name}: öffentliches Branchenverzeichnis, Software-Lexikon, Termine und ausgewählte Brancheninformationen.`.slice(0, 160);
+        const seoTitle = `${partner.dashboard_title || partner.name} | Branchennetzwerk & Software-Lexikon`;
+        const seoDescription = `${partner.name}: öffentliches Branchennetzwerk, Software-Lexikon, Termine und ausgewählte Brancheninformationen.`.slice(0, 160);
         const absoluteLogo = logoUrl
             ? (/^https?:\/\//i.test(logoUrl) ? logoUrl : `${window.location.origin}${logoUrl.startsWith('/') ? '' : '/'}${logoUrl}`)
             : `${window.location.origin}/og-image.jpg`;
@@ -740,10 +789,6 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         document.getElementById('branchenverzeichnis')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
 
-    const handleScrollToPageEnd = () => {
-        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-    };
-
     const handleCloseProviderDetail = () => {
         setSelectedTeaserProvider(null);
         if (!searchParams.has('provider')) return;
@@ -770,7 +815,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         }
 
         if (!provider) {
-            showSnackbar('Der Anbieter ist im öffentlichen Branchenverzeichnis nicht verfügbar.', 'warning');
+            showSnackbar('Der Anbieter ist im öffentlichen Branchennetzwerk nicht verfügbar.', 'warning');
             return;
         }
 
@@ -788,8 +833,8 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
 
         const address = formatProviderAddress(getProviderAddressLocations(provider)[0]);
         const shareData = {
-            title: `${provider.name} | Branchenverzeichnis`,
-            text: `${provider.name}${address ? ` – ${address}` : ''} im Branchenverzeichnis von ${partnerName}`,
+            title: `${provider.name} | Branchennetzwerk`,
+            text: `${provider.name}${address ? ` – ${address}` : ''} im Branchennetzwerk von ${partnerName}`,
             url: shareUrl.toString(),
         };
 
@@ -811,29 +856,45 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
         }
     };
 
-    const navItems = ['Für Mitglieder', 'Branchenverzeichnis', 'Software', 'News & Insights', 'Community', 'Über uns'];
-
     const handleNavItemClick = (item: string) => {
-        setMobileNavOpen(false);
-        const isExternal = item === 'Über uns' || item === 'Für Mitglieder';
+        if (item === 'Start') {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
+        }
 
-        if (item === 'Branchenverzeichnis') {
+        if (item === 'Branchennetzwerk') {
             handleScrollToDirectory();
             return;
         }
 
-        if (item === 'Software') {
-            document.getElementById('software-lexikon')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (item === 'Neu im Dashboard') {
+            const path = canonicalPartnerPath === '/' ? '/plattform-updates' : `${canonicalPartnerPath}/plattform-updates`;
+            navigate(path);
             return;
         }
 
-        if (isExternal && partnerWebsiteUrl) {
-            window.open(partnerWebsiteUrl, '_blank', 'noopener,noreferrer');
+        if (item === 'Mehr') {
+            if (partnerWebsiteUrl) {
+                window.open(partnerWebsiteUrl, '_blank', 'noopener,noreferrer');
+            } else {
+                showSnackbar('Für diesen Mandanten ist noch keine Homepage hinterlegt.', 'info');
+            }
             return;
         }
 
         handleLoginCta();
     };
+
+    const publicNavItems: PublicPortalNavItem[] = [
+        { label: 'Start', onClick: () => handleNavItemClick('Start') },
+        { label: 'Für Mitglieder', badge: Number(tenantStats.community_members) || null, onClick: () => handleNavItemClick('Für Mitglieder') },
+        { label: 'Branchennetzwerk', badge: (Number(tenantStats.total_directory_entries) || 0) + (Number(tenantStats.total_software_entries) || 0), onClick: () => handleNavItemClick('Branchennetzwerk') },
+        ...(Number(tenantStats.platform_updates) > 0
+            ? [{ label: 'Neu im Dashboard', badge: Number(tenantStats.platform_updates), onClick: () => handleNavItemClick('Neu im Dashboard') }]
+            : []),
+        { label: 'Community', badge: Number(tenantStats.community_activity) || null, onClick: () => handleNavItemClick('Community') },
+        { label: 'Mehr', onClick: () => handleNavItemClick('Mehr') },
+    ];
     
     useEffect(() => {
         if (searchParams.get('verified') === '1') {
@@ -845,23 +906,54 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     }, [searchParams, setSearchParams, showSnackbar]);
 
     const [tickerIndex, setTickerIndex] = useState(0);
-    const tickerMessages = ['Exklusive Branchen-News freigeschaltet', 'Netzwerk & Community verfügbar', 'Statistiken und Marktanalysen aktualisiert'];
+    const tickerMessages = ['Kuratierte Brancheninformationen', 'Anbieter und Software im Branchennetzwerk', 'Termine und Austausch für Mitglieder'];
     useEffect(() => {
         const interval = setInterval(() => setTickerIndex((prev) => (prev + 1) % tickerMessages.length), 4000);
         return () => clearInterval(interval);
     }, [tickerMessages.length]);
 
     const formatNumber = (value: number) => new Intl.NumberFormat('de-DE').format(value);
-    
-    const statsCards = [
-        { value: tenantStats.member_companies ? formatNumber(Number(tenantStats.member_companies)) : '50+', label: 'Mitgliedsunternehmen', helper: tenantStats.member_companies_delta || 'aus dem Verzeichnis', icon: StorefrontIcon },
-        { value: tenantStats.network_partners ? formatNumber(Number(tenantStats.network_partners)) : 'Netzwerk', label: 'Partner im Netzwerk', helper: 'aktiv gepflegt', icon: GroupsOutlinedIcon },
-        { value: tenantStats.events_per_year ? formatNumber(Number(tenantStats.events_per_year)) : 'Live', label: 'Veranstaltungen/Jahr', helper: 'Termine & Insights', icon: CalendarMonthIcon },
-        { value: tenantStats.member_satisfaction ? `${tenantStats.member_satisfaction}%` : '—', label: 'Mitgliederzufriedenheit', helper: tenantStats.member_satisfaction ? '★★★★★' : 'nach Login', icon: BarChartIcon },
-    ];
     const logoProviders = networkProviders.length > 0 ? networkProviders : publicProviders;
 
     const eventCalendarWidgetInfo = useMemo(() => getEventCalendarWidgetInfo(allowedWidgets), [allowedWidgets]);
+    const showEventCalendar = Boolean(eventCalendarWidgetInfo);
+    const showSoftwareCatalog = Number(tenantStats.total_software_entries) > 0;
+    const registrationMetrics = registrationHighlights?.available && Array.isArray(registrationHighlights.metrics)
+        ? registrationHighlights.metrics
+        : [];
+    const showRegistrationHighlights = registrationMetrics.length >= 3
+        && Boolean(registrationHighlights?.source?.name)
+        && Boolean(registrationHighlights?.source?.url)
+        && Boolean(registrationHighlights?.latestPeriod)
+        && Boolean(registrationHighlights?.previousPeriod);
+    const registrationMetricIcons = {
+        total: DirectionsCarOutlinedIcon,
+        electric: ElectricCarOutlinedIcon,
+        electrified: InsightsOutlinedIcon,
+    };
+    const formatPeriod = (value?: string) => value
+        ? new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value.slice(0, 10)}T00:00:00.000Z`))
+        : '';
+    const formatSignedNumber = (value: number) => `${value > 0 ? '+' : ''}${formatNumber(value)}`;
+    const formatSignedPercent = (value: number | null) => value === null
+        ? 'Vergleich nicht verfügbar'
+        : `${value > 0 ? '+' : ''}${value.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+    const getMetricInterpretation = (metric: RegistrationHighlightMetric) => {
+        if (metric.key === 'total') {
+            if (metric.changeAbsolute === 0) return 'Der Gesamtmarkt liegt exakt auf dem Niveau des Vormonats.';
+            return `Der Gesamtmarkt liegt ${formatNumber(Math.abs(metric.changeAbsolute))} Fahrzeuge ${metric.changeAbsolute > 0 ? 'über' : 'unter'} dem Vormonat.`;
+        }
+        if (metric.key === 'electric') {
+            const shareTrend = metric.shareChange === null || metric.shareChange === undefined
+                ? ''
+                : ` (${metric.shareChange > 0 ? '+' : ''}${metric.shareChange.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Prozentpunkte zum Vormonat)`;
+            return `${metric.share?.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} % Marktanteil im aktuellen Monat${shareTrend}.`;
+        }
+        const shareTrend = metric.shareChange === null || metric.shareChange === undefined
+            ? ''
+            : `; ${metric.shareChange > 0 ? '+' : ''}${metric.shareChange.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Prozentpunkte zum Vormonat`;
+        return `${metric.share?.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} % der Neuzulassungen sind Elektro-, Hybrid- oder Plug-in-Fahrzeuge${shareTrend}.`;
+    };
 
     const tenantIndustryName = useMemo(() => {
         const industryValues = partner?.industries || partner?.categories || [];
@@ -943,14 +1035,15 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     let sideColumnWidgets: any[] = [];
     let fullWidthWidgets: any[] = [];
     if (allowedWidgets && allowedWidgets.length > 0) {
-        fullWidthWidgets = allowedWidgets.filter((w: any) => w.type_key === 'daily_cockpit');
-        // KORREKTUR: Filtert den EventCalendar raus, da er jetzt oben fest eingebaut ist
-        const nonFullWidth = allowedWidgets.filter((w: any) => w.type_key !== 'daily_cockpit' && w.type_key !== 'EventCalendar' && w.type_key !== 'SoftwareCatalog');
+        const previewWidgets = allowedWidgets.filter((w: any) => PUBLIC_PREVIEW_WIDGET_KEYS.has(w.type_key));
+        fullWidthWidgets = previewWidgets.filter((w: any) => w.type_key === 'daily_cockpit');
+        const nonFullWidth = previewWidgets.filter((w: any) => w.type_key !== 'daily_cockpit');
         nonFullWidth.forEach((w: any, index: number) => {
             if (index % 2 === 0) mainColumnWidgets.push(w);
             else sideColumnWidgets.push(w);
         });
     }
+    const hasDashboardPreview = fullWidthWidgets.length + mainColumnWidgets.length + sideColumnWidgets.length > 0;
 
 const getProviderCategoryLabel = (provider: any): string => {
     const categories = Array.isArray(provider?.categories)
@@ -1019,25 +1112,22 @@ const renderProviderPreviewCard = (provider: any) => {
                 {getProviderCategoryLabel(provider)}
             </Typography>
 
-            {(Number(provider.software_count) > 0 || Number(provider.action_count) > 0) && (
+            {Number(provider.software_count) > 0 && (
                 <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap" sx={{ mb: 1.2 }}>
-                    {Number(provider.software_count) > 0 && (
-                        <Chip
-                            component="button"
-                            clickable
-                            icon={<AppsOutlinedIcon />}
-                            size="small"
-                            label={formatSoftwareProductCount(provider.software_count)}
-                            aria-label={`${formatSoftwareProductCount(provider.software_count)} von ${provider.name} anzeigen`}
-                            onClick={(event) => {
-                                event.stopPropagation();
-                                setSelectedTeaserProvider(provider);
-                                setTeaserTab(1);
-                            }}
-                            sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900, '&:hover': { bgcolor: alpha(primaryColor, 0.18) } }}
-                        />
-                    )}
-                    {Number(provider.action_count) > 0 && <Chip icon={<LocalOfferOutlinedIcon />} size="small" label={`Angebote ${provider.action_count}`} sx={{ bgcolor: alpha(secondaryColor, 0.1), color: secondaryColor, fontWeight: 900 }} />}
+                    <Chip
+                        component="button"
+                        clickable
+                        icon={<AppsOutlinedIcon />}
+                        size="small"
+                        label={formatSoftwareProductCount(provider.software_count)}
+                        aria-label={`${formatSoftwareProductCount(provider.software_count)} von ${provider.name} anzeigen`}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedTeaserProvider(provider);
+                            setTeaserTab(1);
+                        }}
+                        sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900, '&:hover': { bgcolor: alpha(primaryColor, 0.18) } }}
+                    />
                 </Stack>
             )}
             
@@ -1046,14 +1136,14 @@ const renderProviderPreviewCard = (provider: any) => {
                 sx={{ 
                     color: alpha(darkBlue, 0.78), 
                     display: '-webkit-box', 
-                    WebkitLineClamp: { xs: 2, sm: 3 }, 
+                    WebkitLineClamp: 2,
                     WebkitBoxOrient: 'vertical', 
                     overflow: 'hidden', 
                     lineHeight: 1.45, 
                     mb: 2 
                 }}
             >
-                {provider.description || 'Führender Anbieter im Branchen-Netzwerk.'}
+                {provider.description || 'Anbieter im Branchen-Netzwerk.'}
             </Typography>
 
             <Box sx={{ mt: 'auto', pt: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', minWidth: 0 }}>
@@ -1093,227 +1183,25 @@ const renderProviderPreviewCard = (provider: any) => {
     }
 
     return (
-        <Box sx={{ minHeight: '100vh', bgcolor: softBg, color: darkBlue, overflowX: 'clip' }}>
-            {/* --- HEADER --- */}
-            <Box 
-                component="header" 
-                sx={{ 
-                    position: 'sticky', 
-                    top: 0, 
-                    zIndex: 1100, // Sehr wichtig, damit er immer ganz oben bleibt
-                    bgcolor: alpha('#ffffff', 0.98), 
-                    backdropFilter: 'blur(20px)', 
-                    borderBottom: `1px solid ${alpha(darkBlue, 0.08)}`,
-                    boxShadow: `0 4px 20px ${alpha(darkBlue, 0.05)}`, // Leichter Schatten für Trennung beim Scrollen
-                    transition: 'all 0.3s ease'
-                }}
-            >
-                <Container maxWidth="xl" sx={{ py: 1.2 }}>
-                    <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-                        
-                        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-                            <Box sx={{ flexShrink: 0 }}>
-                                {renderPartnerLogo({ width: { xs: 40, md: 52 }, height: { xs: 34, md: 42 }, objectFit: 'contain' })}
-                            </Box>
-                            <Box sx={{ minWidth: 0 }}>
-                                <Typography variant="subtitle1" fontWeight={950} color={darkBlue} lineHeight={1.1} noWrap>{partnerName}</Typography>
-                                <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.66), fontWeight: 700, display: 'block', fontSize: { xs: '0.65rem', md: '0.75rem' } }} noWrap>
-                                    {partnerClaim}
-                                </Typography>
-                            </Box>
-                        </Stack>
-
-                        <Stack direction="row" alignItems="center" spacing={{ lg: 2.4, xl: 3 }} sx={{ display: { xs: 'none', lg: 'flex' }, justifyContent: 'center' }}>
-                            {navItems.map((item) => {
-                                let badgeCount = null;
-                                if (item === 'Branchenverzeichnis' && tenantStats.total_directory_entries > 0) badgeCount = tenantStats.total_directory_entries;
-                                if (item === 'Software' && tenantStats.total_software_entries > 0) badgeCount = tenantStats.total_software_entries;
-                                if (item === 'Für Mitglieder' && tenantStats.community_members > 0) badgeCount = tenantStats.community_members;
-                                if (item === 'Community' && tenantStats.community_activity > 0) badgeCount = tenantStats.community_activity;
-
-                                const buttonElement = (
-                                    <Button
-                                        onClick={() => handleNavItemClick(item)}
-                                        variant="text"
-                                        sx={{
-                                            color: darkBlue,
-                                            fontSize: { lg: 14.5, xl: 15.5 },
-                                            fontWeight: 900,
-                                            textTransform: 'none',
-                                            minWidth: 'auto',
-                                            px: { lg: 1.2, xl: 1.5 },
-                                            py: 1,
-                                            lineHeight: 1.2,
-                                            borderRadius: 999,
-                                            '&:hover': {
-                                                bgcolor: alpha(primaryColor, 0.08),
-                                                color: primaryColor,
-                                            },
-                                        }}
-                                    >
-                                        {item}
-                                    </Button>
-                                );
-
-                                return (
-                                    <Box key={item}>
-                                        {badgeCount ? (
-                                            <Badge badgeContent={badgeCount} max={999} color="primary" sx={{ '& .MuiBadge-badge': { right: 2, top: 2, fontWeight: 900, bgcolor: primaryColor, color: '#fff' } }}>{buttonElement}</Badge>
-                                        ) : buttonElement}
-                                    </Box>
-                                );
-                            })}
-                        </Stack>
-
-                        <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0 }}>
-                            <IconButton
-                                aria-label="Navigation öffnen"
-                                onClick={() => setMobileNavOpen(true)}
-                                sx={{
-                                    display: { xs: 'inline-flex', lg: 'none' },
-                                    width: 42,
-                                    height: 42,
-                                    borderRadius: '50%',
-                                    bgcolor: alpha(primaryColor, 0.1),
-                                    color: primaryColor,
-                                    border: `1px solid ${alpha(primaryColor, 0.16)}`,
-                                    '&:hover': { bgcolor: alpha(primaryColor, 0.16) }
-                                }}
-                            >
-                                <MenuIcon />
-                            </IconButton>
-                            <Button 
-                                onClick={handleLoginCta} 
-                                variant="contained" 
-                                startIcon={<LockIcon />} 
-                                sx={{ 
-                                    bgcolor: primaryColor,
-                                    color: '#fff',
-                                    borderRadius: 999, 
-                                    px: { xs: 2, md: 3 }, 
-                                    py: { xs: 1, md: 1.15 },
-                                    minHeight: { xs: 42, md: 46 },
-                                    textTransform: 'none', 
-                                    fontWeight: 950,
-                                    fontSize: { xs: 14, md: 15 },
-                                    boxShadow: `0 10px 24px ${alpha(primaryColor, 0.24)}`,
-                                    '& .MuiButton-startIcon': { display: { xs: 'none', sm: 'inherit' }, marginRight: { xs: 0, sm: 1 }, marginLeft: -0.5 },
-                                    '&:hover': { bgcolor: primaryColor, filter: 'brightness(0.94)' } 
-                                }}
-                            >
-                                <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>Mitglieder-Login</Box>
-                                <Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}>Login</Box>
-                            </Button>
-                        </Stack>
-                    </Stack>
-                </Container>
-            </Box>
-
-            <Drawer
-                anchor="right"
-                open={mobileNavOpen}
-                onClose={() => setMobileNavOpen(false)}
-                PaperProps={{
-                    sx: {
-                        width: 'min(86vw, 360px)',
-                        p: 2.5,
-                        bgcolor: '#fff',
-                        borderTopLeftRadius: 24,
-                        borderBottomLeftRadius: 24,
-                        boxShadow: `-20px 0 60px ${alpha(darkBlue, 0.18)}`
-                    }
-                }}
-            >
-                <Stack spacing={2.5} sx={{ height: '100%' }}>
-                    <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
-                        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ minWidth: 0 }}>
-                            {renderPartnerLogo({ width: 46, height: 38, objectFit: 'contain' })}
-                            <Box sx={{ minWidth: 0 }}>
-                                <Typography variant="subtitle1" fontWeight={950} color={darkBlue} noWrap>{partnerName}</Typography>
-                                <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.62), fontWeight: 700 }} noWrap>{dashboardTitle}</Typography>
-                            </Box>
-                        </Stack>
-                        <IconButton onClick={() => setMobileNavOpen(false)} sx={{ bgcolor: alpha(darkBlue, 0.05) }}>
-                            <CloseIcon />
-                        </IconButton>
-                    </Stack>
-
-                    <Paper elevation={0} sx={{ p: 2, borderRadius: 3, bgcolor: alpha(primaryColor, 0.07), border: `1px solid ${alpha(primaryColor, 0.12)}` }}>
-                        <Typography variant="body2" fontWeight={900} color={darkBlue}>{partnerClaim}</Typography>
-                        <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.66), display: 'block', mt: 0.4 }}>Schneller Zugriff auf Portalbereiche und Mitgliederfunktionen.</Typography>
-                    </Paper>
-
-                    <Stack spacing={1}>
-                        {navItems.map((item) => (
-                            <Button
-                                key={item}
-                                fullWidth
-                                onClick={() => handleNavItemClick(item)}
-                                endIcon={<ChevronRightIcon />}
-                                sx={{
-                                    justifyContent: 'space-between',
-                                    color: darkBlue,
-                                    borderRadius: 2.5,
-                                    px: 2,
-                                    py: 1.35,
-                                    textTransform: 'none',
-                                    fontWeight: 900,
-                                    bgcolor: alpha(darkBlue, 0.035),
-                                    '&:hover': { bgcolor: alpha(primaryColor, 0.1), color: primaryColor }
-                                }}
-                            >
-                                {item}
-                            </Button>
-                        ))}
-                    </Stack>
-
-                    <Box sx={{ mt: 'auto' }}>
-                        <Button
-                            fullWidth
-                            variant="contained"
-                            startIcon={<LockIcon />}
-                            onClick={() => { setMobileNavOpen(false); handleLoginCta(); }}
-                            sx={{
-                                bgcolor: primaryColor,
-                                color: '#fff',
-                                borderRadius: 3,
-                                py: 1.5,
-                                textTransform: 'none',
-                                fontWeight: 950,
-                                boxShadow: `0 14px 30px ${alpha(primaryColor, 0.28)}`,
-                                '&:hover': { bgcolor: primaryColor, filter: 'brightness(0.94)' }
-                            }}
-                        >
-                            Mitglieder-Login
-                        </Button>
-                    </Box>
-                </Stack>
-            </Drawer>
-
-            <Collapse in={!isHeroOpen} timeout={800}>
-                <Box sx={{ 
-                    width: '100%', 
-                    bgcolor: '#fff', 
-                    borderBottom: `1px solid ${alpha(darkBlue, 0.05)}`, 
-                    display: 'flex', 
-                    justifyContent: 'center', 
-                    py: 1 
-                }}>
-                    <Button 
-                        size="small" 
-                        onClick={() => setIsHeroOpen(true)} 
-                        endIcon={<ExpandMoreIcon />} 
-                        sx={{ 
-                            textTransform: 'none', 
-                            fontWeight: 800, 
-                            color: alpha(darkBlue, 0.6), 
-                            '&:hover': { color: primaryColor } 
-                        }}
-                    >
-                        Willkommensbereich einblenden
-                    </Button>
-                </Box>
-            </Collapse>
+        <Box sx={{ minHeight: '100vh', pb: { xs: 9, md: 0 }, bgcolor: softBg, color: darkBlue, overflowX: 'clip' }}>
+            {/* --- MODERNER MANDANTEN-HEADER --- */}
+            <PublicPortalHeader
+                logoUrl={logoUrl}
+                homeHref={canonicalPartnerHomePath}
+                partnerName={partnerName}
+                partnerClaim={partnerClaim}
+                primaryColor={primaryColor}
+                secondaryColor={secondaryColor}
+                darkColor={darkBlue}
+                navItems={publicNavItems}
+                activeLabel="Start"
+                onLogin={handleLoginCta}
+                partnerId={partner?.id}
+                onOpenNetwork={handleScrollToDirectory}
+                onOpenCompany={handleOpenProviderDetailById}
+                welcomeCollapsed={!isHeroOpen}
+                onOpenWelcome={() => setIsHeroOpen(true)}
+            />
 
             {/* --- HERO --- */}
             <Collapse 
@@ -1339,11 +1227,12 @@ const renderProviderPreviewCard = (provider: any) => {
                                 <Typography variant="h1" sx={{ color: darkBlue, fontWeight: 950, fontSize: { xs: '2.9rem', sm: '4rem', lg: '5.25rem' }, lineHeight: 0.98, letterSpacing: '-0.055em', mb: 2.8 }}>
                                     Wissen. Vernetzen.<Box component="span" sx={{ display: 'block', color: primaryColor }}>Vorankommen.</Box>
                                 </Typography>
-                                <Typography variant="h6" sx={{ color: alpha(darkBlue, 0.78), fontWeight: 500, lineHeight: 1.55, maxWidth: 600, mb: 4 }}>
-                                    Das zentrale Informations- und Netzwerkportal für Mitglieder von {partnerName}. Externe Brancheninfos als Türöffner – volle Funktionen nach dem Login.
+                                <Typography variant="h6" sx={{ color: alpha(darkBlue, 0.78), fontWeight: 500, lineHeight: 1.55, maxWidth: 600, mb: 3 }}>
+                                    Das Informations- und Netzwerkportal von {partnerName}: aktuelle Brancheninformationen, passende Lösungen und direkte Wege in die Community.
                                 </Typography>
+                                <Typography variant="overline" sx={{ display: 'block', color: primaryColor, fontWeight: 950, letterSpacing: '0.09em', mb: 1.3 }}>Das bietet Ihnen das Portal</Typography>
                                 <Grid container spacing={2.2}>
-                                    {[{ icon: LockIcon, title: 'Exklusiv für Mitglieder', text: 'Geschützter Bereich mit wertvollen Inhalten' }, { icon: ShieldOutlinedIcon, title: 'Täglich aktuell', text: 'News, Termine und Insights auf einen Blick' }, { icon: GroupsOutlinedIcon, title: 'Starkes Netzwerk', text: 'Kontakte, Partner und Austausch in der Branche' }].map((item) => {
+                                    {[{ icon: InsightsOutlinedIcon, title: 'Branchenwissen', text: 'Kuratierte Meldungen und belastbare Kennzahlen' }, { icon: StorefrontIcon, title: 'Lösungen finden', text: 'Anbieter und Software schnell einordnen' }, { icon: GroupsOutlinedIcon, title: 'Austausch & Termine', text: 'Community und Branchenkalender für Mitglieder' }].map((item) => {
                                         const Icon = item.icon;
                                         return (
                                             <Grid item xs={12} sm={4} key={item.title}>
@@ -1371,8 +1260,8 @@ const renderProviderPreviewCard = (provider: any) => {
                                         <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
                                             <Box sx={{ width: 48, height: 48, borderRadius: 2, border: `2px solid ${darkBlue}`, display: 'grid', placeItems: 'center', color: darkBlue }}><LockIcon /></Box>
                                             <Box>
-                                                <Typography fontWeight={950} color={darkBlue}>Exklusive Inhalte</Typography>
-                                                <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.68) }}>Melden Sie sich an für vollen Zugriff.</Typography>
+                                                <Typography fontWeight={950} color={darkBlue}>Mehr im Mitgliederbereich</Typography>
+                                                <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.68) }}>Analysen, Community-Beiträge, Downloads und persönliche Funktionen.</Typography>
                                             </Box>
                                         </Stack>
                                         <Button fullWidth variant="contained" onClick={handleLoginCta} startIcon={<LockIcon />} sx={{ bgcolor: primaryColor, borderRadius: 2, py: 1.45, textTransform: 'none', fontWeight: 900, boxShadow: `0 12px 26px ${alpha(primaryColor, 0.26)}`, '&:hover': { bgcolor: primaryColor, filter: 'brightness(0.94)' } }}>Zum Mitglieder-Login</Button>
@@ -1390,25 +1279,31 @@ const renderProviderPreviewCard = (provider: any) => {
                     elevation={0} 
                     sx={{ 
                         borderRadius: 3, 
-                        p: { xs: 3, md: 4 }, 
-                        border: { xs: `1px solid ${alpha(darkBlue, 0.1)}`, md: `1px solid ${alpha(primaryColor, 0.2)}` },
-                        bgcolor: { xs: '#fff', md: alpha(primaryColor, 0.95) }, 
-                        boxShadow: { xs: `0 18px 45px ${alpha(darkBlue, 0.12)}`, md: `0 24px 60px ${alpha(primaryColor, 0.2)}` }
+                        p: { xs: 2, md: 1.5 },
+                        border: `1px solid ${alpha(darkBlue, 0.1)}`,
+                        bgcolor: '#fff',
+                        boxShadow: `0 20px 52px ${alpha(darkBlue, 0.1)}`,
                     }}
                 >
-                    <Typography variant="h5" fontWeight={950} sx={{ mb: 2.5, display: 'flex', alignItems: 'center', gap: 1, color: { xs: darkBlue, md: '#fff' } }}>
-                        <SearchIcon sx={{ color: { xs: primaryColor, md: '#fff' } }} />
-                        Netzwerk-Suche
-                    </Typography>
-
-                    <Grid container spacing={3} alignItems="flex-end">
-                        <Grid item xs={12} md={3.5}>
-                            <Typography variant="caption" fontWeight={900} sx={{ mb: 1, display: 'block', color: { xs: darkBlue, md: alpha('#fff', 0.9) } }}>
+                    <Grid container spacing={{ xs: 2, md: 1.5 }} alignItems="stretch">
+                        <Grid item xs={12} md={2.15}>
+                            <Box sx={{
+                                height: '100%', minHeight: { xs: 58, md: 84 }, px: { xs: 2, md: 2.25 }, py: 1.5,
+                                display: 'flex', alignItems: 'center', gap: 1.1, borderRadius: 2.2,
+                                bgcolor: primaryColor, color: '#fff',
+                                boxShadow: `0 10px 24px ${alpha(primaryColor, 0.2)}`,
+                            }}>
+                                <SearchIcon sx={{ flexShrink: 0 }} />
+                                <Typography variant="h6" fontWeight={950} sx={{ lineHeight: 1.1 }}>Netzwerk-Suche</Typography>
+                            </Box>
+                        </Grid>
+                        <Grid item xs={12} md={2.85}>
+                            <Typography variant="caption" fontWeight={900} sx={{ mb: 0.75, display: 'block', color: alpha(darkBlue, 0.7) }}>
                                 Ich suche nach ...
                             </Typography>
                             <Stack direction="row" alignItems="center" spacing={1} sx={{ minHeight: 56, borderRadius: 2, px: 2, border: `1px solid ${alpha(darkBlue, 0.14)}`, bgcolor: '#fff' }}>
                                 <SearchIcon sx={{ color: alpha(darkBlue, 0.45) }} />
-                                <InputBase fullWidth value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} inputProps={{ maxLength: 120, 'aria-label': 'Branchenverzeichnis durchsuchen' }} placeholder="Dienstleistung, Anbieter, News ..." sx={{ color: darkBlue, fontWeight: 700 }} />
+                                <InputBase fullWidth value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} inputProps={{ maxLength: 120, 'aria-label': 'Branchennetzwerk durchsuchen' }} placeholder="Dienstleistung, Anbieter, News ..." sx={{ color: darkBlue, fontWeight: 700 }} />
                                 {searchTerm && (
                                     <IconButton
                                         size="small"
@@ -1422,8 +1317,8 @@ const renderProviderPreviewCard = (provider: any) => {
                                 )}
                             </Stack>
                         </Grid>
-                        <Grid item xs={12} md={3.1}>
-                            <Typography variant="caption" fontWeight={900} sx={{ mb: 1, display: 'block', color: { xs: darkBlue, md: alpha('#fff', 0.9) } }}>
+                        <Grid item xs={12} md={2.55}>
+                            <Typography variant="caption" fontWeight={900} sx={{ mb: 0.75, display: 'block', color: alpha(darkBlue, 0.7) }}>
                                 In der Branche ...
                             </Typography>
                             <Select fullWidth value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value as string)} IconComponent={KeyboardArrowDownIcon} sx={{ minHeight: 56, borderRadius: 2, bgcolor: '#fff', color: selectedCategory === 'all' ? alpha(darkBlue, 0.58) : darkBlue, fontWeight: 800, '& .MuiOutlinedInput-notchedOutline': { borderColor: alpha(darkBlue, 0.14) } }}>
@@ -1433,8 +1328,8 @@ const renderProviderPreviewCard = (provider: any) => {
                                 ))}
                             </Select>
                         </Grid>
-                        <Grid item xs={12} md={3.1}>
-                            <Typography variant="caption" fontWeight={900} sx={{ mb: 1, display: 'block', color: { xs: darkBlue, md: alpha('#fff', 0.9) } }}>
+                        <Grid item xs={12} md={2.35}>
+                            <Typography variant="caption" fontWeight={900} sx={{ mb: 0.75, display: 'block', color: alpha(darkBlue, 0.7) }}>
                                 Region
                             </Typography>
                             <Select fullWidth value={selectedRegion} onChange={(e) => setSelectedRegion(e.target.value as string)} IconComponent={KeyboardArrowDownIcon} sx={{ minHeight: 56, borderRadius: 2, bgcolor: '#fff', color: selectedRegion === 'all' ? alpha(darkBlue, 0.58) : darkBlue, fontWeight: 800, '& .MuiOutlinedInput-notchedOutline': { borderColor: alpha(darkBlue, 0.14) } }}>
@@ -1444,8 +1339,8 @@ const renderProviderPreviewCard = (provider: any) => {
                                 ))}
                             </Select>
                         </Grid>
-                        <Grid item xs={12} md={2.3}>
-                            <Button fullWidth variant="contained" onClick={handleScrollToDirectory} endIcon={<ArrowForwardIcon />} sx={{ minHeight: 56, borderRadius: 2, bgcolor: { xs: primaryColor, md: '#fff' }, color: { xs: '#fff', md: primaryColor }, fontWeight: 950, textTransform: 'none', fontSize: 16, boxShadow: `0 12px 26px ${alpha(primaryColor, 0.25)}`, '&:hover': { bgcolor: { xs: primaryColor, md: alpha('#fff', 0.9) }, filter: { xs: 'brightness(0.94)', md: 'none' } } }}>
+                        <Grid item xs={12} md={2.1} sx={{ display: 'flex', alignItems: 'flex-end' }}>
+                            <Button fullWidth variant="contained" onClick={handleScrollToDirectory} endIcon={<ArrowForwardIcon />} sx={{ minHeight: 56, borderRadius: 2, bgcolor: primaryColor, color: '#fff', fontWeight: 950, textTransform: 'none', fontSize: 16, boxShadow: `0 12px 26px ${alpha(primaryColor, 0.22)}`, '&:hover': { bgcolor: primaryColor, filter: 'brightness(0.94)' } }}>
                                 Jetzt finden
                             </Button>
                         </Grid>
@@ -1457,11 +1352,11 @@ const renderProviderPreviewCard = (provider: any) => {
             <Container maxWidth="xl" sx={{ pb: 7 }}>
                 <Grid container spacing={3} id="branchenverzeichnis">
                     {/* BRANCHENVERZEICHNIS */}
-                    <Grid item xs={12} lg={directoryView === 'map' ? 12 : 5.6}>
+                    <Grid item xs={12} lg={directoryView === 'map' || !showEventCalendar ? 12 : 7.6}>
                         <Paper elevation={0} sx={{ p: { xs: 2.2, md: 3 }, borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.1)}`, boxShadow: `0 18px 40px ${alpha(darkBlue, 0.06)}`, height: '100%' }}>
                             <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between" spacing={1.5} sx={{ mb: 3 }}>
                                 <Stack direction="row" alignItems="center" spacing={1.5}>
-                                    <Typography variant="h5" fontWeight={950} color={darkBlue}>Branchenverzeichnis</Typography>
+                                    <Typography variant="h5" fontWeight={950} color={darkBlue}>Branchennetzwerk</Typography>
                                     {directoryTotal > 0 && (
                                         <Chip 
                                             label={isMobile ? `${directoryTotal}` : `${directoryTotal} Treffer`}
@@ -1531,8 +1426,8 @@ const renderProviderPreviewCard = (provider: any) => {
                         </Paper>
                     </Grid>
 
-                    {/* HIER NEU: ECHTER EVENT-KALENDER STATT "INSIGHTS" DUMMY */}
-                    <Grid item xs={12} lg={3.4}>
+                    {/* Der öffentliche Branchenkalender erscheint nur bei expliziter Mandantenfreigabe. */}
+                    {showEventCalendar && <Grid item xs={12} lg={4.4}>
                         <Box sx={{ 
                             height: '100%', 
                             '& > .MuiPaper-root': { 
@@ -1574,35 +1469,66 @@ const renderProviderPreviewCard = (provider: any) => {
                                 />
                             </Suspense>
                         </Box>
-                    </Grid>
-
-                    {/* STATS */}
-                    <Grid item xs={12} lg={3}>
-                        <Paper elevation={0} sx={{ p: { xs: 2.2, md: 3 }, borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.1)}`, boxShadow: `0 18px 40px ${alpha(darkBlue, 0.06)}`, height: '100%' }}>
-                            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 3 }}>
-                                <Typography variant="h5" fontWeight={950} color={darkBlue}>Zahlen & Fakten</Typography>
-                                <Button onClick={handleLoginCta} endIcon={<ChevronRightIcon />} sx={{ textTransform: 'none', fontWeight: 900, color: primaryColor }}>Mehr</Button>
-                            </Stack>
-                            <Grid container spacing={1.5}>
-                                {statsCards.map((stat) => {
-                                    const Icon = stat.icon;
-                                    return (
-                                        <Grid item xs={6} key={stat.label}>
-                                            <Paper elevation={0} sx={{ p: 2, minHeight: 126, borderRadius: 3, border: `1px solid ${alpha(darkBlue, 0.09)}`, bgcolor: alpha('#fff', 0.88) }}>
-                                                <Icon sx={{ color: alpha(primaryColor, 0.85), fontSize: 22, mb: 1 }} />
-                                                <Typography variant="h5" fontWeight={950} color={darkBlue}>{stat.value}</Typography>
-                                                <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.68), display: 'block' }}>{stat.label}</Typography>
-                                                <Typography variant="caption" sx={{ color: primaryColor, fontWeight: 900 }}>{stat.helper}</Typography>
-                                            </Paper>
-                                        </Grid>
-                                    );
-                                })}
-                            </Grid>
-                        </Paper>
-                    </Grid>
+                    </Grid>}
                 </Grid>
 
-                <Box id="software-lexikon" sx={{ mt: 3 }}>
+                {showRegistrationHighlights && (
+                    <Paper elevation={0} sx={{ mt: 3, p: { xs: 2.2, md: 3 }, borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.1)}`, boxShadow: `0 18px 40px ${alpha(darkBlue, 0.06)}` }}>
+                        <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ xs: 'flex-start', md: 'center' }} justifyContent="space-between" spacing={1.5} sx={{ mb: 2.5 }}>
+                            <Box>
+                                <Typography variant="h5" fontWeight={950} color={darkBlue}>Branche auf einen Blick</Typography>
+                                <Typography variant="body2" sx={{ color: alpha(darkBlue, 0.66), mt: 0.4 }}>
+                                    Neuzulassungen {registrationHighlights?.countryCode} · {formatPeriod(registrationHighlights?.latestPeriod)} im Vergleich zu {formatPeriod(registrationHighlights?.previousPeriod)}
+                                </Typography>
+                            </Box>
+                            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
+                                <Chip size="small" label={`Stand ${formatPeriod(registrationHighlights?.latestPeriod)}`} sx={{ bgcolor: alpha(primaryColor, 0.08), color: primaryColor, fontWeight: 900 }} />
+                                <Button
+                                    href={getExternalUrl(registrationHighlights?.source?.url)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    endIcon={<ArrowForwardIcon />}
+                                    sx={{ px: 0.5, textTransform: 'none', color: primaryColor, fontWeight: 900 }}
+                                >
+                                    Quelle: {registrationHighlights?.source?.name}
+                                </Button>
+                            </Stack>
+                        </Stack>
+                        <Grid container spacing={1.5}>
+                            {registrationMetrics.map((metric) => {
+                                const Icon = registrationMetricIcons[metric.key];
+                                const comparisonLabel = metric.changeAbsolute === 0
+                                    ? `Vormonat ${formatNumber(metric.comparisonValue)} · unverändert`
+                                    : `Vormonat ${formatNumber(metric.comparisonValue)} · ${formatSignedNumber(metric.changeAbsolute)} absolut`;
+                                return (
+                                    <Grid item xs={12} md={4} key={metric.key}>
+                                        <Paper elevation={0} sx={{ p: 2.2, height: '100%', minHeight: 190, borderRadius: 3, border: `1px solid ${alpha(primaryColor, 0.16)}`, bgcolor: alpha(primaryColor, 0.035), display: 'flex', flexDirection: 'column' }}>
+                                            <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+                                                <Box>
+                                                    <Typography variant="overline" sx={{ color: alpha(darkBlue, 0.6), fontWeight: 950, letterSpacing: '0.05em', lineHeight: 1.2 }}>{metric.label}</Typography>
+                                                    <Typography variant="h4" fontWeight={950} color={darkBlue} sx={{ mt: 0.5 }}>{formatNumber(metric.value)}</Typography>
+                                                    <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.58) }}>{metric.unit}</Typography>
+                                                </Box>
+                                                <Box sx={{ width: 44, height: 44, borderRadius: 2.2, display: 'grid', placeItems: 'center', color: primaryColor, bgcolor: alpha(primaryColor, 0.1), flexShrink: 0 }}><Icon /></Box>
+                                            </Stack>
+                                            <Stack direction="row" spacing={0.8} alignItems="center" sx={{ mt: 1.5 }}>
+                                                <Typography variant="body2" fontWeight={950} sx={{ color: metric.changeAbsolute >= 0 ? '#237A3B' : '#B43A35' }}>{formatSignedPercent(metric.changePercent)}</Typography>
+                                                <Typography variant="caption" sx={{ color: alpha(darkBlue, 0.6) }}>· {comparisonLabel}</Typography>
+                                            </Stack>
+                                            <Typography variant="body2" sx={{ mt: 1.2, color: alpha(darkBlue, 0.74), lineHeight: 1.45 }}>{getMetricInterpretation(metric)}</Typography>
+                                        </Paper>
+                                    </Grid>
+                                );
+                            })}
+                        </Grid>
+                        <Typography variant="caption" sx={{ display: 'block', mt: 1.5, color: alpha(darkBlue, 0.5) }}>
+                            Quelle und Berechnung werden nur angezeigt, wenn zwei vollständige Monatsstände einer offiziellen Datenquelle vorliegen.
+                            {registrationHighlights?.updatedAt ? ` Datenimport: ${new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium' }).format(new Date(registrationHighlights.updatedAt))}.` : ''}
+                        </Typography>
+                    </Paper>
+                )}
+
+                {showSoftwareCatalog && <Box id="software-lexikon" sx={{ mt: 3 }}>
                     <Suspense fallback={<Paper sx={{ p: 4, borderRadius: 4 }}><CircularProgress /></Paper>}>
                         <SoftwareCatalogWidget
                             isPublic
@@ -1616,17 +1542,17 @@ const renderProviderPreviewCard = (provider: any) => {
                             onDelete={() => {}}
                         />
                     </Suspense>
-                </Box>
+                </Box>}
 
                 {/* --- CTA BANNER --- */}
                 <Paper elevation={0} sx={{ mt: 3, borderRadius: 4, overflow: 'hidden', bgcolor: darkBlue, background: `linear-gradient(90deg, ${darkBlue}, ${secondaryColor})`, color: '#fff', p: { xs: 2.6, md: 3 }, boxShadow: `0 20px 45px ${alpha(darkBlue, 0.18)}` }}>
                     <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ xs: 'stretch', md: 'center' }} justifyContent="space-between" spacing={3}>
                         <Box>
-                            <Typography variant="h5" fontWeight={950}>Werden Sie Teil unseres starken Netzwerks</Typography>
-                            <Typography variant="body2" sx={{ color: alpha('#fff', 0.78), mt: 0.5 }}>Profitieren Sie von exklusiven Inhalten, wertvollen Kontakten und aktuellen Branchen-Insights.</Typography>
+                            <Typography variant="h5" fontWeight={950}>Mehr wissen. Schneller die richtigen Kontakte finden.</Typography>
+                            <Typography variant="body2" sx={{ color: alpha('#fff', 0.78), mt: 0.5 }}>Im Mitgliederbereich erhalten Sie vollständige Analysen, Community-Erfahrungen, Downloads und persönliche Funktionen.</Typography>
                         </Box>
                         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3} alignItems={{ xs: 'flex-start', sm: 'center' }} sx={{ color: alpha('#fff', 0.92) }}>
-                            {[{ icon: ShieldOutlinedIcon, label: 'Exklusive Inhalte' }, { icon: GroupsOutlinedIcon, label: 'Starkes Netzwerk' }, { icon: UpdateIcon, label: 'Tägliche Updates' }].map((item) => {
+                            {[{ icon: ShieldOutlinedIcon, label: 'Vollständige Analysen' }, { icon: GroupsOutlinedIcon, label: 'Community-Erfahrungen' }, { icon: UpdateIcon, label: 'Persönliche Funktionen' }].map((item) => {
                                 const Icon = item.icon;
                                 return (
                                     <Stack direction="row" spacing={1} alignItems="center" key={item.label}>
@@ -1673,7 +1599,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                             tabIndex={cycle === 1 ? -1 : 0}
                                             key={`${cycle}-${provider.id}`}
                                             onClick={() => { setSelectedTeaserProvider(provider); setTeaserTab(0); }}
-                                            aria-label={`${provider.name} im Branchenverzeichnis öffnen`}
+                                            aria-label={`${provider.name} im Branchennetzwerk öffnen`}
                                             sx={{
                                                 width: 142,
                                                 height: 48,
@@ -1696,8 +1622,8 @@ const renderProviderPreviewCard = (provider: any) => {
                     )}
                 </Box>
 
-                {/* --- WIDGET PREVIEW (Glass Cockpit unten) --- */}
-                <Box sx={{ mt: { xs: 6, md: 8 } }}>
+                {/* Nur tatsächlich freigegebene und unterstützte Module werden als Vorschau gezeigt. */}
+                {hasDashboardPreview && <Box sx={{ mt: { xs: 6, md: 8 } }}>
                     <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'flex-end' }} spacing={2} sx={{ mb: 3 }}>
                         <Box>
                             <Chip label="Dashboard-Vorschau" sx={{ bgcolor: alpha(primaryColor, 0.1), color: primaryColor, fontWeight: 900, mb: 1 }} />
@@ -1716,52 +1642,43 @@ const renderProviderPreviewCard = (provider: any) => {
                                     boxShadow: `0 24px 60px ${alpha(primaryColor, 0.2)}` 
                                 }}>
                             <Grid container spacing={3} sx={{ position: 'relative', zIndex: 2 }}>
-                                {allowedWidgets.length > 0 ? (
-                                    <>
-                                        {fullWidthWidgets.length > 0 && (
-                                            <Grid item xs={12}>
-                                                <Stack spacing={3}>
-                                                    {fullWidthWidgets.map((w, i) => <Box key={`${w.type_key}-${i}`}>{renderWidget(w, i + 100)}</Box>)}
-                                                </Stack>
-                                            </Grid>
-                                        )}
-                                        <Grid item xs={12} md={8} lg={8}>
-                                            <Stack spacing={3} sx={{ height: '100%' }}>
-                                                {mainColumnWidgets.map((w, i) => <Box key={`${w.type_key}-${i}`} sx={{ flexGrow: i === mainColumnWidgets.length - 1 ? 1 : 0 }}>{renderWidget(w, i)}</Box>)}
-                                            </Stack>
-                                        </Grid>
-                                        <Grid item xs={12} md={4} lg={4}>
-                                            <Stack spacing={3}>
-                                                {sideColumnWidgets.map((w, i) => <Box key={`${w.type_key}-${i + 10}`}>{renderWidget(w, i + 10)}</Box>)}
-                                            </Stack>
-                                        </Grid>
-                                    </>
-                                ) : (
-                                    <>
-                                        <Grid item xs={12} md={8} lg={8}>
-                                            <Stack spacing={3} sx={{ height: '100%' }}>
-                                                <Paper sx={{ p: 4, borderRadius: 3, bgcolor: 'rgba(0, 0, 0, 0.25)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)' }}>
-                                                    <Stack direction="row" alignItems="center" gap={2} mb={2}>
-                                                        <AutoAwesomeIcon sx={{ color: '#fff', fontSize: 32 }} />
-                                                        <Typography variant="h5" color="white" fontWeight="bold">Public Preview</Typography>
-                                                    </Stack>
-                                                    <Typography variant="body1" sx={{ color: alpha('#fff', 0.8), lineHeight: 1.6 }}>Das Portal läuft als White-Label-Türöffner. Öffentliche Inhalte machen den Mehrwert sichtbar; sensible Details bleiben dem Mitgliederbereich vorbehalten.</Typography>
-                                                </Paper>
-                                                <EVStationWidget isPublic={true} widgetId="demo-ev" widgetTypeKey="EVStation" title="Netzwerkauslastung & Infrastruktur" onDelete={()=>{}} />
-                                            </Stack>
-                                        </Grid>
-                                        <Grid item xs={12} md={4} lg={4}>
-                                            <Stack spacing={3}>
-                                                <SentimentWidget isPublic={true} widgetId="demo-sent" widgetTypeKey="sentiment_widget" title="KI Markt-Barometer (Live)" isRemovable={false} onDelete={()=>{}}/>
-                                                <CommodityPricesWidget isPublic={true} widgetId="demo-com" widgetTypeKey="CommodityPrices" title="Indikatoren Echtzeit" isRemovable={false} onDelete={()=>{}}/>
-                                            </Stack>
-                                        </Grid>
-                                    </>
+                                {fullWidthWidgets.length > 0 && (
+                                    <Grid item xs={12}>
+                                        <Stack spacing={3}>
+                                            {fullWidthWidgets.map((w, i) => <Box key={`${w.type_key}-${i}`}>{renderWidget(w, i + 100)}</Box>)}
+                                        </Stack>
+                                    </Grid>
                                 )}
+                                {mainColumnWidgets.length > 0 && <Grid item xs={12} md={sideColumnWidgets.length > 0 ? 8 : 12}>
+                                    <Stack spacing={3} sx={{ height: '100%' }}>
+                                        {mainColumnWidgets.map((w, i) => <Box key={`${w.type_key}-${i}`} sx={{ flexGrow: i === mainColumnWidgets.length - 1 ? 1 : 0 }}>{renderWidget(w, i)}</Box>)}
+                                    </Stack>
+                                </Grid>}
+                                {sideColumnWidgets.length > 0 && <Grid item xs={12} md={4}>
+                                    <Stack spacing={3}>
+                                        {sideColumnWidgets.map((w, i) => <Box key={`${w.type_key}-${i + 10}`}>{renderWidget(w, i + 10)}</Box>)}
+                                    </Stack>
+                                </Grid>}
                             </Grid>
                         </Box>
                     </ThemeProvider>
-                </Box>
+                </Box>}
+
+                <Paper elevation={0} sx={{ mt: { xs: 5, md: 7 }, p: { xs: 2.5, md: 3.5 }, borderRadius: 4, bgcolor: '#fff', border: `1px solid ${alpha(darkBlue, 0.1)}`, boxShadow: `0 18px 40px ${alpha(darkBlue, 0.06)}` }}>
+                    <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ xs: 'stretch', md: 'center' }} justifyContent="space-between" spacing={3}>
+                        <Stack direction="row" spacing={2} alignItems="center">
+                            {renderPartnerLogo({ width: 64, height: 54, objectFit: 'contain' })}
+                            <Box>
+                                <Typography variant="h5" fontWeight={950} color={darkBlue}>{partnerName}</Typography>
+                                <Typography variant="body2" sx={{ color: alpha(darkBlue, 0.66), mt: 0.3 }}>Kontakt, Organisationshomepage und Mitgliederbereich – direkt erreichbar.</Typography>
+                            </Box>
+                        </Stack>
+                        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.2}>
+                            {partnerWebsiteUrl && <Button component="a" href={partnerWebsiteUrl} target="_blank" rel="noopener noreferrer" variant="outlined" startIcon={<LanguageIcon />} sx={{ borderColor: primaryColor, color: primaryColor, textTransform: 'none', fontWeight: 900 }}>Kontakt & Homepage</Button>}
+                            <Button variant="contained" onClick={handleLoginCta} startIcon={<LockIcon />} sx={{ bgcolor: primaryColor, textTransform: 'none', fontWeight: 950, '&:hover': { bgcolor: primaryColor, filter: 'brightness(0.94)' } }}>Mitglieder-Login</Button>
+                        </Stack>
+                    </Stack>
+                </Paper>
 
                 {/* --- FOOTER --- */}
                 <Box sx={{ mt: 8, mb: 4 }}>
@@ -1788,34 +1705,39 @@ const renderProviderPreviewCard = (provider: any) => {
                 </Box>
             </Container>
 
-            {publicContext?.assistant?.enabled && (
+            {showPublicAssistant && (
                 <Suspense fallback={null}>
                     <PublicAiAssistantWidget
-                        siteKey={String(publicContext.assistant.siteKey)}
+                        key={assistantSiteKey}
+                        siteKey={assistantSiteKey}
                         primaryColor={primaryColor}
                         partnerName={partnerName}
                     />
                 </Suspense>
             )}
 
-            <Fab
-                aria-label="Zum Seitenende"
-                onClick={handleScrollToPageEnd}
+            <Paper
+                elevation={8}
                 sx={{
-                    display: { xs: 'flex', md: 'none' },
+                    display: { xs: 'block', md: 'none' },
                     position: 'fixed',
-                    right: 18,
-                    bottom: 18,
+                    left: 12,
+                    right: 12,
+                    bottom: 10,
                     zIndex: 1200,
-                    bgcolor: primaryColor,
-                    color: '#fff',
-                    boxShadow: `0 14px 32px ${alpha(primaryColor, 0.32)}`,
-                    '&:hover': { bgcolor: primaryColor, filter: 'brightness(0.94)' },
+                    p: 0.8,
+                    borderRadius: 999,
+                    bgcolor: alpha('#fff', 0.97),
+                    backdropFilter: 'blur(16px)',
+                    border: `1px solid ${alpha(primaryColor, 0.16)}`,
                     '@media print': { display: 'none' }
                 }}
             >
-                <KeyboardDoubleArrowDownIcon />
-            </Fab>
+                <Stack direction="row" spacing={0.8}>
+                    <Button onClick={handleScrollToDirectory} startIcon={<SearchIcon />} sx={{ flex: 0.9, borderRadius: 999, color: primaryColor, textTransform: 'none', fontWeight: 900 }}>Netzwerk</Button>
+                    <Button onClick={handleLoginCta} variant="contained" startIcon={<LockIcon />} sx={{ flex: 1.25, borderRadius: 999, bgcolor: primaryColor, textTransform: 'none', fontWeight: 950, '&:hover': { bgcolor: primaryColor, filter: 'brightness(0.94)' } }}>Mitglieder-Login</Button>
+                </Stack>
+            </Paper>
 
             {/* --- DIALOGE --- */}
             <Dialog open={loginDialogOpen} onClose={() => setLoginDialogOpen(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 4, overflow: 'hidden' } }}>
@@ -1901,7 +1823,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                 </Stack>
                             </Box>
                             
-                            <Tabs value={teaserTab} onChange={(_, val) => setTeaserTab(val)} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile sx={{ mt: 3, '& .MuiTab-root': { color: alpha(darkBlue, 0.56), fontWeight: 900, px: 1.5, whiteSpace: 'nowrap' }, '& .Mui-selected': { color: primaryColor } }} TabIndicatorProps={{ style: { backgroundColor: primaryColor } }}>
+                            <Tabs value={teaserTab} onChange={(_, val) => setTeaserTab(val)} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile textColor="inherit" sx={{ mt: 3, '& .MuiTab-root': { color: alpha(darkBlue, 0.56), fontWeight: 900, px: 1.5, whiteSpace: 'nowrap' }, '& .MuiTab-root.Mui-selected': { color: `${primaryColor} !important` } }} TabIndicatorProps={{ style: { backgroundColor: primaryColor } }}>
                                 <Tab label="Übersicht & Kontakt" />
                                 {Number(selectedTeaserProvider.software_count) > 0 && <Tab value={1} label={`Software (${selectedTeaserProvider.software_count})`} />}
                                 <Tab value={2} label={`Bewertungen (${selectedTeaserProvider.review_count || 0})`} />

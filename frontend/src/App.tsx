@@ -5,7 +5,7 @@ import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider, createTheme, Theme } from '@mui/material/styles';
-import { CssBaseline, Box, CircularProgress } from '@mui/material';
+import { CssBaseline, Box, Button, CircularProgress, Paper, Typography } from '@mui/material';
 import { SnackbarProvider } from './context/SnackbarContext';
 import {
   canUseContentWorkspace,
@@ -22,6 +22,7 @@ const DashboardLayout = lazy(() => import('./components/DashboardLayout'));
 
 // Öffentliche Seiten – lazy, damit sie nicht alle im Hauptbundle landen.
 const PublicPortalPage = lazy(() => import('./pages/PublicPortalPage'));
+const PublicPlatformUpdatesPage = lazy(() => import('./pages/PublicPlatformUpdatesPage'));
 const CareerPage = lazy(() => import('./pages/CareerPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
@@ -60,6 +61,7 @@ const AdminDashboardPage = lazy(() => import('./pages/AdminDashboardPage'));
 const AdminBusinessPartnersPage = lazy(() => import('./pages/AdminBusinessPartnersPage'));
 const AdminUserManagementPage = lazy(() => import('./pages/AdminUserManagementPage'));
 const AdminDemoAccessPage = lazy(() => import('./pages/AdminDemoAccessPage'));
+const AdminPlatformUpdatesPage = lazy(() => import('./pages/AdminPlatformUpdatesPage'));
 const AdminWidgetTypesPage = lazy(() => import('./pages/AdminWidgetTypesPage'));
 const AdminBpWidgetAccessPage = lazy(() => import('./pages/AdminBpWidgetAccessPage'));
 const AdminScrapedContentPage = lazy(() => import('./pages/AdminScrapedContentPage'));
@@ -115,6 +117,67 @@ const LazyRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 const lazyRoute = (element: React.ReactElement) => <LazyRoute>{element}</LazyRoute>;
+
+type RouteErrorState = { error: Error | null; isChunkError: boolean };
+
+const clearStaleFrontendCaches = async () => {
+  if ('serviceWorker' in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+  }
+  if ('caches' in window) {
+    const cacheNames = await caches.keys();
+    const frontendCacheNames = cacheNames.filter((name) => (
+      /workbox|precache|assets-runtime|mobiliti|fleetki/i.test(name)
+    ));
+    await Promise.all(frontendCacheNames.map((name) => caches.delete(name)));
+  }
+};
+
+class RouteLoadErrorBoundary extends React.Component<{ children: React.ReactNode }, RouteErrorState> {
+  state: RouteErrorState = { error: null, isChunkError: false };
+
+  static getDerivedStateFromError(error: Error): RouteErrorState {
+    const message = String(error?.message || error);
+    return { error, isChunkError: /dynamically imported module|module script|outdated optimize dep|loading chunk/i.test(message) };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('Route konnte nicht geladen werden:', error);
+    const message = String(error?.message || error);
+    const isChunkError = /dynamically imported module|module script|outdated optimize dep|loading chunk/i.test(message);
+    if (!isChunkError) return;
+
+    try {
+      const reloadKey = 'mobiliti-route-load-recovery';
+      const lastReload = Number(sessionStorage.getItem(reloadKey) || 0);
+      if (!lastReload || Date.now() - lastReload > 60_000) {
+        sessionStorage.setItem(reloadKey, String(Date.now()));
+        void clearStaleFrontendCaches().finally(() => window.location.reload());
+      }
+    } catch {
+      // Falls Session Storage blockiert ist, bleibt die manuelle Wiederherstellung sichtbar.
+    }
+  }
+
+  recover = () => {
+    try { sessionStorage.removeItem('mobiliti-route-load-recovery'); } catch { /* optional */ }
+    void clearStaleFrontendCaches().finally(() => window.location.reload());
+  };
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', p: 2, bgcolor: 'background.default' }}>
+        <Paper elevation={0} sx={{ width: 'min(100%, 540px)', p: { xs: 3, sm: 4 }, borderRadius: 4, textAlign: 'center', border: '1px solid', borderColor: 'divider' }}>
+          <Typography variant="h5" fontWeight={950}>Ansicht konnte nicht geladen werden</Typography>
+          <Typography color="text.secondary" sx={{ mt: 1, mb: 2.5 }}>{this.state.isChunkError ? 'Die Anwendung wurde aktualisiert oder ein lokaler Browser-Cache ist veraltet.' : 'Beim Darstellen dieser Ansicht ist ein Fehler aufgetreten. Bitte versuchen Sie es erneut.'}</Typography>
+          <Button variant="contained" onClick={this.recover}>{this.state.isChunkError ? 'Version aktualisieren' : 'Erneut versuchen'}</Button>
+        </Paper>
+      </Box>
+    );
+  }
+}
 
 // --- ROUTE GUARDS ---
 const ProtectedRoutes: React.FC = () => {
@@ -256,9 +319,10 @@ function App() {
   return (
     <AnyThemeProvider theme={currentTheme}>
       <CssBaseline />
-      <PwaUpdatePrompt />
-      <Router>
-        <Routes>
+      <RouteLoadErrorBoundary>
+        <PwaUpdatePrompt />
+        <Router>
+          <Routes>
           {/* Öffentliche Routen */}
           <Route path="/" element={lazyRoute(<PublicPortalPage />)} />
           <Route path="/login" element={lazyRoute(<LoginPage />)} />
@@ -278,6 +342,8 @@ function App() {
           <Route path="/assistant/:siteKey" element={lazyRoute(<PublicAssistantEmbedPage />)} />
           <Route path="/account-radar" element={lazyRoute(<AccountRadarProductPage />)} />
           <Route path="/demo/accept" element={lazyRoute(<DemoInvitationPage />)} />
+          <Route path="/plattform-updates" element={lazyRoute(<PublicPlatformUpdatesPage />)} />
+          <Route path="/:partnerSlug/plattform-updates" element={lazyRoute(<PublicPlatformUpdatesPage />)} />
 
           {/* Dynamische Route für Partner-Slugs, z. B. /vfa */}
           <Route path="/:partnerSlug" element={lazyRoute(<PublicPortalPage />)} />
@@ -333,6 +399,7 @@ function App() {
               <Route path="business-partners" element={lazyRoute(<AdminBusinessPartnersPage />)} />
               <Route path="sales-leads" element={lazyRoute(<AdminSalesLeadsPage />)} />
               <Route path="demo-access" element={lazyRoute(<AdminDemoAccessPage />)} />
+              <Route path="platform-updates" element={lazyRoute(<AdminPlatformUpdatesPage />)} />
               <Route path="tracked-articles" element={lazyRoute(<AdminBpTrackedArticlesPage />)} />
               <Route path="widget-types" element={lazyRoute(<AdminWidgetTypesPage />)} />
               <Route path="bp-widget-access" element={lazyRoute(<AdminBpWidgetAccessPage />)} />
@@ -358,10 +425,11 @@ function App() {
 
           {/* Catch-All */}
           <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+          </Routes>
 
-        <CookieBanner />
-      </Router>
+          <CookieBanner />
+        </Router>
+      </RouteLoadErrorBoundary>
     </AnyThemeProvider>
   );
 }

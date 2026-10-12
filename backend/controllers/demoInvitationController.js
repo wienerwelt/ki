@@ -89,10 +89,26 @@ async function demoDashboardConfig(client) {
 
 async function deliverInvitation(id, email, firstName, scenario, token, expiresAt) {
   const url = `${getBaseUrl()}/demo/accept#token=${encodeURIComponent(token)}`;
+  const scenarioGuidance = scenario === 'sales'
+    ? 'Achten Sie besonders auf Arbeitsliste, Trigger-Treffer, Accounts, Sales-Pipeline und Kalender.'
+    : scenario === 'content'
+      ? 'Achten Sie besonders auf Dashboard, Brancheninformationen, Quellen und Community-Inhalte.'
+      : 'Achten Sie besonders auf das Content-Dashboard sowie Arbeitsliste, Trigger-Treffer, Accounts, Sales-Pipeline und Kalender.';
+  const expiresAtLabel = new Date(expiresAt).toLocaleString('de-AT', { timeZone: 'Europe/Vienna' });
   const html = renderLayout({
     title: 'Ihr persönlicher Demo-Zugang',
     preheader: 'Mobiliti AI unverbindlich kennenlernen',
-    contentHtml: `<p>Hallo ${escapeHtml(firstName)},</p><p>Sie wurden zur Mobiliti-AI-Demo für <strong>${escapeHtml(SCENARIOS[scenario].name)}</strong> eingeladen. Sales-Beispiele sind fiktiv; Content zeigt öffentliche Brancheninformationen. Kundendaten anderer Mandanten sind nicht enthalten. Die Umgebung ist schreibgeschützt.</p><p>Der einmalige Einladungslink ist bis ${escapeHtml(new Date(expiresAt).toLocaleString('de-AT', { timeZone: 'Europe/Vienna' }))} gültig.</p>`,
+    contentHtml: `<p>Hallo ${escapeHtml(firstName)},</p>
+      <p>Sie wurden zur Mobiliti-AI-Demo für <strong>${escapeHtml(SCENARIOS[scenario].name)}</strong> eingeladen.</p>
+      <ul>
+        <li><strong>Aktivierung:</strong> Öffnen Sie den persönlichen Link und vergeben Sie ein Passwort mit mindestens 12 Zeichen.</li>
+        <li><strong>Anmeldung:</strong> Danach melden Sie sich mit dieser E-Mail-Adresse im Mobiliti Dashboard an.</li>
+        <li><strong>Laufzeit:</strong> Ihr Zugang endet am ${escapeHtml(expiresAtLabel)}.</li>
+        <li><strong>Daten:</strong> Sales-Beispiele sind fiktiv; Content zeigt öffentliche Brancheninformationen. Kundendaten anderer Mandanten sind nicht enthalten.</li>
+        <li><strong>Demo-Schutz:</strong> Änderungen, KI-Anfragen, Exporte und Versand sind deaktiviert.</li>
+      </ul>
+      <p><strong>Empfohlener Rundgang:</strong> ${escapeHtml(scenarioGuidance)}</p>
+      <p>Der Aktivierungslink ist persönlich und nur einmal verwendbar. Bitte leiten Sie ihn nicht weiter.</p>`,
     ctaLabel: 'Demo-Zugang aktivieren',
     ctaUrl: url,
     footerText: 'Falls Sie diese Einladung nicht erwartet haben, ignorieren Sie diese E-Mail.',
@@ -140,7 +156,10 @@ exports.create = async (req, res) => {
   try {
     await client.query('BEGIN');
     const existing = await client.query(
-      `SELECT u.id, u.role, u.business_partner_id, bp.is_demo_tenant, bp.demo_scenario
+      `SELECT u.id, u.role, u.business_partner_id, u.email, bp.name AS business_partner_name,
+              bp.is_demo_tenant, bp.demo_scenario,
+              (SELECT i.id FROM demo_invitations i WHERE i.user_id = u.id
+               ORDER BY i.created_at DESC LIMIT 1) AS demo_invitation_id
        FROM users u LEFT JOIN business_partners bp ON bp.id = u.business_partner_id
        WHERE LOWER(u.email) = $1 OR LOWER(u.username) = $1 FOR UPDATE OF u`, [email]
     );
@@ -149,7 +168,20 @@ exports.create = async (req, res) => {
       const previous = existing.rows[0];
       if (previous.role !== 'demo' || previous.is_demo_tenant !== true || previous.demo_scenario !== scenario) {
         await client.query('ROLLBACK');
-        return res.status(409).json({ message: 'Diese E-Mail ist bereits einem anderen Zugang zugeordnet.' });
+        const existingDemo = previous.role === 'demo' && previous.is_demo_tenant === true;
+        const scenarioName = SCENARIOS[previous.demo_scenario]?.name || previous.demo_scenario || 'unbekannt';
+        const managementPath = existingDemo && previous.demo_invitation_id
+          ? `/admin/demo-access?focus=${encodeURIComponent(previous.demo_invitation_id)}`
+          : `/admin/users?search=${encodeURIComponent(email)}`;
+        return res.status(409).json({
+          message: existingDemo
+            ? `Diese E-Mail gehört bereits zu einem Demo-Zugang „${scenarioName}“. Verwalten oder löschen Sie zuerst den vorhandenen Demo-Zugang.`
+            : `Diese E-Mail gehört bereits zu einem Benutzer${previous.business_partner_name ? ` im Mandanten „${previous.business_partner_name}“` : ''} (Rolle: ${previous.role}). Verwalten Sie den vorhandenen Benutzer oder verwenden Sie eine andere E-Mail-Adresse.`,
+          management: {
+            path: managementPath,
+            label: existingDemo ? 'Vorhandenen Demo-Zugang öffnen' : 'Benutzerverwaltung öffnen',
+          },
+        });
       }
       userId = previous.id;
       await client.query(
@@ -266,6 +298,44 @@ exports.revoke = async (req, res) => {
     await client.query('ROLLBACK');
     console.error('[demo-invitations] revoke:', error);
     return res.status(500).json({ message: 'Widerruf fehlgeschlagen.' });
+  } finally {
+    client.release();
+  }
+};
+
+exports.remove = async (req, res) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `SELECT i.user_id, u.business_partner_id
+       FROM demo_invitations i JOIN users u ON u.id = i.user_id
+       JOIN business_partners bp ON bp.id = u.business_partner_id
+       WHERE i.id = $1 AND u.role = 'demo' AND bp.is_demo_tenant = TRUE
+       FOR UPDATE OF i, u, bp`, [req.params.id]
+    );
+    const demo = result.rows[0];
+    if (!demo) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Demo-Einladung nicht gefunden.' });
+    }
+
+    // Ein Listen-Eintrag repraesentiert einen vollstaendigen, isolierten Demo-Zugang.
+    // Deshalb werden Benutzer und Demo-Mandant gemeinsam entfernt, damit kein
+    // aktiver oder verwaister Zugang ausserhalb der Admin-Uebersicht bestehen bleibt.
+    await client.query('DELETE FROM activity_log WHERE user_id = $1', [demo.user_id]);
+    await client.query('DELETE FROM dashboard_configurations WHERE user_id = $1', [demo.user_id]);
+    await client.query("DELETE FROM users WHERE id = $1 AND role = 'demo'", [demo.user_id]);
+    await client.query(
+      'DELETE FROM business_partners WHERE id = $1 AND is_demo_tenant = TRUE',
+      [demo.business_partner_id]
+    );
+    await client.query('COMMIT');
+    return res.json({ message: 'Demo-Zugang und zugehöriger Demo-Mandant wurden gelöscht.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('[demo-invitations] delete:', error);
+    return res.status(500).json({ message: 'Demo-Zugang konnte nicht gelöscht werden.' });
   } finally {
     client.release();
   }

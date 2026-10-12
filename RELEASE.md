@@ -271,11 +271,11 @@ Das Release-Skript erzwingt zusätzlich einen sauberen `main`, merkt sich den Co
 
    Im PowerShell-Fenster mit dem laufenden Frontend zuerst `Strg+C` drücken. Danach in einem PowerShell-Fenster ausführen:
 
-   ```powershell
-   Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
-   docker compose stop
-   docker compose ps
-   ```
+```powershell
+Set-Location 'C:\DATEN\WWW\projekte-App\dashboard'
+docker compose stop
+docker compose ps
+```
 
    `docker compose stop` erhält Datenbank, Redis-Daten und Uploads. Docker Desktop darf anschließend beendet werden. Niemals `docker compose down -v` verwenden.
 

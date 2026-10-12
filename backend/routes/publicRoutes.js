@@ -7,6 +7,8 @@ const fileController = require('../controllers/fileController');
 const softwareController = require('../controllers/softwareController');
 const publicAiAssistantController = require('../controllers/publicAiAssistantController');
 const accountRadarController = require('../controllers/accountRadarController');
+const platformUpdateController = require('../controllers/platformUpdateController');
+const publicCompanyController = require('../controllers/publicCompanyController');
 
 const contactFormLimiter = rateLimit({
     // Kontaktformular bewusst strenger als die übrigen Public-Routen:
@@ -51,7 +53,11 @@ const publicAssistantConfigLimiter = rateLimit({
 // --- 1. BRANDING & KONTEXT ---
 router.get('/context', publicController.getPublicContext);
 router.get('/career', publicSearchLimiter, require('../controllers/careerController').publicList);
+router.get('/career-jobs', publicSearchLimiter, require('../controllers/careerController').publicJobs);
 router.get('/career/:partnerId/:id/photo', publicSearchLimiter, require('../controllers/careerController').photo);
+router.get('/platform-updates', publicSearchLimiter, platformUpdateController.publicList);
+router.get('/companies', publicSearchLimiter, publicCompanyController.search);
+router.get('/companies/:id', publicSearchLimiter, publicCompanyController.detail);
 
 // Homepagebasierter, strikt mandantenspezifischer Public-Assistent.
 // Das eigentliche Fragen-/Tokenbudget wird transaktionssicher je Mandant,
@@ -92,5 +98,6 @@ router.get('/directory', publicSearchLimiter, publicController.getPublicDirector
 router.get('/software', publicSearchLimiter, softwareController.getPublicCatalog);
 router.get('/economic-statistics', publicController.getPublicEconomicStatistics);
 router.get('/economic-statistics/countries', publicController.getPublicEconomicStatCountries);
+router.get('/registration-highlights', publicController.getPublicRegistrationHighlights);
 
 module.exports = router;

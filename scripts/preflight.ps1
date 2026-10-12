@@ -3,7 +3,7 @@ param(
     [switch]$SkipHealthCheck,
     [switch]$SkipSmokeTests,
     [ValidateRange(1, 100)]
-    [double]$MinimumFreeGiB = 5,
+    [double]$MinimumFreeGiB = 20,
     [switch]$PreserveDependencyVolumes
 )
 
@@ -28,7 +28,10 @@ function Assert-LocalReleaseDiskSpace {
         if (-not $releaseDrive.IsReady) { throw "Release-Laufwerk nicht verfügbar: $releaseDriveRoot" }
         $releaseFreeGiB = [math]::Round($releaseDrive.AvailableFreeSpace / 1GB, 2)
         if ($releaseDrive.AvailableFreeSpace -lt ($MinimumFreeGiB * 1GB)) {
-            throw "STOPP: $releaseDriveRoot hat nur $releaseFreeGiB GiB frei. Mindestens $MinimumFreeGiB GiB, für den ersten Docker-Build möglichst 10 GiB freigeben. Keine Docker-Volumes oder fremden Projekte löschen."
+            throw "STOPP: $releaseDriveRoot hat nur $releaseFreeGiB GiB frei. Mindestens $MinimumFreeGiB GiB sind für einen vollständigen Docker-Build erforderlich; empfohlen sind 30 GiB. Keine Docker-Volumes oder fremden Projekte löschen."
+        }
+        if ($releaseDrive.AvailableFreeSpace -lt (30 * 1GB)) {
+            Write-Warning "$releaseDriveRoot hat nur $releaseFreeGiB GiB frei. Vor dem Release werden mindestens 30 GiB empfohlen."
         }
         Write-Host "  Freier lokaler Speicher ${releaseDriveRoot}: $releaseFreeGiB GiB"
     }
@@ -249,6 +252,7 @@ try {
             'smoke:scraping-rules',
             'smoke:article-oem-logos',
             'smoke:career',
+            'smoke:company-career-jobs',
             'smoke:public-file-links',
             'smoke:public-profile-privacy',
             'smoke:newsletter-delivery',
@@ -262,6 +266,7 @@ try {
             'smoke:account-radar-external-sources',
             'smoke:account-radar-integrations',
             'smoke:demo-invitations',
+            'smoke:platform-updates',
             'smoke:tenant-modules',
             'smoke:sales-plans',
             'smoke:sales-lifecycle',

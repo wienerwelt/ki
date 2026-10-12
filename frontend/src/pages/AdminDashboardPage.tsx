@@ -30,6 +30,7 @@ import ShareIcon from '@mui/icons-material/Share';
 import StorefrontIcon from '@mui/icons-material/Storefront'; // ✅ NEU: Icon für Branchenverzeichnis
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EmailIcon from '@mui/icons-material/Email';
+import NewReleasesOutlinedIcon from '@mui/icons-material/NewReleasesOutlined';
 
 const AdminDashboardPage: React.FC = () => {
     return (
@@ -42,6 +43,14 @@ const AdminDashboardPage: React.FC = () => {
                 </Typography>
 
                 <Grid container spacing={3}>
+                    <Grid item xs={12} sm={6} md={4}>
+                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <NewReleasesOutlinedIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
+                            <Typography variant="h6" component="h2" gutterBottom>Plattform-Updates</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Neuerungen einmal zentral pflegen und dauerhaft für alle Mandanten bereitstellen.</Typography>
+                            <Button component={Link} to="/admin/platform-updates" variant="contained" color="primary">Updates verwalten</Button>
+                        </Paper>
+                    </Grid>
                     {/* ✅ NEU: Tages-Briefing Redaktion */}
                     <Grid item xs={12} sm={6} md={4}>
                         <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>

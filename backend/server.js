@@ -65,6 +65,7 @@ const adminBpAccountsRoutes = require('./routes/adminBpAccountsRoutes.js');
 const adminBpCompetitorsRoutes = require('./routes/adminBpCompetitorsRoutes.js');
 const adminUserRoutes = require('./routes/adminUserRoutes.js');
 const adminDemoInvitationRoutes = require('./routes/adminDemoInvitationRoutes.js');
+const adminPlatformUpdateRoutes = require('./routes/adminPlatformUpdateRoutes.js');
 const adminScrapingRulesRoutes = require('./routes/adminScrapingRulesRoutes.js');
 const adminScrapedContentRoutes = require('./routes/adminScrapedContentRoutes.js');
 const adminAIPromptRulesRoutes = require('./routes/adminAIPromptRulesRoutes.js');
@@ -261,6 +262,7 @@ app.use('/api/admin/accounts', adminBpAccountsRoutes);
 app.use('/api/admin/competitors', adminBpCompetitorsRoutes);
 app.use('/api/admin/users', adminUserRoutes);
 app.use('/api/admin/demo-invitations', adminDemoInvitationRoutes);
+app.use('/api/admin/platform-updates', adminPlatformUpdateRoutes);
 app.use('/api/admin/scraped-content', adminScrapedContentRoutes);
 app.use('/api/admin/scraping-rules', adminScrapingRulesRoutes);
 app.use('/api/admin/ai-prompt-rules', adminAIPromptRulesRoutes);
@@ -355,9 +357,18 @@ app.get('/sitemap.xml', async (req, res, next) => {
         <loc>${escapeSeoHtml(`${publicDashboardOrigin}/${encodeURIComponent(partner.slug)}`)}</loc>
         <lastmod>${new Date(partner.updated_at || Date.now()).toISOString()}</lastmod>
         <changefreq>weekly</changefreq>
+      </url>
+      <url>
+        <loc>${escapeSeoHtml(`${publicDashboardOrigin}/${encodeURIComponent(partner.slug)}/plattform-updates`)}</loc>
+        <lastmod>${new Date(partner.updated_at || Date.now()).toISOString()}</lastmod>
+        <changefreq>monthly</changefreq>
       </url>`).join('');
     res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
-      <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}
+      <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url>
+        <loc>${escapeSeoHtml(`${publicDashboardOrigin}/plattform-updates`)}</loc>
+        <changefreq>monthly</changefreq>
+      </url>${urls}
       </urlset>`);
   } catch (error) {
     next(error);
@@ -368,8 +379,23 @@ app.get('*', async (req, res, next) => {
   try {
     let html = await fs.promises.readFile(frontendIndexPath, 'utf8');
     const pathParts = req.path.split('/').filter(Boolean);
-    const slug = pathParts.length === 1 ? decodeURIComponent(pathParts[0]).toLowerCase() : '';
-    const reservedPaths = new Set(['login', 'register', 'dashboard', 'community', 'privacy', 'terms', 'disclaimer', 'cookie-settings']);
+    const isGlobalPlatformUpdatesPage = pathParts.length === 1 && pathParts[0].toLowerCase() === 'plattform-updates';
+    const isPlatformUpdatesPage = pathParts.length === 2 && pathParts[1].toLowerCase() === 'plattform-updates';
+    const slug = (pathParts.length === 1 || isPlatformUpdatesPage) ? decodeURIComponent(pathParts[0]).toLowerCase() : '';
+    const reservedPaths = new Set(['login', 'register', 'dashboard', 'community', 'privacy', 'terms', 'disclaimer', 'cookie-settings', 'plattform-updates']);
+
+    if (isGlobalPlatformUpdatesPage) {
+      const canonicalUrl = `${publicDashboardOrigin}/plattform-updates`;
+      const title = 'Neu im Mitglieder-Dashboard | Mobiliti';
+      const description = 'Neue Funktionen und Verbesserungen im Mobiliti Mitglieder-Dashboard – verständlich erklärt und dauerhaft zum Nachlesen.';
+      html = html
+        .replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeSeoHtml(title)}</title>`)
+        .replace(/<meta name="description"[^>]*>/i, `<meta name="description" content="${escapeSeoHtml(description)}" />`)
+        .replace(/<meta property="og:title"[^>]*>/i, `<meta property="og:title" content="${escapeSeoHtml(title)}" />`)
+        .replace(/<meta property="og:description"[^>]*>/i, `<meta property="og:description" content="${escapeSeoHtml(description)}" />`)
+        .replace(/<meta property="og:url"[^>]*>/i, `<meta property="og:url" content="${escapeSeoHtml(canonicalUrl)}" />`)
+        .replace('</head>', `<link rel="canonical" href="${escapeSeoHtml(canonicalUrl)}" />\n  </head>`);
+    }
 
     if (slug && !reservedPaths.has(slug) && /^[a-z0-9_-]{1,120}$/.test(slug)) {
       const partnerResult = await db.query(`
@@ -380,9 +406,13 @@ app.get('*', async (req, res, next) => {
       `, [slug]);
       const partner = partnerResult.rows[0];
       if (partner) {
-        const canonicalUrl = `${publicDashboardOrigin}/${encodeURIComponent(partner.slug)}`;
-        const title = `${partner.dashboard_title || partner.name} | Branchenverzeichnis & Software-Lexikon`;
-        const description = `${partner.name}: öffentliches Branchenverzeichnis, Software-Lexikon, Termine und ausgewählte Brancheninformationen.`.slice(0, 160);
+        const canonicalUrl = `${publicDashboardOrigin}/${encodeURIComponent(partner.slug)}${isPlatformUpdatesPage ? '/plattform-updates' : ''}`;
+        const title = isPlatformUpdatesPage
+          ? `Neu im Mitglieder-Dashboard | ${partner.name}`
+          : `${partner.dashboard_title || partner.name} | Branchennetzwerk & Software-Lexikon`;
+        const description = isPlatformUpdatesPage
+          ? `Neue Funktionen und Verbesserungen im Mitglieder-Dashboard von ${partner.name} – verständlich erklärt und dauerhaft zum Nachlesen.`.slice(0, 160)
+          : `${partner.name}: öffentliches Branchennetzwerk, Software-Lexikon, Termine und ausgewählte Brancheninformationen.`.slice(0, 160);
         const logo = partner.logo_url && /^https?:\/\//i.test(partner.logo_url)
           ? partner.logo_url
           : `${publicDashboardOrigin}${partner.logo_url && partner.logo_url.startsWith('/') ? partner.logo_url : '/og-image.jpg'}`;

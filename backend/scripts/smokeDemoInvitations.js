@@ -135,6 +135,21 @@ async function run() {
   assert(record.delivery_status === 'sent', 'Einladungsstatus wurde nicht auf gesendet gesetzt.');
   assert(record.enabled_modules.includes('content') && record.enabled_modules.includes('sales'), 'Demo-Module sind unvollstaendig.');
 
+  const conflictRes = responseRecorder();
+  await controller.create({
+    user: { id: adminResult.rows[0].id },
+    body: {
+      email,
+      first_name: 'Demo',
+      last_name: 'Smoke',
+      organization_name: 'Demo Smoke Organisation',
+      scenario: 'sales',
+      days: 7,
+    },
+  }, conflictRes);
+  assert(conflictRes.statusCode === 409, 'Abweichendes Demo-Szenario wurde fuer dieselbe E-Mail zugelassen.');
+  assert(/\/admin\/demo-access\?focus=/.test(String(conflictRes.body?.management?.path)), 'Konflikthinweis enthaelt keinen direkten Verwaltungslink.');
+
   const sampleResult = await db.query(
     `SELECT COUNT(DISTINCT account.id)::int AS accounts,
             COUNT(article.id)::int AS signals
@@ -202,7 +217,16 @@ async function run() {
   });
   assert(revokedLogin.response.status === 403, 'Widerruf sperrt den erneuten Login nicht.');
 
-  console.log('Demo-Einladungen: Isolation, Aktivierung, Einmal-Token, Login, Lesezugriff, Schreib-/Exportsperre und Widerruf OK.');
+  const deleteRes = responseRecorder();
+  await controller.remove({ params: { id: record.invitation_id } }, deleteRes);
+  assert(deleteRes.statusCode === 200, 'Demo-Zugang konnte nicht geloescht werden.');
+  const deleted = await db.query(
+    'SELECT COUNT(1)::int AS count FROM users WHERE id = $1 OR business_partner_id = $2',
+    [userId, partnerId]
+  );
+  assert(deleted.rows[0].count === 0, 'Demo-Benutzer oder Demo-Mandant blieb nach dem Loeschen bestehen.');
+
+  console.log('Demo-Einladungen: Isolation, Aktivierung, Einmal-Token, Login, Lesezugriff, Schreib-/Exportsperre, Widerruf und Loeschen OK.');
 }
 
 run()

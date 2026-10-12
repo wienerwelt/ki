@@ -22,5 +22,6 @@ router.get('/', controller.list);
 router.post('/', inviteLimiter, controller.create);
 router.post('/:id/resend', inviteLimiter, controller.resend);
 router.post('/:id/revoke', controller.revoke);
+router.delete('/:id', controller.remove);
 
 module.exports = router;

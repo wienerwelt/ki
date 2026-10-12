@@ -45,6 +45,7 @@ import ContactMailOutlinedIcon from '@mui/icons-material/ContactMailOutlined';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import ViewListOutlinedIcon from '@mui/icons-material/ViewListOutlined';
 import TimelineOutlinedIcon from '@mui/icons-material/TimelineOutlined';
+import NewReleasesOutlinedIcon from '@mui/icons-material/NewReleasesOutlined';
 
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -566,6 +567,10 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItem button component={RouterLink} to="/admin/social-media">
                                 <ListItemIcon><ShareIcon /></ListItemIcon>
                                 <ListItemText primary="Social Media" />
+                            </ListItem>
+                            <ListItem button component={RouterLink} to="/admin/platform-updates">
+                                <ListItemIcon><NewReleasesOutlinedIcon /></ListItemIcon>
+                                <ListItemText primary="Plattform-Updates" secondary="Infos für Mandanten" />
                             </ListItem>
                             <ListItem button component={RouterLink} to="/admin/actions">
                                 <ListItemIcon>
