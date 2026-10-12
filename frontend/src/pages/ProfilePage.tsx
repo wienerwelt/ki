@@ -1,5 +1,6 @@
 // frontend/src/pages/ProfilePage.tsx
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Container, Typography, Paper, Tabs, Tab, Box, Alert, CircularProgress, Stack } from '@mui/material';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import TuneIcon from '@mui/icons-material/Tune';
@@ -38,10 +39,20 @@ function CustomTabPanel(props: TabPanelProps) {
 const ProfilePage: React.FC = () => {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState(0);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const tabFromQuery = requestedTab === 'topics' ? 1 : requestedTab === 'email' ? 2 : requestedTab === 'security' ? 3 : 0;
+  const [activeTab, setActiveTab] = useState(tabFromQuery);
+
+  useEffect(() => setActiveTab(tabFromQuery), [tabFromQuery]);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setActiveTab(newValue);
+    const next = new URLSearchParams(searchParams);
+    const tabKeys = ['profile', 'topics', 'email', 'security'];
+    if (newValue === 0) next.delete('tab');
+    else next.set('tab', tabKeys[newValue]);
+    setSearchParams(next, { replace: true });
   };
 
   if (!user) {

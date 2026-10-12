@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Box, FormControlLabel, Paper, Snackbar, Stack, Switch, Typography } from '@mui/material';
+import { Alert, Box, Button, FormControlLabel, Paper, Snackbar, Stack, Switch, Typography } from '@mui/material';
 import MarkEmailReadOutlinedIcon from '@mui/icons-material/MarkEmailReadOutlined';
 import NewspaperOutlinedIcon from '@mui/icons-material/NewspaperOutlined';
 import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
@@ -9,11 +9,18 @@ import apiClient from '../apiClient';
 
 const ProfileTabNotifications: React.FC<{ user: any; isDemoUser: boolean }> = ({ user, isDemoUser }) => {
   const { t } = useTranslation();
-  const { updateUser } = useAuth();
+  const { updateUser, businessPartner } = useAuth();
   const [newsletterOptIn, setNewsletterOptIn] = useState(Boolean(user.newsletter_opt_in));
   const [briefingEnabled, setBriefingEnabled] = useState(Boolean(user.briefing_email_enabled));
   const [memberNewsletterEnabled, setMemberNewsletterEnabled] = useState(Boolean(user.member_newsletter_enabled));
   const [snackbar, setSnackbar] = useState({ open: false, message: '' });
+  const deliveryMode = businessPartner?.newsletter_delivery_mode || 'mobiliti';
+  const externalSignupUrl = /^https?:\/\//i.test(businessPartner?.newsletter_external_signup_url || '')
+    ? businessPartner?.newsletter_external_signup_url || undefined
+    : undefined;
+  const directBriefingAllowed = businessPartner?.allow_automated_newsletter !== false
+    && deliveryMode === 'mobiliti'
+    && businessPartner?.newsletter_frequency !== 'never';
 
   useEffect(() => {
     setNewsletterOptIn(Boolean(user.newsletter_opt_in));
@@ -66,6 +73,17 @@ const ProfileTabNotifications: React.FC<{ user: any; isDemoUser: boolean }> = ({
       {user.newsletter_email_enabled === false && (
         <Alert severity="info">Der Newsletter-Empfang ist administrativ pausiert. Ihre Einwilligung und Abonnements bleiben gespeichert. Bitte wenden Sie sich für die Freigabe an den Admin.</Alert>
       )}
+      {!directBriefingAllowed && deliveryMode === 'external' && (
+        <Alert severity="info" action={externalSignupUrl ? <Button color="inherit" component="a" href={externalSignupUrl} target="_blank" rel="noopener noreferrer">Extern anmelden</Button> : undefined}>
+          Das Branchenbriefing wird über das Newsletter-System Ihrer Organisation verwaltet.
+        </Alert>
+      )}
+      {!directBriefingAllowed && deliveryMode === 'export' && (
+        <Alert severity="info">Das Branchenbriefing wird zentral durch Ihre Organisation verteilt. Eine persönliche Freischaltung ist hier nicht erforderlich.</Alert>
+      )}
+      {!directBriefingAllowed && deliveryMode === 'mobiliti' && (
+        <Alert severity="warning">Der E-Mail-Versand des Branchenbriefings ist derzeit zentral gesperrt. Die Freigabe kann nur durch den Mandanten-Admin erfolgen.</Alert>
+      )}
       <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 3 }}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }}>
           <Stack direction="row" spacing={1.5} alignItems="center">
@@ -90,7 +108,7 @@ const ProfileTabNotifications: React.FC<{ user: any; isDemoUser: boolean }> = ({
             <NewspaperOutlinedIcon color="primary" sx={{ mt: 0.5 }} />
             <Box sx={{ flex: 1 }}>
               <FormControlLabel
-                control={<Switch checked={briefingEnabled} disabled={isDemoUser || !newsletterOptIn} onChange={(event) => { setBriefingEnabled(event.target.checked); void savePreference('briefing_email_enabled', event.target.checked); }} />}
+                control={<Switch checked={briefingEnabled} disabled={isDemoUser || !newsletterOptIn || !directBriefingAllowed} onChange={(event) => { setBriefingEnabled(event.target.checked); void savePreference('briefing_email_enabled', event.target.checked); }} />}
                 label={<Typography fontWeight={700}>Branchenbriefing erhalten</Typography>}
               />
               <Typography variant="body2" color="text.secondary">Regelmäßige Zusammenfassungen mit relevanten Brancheninformationen.</Typography>

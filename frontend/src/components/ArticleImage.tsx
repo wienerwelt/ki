@@ -39,8 +39,8 @@ const ArticleImage: React.FC<ArticleImageProps> = ({ src, alt, variant = 'previe
                     <Box component="img" src={src} alt="" aria-hidden="true" loading="lazy" decoding="async"
                         sx={{
                             position: 'absolute', inset: 0, width: '100%', height: '100%',
-                            objectFit: 'cover', filter: 'blur(14px)', transform: 'scale(1.08)',
-                            opacity: 0.22, pointerEvents: 'none',
+                            objectFit: 'cover', filter: 'blur(10px)', transform: 'scale(1.05)',
+                            opacity: 0.32, pointerEvents: 'none',
                         }} />
                 )}
                 <Box component="img" src={src} alt={alt} loading="lazy" decoding="async"

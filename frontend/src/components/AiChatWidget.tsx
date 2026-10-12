@@ -126,13 +126,13 @@ export const AiChatWidget: React.FC = () => {
           bottom: { xs: 96, sm: 24 },
           right: { xs: 16, sm: 24 },
           zIndex: 1500,
-          width: { xs: 58, sm: 56 },
-          height: { xs: 58, sm: 56 },
+          width: { xs: 66, sm: 74 },
+          height: { xs: 66, sm: 74 },
           display: { xs: isOpen || isDashboardWidgetMenuOpen ? 'none' : 'inline-flex', sm: 'inline-flex' },
           boxShadow: 8,
         }}
       >
-        {isOpen ? <CloseIcon /> : <Avatar src={assistantAvatarUrl} sx={{ width: 46, height: 46 }} />}
+        {isOpen ? <CloseIcon /> : <Avatar src={assistantAvatarUrl} sx={{ width: '100%', height: '100%', '& img': { objectFit: 'cover', objectPosition: 'center top' } }} />}
       </Fab>
 
       {isOpen && (
@@ -174,7 +174,7 @@ export const AiChatWidget: React.FC = () => {
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
               <Avatar
                 src={assistantAvatarUrl}
-                sx={{ width: { xs: 38, sm: 40 }, height: { xs: 38, sm: 40 }, flexShrink: 0 }}
+                sx={{ width: 52, height: 52, flexShrink: 0, '& img': { objectFit: 'cover', objectPosition: 'center top' } }}
               />
               <Box sx={{ minWidth: 0 }}>
                 <Typography variant="subtitle1" fontWeight="bold" noWrap>

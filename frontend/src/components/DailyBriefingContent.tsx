@@ -3,16 +3,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Typography, Link as MuiLink, FormControlLabel, Switch, Tooltip, 
-  CircularProgress, Button, Grid, Paper, Stack, Chip, IconButton, Fade, useTheme, Divider
+  CircularProgress, Button, Grid, Paper, Stack, Chip, IconButton, useTheme, Divider
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import RadarIcon from '@mui/icons-material/Radar';
 import GavelIcon from '@mui/icons-material/Gavel';
-import MonetizationOnIcon from '@mui/icons-material/MonetizationOn';
 import WhatshotIcon from '@mui/icons-material/Whatshot';
-import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ThumbUpOutlinedIcon from '@mui/icons-material/ThumbUpOutlined';
@@ -26,6 +26,7 @@ import apiClient from '../apiClient';
 import { useAuth } from '../context/AuthContext';
 import { useSnackbar } from '../context/SnackbarContext';
 import AiContentLabel from './AiContentLabel';
+import { canUseContentWorkspace, canUseSalesWorkspace } from '../utils/workspaceAccess';
 
 // --- Interfaces ---
 interface BriefingItem {
@@ -117,8 +118,9 @@ const CopyButton: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
-const DailyBriefingContent: React.FC = () => {
+const DailyBriefingContent: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
   const theme = useTheme();
+  const navigate = useNavigate();
   const [data, setData] = useState<CockpitData | null>(null);
   const [loading, setLoading] = useState(true);
   const { user, updateUser, businessPartner } = useAuth();
@@ -134,6 +136,10 @@ const DailyBriefingContent: React.FC = () => {
   
   // DYNAMISCHER TRIGGER: Sales vs. Information
   const dashboardFocus = businessPartner?.dashboard_focus || 'information';
+  const hasContentAccess = canUseContentWorkspace(user, businessPartner);
+  const hasSalesPremium = canUseSalesWorkspace(user, businessPartner)
+    && (businessPartner?.sales_plan || user?.tenant_sales_plan) === 'premium'
+    && (businessPartner?.sales_access_active ?? user?.tenant_sales_access_active ?? true);
   const currentDateLabel = new Intl.DateTimeFormat('de-AT', {
     timeZone: 'Europe/Vienna',
     weekday: 'long',
@@ -183,6 +189,11 @@ const DailyBriefingContent: React.FC = () => {
     }
   };
 
+  const openEmailSettings = () => {
+    onClose?.();
+    navigate('/profile?tab=email');
+  };
+
   // --- DATEN-EXTRAKTION ---
   const names = data?.linkable_names || [];
   const salesTriggers = data?.sales_triggers || [];
@@ -197,8 +208,9 @@ const DailyBriefingContent: React.FC = () => {
     ? items.filter(i => i.briefing_type === 'regulation')
     : (legacyBriefing.regulation_and_funding || []).map((i: any) => ({ headline: i.title, analysis_summary: i.summary, talking_point: i.action, related_articles: JSON.stringify(i.source ? [i.source] : []) }));
 
-  const isLocked = data?.hasVotedToday === false;
-  const hasAnyData = topInsights.length > 0 || regulations.length > 0 || salesTriggers.length > 0;
+  const hasContentInsights = topInsights.length > 0 || regulations.length > 0;
+  const showContentArea = hasContentAccess || hasContentInsights;
+  const hasAnyData = showContentArea || salesTriggers.length > 0 || hasSalesPremium;
 
   const readTime = useMemo(() => {
     const allText = [
@@ -237,9 +249,17 @@ const DailyBriefingContent: React.FC = () => {
   const TopInsightsBlock = () => (
     <Paper sx={{ p: 3, borderRadius: 4, height: '100%', border: '1px solid', borderColor: 'divider', boxShadow: '0 4px 20px rgba(0,0,0,0.03)' }}>
       <Typography variant="h6" sx={{ fontWeight: 800, mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>
-        <LightbulbOutlinedIcon color="primary" /> Strategische Insights
+        <DashboardIcon color="primary" /> Content Insights
       </Typography>
       <Stack spacing={4}>
+        {topInsights.length === 0 && regulations.length === 0 && (
+          <Box sx={{ p: 2.5, borderRadius: 3, bgcolor: alpha(theme.palette.primary.main, 0.05), border: `1px solid ${alpha(theme.palette.primary.main, 0.16)}` }}>
+            <Typography fontWeight={850}>Heute noch keine neuen CONTENT-Insights.</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              Neue veröffentlichte Brancheninformationen erscheinen hier automatisch.
+            </Typography>
+          </Box>
+        )}
         {topInsights.map((ins: any, idx: number) => (
           <Box key={idx} sx={{ position: 'relative', pl: 2, borderLeft: '3px solid', borderColor: 'primary.main' }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.3, mb: 1 }}>{ins.headline}</Typography>
@@ -279,35 +299,20 @@ const DailyBriefingContent: React.FC = () => {
   const SalesTriggersBlock = () => (
     <Paper sx={{ p: 3, borderRadius: 4, height: '100%', border: '1px solid', borderColor: 'divider', boxShadow: '0 4px 20px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
       <Typography variant="h6" sx={{ fontWeight: 800, mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>
-        <MonetizationOnIcon color="success" /> Sales Intelligence
+        <RadarIcon color="success" /> Sales Intelligence
       </Typography>
-      
-      {isLocked && (
-          <Fade in={isLocked}>
-            <Box sx={{ 
-                position: 'absolute', top: 60, left: 0, right: 0, bottom: 0, zIndex: 10,
-                backdropFilter: 'blur(6px)', backgroundColor: 'rgba(255,255,255,0.6)',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', p: 3, textAlign: 'center'
-            }}>
-                <Box sx={{ bgcolor: 'background.paper', p: 4, borderRadius: 4, boxShadow: '0 10px 40px rgba(0,0,0,0.15)' }}>
-                    <LockOutlinedIcon color="primary" sx={{ fontSize: 48, mb: 2 }} />
-                    <Typography variant="h5" sx={{ fontWeight: 900, mb: 1 }}>Leads & Pitches gesperrt</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3, maxWidth: 300, mx: 'auto' }}>Helfen Sie der Community mit einer kurzen Abstimmung, um diese handlungsorientierten Leads freizuschalten.</Typography>
-                    <Button 
-                        variant="contained" 
-                        size="large"
-                        // DUMMY UI-Aktion
-                        onClick={() => showSnackbar('Hier öffnet sich später das Abstimmungs-Modal!', 'info')} 
-                        sx={{ borderRadius: 8, px: 4, fontWeight: 'bold' }}
-                    >
-                        Jetzt abstimmen
-                    </Button>
-                </Box>
-            </Box>
-          </Fade>
-      )}
-
-      <Stack spacing={3} sx={{ filter: isLocked ? 'blur(5px)' : 'none', transition: 'filter 0.3s' }}>
+      <Stack spacing={3}>
+        {salesTriggers.length === 0 && (
+          <Box sx={{ p: 2.5, borderRadius: 3, bgcolor: alpha(theme.palette.success.main, 0.06), border: `1px solid ${alpha(theme.palette.success.main, 0.18)}` }}>
+            <Typography fontWeight={850}>Heute noch keine neuen Sales-Signale.</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
+              Neue Account- und Trigger-Treffer erscheinen hier automatisch. Bestehende Vorgänge bleiben im Sales-Radar verfügbar.
+            </Typography>
+            <Button size="small" variant="outlined" onClick={() => window.location.assign('/radar')} startIcon={<RadarIcon />}>
+              Sales-Radar öffnen
+            </Button>
+          </Box>
+        )}
         {salesTriggers.map((trigger: any, idx: number) => {
           // DUMMY UI: Fake-Scoring generieren
           const isHot = idx % 2 === 0;
@@ -407,26 +412,16 @@ const DailyBriefingContent: React.FC = () => {
 
         {/* BENTO GRID (Dynamisch nach Fokus & Datenverfügbarkeit) */}
         <Grid container spacing={3}>
-            {dashboardFocus === 'sales' ? (
+            {dashboardFocus === 'sales' && hasSalesPremium ? (
                 // --- SALES MODUS (Hunter) ---
                 <>
-                    {salesTriggers.length > 0 ? (
-                        <>
-                            <Grid item xs={12} md={6}>
-                                <SalesTriggersBlock />
-                            </Grid>
-                            <Grid item xs={12} md={6}>
-                                <Stack spacing={3} sx={{ height: '100%' }}>
-                                    {topInsights.length > 0 && <TopInsightsBlock />}
-                                    {regulations.length > 0 && <RegulationsBlock />}
-                                </Stack>
-                            </Grid>
-                        </>
-                    ) : (
-                        // Fallback, wenn Sales-Fokus aktiv, aber heute keine Leads da sind -> Volle Breite
-                        <Grid item xs={12}>
+                    <Grid item xs={12} md={6}>
+                        <SalesTriggersBlock />
+                    </Grid>
+                    {showContentArea && (
+                        <Grid item xs={12} md={6}>
                             <Stack spacing={3} sx={{ height: '100%' }}>
-                                {topInsights.length > 0 && <TopInsightsBlock />}
+                                <TopInsightsBlock />
                                 {regulations.length > 0 && <RegulationsBlock />}
                             </Stack>
                         </Grid>
@@ -435,14 +430,16 @@ const DailyBriefingContent: React.FC = () => {
             ) : (
                 // --- INFORMATION MODUS (Strategie) ---
                 <>
-                    <Grid item xs={12} md={salesTriggers.length > 0 ? 8 : 12}>
-                        <Stack spacing={3} sx={{ height: '100%' }}>
-                            {topInsights.length > 0 && <TopInsightsBlock />}
-                            {regulations.length > 0 && salesTriggers.length === 0 && <RegulationsBlock />}
-                        </Stack>
-                    </Grid>
-                    {salesTriggers.length > 0 && (
-                        <Grid item xs={12} md={4}>
+                    {showContentArea && (
+                        <Grid item xs={12} md={hasSalesPremium ? 8 : 12}>
+                            <Stack spacing={3} sx={{ height: '100%' }}>
+                                <TopInsightsBlock />
+                                {regulations.length > 0 && !hasSalesPremium && <RegulationsBlock />}
+                            </Stack>
+                        </Grid>
+                    )}
+                    {hasSalesPremium && (
+                        <Grid item xs={12} md={showContentArea ? 4 : 12}>
                             <Stack spacing={3} sx={{ height: '100%' }}>
                                 {regulations.length > 0 && <RegulationsBlock />}
                                 <SalesTriggersBlock />
@@ -459,7 +456,13 @@ const DailyBriefingContent: React.FC = () => {
         <Typography variant="body2" sx={{ fontWeight: 600, color: !isNewsletterAllowed ? 'text.disabled' : 'text.primary' }}>
             Tägliches Briefing als E-Mail erhalten
         </Typography>
-        <Tooltip title={!isNewsletterAllowed ? "E-Mail-Versand ist systemseitig deaktiviert." : (effectiveSubscription ? "Abonnement kündigen" : "Jetzt abonnieren")}>
+        {!isNewsletterAllowed ? (
+          <Tooltip title="E-Mail-Einstellungen öffnen und den aktuellen Sperrgrund prüfen.">
+            <Button size="small" variant="outlined" startIcon={<EmailOutlinedIcon />} onClick={openEmailSettings}>
+              Gesperrt · Einstellungen
+            </Button>
+          </Tooltip>
+        ) : <Tooltip title={effectiveSubscription ? "Abonnement kündigen" : "Jetzt abonnieren"}>
             <FormControlLabel
                 control={
                   <Switch 
@@ -473,15 +476,15 @@ const DailyBriefingContent: React.FC = () => {
                 label={
                   <Chip 
                     size="small" 
-                    label={!isNewsletterAllowed ? "Gesperrt" : (effectiveSubscription ? "Aktiv" : "Inaktiv")} 
-                    color={!isNewsletterAllowed ? "default" : (effectiveSubscription ? "primary" : "default")} 
+                    label={effectiveSubscription ? "Aktiv" : "Inaktiv"}
+                    color={effectiveSubscription ? "primary" : "default"}
                     variant={effectiveSubscription ? "filled" : "outlined"} 
                     sx={{ ml: 1, fontWeight: 'bold' }} 
                   />
                 }
                 sx={{ m: 0 }}
             />
-        </Tooltip>
+        </Tooltip>}
       </Box>
     </Box>
   );

@@ -5,7 +5,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 const dataController = require('../controllers/dataController');
 const adminBpAccountsController = require('../controllers/adminBpAccountsController');
 const { rateLimit } = require('express-rate-limit');
-const { ACCOUNT_RADAR_ROLES, requireTenantModule } = require('../services/tenantModuleService');
+const { ACCOUNT_RADAR_ROLES, hasTenantModule, requireTenantModule } = require('../services/tenantModuleService');
 const { requireActiveSalesSubscription } = require('../services/salesPlanService');
 const requireContentModule = requireTenantModule('content');
 
@@ -24,6 +24,10 @@ const requireAccountRadarModule = requireTenantModule('sales', { allowedRoles: A
 const requireAccountRadarAccess = (req, res, next) => (
     requireAccountRadarModule(req, res, () => requireActiveSalesSubscription(req, res, next))
 );
+const requireDailyBriefingAccess = (req, res, next) => {
+    if (hasTenantModule(req.user, 'content')) return next();
+    return requireAccountRadarAccess(req, res, next);
+};
 
 router.get('/relevant-action', requireContentModule, dataController.getRelevantAction);
 router.get('/search', requireContentModule, dataController.globalSearch);
@@ -79,7 +83,7 @@ router.get('/account-intelligence', requireAccountRadarAccess, dataController.ge
 router.get('/notifications/count', dataController.getNotificationCounts);
 router.get('/monitor-entries', requireContentModule, dataController.getMonitorEntries);
 router.get('/bp-members-preview', requireContentModule, dataController.getBusinessPartnerMembersPreview);
-router.get('/daily-briefing', requireContentModule, dataController.getDailyBriefing);
+router.get('/daily-briefing', requireDailyBriefingAccess, dataController.getDailyBriefing);
 //router.get('/daily-briefing/pdf', dataController.getDailyBriefingPdfByToken);
 router.get('/notification-counts', dataController.getNotificationCounts);
 
