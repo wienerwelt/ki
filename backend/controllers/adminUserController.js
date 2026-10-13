@@ -7,7 +7,13 @@ const { logActivity } = require('../services/auditLogService');
 
 const isValidUUID = (uuid) => uuid && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid);
 const ASSISTANT_ALLOWED_TARGET_ROLES = new Set(['user', 'demo', 'sales_user']);
-const MAIL_PREFERENCE_FIELDS = ['newsletter_email_enabled', 'monthly_report_email_enabled'];
+const MAIL_PREFERENCE_FIELDS = [
+    'newsletter_email_enabled',
+    'monthly_report_email_enabled',
+    'newsletter_opt_in',
+    'briefing_email_enabled',
+    'member_newsletter_enabled',
+];
 
 function validateMailPreferences(req, res) {
     for (const field of MAIL_PREFERENCE_FIELDS) {
@@ -23,6 +29,11 @@ function validateMailPreferences(req, res) {
     }
     if (req.body.monthly_report_email_enabled === true && !['admin', 'assistenz'].includes(req.body.role)) {
         res.status(400).json({ message: 'Monatsreports sind nur für Admin und Assistenz vorgesehen.' });
+        return false;
+    }
+    if (req.body.newsletter_opt_in === false
+        && (req.body.briefing_email_enabled === true || req.body.member_newsletter_enabled === true)) {
+        res.status(400).json({ message: 'Ohne dokumentierte Newsletter-Einwilligung dürfen keine Newsletter-Abonnements aktiviert werden.' });
         return false;
     }
     return true;
@@ -231,6 +242,7 @@ exports.getAllUsers = async (req, res) => {
                 u.linkedin_url, u.login_count, u.membership_level,
                 u.role, u.is_active, u.active_until, u.created_at, u.updated_at, u.last_login_at,
                 u.profile_image_url, u.newsletter_opt_in, u.newsletter_opt_in_confirmed_at,
+                u.newsletter_opt_in_source, u.briefing_email_enabled, u.member_newsletter_enabled,
                 u.newsletter_email_enabled, u.monthly_report_email_enabled,
                 bp.name AS business_partner_name, bp.id AS business_partner_id
             ${baseQuery}
@@ -269,6 +281,7 @@ exports.getUserById = async (req, res) => {
                 u.phone, u.linkedin_url, u.login_count, u.contribution_score, u.membership_level,
                 u.role, u.is_active, u.active_until, u.created_at, u.updated_at, u.last_login_at,
                 u.profile_image_url, u.newsletter_opt_in, u.newsletter_opt_in_confirmed_at,
+                u.newsletter_opt_in_source, u.briefing_email_enabled, u.member_newsletter_enabled,
                 u.newsletter_email_enabled, u.monthly_report_email_enabled,
                 ARRAY(
                     SELECT ust.tag_name
@@ -334,12 +347,27 @@ exports.createUser = async (req, res) => {
 
         const salt = await bcrypt.genSalt(10);
         const password_hash = await bcrypt.hash(password, salt);
+        const newsletterOptIn = req.body.newsletter_opt_in === true;
+        const briefingEmailEnabled = newsletterOptIn && req.body.briefing_email_enabled === true;
+        const memberNewsletterEnabled = newsletterOptIn && role === 'user' && req.body.member_newsletter_enabled === true;
 
         const newUserResult = await db.query(
-            `INSERT INTO users (username, email, password_hash, first_name, last_name, organization_name, linkedin_url, profile_image_url, membership_level, role, business_partner_id, is_active, active_until, newsletter_email_enabled, monthly_report_email_enabled)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
+            `INSERT INTO users (
+                username, email, password_hash, first_name, last_name, organization_name,
+                linkedin_url, profile_image_url, membership_level, role, business_partner_id,
+                is_active, active_until, newsletter_email_enabled, monthly_report_email_enabled,
+                newsletter_opt_in, newsletter_opt_in_confirmed_at, newsletter_opt_in_source,
+                newsletter_consent_version, briefing_email_enabled, member_newsletter_enabled
+             )
+             VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+                $16, CASE WHEN $16 THEN CURRENT_TIMESTAMP ELSE NULL END,
+                CASE WHEN $16 THEN 'admin_user_management' ELSE NULL END,
+                CASE WHEN $16 THEN '2026-08' ELSE NULL END, $17, $18
+             ) RETURNING id`,
             [normalizedUsername, normalizedEmail, password_hash, first_name, last_name, organization_name, linkedin_url, profile_image_url || null, validatedMembershipLevel, role, finalBpId || null, is_active, active_until || null,
-                req.body.newsletter_email_enabled ?? true, req.body.monthly_report_email_enabled ?? false]
+                req.body.newsletter_email_enabled ?? true, req.body.monthly_report_email_enabled ?? false,
+                newsletterOptIn, briefingEmailEnabled, memberNewsletterEnabled]
         );
         const newUserId = newUserResult.rows[0].id;
 
@@ -372,7 +400,10 @@ exports.createUser = async (req, res) => {
             targetId: newUserId, targetType: 'user',
             details: { createdUsername: normalizedUsername, role: role, businessPartnerName: businessPartnerName,
                 newsletter_email_enabled: req.body.newsletter_email_enabled ?? true,
-                monthly_report_email_enabled: req.body.monthly_report_email_enabled ?? false },
+                monthly_report_email_enabled: req.body.monthly_report_email_enabled ?? false,
+                newsletter_opt_in: newsletterOptIn,
+                briefing_email_enabled: briefingEmailEnabled,
+                member_newsletter_enabled: memberNewsletterEnabled },
             ipAddress: req.ip
         });
 
@@ -439,6 +470,17 @@ exports.updateUser = async (req, res) => {
         const monthlyReportEmailEnabled = ['admin', 'assistenz'].includes(updateData.role)
             ? (updateData.monthly_report_email_enabled ?? beforeUpdate.monthly_report_email_enabled)
             : false;
+        const newsletterOptIn = updateData.newsletter_opt_in ?? beforeUpdate.newsletter_opt_in;
+        const briefingEmailEnabled = newsletterOptIn
+            ? (updateData.briefing_email_enabled ?? beforeUpdate.briefing_email_enabled)
+            : false;
+        const memberNewsletterEnabled = newsletterOptIn && updateData.role === 'user'
+            ? (updateData.member_newsletter_enabled ?? beforeUpdate.member_newsletter_enabled)
+            : false;
+
+        if (!newsletterOptIn && (briefingEmailEnabled || memberNewsletterEnabled)) {
+            return res.status(400).json({ message: 'Ohne dokumentierte Newsletter-Einwilligung dürfen keine Newsletter-Abonnements aktiviert werden.' });
+        }
 
         await db.query(
             `UPDATE users SET
@@ -447,6 +489,27 @@ exports.updateUser = async (req, res) => {
                 business_partner_id = $10, is_active = $11, active_until = $12, profile_image_url = $13,
                 auth_version = auth_version + CASE WHEN $15::boolean THEN 1 ELSE 0 END,
                 newsletter_email_enabled = $16, monthly_report_email_enabled = $17,
+                newsletter_opt_in = $18, briefing_email_enabled = $19, member_newsletter_enabled = $20,
+                newsletter_opt_in_confirmed_at = CASE
+                    WHEN $18::boolean AND (newsletter_opt_in IS DISTINCT FROM TRUE OR newsletter_opt_in_confirmed_at IS NULL)
+                        THEN CURRENT_TIMESTAMP
+                    ELSE newsletter_opt_in_confirmed_at
+                END,
+                newsletter_opt_in_source = CASE
+                    WHEN $18::boolean AND (newsletter_opt_in IS DISTINCT FROM TRUE OR newsletter_opt_in_confirmed_at IS NULL)
+                        THEN 'admin_user_management'
+                    ELSE newsletter_opt_in_source
+                END,
+                newsletter_consent_version = CASE
+                    WHEN $18::boolean AND (newsletter_opt_in IS DISTINCT FROM TRUE OR newsletter_opt_in_confirmed_at IS NULL)
+                        THEN '2026-08'
+                    ELSE newsletter_consent_version
+                END,
+                newsletter_unsubscribed_at = CASE
+                    WHEN NOT $18::boolean AND newsletter_opt_in = TRUE THEN CURRENT_TIMESTAMP
+                    WHEN $18::boolean THEN NULL
+                    ELSE newsletter_unsubscribed_at
+                END,
                 updated_at = CURRENT_TIMESTAMP
              WHERE id = $14`,
             [
@@ -456,12 +519,19 @@ exports.updateUser = async (req, res) => {
                 updateData.is_active, updateData.active_until || null, updateData.profile_image_url || null,
                 targetUserId,
                 Boolean(updateData.password && updateData.password.trim() !== ''),
-                newsletterEmailEnabled, monthlyReportEmailEnabled
+                newsletterEmailEnabled, monthlyReportEmailEnabled,
+                newsletterOptIn, briefingEmailEnabled, memberNewsletterEnabled
             ]
         );
 
         const changes = {};
-        for (const [key, value] of Object.entries({ newsletter_email_enabled: newsletterEmailEnabled, monthly_report_email_enabled: monthlyReportEmailEnabled })) {
+        for (const [key, value] of Object.entries({
+            newsletter_email_enabled: newsletterEmailEnabled,
+            monthly_report_email_enabled: monthlyReportEmailEnabled,
+            newsletter_opt_in: newsletterOptIn,
+            briefing_email_enabled: briefingEmailEnabled,
+            member_newsletter_enabled: memberNewsletterEnabled,
+        })) {
             if (beforeUpdate[key] !== value) changes[key] = { from: beforeUpdate[key], to: value };
         }
         const fieldsToCheck = ['username', 'email', 'first_name', 'last_name', 'organization_name', 'linkedin_url', 'membership_level', 'role', 'business_partner_id', 'is_active', 'active_until', 'profile_image_url'];

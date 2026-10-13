@@ -237,6 +237,17 @@ const AdminPublicAssistantPage: React.FC = () => {
             ))}
           </Grid>
 
+          <Alert
+            severity={!settings.is_enabled ? 'warning' : Number(settings.document_chunks || 0) === 0 ? 'info' : 'success'}
+            variant="outlined"
+          >
+            {!settings.is_enabled
+              ? 'Externe Verbindung inaktiv: URLs und erlaubte Domains allein schalten den Assistenten nicht frei. „Öffentlich aktiv“ einschalten und anschließend speichern.'
+              : Number(settings.document_chunks || 0) === 0
+                ? 'Öffentliche Verbindung aktiv, aber noch ohne Wissensbasis. Bitte die Homepage synchronisieren; Avatar und Farben werden bereits ausgeliefert.'
+                : `Öffentliche Verbindung bereit: ${settings.indexed_pages} Seiten und ${settings.document_chunks} Textabschnitte sind verfügbar.`}
+          </Alert>
+
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 3 }}>
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2} sx={{ mb: 2 }}>
               <Box>
@@ -323,9 +334,10 @@ const AdminPublicAssistantPage: React.FC = () => {
           {isAdmin && <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 3 }}>
             <Typography variant="h6" fontWeight={900}>3. Website-Einbettung</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Die Public Page benötigt diesen Code nicht: Dort wird der aktivierte Assistent automatisch eingebunden. Für WordPress kommt der Code in einen „Individuelles HTML“-Block; auf jeder normalen HTML-Seite direkt vor das schließende <code>&lt;/body&gt;</code>. Vorher muss die Website-Domain oben erlaubt und gespeichert sein.</Typography>
+            {!settings.is_enabled && <Alert severity="warning" sx={{ mb: 2 }}>Der Einbettungscode ist erst nutzbar, nachdem „Öffentlich aktiv“ eingeschaltet und gespeichert wurde.</Alert>}
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
-              <TextField fullWidth value={settings.embed_code || ''} InputProps={{ readOnly: true, sx: { fontFamily: 'monospace', fontSize: 13 } }} />
-              <Tooltip title="Einbettungscode kopieren"><IconButton onClick={() => void copy(settings.embed_code || '', 'Einbettungscode kopiert.')}><ContentCopyIcon /></IconButton></Tooltip>
+              <TextField fullWidth value={settings.embed_code || ''} disabled={!settings.is_enabled} InputProps={{ readOnly: true, sx: { fontFamily: 'monospace', fontSize: 13 } }} />
+              <Tooltip title={settings.is_enabled ? 'Einbettungscode kopieren' : 'Assistent zuerst öffentlich aktivieren'}><span><IconButton disabled={!settings.is_enabled} onClick={() => void copy(settings.embed_code || '', 'Einbettungscode kopiert.')}><ContentCopyIcon /></IconButton></span></Tooltip>
               <Tooltip title="Vorschau öffnen"><span><IconButton component="a" href={`/assistant/${settings.site_key}`} target="_blank" disabled={!settings.is_enabled || !settings.site_key}><LaunchIcon /></IconButton></span></Tooltip>
               <Tooltip title="Schlüssel erneuern"><IconButton color="warning" onClick={() => void rotateKey()}><RestartAltIcon /></IconButton></Tooltip>
             </Stack>
