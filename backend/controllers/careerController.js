@@ -34,12 +34,14 @@ const fields = `e.id,e.person_name,e.organization,e.role_title,e.kind,e.effectiv
 exports.tenants=wrap(async(req,res)=>{
  if(!manager(req.user))throw fail('Mandantenübersicht nur für Assistenz und Admin.',403);
  const isAdmin=req.user.role==='admin';const id=isAdmin?null:tenant(req);
- const result=await db.query(`SELECT bp.id,bp.name,bp.slug,COUNT(e.id)::int AS total,
+ const result=await db.query(`SELECT bp.id,bp.name,bp.slug,cs.primary_color,cs.primary_text_color,COUNT(e.id)::int AS total,
  COUNT(e.id) FILTER(WHERE e.status='approved')::int AS approved,
  COUNT(e.id) FILTER(WHERE e.status='pending')::int AS pending,
  COUNT(e.id) FILTER(WHERE e.status='rejected')::int AS rejected
- FROM business_partners bp LEFT JOIN career_entries e ON e.business_partner_id=bp.id AND e.status<>'withdrawn'
- WHERE ($1::boolean OR bp.id=$2::uuid) GROUP BY bp.id,bp.name,bp.slug ORDER BY bp.name`,[isAdmin,id]);
+ FROM business_partners bp
+ LEFT JOIN color_schemes cs ON cs.id=bp.color_scheme_id
+ LEFT JOIN career_entries e ON e.business_partner_id=bp.id AND e.status<>'withdrawn'
+ WHERE ($1::boolean OR bp.id=$2::uuid) GROUP BY bp.id,bp.name,bp.slug,cs.primary_color,cs.primary_text_color ORDER BY bp.name`,[isAdmin,id]);
  res.json(result.rows);
 });
 exports.list=wrap(async(req,res)=>{

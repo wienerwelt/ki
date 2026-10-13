@@ -23,9 +23,17 @@ import apiClient from '../apiClient';
 import AiContentLabel from './AiContentLabel';
 
 const MAX_QUESTION_LENGTH = 500;
+const MAX_SOURCE_LABEL_LENGTH = 48;
 
 type Source = { title: string; url: string };
 type Message = { role: 'user' | 'assistant'; content: string; sources?: Source[] };
+
+const compactSourceLabel = (value: string) => {
+  const clean = String(value || '').replace(/\s+/g, ' ').trim();
+  return clean.length > MAX_SOURCE_LABEL_LENGTH
+    ? `${clean.slice(0, MAX_SOURCE_LABEL_LENGTH - 1).trimEnd()}…`
+    : clean;
+};
 
 type AssistantConfig = {
   siteKey: string;
@@ -86,11 +94,23 @@ const PublicAiAssistantWidget: React.FC<Props> = ({
         if (!active) return;
         setConfig(response.data);
         setMessages([{ role: 'assistant', content: response.data.welcomeMessage }]);
+        if (embedded && window.parent !== window) {
+          window.parent.postMessage({
+            type: 'mobiliti-assistant-ready',
+            primaryColor: response.data.primaryColor,
+          }, '*');
+        }
       })
-      .catch(() => active && setError('Der digitale Assistent ist derzeit nicht verfügbar.'))
+      .catch(() => {
+        if (!active) return;
+        setError('Der digitale Assistent ist derzeit nicht verfügbar.');
+        if (embedded && window.parent !== window) {
+          window.parent.postMessage({ type: 'mobiliti-assistant-unavailable' }, '*');
+        }
+      })
       .finally(() => active && setConfigLoading(false));
     return () => { active = false; };
-  }, [siteKey]);
+  }, [embedded, siteKey]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -159,7 +179,8 @@ const PublicAiAssistantWidget: React.FC<Props> = ({
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        border: `1px solid ${primaryColor}33`,
+        boxSizing: 'border-box',
+        border: embedded ? 0 : `5px solid ${primaryColor}`,
         bgcolor: '#fff',
       }}
     >
@@ -179,21 +200,23 @@ const PublicAiAssistantWidget: React.FC<Props> = ({
           </Stack>
         </Box>
         <Stack direction="row" spacing={0.5}>
-          <Tooltip title="Neue Unterhaltung">
+          <Tooltip title="Unterhaltung löschen und neu starten" arrow>
             <span>
               <IconButton
                 onClick={resetConversation}
                 disabled={messages.length <= 1 || loading}
-                aria-label="Unterhaltung zurücksetzen"
+                aria-label="Unterhaltung löschen und neu starten"
                 sx={{ color: '#fff', bgcolor: 'rgba(255,255,255,.14)', '&.Mui-disabled': { color: 'rgba(255,255,255,.45)' } }}
               >
                 <RestartAltIcon />
               </IconButton>
             </span>
           </Tooltip>
-          <IconButton onClick={close} aria-label="Assistent schließen" sx={{ color: '#fff', bgcolor: 'rgba(255,255,255,.14)' }}>
-            <CloseIcon />
-          </IconButton>
+          <Tooltip title="Chatfenster schließen" arrow>
+            <IconButton onClick={close} aria-label="Chatfenster schließen" sx={{ color: '#fff', bgcolor: 'rgba(255,255,255,.14)' }}>
+              <CloseIcon />
+            </IconButton>
+          </Tooltip>
         </Stack>
       </Box>
 
@@ -216,16 +239,27 @@ const PublicAiAssistantWidget: React.FC<Props> = ({
                 </ReactMarkdown>
               </Box>
               {!!message.sources?.length && (
-                <Box sx={{ mt: 1, pt: 1, borderTop: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', gap: 0.6, overflowX: 'auto', whiteSpace: 'nowrap', scrollbarWidth: 'thin' }}>
-                  <Typography variant="caption" fontWeight={800} flexShrink={0}>Quellen:</Typography>
-                  {message.sources.map((source, sourceIndex) => (
-                    <React.Fragment key={source.url}>
-                      {sourceIndex > 0 && <Typography variant="caption" color="text.disabled">·</Typography>}
-                      <Link key={source.url} href={source.url} target="_blank" rel="noopener noreferrer" variant="caption" underline="hover" sx={{ display: 'inline-flex', gap: 0.35, alignItems: 'center', color: primaryColor, flexShrink: 0 }}>
-                        {source.title}<OpenInNewIcon sx={{ fontSize: 11 }} />
+                <Box sx={{ mt: 1, pt: 1, borderTop: '1px solid', borderColor: 'divider', minWidth: 0 }}>
+                  <Typography variant="caption" fontWeight={800} sx={{ display: 'block', mb: 0.4 }}>Quellen:</Typography>
+                  <Stack spacing={0.35} alignItems="flex-start">
+                    {message.sources.map((source, sourceIndex) => (
+                      <Link
+                        key={`${source.url}-${sourceIndex}`}
+                        href={source.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        variant="caption"
+                        underline="hover"
+                        title={source.title}
+                        sx={{ display: 'inline-flex', gap: 0.4, alignItems: 'center', color: primaryColor, maxWidth: '100%', minWidth: 0 }}
+                      >
+                        <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {compactSourceLabel(source.title)}
+                        </Box>
+                        <OpenInNewIcon sx={{ fontSize: 13, flexShrink: 0 }} />
                       </Link>
-                    </React.Fragment>
-                  ))}
+                    ))}
+                  </Stack>
                 </Box>
               )}
             </Paper>

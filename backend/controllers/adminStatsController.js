@@ -171,7 +171,7 @@ exports.getUsageStats = async (req, res) => {
 
                 -- AI Content
                 (SELECT COUNT(*)::int
-                 FROM ai_generated_content agc JOIN users u ON agc.user_id = u.id
+                 FROM ai_generated_content agc LEFT JOIN users u ON agc.user_id = u.id
                  WHERE agc.created_at >= $1 AND agc.created_at < $2
                    AND ($3::uuid IS NULL OR u.business_partner_id = $3::uuid)
                 ) AS total_ai_content,
@@ -314,13 +314,13 @@ exports.getUsageStats = async (req, res) => {
         // 5) Kategorie Verteilung
         // -------------------------
         const categoryDistributionQuery = `
-            SELECT c.name, COUNT(agc.id)::INT as count
+            SELECT COALESCE(c.name, 'Ohne Kategorie') AS name, COUNT(agc.id)::INT as count
             FROM ai_generated_content agc
-            JOIN categories c ON agc.category_id = c.id
-            JOIN users u ON agc.user_id = u.id
+            LEFT JOIN categories c ON agc.category_id = c.id
+            LEFT JOIN users u ON agc.user_id = u.id
             WHERE agc.created_at >= $1 AND agc.created_at < $2
               AND ($3::uuid IS NULL OR u.business_partner_id = $3::uuid)
-            GROUP BY c.name
+            GROUP BY COALESCE(c.name, 'Ohne Kategorie')
             HAVING COUNT(agc.id) > 0
             ORDER BY count DESC;
         `;

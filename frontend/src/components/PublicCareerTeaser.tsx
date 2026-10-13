@@ -16,6 +16,7 @@ import {
     Stack,
     TextField,
     Typography,
+    useTheme,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
@@ -42,6 +43,8 @@ export default function PublicCareerTeaser({
     partnerPath: string;
     primaryColor: string;
 }) {
+    const theme = useTheme();
+    const primaryContrast = theme.palette.getContrastText(primaryColor);
     const [entries, setEntries] = useState<CareerEntry[]>([]);
     const [jobs, setJobs] = useState<CareerJob[]>([]);
     const [enabled, setEnabled] = useState(false);
@@ -227,18 +230,18 @@ export default function PublicCareerTeaser({
                 })}</Grid>
             </Box>}
 
-            <Dialog open={Boolean(selected)} onClose={() => setSelected(null)} maxWidth="sm" fullWidth>
-                <DialogTitle sx={{ pr: 7 }}>
+            <Dialog open={Boolean(selected)} onClose={() => setSelected(null)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3.5, overflow: 'hidden', border: `1px solid ${alpha(primaryColor, 0.24)}` } }}>
+                <DialogTitle sx={{ pr: 7, bgcolor: primaryColor, color: primaryContrast, fontWeight: 900 }}>
                     {selected?.person_name}
-                    <IconButton aria-label="Schließen" onClick={() => setSelected(null)} sx={{ position: 'absolute', right: 12, top: 12 }}>
+                    <IconButton aria-label="Schließen" onClick={() => setSelected(null)} sx={{ position: 'absolute', right: 12, top: 12, color: primaryContrast }}>
                         <CloseIcon />
                     </IconButton>
                 </DialogTitle>
                 <DialogContent>
                     {selected && (
                         <>
-                            <CareerCard entry={selected} onOpen={() => {}} detail />
-                            <Paper variant="outlined" sx={{ mt: 1.5, p: 1.5, borderRadius: 2 }}><Typography variant="caption" color="text.secondary" display="block">Quelle der Meldung</Typography>{selected.source_url ? <Button component="a" href={selected.source_url} target="_blank" rel="noopener noreferrer" endIcon={<ArrowForwardRoundedIcon />} sx={{ color: primaryColor, p: 0, minHeight: 'auto', justifyContent: 'flex-start' }}>Originalmeldung öffnen</Button> : <Typography variant="body2" color="text.secondary">Bestandseintrag ohne hinterlegten externen Quellenlink.</Typography>}</Paper>
+                            <CareerCard entry={selected} onOpen={() => {}} detail accentColor={primaryColor} />
+                            <Paper variant="outlined" sx={{ mt: 1.5, p: 1.5, borderRadius: 2, borderColor: alpha(primaryColor, 0.22), bgcolor: alpha(primaryColor, 0.035) }}><Typography variant="caption" color="text.secondary" display="block">Quelle der Meldung</Typography>{selected.source_url ? <Button component="a" href={selected.source_url} target="_blank" rel="noopener noreferrer" endIcon={<ArrowForwardRoundedIcon />} sx={{ color: primaryColor, p: 0, minHeight: 'auto', justifyContent: 'flex-start' }}>Originalmeldung öffnen</Button> : <Typography variant="body2" color="text.secondary">Bestandseintrag ohne hinterlegten externen Quellenlink.</Typography>}</Paper>
                             <Typography variant="body2" sx={{ mt: 2 }}>Austausch und Kommentare bleiben der Community vorbehalten.</Typography>
                         </>
                     )}
@@ -248,6 +251,7 @@ export default function PublicCareerTeaser({
                 <DialogActions>
                     <Button
                         startIcon={<ShareIcon />}
+                        sx={{ color: primaryColor }}
                         onClick={async () => {
                             const url = `${window.location.origin}${partnerPath}?career=${selected!.id}#menschen-karriere`;
                             setShareFallback('');
@@ -267,7 +271,7 @@ export default function PublicCareerTeaser({
                     >
                         Teilen
                     </Button>
-                    <Button component="a" href={login}>Zur Community</Button>
+                    <Button component="a" href={login} variant="contained" sx={{ bgcolor: primaryColor, color: primaryContrast, '&:hover': { bgcolor: primaryColor, filter: 'brightness(0.92)' } }}>Zur Community</Button>
                 </DialogActions>
             </Dialog>
         </Box>

@@ -35,6 +35,9 @@ interface User {
   email: string;
   newsletter_opt_in: boolean;
   newsletter_opt_in_confirmed_at: string | null;
+  newsletter_opt_in_source: string | null;
+  briefing_email_enabled: boolean;
+  member_newsletter_enabled: boolean;
   newsletter_email_enabled: boolean;
   monthly_report_email_enabled: boolean;
   linkedin_url: string | null;
@@ -130,6 +133,9 @@ const AdminUserManagementPage: React.FC = () => {
   const [formRole, setFormRole] = useState('user');
   const [formBusinessPartnerId, setFormBusinessPartnerId] = useState('');
   const [formIsActive, setFormIsActive] = useState(true);
+  const [formNewsletterOptIn, setFormNewsletterOptIn] = useState(false);
+  const [formBriefingEmailEnabled, setFormBriefingEmailEnabled] = useState(false);
+  const [formMemberNewsletterEnabled, setFormMemberNewsletterEnabled] = useState(false);
   const [formNewsletterEmailEnabled, setFormNewsletterEmailEnabled] = useState(true);
   const [formMonthlyReportEmailEnabled, setFormMonthlyReportEmailEnabled] = useState(false);
   const [formActiveUntil, setFormActiveUntil] = useState('');
@@ -335,11 +341,14 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
   }, [roleOptions, isAssistant]);
 
   const handleOpenAddDialog = () => {
-    setFormNewsletterEmailEnabled(true); setFormMonthlyReportEmailEnabled(false);
+    setFormNewsletterOptIn(false); setFormBriefingEmailEnabled(false); setFormMemberNewsletterEnabled(false); setFormNewsletterEmailEnabled(true); setFormMonthlyReportEmailEnabled(false);
     setEditingUser(null); setFormUsername(''); setFormEmail(''); setFormPassword(''); setFormFirstName(''); setFormLastName(''); setFormOrganizationName(''); setFormLinkedinUrl(''); setFormProfileImageUrl(''); setFormMembershipLevel(''); setFormRole('user'); setFormBusinessPartnerId(isAssistant ? (loggedInUser?.business_partner_id || '') : (adminFilterBpId || '')); setFormIsActive(true); setFormActiveUntil(''); setDialogError(null); setOpenDialog(true);
   };
 
   const handleOpenEditDialog = (user: User) => {
+    setFormNewsletterOptIn(user.newsletter_opt_in === true);
+    setFormBriefingEmailEnabled(user.briefing_email_enabled === true);
+    setFormMemberNewsletterEnabled(user.member_newsletter_enabled === true);
     setFormNewsletterEmailEnabled(user.newsletter_email_enabled !== false);
     setFormMonthlyReportEmailEnabled(user.monthly_report_email_enabled === true);
     setEditingUser(user); setFormUsername(user.username); setFormEmail(user.email); setFormPassword(''); setFormFirstName(user.first_name || ''); setFormLastName(user.last_name || ''); setFormOrganizationName(user.organization_name || ''); setFormLinkedinUrl(user.linkedin_url || ''); setFormMembershipLevel(user.membership_level || ''); setFormRole(user.role); setFormBusinessPartnerId(user.business_partner_id || ''); setFormIsActive(user.is_active); setFormActiveUntil(user.active_until ? user.active_until.split('T')[0] : ''); setFormProfileImageUrl(user.profile_image_url || ''); setDialogError(null); setOpenDialog(true);
@@ -366,6 +375,9 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       is_active: formIsActive,
       active_until: formActiveUntil || null,
       ...(isAdmin ? {
+        newsletter_opt_in: formNewsletterOptIn,
+        briefing_email_enabled: formNewsletterOptIn && formBriefingEmailEnabled,
+        member_newsletter_enabled: formRole === 'user' && formNewsletterOptIn && formMemberNewsletterEnabled,
         newsletter_email_enabled: formNewsletterEmailEnabled,
         monthly_report_email_enabled: ['admin', 'assistenz'].includes(formRole) && formMonthlyReportEmailEnabled,
       } : {}),
@@ -645,6 +657,15 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                 <TableBody>
                   {sortedAndFilteredUsers.map((u) => {
                     const statusInfo = getStatusInfo(u);
+                    const hasNewsletterSubscription = u.briefing_email_enabled === true
+                      || (u.role === 'user' && u.member_newsletter_enabled === true);
+                    const newsletterStatus = u.newsletter_email_enabled === false
+                      ? { label: 'Newsletter-Versand administrativ gesperrt', color: 'error.main' }
+                      : !u.newsletter_opt_in
+                        ? { label: 'Keine dokumentierte Newsletter-Einwilligung', color: 'warning.main' }
+                        : !hasNewsletterSubscription
+                          ? { label: 'Einwilligung vorhanden, aber kein Newsletter ausgewählt', color: 'warning.main' }
+                          : { label: 'Newsletter-Empfang aktiv', color: 'success.main' };
                     
                     return (
                         <TableRow 
@@ -668,11 +689,11 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                         
                         <TableCell>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                                <Tooltip title={u.newsletter_email_enabled === false ? 'Newsletter-Empfang durch Admin deaktiviert' : u.newsletter_opt_in ? 'Newsletter-Empfang aktiv · Einwilligung vorhanden' : 'Newsletter-Empfang wartet auf Einwilligung'}>
+                                <Tooltip title={newsletterStatus.label}>
                                     <Box 
                                         sx={{ 
                                             width: 10, height: 10, borderRadius: '50%', 
-                                            bgcolor: u.newsletter_email_enabled === false ? 'error.main' : u.newsletter_opt_in ? 'success.main' : 'warning.main', flexShrink: 0
+                                            bgcolor: newsletterStatus.color, flexShrink: 0
                                         }} 
                                     />
                                 </Tooltip>
@@ -843,13 +864,60 @@ const handleBpFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
             {isAdmin && (
               <Box sx={{ mt: 2, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
                 <Typography variant="subtitle1" fontWeight={700}>E-Mail-Empfang</Typography>
-                <FormControlLabel control={<Switch checked={formNewsletterEmailEnabled} onChange={(e) => setFormNewsletterEmailEnabled(e.target.checked)} />}
-                  label={`Newsletter-Empfang ${formNewsletterEmailEnabled ? 'aktiv' : 'inaktiv'}`} />
+                <FormControlLabel
+                  control={<Switch checked={formNewsletterOptIn} onChange={(e) => {
+                    const checked = e.target.checked;
+                    setFormNewsletterOptIn(checked);
+                    if (!checked) {
+                      setFormBriefingEmailEnabled(false);
+                      setFormMemberNewsletterEnabled(false);
+                    }
+                  }} />}
+                  label={`Einwilligung ${formNewsletterOptIn ? 'dokumentiert' : 'nicht dokumentiert'}`}
+                />
                 <Typography variant="caption" display="block" color="text.secondary">
-                  Gilt für Branchenbriefings und Mitglieder-Newsletter. Die Einwilligung und individuellen Abonnements bleiben unverändert.
+                  Nur aktivieren, wenn eine nachweisbare Einwilligung vorliegt. Die Bestätigung wird mit Zeitpunkt und Quelle „Benutzerverwaltung“ protokolliert.
                 </Typography>
-                <Chip size="small" sx={{ mt: 1 }} color={editingUser?.newsletter_opt_in ? 'success' : 'default'}
-                  label={editingUser?.newsletter_opt_in ? 'Newsletter-Einwilligung vorhanden' : 'Keine Newsletter-Einwilligung · kein Versand'} />
+                <Chip
+                  size="small"
+                  sx={{ mt: 1 }}
+                  color={formNewsletterOptIn ? 'success' : 'warning'}
+                  label={formNewsletterOptIn
+                    ? (editingUser?.newsletter_opt_in_confirmed_at
+                      ? `Einwilligung bestätigt · ${new Date(editingUser.newsletter_opt_in_confirmed_at).toLocaleDateString('de-AT')}`
+                      : 'Einwilligung wird beim Speichern dokumentiert')
+                    : 'Keine Einwilligung · kein Newsletter-Versand'}
+                />
+                <Divider sx={{ my: 1.5 }} />
+                <FormControlLabel control={<Switch checked={formNewsletterEmailEnabled} onChange={(e) => setFormNewsletterEmailEnabled(e.target.checked)} />}
+                  label={`Administrative Versandfreigabe ${formNewsletterEmailEnabled ? 'aktiv' : 'gesperrt'}`} />
+                <Typography variant="caption" display="block" color="text.secondary">
+                  Übergeordneter Schalter für Newsletter. Eine Einwilligung und mindestens ein Abonnement sind zusätzlich erforderlich.
+                </Typography>
+                <Box sx={{ mt: 1 }}>
+                  <FormControlLabel
+                    control={<Switch checked={formBriefingEmailEnabled} disabled={!formNewsletterOptIn} onChange={(e) => setFormBriefingEmailEnabled(e.target.checked)} />}
+                    label="Branchenbriefing erhalten"
+                  />
+                </Box>
+                {formRole === 'user' && (
+                  <FormControlLabel
+                    control={<Switch checked={formMemberNewsletterEnabled} disabled={!formNewsletterOptIn} onChange={(e) => setFormMemberNewsletterEnabled(e.target.checked)} />}
+                    label="Mitglieder-Newsletter erhalten"
+                  />
+                )}
+                <Alert
+                  severity={formNewsletterEmailEnabled && formNewsletterOptIn && (formBriefingEmailEnabled || (formRole === 'user' && formMemberNewsletterEnabled)) ? 'success' : 'info'}
+                  sx={{ mt: 1.5 }}
+                >
+                  {formNewsletterEmailEnabled && formNewsletterOptIn && (formBriefingEmailEnabled || (formRole === 'user' && formMemberNewsletterEnabled))
+                    ? 'Newsletter-Empfang ist nach dem Speichern aktiv.'
+                    : !formNewsletterOptIn
+                      ? 'Der Empfang bleibt ohne dokumentierte Einwilligung gesperrt.'
+                      : !formNewsletterEmailEnabled
+                        ? 'Der Empfang ist durch die administrative Versandfreigabe gesperrt.'
+                        : 'Bitte mindestens eine Newsletter-Art auswählen.'}
+                </Alert>
                 {['admin', 'assistenz'].includes(formRole) && (
                   <Box sx={{ mt: 2 }}>
                     <FormControlLabel control={<Switch checked={formMonthlyReportEmailEnabled} onChange={(e) => setFormMonthlyReportEmailEnabled(e.target.checked)} />}

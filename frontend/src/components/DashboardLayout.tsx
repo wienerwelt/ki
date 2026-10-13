@@ -396,18 +396,40 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         : businessPartner?.dashboard_title || businessPartner?.name || 'KI-Dashboard';
     const showOnboarding = user && user.has_completed_onboarding === false && user.role !== 'demo';
     const adBannerHeight = !isSalesWorkspace && isAdVisible && ad ? 40 : 0;
+    const tenantAccent = businessPartner?.color_scheme?.primary_color || theme.palette.primary.main;
+    const tenantAccentContrast = theme.palette.getContrastText(tenantAccent);
+    const navSectionLabelSx = {
+        bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 850,
+        lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase',
+    } as const;
+    const adminNavSectionSx = {
+        mx: 0.5, my: 1, py: 0.75, borderRadius: 2.5,
+        bgcolor: alpha(tenantAccent, 0.075),
+        border: `1px solid ${alpha(tenantAccent, 0.2)}`,
+        borderLeft: `4px solid ${tenantAccent}`,
+        overflow: 'hidden',
+        '& .MuiListItemIcon-root': { color: tenantAccent },
+    } as const;
 
     const drawerContent = (
-        <Box sx={{ width: 290 }} role="presentation" onClick={toggleDrawer(false)} onKeyDown={toggleDrawer(false)}>
+        <Box sx={{ width: 290, height: '100%', display: 'flex', flexDirection: 'column' }} role="presentation" onClick={toggleDrawer(false)} onKeyDown={toggleDrawer(false)}>
             <Toolbar />
             {adBannerHeight > 0 && <Box sx={{ height: adBannerHeight }} />}
             <Divider />
-            <List>
+            <Box sx={{ px: 2, py: 1.5, bgcolor: alpha(tenantAccent, 0.075), borderBottom: `1px solid ${alpha(tenantAccent, 0.16)}`, flexShrink: 0 }}>
+                <Typography variant="overline" sx={{ display: 'block', color: tenantAccent, fontWeight: 950, letterSpacing: '0.11em', lineHeight: 1.3 }}>
+                    Arbeitsbereich {isSalesWorkspace ? 'Sales' : 'Content'}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" fontWeight={750}>
+                    Startpunkt · {isSalesWorkspace ? 'Cockpit' : 'Mein Dashboard'}
+                </Typography>
+            </Box>
+            <List sx={{ px: 1, py: 1.25, overflowY: 'auto', flex: 1 }}>
                 {isSalesWorkspace && (
                     <>
                         <ListSubheader
                             disableSticky
-                            sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                            sx={navSectionLabelSx}
                         >
                             Sales-Radar
                         </ListSubheader>
@@ -427,11 +449,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItemIcon><QueryStatsIcon /></ListItemIcon>
                             <ListItemText primary="Reports & Daily-Radar" />
                         </ListItem>
-                        <ListItem button component={RouterLink} to="/radar/help">
-                            <ListItemIcon><HelpOutlineIcon /></ListItemIcon>
-                            <ListItemText primary="Anleitung & FAQ" secondary="Schnellstart und Hilfe" />
-                        </ListItem>
-                        {salesPlan === 'premium' && ['admin', 'assistenz', 'sales_manager'].includes(String(user?.role || '').toLowerCase()) && (
+                        {['admin', 'assistenz', 'sales_manager'].includes(String(user?.role || '').toLowerCase()) && (
+                        <Box sx={adminNavSectionSx}>
+                        <ListSubheader disableSticky sx={{ ...navSectionLabelSx, color: tenantAccent }}>
+                            Sales-Verwaltung
+                        </ListSubheader>
+                        {salesPlan === 'premium' && (
                             <ListItem button component={RouterLink} to="/radar?panel=import">
                                 <ListItemIcon><DataObjectIcon /></ListItemIcon>
                                 <ListItemText primary="Import & Einstellungen" />
@@ -449,18 +472,30 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                 <ListItemText primary="Team & Benutzer" />
                             </ListItem>
                         )}
+                        </Box>
+                        )}
                         {user?.role === 'admin' && (
+                            <Box sx={adminNavSectionSx}>
+                            <ListSubheader disableSticky sx={{ ...navSectionLabelSx, color: tenantAccent }}>
+                                Plattform-Administration
+                            </ListSubheader>
                             <ListItem button component={RouterLink} to="/admin">
                                 <ListItemIcon><SettingsIcon /></ListItemIcon>
                                 <ListItemText primary="Admin-Dashboard" secondary="Alle Verwaltungsbereiche" />
                             </ListItem>
+                            </Box>
                         )}
+                        <ListItem button component={RouterLink} to="/radar/help">
+                            <ListItemIcon><HelpOutlineIcon /></ListItemIcon>
+                            <ListItemText primary="Anleitung & FAQ" secondary="Schnellstart und Hilfe" />
+                        </ListItem>
                         <Divider sx={{ my: 1 }} />
                     </>
                 )}
 
                 {!isSalesWorkspace && (
                   <>
+                <ListSubheader disableSticky sx={navSectionLabelSx}>Content</ListSubheader>
                 <ListItem button component={RouterLink} to="/dashboard">
                     <ListItemIcon><DashboardIcon /></ListItemIcon>
                     <ListItemText primary={t('layout.myDashboard')} />
@@ -517,10 +552,10 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 <Divider sx={{ my: 1 }} />
                 
                 {user?.role === 'assistenz' && (
-                   <>
+                   <Box sx={adminNavSectionSx}>
                         <ListSubheader
                             disableSticky
-                            sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                            sx={{ ...navSectionLabelSx, color: tenantAccent }}
                         >
                             Mandanten-Werkzeuge
                         </ListSubheader>
@@ -538,11 +573,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         <ListItem button component={RouterLink} to="/admin/surveys"><ListItemIcon><PollIcon /></ListItemIcon><ListItemText primary={t('layout.surveys')} /></ListItem>
                         <ListItem button component={RouterLink} to="/admin/community"><ListItemIcon><ForumIcon /></ListItemIcon><ListItemText primary="Community Moderation" /></ListItem>
                         <Divider sx={{ my: 1 }} />
-                   </>
+                   </Box>
                 )}
                 
                 {user?.role === 'admin' && (
-                    <>
+                    <Box sx={adminNavSectionSx}>
+                        <ListSubheader disableSticky sx={{ ...navSectionLabelSx, color: tenantAccent }}>
+                            Plattform-Administration
+                        </ListSubheader>
                         <ListItem button component={RouterLink} to="/admin">
                             <ListItemIcon><SettingsIcon /></ListItemIcon>
                             <ListItemText primary="Admin-Dashboard" secondary="Alle Verwaltungsbereiche" />
@@ -550,7 +588,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         <List component="div" disablePadding sx={{ pl: 1.5 }}>
                             <ListSubheader
                                 disableSticky
-                                sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                                sx={navSectionLabelSx}
                             >
                                 Redaktion
                             </ListSubheader>
@@ -581,7 +619,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             </ListItem>
                             <ListSubheader
                                 disableSticky
-                                sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                                sx={navSectionLabelSx}
                             >
                                 Kunden & Vertrieb
                             </ListSubheader>
@@ -596,7 +634,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
                             <ListSubheader
                                 disableSticky
-                                sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                                sx={navSectionLabelSx}
                             >
                                 Daten & KI
                             </ListSubheader>
@@ -618,7 +656,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
                             <ListSubheader
                                 disableSticky
-                                sx={{ bgcolor: 'transparent', color: 'text.secondary', fontSize: '0.68rem', fontWeight: 800, lineHeight: '32px', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                                sx={navSectionLabelSx}
                             >
                                 Betrieb & Analyse
                             </ListSubheader>
@@ -627,7 +665,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             <ListItem button component={RouterLink} to="/admin/monitor"><ListItemIcon><MonitorIcon /></ListItemIcon><ListItemText primary="System & Aktivität" /></ListItem>
                             <Divider sx={{ my: 1 }} />                                            
                         </List>
-                    </>
+                    </Box>
                 )}
                   </>
                 )}
@@ -1051,7 +1089,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 open={drawerOpen}
                 onClose={toggleDrawer(false)}
                 ModalProps={{ keepMounted: true }}
-                sx={{ width: 290, flexShrink: 0, [`& .MuiDrawer-paper`]: { width: 290, boxSizing: 'border-box' } }}
+                sx={{ width: 290, flexShrink: 0, [`& .MuiDrawer-paper`]: { width: 290, boxSizing: 'border-box', overflow: 'hidden' } }}
             >
                 {drawerContent}
             </Drawer>
@@ -1099,10 +1137,11 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 fullWidth
                 maxWidth="md"
                 fullScreen={isMobile}
+                PaperProps={{ sx: { borderRadius: isMobile ? 0 : 3, overflow: 'hidden', border: `1px solid ${alpha(tenantAccent, 0.22)}` } }}
             >
-                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', bgcolor: tenantAccent, color: tenantAccentContrast, fontWeight: 900 }}>
                     Suchen
-                    <IconButton onClick={handleSearchClose}>
+                    <IconButton onClick={handleSearchClose} sx={{ color: tenantAccentContrast }}>
                         <CloseIcon />
                     </IconButton>
                 </DialogTitle>

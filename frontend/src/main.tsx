@@ -21,12 +21,15 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 import deTranslation from './locales/translation-de.json';
 import enTranslation from './locales/translation-en.json';
 
-posthog.init(import.meta.env.VITE_POSTHOG_KEY, {
+const posthogKey = String(import.meta.env.VITE_POSTHOG_KEY || '').trim();
+if (posthogKey) {
+  posthog.init(posthogKey, {
     api_host: import.meta.env.VITE_POSTHOG_HOST,
-    capture_pageview: true, 
-    autocapture: true, 
-    opt_out_capturing_by_default: true, 
-});
+    capture_pageview: true,
+    autocapture: true,
+    opt_out_capturing_by_default: true,
+  });
+}
             
 
 i18n

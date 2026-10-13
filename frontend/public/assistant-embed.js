@@ -21,7 +21,7 @@
     position: 'fixed', right: '22px', bottom: '22px', zIndex: '2147483000',
     border: '0', borderRadius: '999px', padding: '13px 18px', cursor: 'pointer',
     background: buttonColor, color: '#fff', font: '700 15px/1.2 Arial, sans-serif',
-    boxShadow: '0 12px 32px rgba(0,0,0,.24)'
+    boxShadow: '0 12px 32px rgba(0,0,0,.24)', display: 'none'
   });
 
   var frame = document.createElement('iframe');
@@ -34,7 +34,8 @@
   Object.assign(frame.style, {
     position: 'fixed', right: '18px', bottom: '18px', zIndex: '2147483001',
     width: '390px', height: 'min(590px, calc(100vh - 36px))', maxWidth: 'calc(100vw - 24px)',
-    border: '0', borderRadius: '18px', display: 'none', background: '#fff',
+    border: '5px solid ' + buttonColor, borderRadius: '20px', boxSizing: 'border-box',
+    display: 'none', background: '#fff',
     boxShadow: '0 18px 54px rgba(0,0,0,.28)'
   });
 
@@ -44,6 +45,21 @@
   });
   window.addEventListener('message', function (event) {
     if (event.origin !== baseUrl || event.source !== frame.contentWindow) return;
+    if (event.data && event.data.type === 'mobiliti-assistant-ready') {
+      var liveColor = String(event.data.primaryColor || '');
+      if (/^#[0-9a-f]{6}$/i.test(liveColor)) {
+        button.style.background = liveColor;
+        frame.style.borderColor = liveColor;
+      }
+      button.style.display = 'block';
+      return;
+    }
+    if (event.data && event.data.type === 'mobiliti-assistant-unavailable') {
+      button.style.display = 'none';
+      frame.style.display = 'none';
+      console.warn('[Mobiliti Assistant] Der Assistent ist nicht öffentlich aktiviert oder der Einbettungsschlüssel ist nicht mehr gültig.');
+      return;
+    }
     if (event.data && event.data.type === 'mobiliti-assistant-close') {
       frame.style.display = 'none';
       button.style.display = 'block';

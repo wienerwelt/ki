@@ -88,10 +88,10 @@ async function run() {
         assert.equal((await loadEligibleRecipients(partnerId)).length, 0, 'Admin-paused members must be excluded');
         assert.equal((await dispatchBriefing({ partner: { id: partnerId, newsletter_delivery_mode: 'mobiliti' }, items: [], briefing: {}, frequency: 'daily' })).recipientCount, 0);
 
-        const invokeUpdate = async (requesterRole, body) => {
+        const invokeUpdate = async (requesterRole, body, target = member) => {
             const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(value) { this.body = value; return this; }, send(value) { this.body = value; return this; } };
-            await adminController.updateUser({ params: { id: member.id }, user: { id: assistant.id, role: requesterRole, business_partner_id: partnerId },
-                body: { ...member, ...body }, ip: '127.0.0.1' }, res);
+            await adminController.updateUser({ params: { id: target.id }, user: { id: assistant.id, role: requesterRole, business_partner_id: partnerId },
+                body: { ...target, ...body }, ip: '127.0.0.1' }, res);
             return res;
         };
         assert.equal((await invokeUpdate('assistenz', { newsletter_email_enabled: true })).statusCode, 403);
@@ -105,6 +105,36 @@ async function run() {
         assert.equal((await loadEligibleRecipients(partnerId)).length, 1);
         await client.query('UPDATE users SET newsletter_opt_in = FALSE WHERE id = $1', [member.id]);
         assert.equal((await loadEligibleRecipients(partnerId)).length, 0, 'Activation must not bypass an unsubscribe');
+        assert.equal((await invokeUpdate('admin', {
+            newsletter_opt_in: true,
+            newsletter_email_enabled: true,
+            briefing_email_enabled: true,
+            member_newsletter_enabled: true,
+            monthly_report_email_enabled: false,
+        })).statusCode, 200);
+        const afterAdminConsent = (await client.query('SELECT * FROM users WHERE id = $1', [member.id])).rows[0];
+        assert.equal(afterAdminConsent.newsletter_opt_in, true);
+        assert.equal(afterAdminConsent.newsletter_opt_in_source, 'admin_user_management');
+        assert.ok(afterAdminConsent.newsletter_opt_in_confirmed_at);
+        assert.equal((await loadEligibleRecipients(partnerId)).length, 1);
+        assert.equal((await invokeUpdate('admin', {
+            newsletter_opt_in: false,
+            briefing_email_enabled: false,
+            member_newsletter_enabled: false,
+            monthly_report_email_enabled: false,
+        })).statusCode, 200);
+        assert.equal((await loadEligibleRecipients(partnerId)).length, 0);
+        assert.equal((await invokeUpdate('admin', {
+            newsletter_opt_in: true,
+            newsletter_email_enabled: true,
+            briefing_email_enabled: true,
+            member_newsletter_enabled: false,
+            monthly_report_email_enabled: true,
+        }, assistant)).statusCode, 200);
+        const assistantAfterConsent = (await client.query('SELECT * FROM users WHERE id = $1', [assistant.id])).rows[0];
+        assert.equal(assistantAfterConsent.newsletter_opt_in, true);
+        assert.equal(assistantAfterConsent.briefing_email_enabled, true);
+        assert.equal(assistantAfterConsent.member_newsletter_enabled, false);
 
         const adminMonitorController = require('../controllers/adminMonitorController');
         const invokeManualSend = async (body) => {

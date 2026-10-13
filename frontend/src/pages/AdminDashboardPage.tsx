@@ -1,9 +1,8 @@
-// frontend/src/pages/AdminDashboardPage.tsx
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Typography, Container, Button, Grid, Paper } from '@mui/material';
+import { alpha, useTheme } from '@mui/material/styles';
+import { Box, Button, Container, Grid, Paper, Stack, Typography } from '@mui/material';
 
-// Icons
 import BusinessIcon from '@mui/icons-material/Business';
 import WidgetsIcon from '@mui/icons-material/Widgets';
 import SubscriptionsIcon from '@mui/icons-material/Subscriptions';
@@ -27,270 +26,126 @@ import GavelIcon from '@mui/icons-material/Gavel';
 import ForumIcon from '@mui/icons-material/Forum';
 import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
 import ShareIcon from '@mui/icons-material/Share';
-import StorefrontIcon from '@mui/icons-material/Storefront'; // ✅ NEU: Icon für Branchenverzeichnis
+import StorefrontIcon from '@mui/icons-material/Storefront';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EmailIcon from '@mui/icons-material/Email';
 import NewReleasesOutlinedIcon from '@mui/icons-material/NewReleasesOutlined';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
+
+type AdminCard = {
+  title: string;
+  description: string;
+  to: string;
+  action: string;
+  icon: React.ElementType;
+};
+
+type AdminSection = {
+  title: string;
+  description: string;
+  accent: string;
+  cards: AdminCard[];
+};
 
 const AdminDashboardPage: React.FC = () => {
-    return (
-            <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-                <Typography variant="h4" component="h1" gutterBottom>
-                    Admin-Dashboard
-                </Typography>
-                <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-                    Verwalten Sie Business Partner, Inhalte, Regeln und Systemeinstellungen.
-                </Typography>
+  const theme = useTheme();
+  const sections: AdminSection[] = [
+    {
+      title: 'Mandanten & Zugänge',
+      description: 'Organisationen, Benutzer, Demos und sichtbare Module zentral verwalten.',
+      accent: theme.palette.info.main,
+      cards: [
+        { title: 'Business Partner', description: 'Mandanten, Branding und Module verwalten.', to: '/admin/business-partners', action: 'Mandanten öffnen', icon: BusinessIcon },
+        { title: 'Benutzerverwaltung', description: 'Konten, Rollen und E-Mail-Empfang steuern.', to: '/admin/users', action: 'Benutzer öffnen', icon: GroupIcon },
+        { title: 'Demo-Zugänge', description: 'Befristete Zugänge für Interessenten verwalten.', to: '/admin/demo-access', action: 'Demos öffnen', icon: VisibilityIcon },
+        { title: 'Widget-Zugriff', description: 'Widgets je Mandant freischalten.', to: '/admin/bp-widget-access', action: 'Zugriffe öffnen', icon: SubscriptionsIcon },
+        { title: 'Homepage-Assistent', description: 'Mandant, Verhalten und Chatbot-Avatar konfigurieren.', to: '/admin/public-assistant', action: 'Assistent öffnen', icon: SmartToyIcon },
+      ],
+    },
+    {
+      title: 'Redaktion & Public Page',
+      description: 'Alle Inhalte pflegen, die Mitglieder und öffentliche Besucher sehen.',
+      accent: theme.palette.primary.main,
+      cards: [
+        { title: 'Plattform-Updates', description: 'Neuerungen für ausgewählte Mandanten veröffentlichen.', to: '/admin/platform-updates', action: 'Updates öffnen', icon: NewReleasesOutlinedIcon },
+        { title: 'Briefing Redaktion', description: 'Tägliche Briefings prüfen und freigeben.', to: '/admin/briefing-editorial', action: 'Redaktion öffnen', icon: HistoryEduIcon },
+        { title: 'Social Media', description: 'Posts und Grafiken aus Statistiken erstellen.', to: '/admin/social-media', action: 'Generator öffnen', icon: ShareIcon },
+        { title: 'Community', description: 'Beiträge und Kommentare moderieren.', to: '/admin/community', action: 'Moderation öffnen', icon: ForumIcon },
+        { title: 'Branchennetzwerk', description: 'Dienstleister, Kategorien und Freigaben steuern.', to: '/admin/directory', action: 'Netzwerk öffnen', icon: StorefrontIcon },
+        { title: 'Actions & Software', description: 'Angebote und Software-Lexikon pflegen.', to: '/admin/actions', action: 'Inhalte öffnen', icon: StarsIcon },
+        { title: 'Umfragen', description: 'Umfragen erstellen und auswerten.', to: '/admin/surveys', action: 'Umfragen öffnen', icon: PollIcon },
+        { title: 'Werbung', description: 'Werbebanner im Dashboard verwalten.', to: '/admin/advertisements', action: 'Werbung öffnen', icon: CampaignIcon },
+      ],
+    },
+    {
+      title: 'Daten, Quellen & KI',
+      description: 'Datenzufluss, KI-Regeln, Qualität und fachliche Struktur kontrollieren.',
+      accent: theme.palette.success.main,
+      cards: [
+        { title: 'Gescrapte Inhalte', description: 'Gesammelte Artikel und Daten prüfen.', to: '/admin/scraped-content', action: 'Inhalte öffnen', icon: DataObjectIcon },
+        { title: 'Scraping-Regeln', description: 'Selektoren und externe Quellen verwalten.', to: '/admin/scraping-rules', action: 'Regeln öffnen', icon: PolicyIcon },
+        { title: 'KI-Prompt-Regeln', description: 'Prompts für Analyse und Generierung steuern.', to: '/admin/ai-prompt-rules', action: 'Prompts öffnen', icon: AutoAwesomeIcon },
+        { title: 'KI-Inhalte', description: 'Generierte Inhalte prüfen und verwalten.', to: '/admin/ai-content', action: 'KI-Inhalte öffnen', icon: ArticleIcon },
+        { title: 'Kategorien', description: 'Zentrale Inhalts- und Softwarekategorien pflegen.', to: '/admin/categories', action: 'Kategorien öffnen', icon: CategoryIcon },
+        { title: 'Tags', description: 'Zentrale Schlagwörter pflegen.', to: '/admin/tags', action: 'Tags öffnen', icon: TagIcon },
+        { title: 'Vertrauenswürdige Quellen', description: 'Eingereichte Quellen prüfen.', to: '/admin/sources', action: 'Quellen öffnen', icon: FactCheckIcon },
+        { title: 'Events', description: 'Gefundene Termine für Kalender verwalten.', to: '/admin/events', action: 'Events öffnen', icon: CalendarMonthIcon },
+        { title: 'Förderungen', description: 'Förderfunde und KI-Kosten überwachen.', to: '/admin/funding', action: 'Förderungen öffnen', icon: ShoppingCartCheckoutIcon },
+        { title: 'Monitor-Verwaltung', description: 'Fachmonitore und Dokumente verwalten.', to: '/admin/legal-monitor', action: 'Monitore öffnen', icon: GavelIcon },
+      ],
+    },
+    {
+      title: 'Betrieb & Auswertung',
+      description: 'Automatisierung, Zustellung, Systemzustand und Nutzung im Blick behalten.',
+      accent: theme.palette.secondary.main,
+      cards: [
+        { title: 'Automatische Aufgaben', description: 'Cronjobs für KI, Scraping und E-Mail steuern.', to: '/admin/cronjobs', action: 'Aufgaben öffnen', icon: ScheduleIcon },
+        { title: 'Widget-Typen', description: 'Verfügbare Dashboard-Widgets definieren.', to: '/admin/widget-types', action: 'Widgets öffnen', icon: WidgetsIcon },
+        { title: 'E-Mail & Reports', description: 'Versand, Reports und Empfänger prüfen.', to: '/admin/email-reports', action: 'E-Mail öffnen', icon: EmailIcon },
+        { title: 'Statistiken', description: 'Nutzung, Tokens und Inhalte auswerten.', to: '/admin/statistics', action: 'Statistiken öffnen', icon: QueryStatsIcon },
+        { title: 'System & Aktivität', description: 'Systemzustand, Jobs und Protokolle prüfen.', to: '/admin/monitor', action: 'Monitor öffnen', icon: MonitorIcon },
+      ],
+    },
+  ];
 
-                <Grid container spacing={3}>
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <NewReleasesOutlinedIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Plattform-Updates</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Neuerungen einmal zentral pflegen und dauerhaft für alle Mandanten bereitstellen.</Typography>
-                            <Button component={Link} to="/admin/platform-updates" variant="contained" color="primary">Updates verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    {/* ✅ NEU: Tages-Briefing Redaktion */}
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <HistoryEduIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Briefing Redaktion</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>KI-Entwürfe prüfen, veredeln und für Mandanten freigeben.</Typography>
-                            <Button component={Link} to="/admin/briefing-editorial" variant="contained" color="primary">Zum Redaktions-Tool</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    {/* ✅ NEU: Social Media Generator */}
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <ShareIcon sx={{ fontSize: 60, mb: 2 }} color="info" />
-                            <Typography variant="h6" component="h2" gutterBottom>Social Media Generator</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>LinkedIn-Posts und Grafiken aus KFZ-Statistiken erstellen.</Typography>
-                            <Button component={Link} to="/admin/social-media" variant="contained" color="info">Generator öffnen</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    {/* ✅ NEU: Community Moderation Kachel */}
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <ForumIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Community</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Beiträge und Kommentare aller Mandanten moderieren.</Typography>
-                            <Button component={Link} to="/admin/community" variant="contained" color="primary">Verwalten</Button>
-                        </Paper>
-                    </Grid>
+  return (
+    <Container maxWidth="xl" sx={{ mt: 3, mb: 5 }}>
+      <Typography variant="h4" component="h1" fontWeight={900}>Admin-Dashboard</Typography>
+      <Typography variant="body1" color="text.secondary" sx={{ mt: 0.75, mb: 3 }}>
+        Verwaltungsbereiche sind nach Aufgabe geordnet. Keine Funktion wurde entfernt.
+      </Typography>
 
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <ShoppingCartCheckoutIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Förderungen</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Gefundene Förderungen und KI-Kosten überwachen.</Typography>
-                            <Button component={Link} to="/admin/funding" variant="contained" color="primary">Öffnen</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <ScheduleIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Autom. Aufgaben</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Zentrale Verwaltung aller Cronjobs (KI, Scraping, E-Mails).</Typography>
-                            <Button component={Link} to="/admin/cronjobs" variant="contained" color="primary">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <BusinessIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Business Partner</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Alle registrierten Business Partner verwalten.</Typography>
-                            <Button component={Link} to="/admin/business-partners" variant="contained" color="primary">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <VisibilityIcon sx={{ fontSize: 60, mb: 2 }} color="info" />
-                            <Typography variant="h6" component="h2" gutterBottom>Demo-Zugänge</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Befristete, schreibgeschützte Zugänge für ausgewählte Interessenten verwalten.</Typography>
-                            <Button component={Link} to="/admin/demo-access" variant="contained" color="info">Demo-Zugänge öffnen</Button>
-                        </Paper>
-                    </Grid>
-
-                    {/* ✅ NEU: Branchenverzeichnis Kachel */}
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <StorefrontIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
-                            <Typography variant="h6" component="h2" gutterBottom>Branchenverzeichnis</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Dienstleister, Kategorien und Mandanten-Freigaben steuern.</Typography>
-                            <Button component={Link} to="/admin/directory" variant="contained" color="success">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <GroupIcon sx={{ fontSize: 60, mb: 2 }} color="info" />
-                            <Typography variant="h6" component="h2" gutterBottom>Benutzerverwaltung</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Benutzer erstellen, bearbeiten und zuordnen.</Typography>
-                            <Button component={Link} to="/admin/users" variant="contained" color="info">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <WidgetsIcon sx={{ fontSize: 60, mb: 2 }} color="secondary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Widget-Typen</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Verfügbare Widgets definieren und verwalten.</Typography>
-                            <Button component={Link} to="/admin/widget-types" variant="contained" color="secondary">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <StarsIcon sx={{ fontSize: 60, mb: 2 }} color="warning" />
-                            <Typography variant="h6" component="h2" gutterBottom>Aktionen verwalten</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Spezielle Aktionen und Angebote für Partner erstellen.</Typography>
-                            <Button component={Link} to="/admin/actions" variant="contained" color="warning">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <CampaignIcon sx={{ fontSize: 60, mb: 2 }} color="secondary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Werbung</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Werbebanner für das Dashboard verwalten.</Typography>
-                            <Button component={Link} to="/admin/advertisements" variant="contained" color="secondary">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <PolicyIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Scraping-Regeln</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Regeln für externe Quellen verwalten.</Typography>
-                            <Button component={Link} to="/admin/scraping-rules" variant="contained" color="primary">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                     <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <AutoAwesomeIcon sx={{ fontSize: 60, mb: 2 }} color="info" />
-                            <Typography variant="h6" component="h2" gutterBottom>KI-Prompt-Regeln</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>KI-Prompts für Analysen und Generierungen.</Typography>
-                            <Button component={Link} to="/admin/ai-prompt-rules" variant="contained" color="info">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <FactCheckIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
-                            <Typography variant="h6" component="h2" gutterBottom>Vertrauensw. Quellen</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Von Nutzern eingereichte Quellen prüfen und verwalten.</Typography>
-                            <Button component={Link} to="/admin/sources" variant="contained" color="success">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <CalendarMonthIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Events</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Gescrapte Events prüfen und für den Kalender verwalten.</Typography>
-                            <Button component={Link} to="/admin/events" variant="contained" color="primary">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <GavelIcon sx={{ fontSize: 60, mb: 2 }} color="action" />
-                            <Typography variant="h6" component="h2" gutterBottom>Monitor-Verwaltung</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Skalierbare Inhalte (z.B. Rechtsmonitor) per PDF verwalten.</Typography>
-                            <Button component={Link} to="/admin/legal-monitor" variant="contained" color="secondary">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <DataObjectIcon sx={{ fontSize: 60, mb: 2 }} color="warning" />
-                            <Typography variant="h6" component="h2" gutterBottom>Gescrapte Inhalte</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Alle gesammelten Inhalte (inkl. Verkehr) anzeigen.</Typography>
-                            <Button component={Link} to="/admin/scraped-content" variant="contained" color="warning">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <ArticleIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
-                            <Typography variant="h6" component="h2" gutterBottom>KI-Inhalte</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Alle von der KI erstellten Inhalte verwalten.</Typography>
-                            <Button component={Link} to="/admin/ai-content" variant="contained" color="success">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <CategoryIcon sx={{ fontSize: 60, mb: 2 }} color="secondary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Kategorien</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Zentrale Verwaltung der Inhalts-Kategorien.</Typography>
-                            <Button component={Link} to="/admin/categories" variant="contained" color="secondary">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <TagIcon sx={{ fontSize: 60, mb: 2 }} color="success" />
-                            <Typography variant="h6" component="h2" gutterBottom>Tags</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Zentrale Verwaltung der Schlagwörter (Tags).</Typography>
-                            <Button component={Link} to="/admin/tags" variant="contained" color="success">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                     <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <SubscriptionsIcon sx={{ fontSize: 60, mb: 2 }} color="error" />
-                            <Typography variant="h6" component="h2" gutterBottom>Widget-Zugriff</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Widget-Zugriff für Business Partner steuern.</Typography>
-                            <Button component={Link} to="/admin/bp-widget-access" variant="contained" color="error">Verwalten</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <MonitorIcon sx={{ fontSize: 60, mb: 2 }} color="action" />
-                            <Typography variant="h6" component="h2" gutterBottom>System & Aktivität</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Systemgesundheit, Speicher und Sicherheitsaktivitäten überwachen.</Typography>
-                            <Button component={Link} to="/admin/monitor" variant="contained" color="secondary">Anzeigen</Button>
-                        </Paper>
-                    </Grid>
-
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <EmailIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>E-Mail & Reports</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Mandanten, Empfänger, Versandarten und Zustellstatus zentral prüfen.</Typography>
-                            <Button component={Link} to="/admin/email-reports" variant="contained" color="primary">Öffnen</Button>
-                        </Paper>
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <PollIcon sx={{ fontSize: 60, mb: 2 }} color="info" />
-                            <Typography variant="h6" component="h2" gutterBottom>Umfragen</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Umfragen für Nutzer erstellen und Ergebnisse auswerten.</Typography>
-                            <Button component={Link} to="/admin/surveys" variant="contained" color="info">Verwalten</Button>
-                        </Paper>
-                    </Grid>                    
-                    
-                    <Grid item xs={12} sm={6} md={4}>
-                        <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
-                            <QueryStatsIcon sx={{ fontSize: 60, mb: 2 }} color="primary" />
-                            <Typography variant="h6" component="h2" gutterBottom>Statistiken</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>Nutzungs- und Systemstatistiken anzeigen.</Typography>
-                            <Button component={Link} to="/admin/statistics" variant="contained" color="primary">Anzeigen</Button>
-                        </Paper>
-                    </Grid>
-                </Grid>
-            </Container>
-    );
+      <Stack spacing={3}>
+        {sections.map((section) => (
+          <Paper key={section.title} variant="outlined" sx={{ p: { xs: 2, md: 2.5 }, borderRadius: 3, borderColor: alpha(section.accent, 0.24), bgcolor: alpha(section.accent, 0.035) }}>
+            <Box sx={{ pl: 1.5, mb: 2, borderLeft: `4px solid ${section.accent}` }}>
+              <Typography variant="h5" fontWeight={900}>{section.title}</Typography>
+              <Typography variant="body2" color="text.secondary">{section.description}</Typography>
+            </Box>
+            <Grid container spacing={2}>
+              {section.cards.map((card) => {
+                const Icon = card.icon;
+                return (
+                  <Grid item xs={12} sm={6} lg={4} key={card.to}>
+                    <Paper elevation={0} sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', borderRadius: 2.5, bgcolor: 'background.paper', border: `1px solid ${alpha(section.accent, 0.16)}`, transition: 'transform 160ms ease, box-shadow 160ms ease', '&:hover': { transform: 'translateY(-2px)', boxShadow: `0 10px 24px ${alpha(section.accent, 0.1)}` } }}>
+                      <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ flex: 1 }}>
+                        <Box sx={{ width: 44, height: 44, borderRadius: 2, display: 'grid', placeItems: 'center', bgcolor: alpha(section.accent, 0.1), color: section.accent, flexShrink: 0 }}><Icon /></Box>
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography variant="subtitle1" fontWeight={900}>{card.title}</Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.35 }}>{card.description}</Typography>
+                        </Box>
+                      </Stack>
+                      <Button component={Link} to={card.to} size="small" sx={{ mt: 1.5, alignSelf: 'flex-start', color: section.accent, fontWeight: 850 }}>{card.action}</Button>
+                    </Paper>
+                  </Grid>
+                );
+              })}
+            </Grid>
+          </Paper>
+        ))}
+      </Stack>
+    </Container>
+  );
 };
 
 export default AdminDashboardPage;

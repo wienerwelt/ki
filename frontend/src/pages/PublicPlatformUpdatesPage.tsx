@@ -111,7 +111,7 @@ const PublicPlatformUpdatesPage: React.FC = () => {
   const navItems: PublicPortalNavItem[] = [
     { label: 'Start', onClick: () => navigate(homePath) },
     { label: 'Für Mitglieder', badge: Number(context?.stats?.community_members) || null, onClick: () => navigate(`${homePath}?login=1`) },
-    { label: 'Branchennetzwerk', badge: (Number(context?.stats?.total_directory_entries) || 0) + (Number(context?.stats?.total_software_entries) || 0), onClick: () => navigate(`${homePath}#branchenverzeichnis`) },
+    { label: 'Branchennetzwerk', badge: Number(context?.stats?.total_directory_entries) || 0, onClick: () => navigate(`${homePath}#branchenverzeichnis`) },
     { label: 'Neu im Dashboard', badge: items.length || null, onClick: () => window.scrollTo({ top: 0, behavior: 'smooth' }) },
     { label: 'Community', badge: Number(context?.stats?.community_activity) || null, onClick: () => navigate(`${homePath}?login=1`) },
     { label: 'Mehr', onClick: openPartnerWebsite },

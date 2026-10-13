@@ -563,27 +563,40 @@ const AdminStatisticsPage: React.FC = () => {
 
         {/* Cost per BP (Top Limit für Skalierbarkeit) */}
         <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 3, height: 450, borderRadius: 2 }}>
+          <Paper sx={{ p: 3, height: 470, borderRadius: 2 }}>
             <Typography variant="h6" gutterBottom fontWeight="bold">Token-Verbrauch nach Partner (Top 10)</Typography>
-            <ResponsiveContainer>
-              <BarChart data={stats.costPerBusinessPartner.slice(0, 10)} layout="vertical" margin={{ top: 5, right: 30, left: 120, bottom: 5 }}>
+            <Box sx={{ height: 390, minWidth: 0 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={stats.costPerBusinessPartner.slice(0, 10)} layout="vertical" margin={{ top: 8, right: 30, left: 145, bottom: 24 }} barCategoryGap="48%">
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" tickFormatter={fmtAxis} />
-                <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 12 }} />
+                <XAxis type="number" tickFormatter={fmtAxis} tickMargin={8} />
+                <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} tickMargin={8} />
                 <Tooltip formatter={(value: number) => new Intl.NumberFormat('de-AT').format(value)} />
-                <Bar dataKey="total_tokens" name="Tokens Gesamt" fill={theme.palette.primary.main} radius={[0, 4, 4, 0]} />
+                <Bar dataKey="total_tokens" name="Tokens Gesamt" fill={theme.palette.primary.main} radius={[0, 4, 4, 0]} barSize={16} maxBarSize={16} />
               </BarChart>
             </ResponsiveContainer>
+            </Box>
           </Paper>
         </Grid>
 
         {/* Category distribution */}
         <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 3, height: 450, borderRadius: 2 }}>
+          <Paper sx={{ p: 3, height: 470, borderRadius: 2 }}>
             <Typography variant="h6" gutterBottom fontWeight="bold">KI-Inhalte nach Kategorie</Typography>
-            <ResponsiveContainer>
+            {stats.categoryDistribution.length === 0 ? (
+              <Box sx={{ height: 390, display: 'grid', placeItems: 'center', textAlign: 'center', px: 3 }}>
+                <Box>
+                  <Typography fontWeight={800}>Keine KI-Inhalte im gewählten Zeitraum</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
+                    Zeitraum oder Mandant ändern. Inhalte ohne Kategorie werden künftig als „Ohne Kategorie“ ausgewiesen.
+                  </Typography>
+                </Box>
+              </Box>
+            ) : (
+            <Box sx={{ height: 390, minWidth: 0 }}>
+            <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={stats.categoryDistribution} dataKey="count" nameKey="name" cx="50%" cy="50%" innerRadius={80} outerRadius={130} labelLine={false} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                <Pie data={stats.categoryDistribution} dataKey="count" nameKey="name" cx="50%" cy="46%" innerRadius={72} outerRadius={118} labelLine={false} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
                   {stats.categoryDistribution.map((_, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
@@ -592,6 +605,8 @@ const AdminStatisticsPage: React.FC = () => {
                 <Legend verticalAlign="bottom" />
               </PieChart>
             </ResponsiveContainer>
+            </Box>
+            )}
           </Paper>
         </Grid>
 

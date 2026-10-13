@@ -898,7 +898,7 @@ const PublicPortalPage: React.FC<PublicPortalPageProps> = ({ isRegister = false 
     const publicNavItems: PublicPortalNavItem[] = [
         { label: 'Start', onClick: () => handleNavItemClick('Start') },
         { label: 'Für Mitglieder', badge: Number(tenantStats.community_members) || null, onClick: () => handleNavItemClick('Für Mitglieder') },
-        { label: 'Branchennetzwerk', badge: (Number(tenantStats.total_directory_entries) || 0) + (Number(tenantStats.total_software_entries) || 0), onClick: () => handleNavItemClick('Branchennetzwerk') },
+        { label: 'Branchennetzwerk', badge: Number(tenantStats.total_directory_entries) || 0, onClick: () => handleNavItemClick('Branchennetzwerk') },
         ...(Number(tenantStats.platform_updates) > 0
             ? [{ label: 'Neu im Dashboard', badge: Number(tenantStats.platform_updates), onClick: () => handleNavItemClick('Neu im Dashboard') }]
             : []),
@@ -1675,7 +1675,7 @@ const renderProviderPreviewCard = (provider: any) => {
                                                 '&:focus-visible': { outline: `3px solid ${alpha(primaryColor, 0.45)}` },
                                             }}
                                         >
-                                            <ImageWithFallback src={provider.logo_url ? getAssetUrl(provider.logo_url) : null} alt={provider.name} fallbackColor={primaryColor} loading="lazy" sx={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'grayscale(1)', opacity: 0.68 }} />
+                                            <ImageWithFallback src={provider.logo_url ? getAssetUrl(provider.logo_url) : null} alt={provider.name} fallbackColor={primaryColor} loading="lazy" sx={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'grayscale(1)', opacity: 0.72, bgcolor: 'transparent', borderRadius: 0, mixBlendMode: 'multiply' }} />
                                         </Box>
                                         ))}
                                     </Box>
